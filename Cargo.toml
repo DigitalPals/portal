@@ -1,0 +1,45 @@
+[package]
+name = "portal"
+version = "0.1.0"
+edition = "2024"
+description = "A modern SSH client with GUI"
+authors = ["John"]
+license = "MIT"
+rust-version = "1.85"
+
+[dependencies]
+# GUI
+iced = { version = "0.13", features = ["tokio", "advanced"] }
+
+# Terminal emulation
+alacritty_terminal = "0.24"
+
+# SSH
+russh = "0.54"
+russh-sftp = "2.0"
+ssh-key = { version = "0.6", features = ["std"] }
+
+# Async
+tokio = { version = "1.41", features = ["full"] }
+futures = "0.3"
+
+# Configuration
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.8"
+directories = "5.0"
+
+# Utilities
+uuid = { version = "1.10", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+thiserror = "2.0"
+anyhow = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Additional
+parking_lot = "0.12"
+rfd = "0.15"  # Native file dialogs
+
+[profile.release]
+lto = true
+codegen-units = 1
