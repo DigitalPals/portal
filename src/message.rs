@@ -145,6 +145,9 @@ pub enum Message {
     HostKeyVerificationAccept,
     HostKeyVerificationReject,
 
+    // Window resize
+    WindowResized(iced::Size),
+
     // Placeholder for future messages
     Noop,
 }

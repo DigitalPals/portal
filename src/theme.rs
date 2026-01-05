@@ -63,3 +63,18 @@ pub const BORDER_RADIUS: f32 = 4.0;
 
 /// Border radius for cards
 pub const CARD_BORDER_RADIUS: f32 = 8.0;
+
+/// Minimum card width for responsive grid
+pub const MIN_CARD_WIDTH: f32 = 280.0;
+
+/// Fixed card height for consistent tile heights
+pub const CARD_HEIGHT: f32 = 72.0;
+
+/// Grid spacing between cards
+pub const GRID_SPACING: f32 = 16.0;
+
+/// Grid horizontal padding (left + right)
+pub const GRID_PADDING: f32 = 48.0;
+
+/// Threshold for auto-collapsing sidebar
+pub const SIDEBAR_AUTO_COLLAPSE_THRESHOLD: f32 = 900.0;

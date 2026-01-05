@@ -5,14 +5,14 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use iced::keyboard::{self, Key};
 use iced::widget::{button, column, container, row, text, stack};
-use iced::{event, Element, Fill, Subscription, Task, Theme as IcedTheme};
+use iced::{event, window, Element, Fill, Subscription, Task, Theme as IcedTheme};
 use uuid::Uuid;
 
 use crate::config::{HistoryConfig, Host, HostsConfig, Snippet, SnippetsConfig};
 use crate::message::{HostDialogField, Message, SessionId, SidebarMenuItem, SnippetField};
 use crate::sftp::SharedSftpSession;
 use crate::ssh::SshSession;
-use crate::theme::THEME;
+use crate::theme::{SIDEBAR_AUTO_COLLAPSE_THRESHOLD, THEME};
 use crate::ssh::host_key_verification::HostKeyVerificationResponse;
 use crate::views::dialogs::host_dialog::{
     host_dialog_view, AuthMethodChoice, HostDialogState,
@@ -24,7 +24,7 @@ use crate::views::dialogs::sftp_dialogs::{
 };
 use crate::views::dialogs::snippets_dialog::{snippets_dialog_view, SnippetsDialogState};
 use crate::views::history_view::history_view;
-use crate::views::host_grid::host_grid_view;
+use crate::views::host_grid::{calculate_columns, host_grid_view};
 use crate::views::sftp_picker::{sftp_picker_view, SftpHostCard};
 use crate::views::sftp_view::{sftp_browser_view, SftpBrowserState};
 use crate::views::sidebar::sidebar_view;
@@ -97,6 +97,10 @@ pub struct Portal {
 
     // Connection status message
     status_message: Option<String>,
+
+    // Responsive layout
+    window_size: iced::Size,
+    sidebar_manually_collapsed: bool,
 }
 
 impl Portal {
@@ -173,6 +177,8 @@ impl Portal {
             sessions: HashMap::new(),
             sftp_sessions: HashMap::new(),
             status_message: None,
+            window_size: iced::Size::new(1200.0, 800.0),
+            sidebar_manually_collapsed: false,
         };
 
         (app, Task::none())
@@ -234,7 +240,9 @@ impl Portal {
             }
             Message::SidebarToggleCollapse => {
                 self.sidebar_collapsed = !self.sidebar_collapsed;
-                tracing::info!("Sidebar collapsed: {}", self.sidebar_collapsed);
+                // Track manual collapse state to prevent auto-collapse override
+                self.sidebar_manually_collapsed = self.sidebar_collapsed;
+                tracing::info!("Sidebar collapsed: {} (manual)", self.sidebar_collapsed);
             }
             Message::OsDetectionResult(host_id, result) => {
                 match result {
@@ -346,6 +354,15 @@ impl Portal {
                 }
             }
             Message::Noop => {}
+            // Window resize for responsive layout
+            Message::WindowResized(size) => {
+                self.window_size = size;
+
+                // Auto-collapse/expand sidebar (unless manually collapsed)
+                if !self.sidebar_manually_collapsed {
+                    self.sidebar_collapsed = size.width < SIDEBAR_AUTO_COLLAPSE_THRESHOLD;
+                }
+            }
             // Host key verification
             Message::HostKeyVerification(mut wrapper) => {
                 if let Some(request) = wrapper.0.take() {
@@ -976,10 +993,13 @@ impl Portal {
                 }
             }
             View::HostGrid => {
+                // Calculate responsive column count
+                let column_count = calculate_columns(self.window_size.width, self.sidebar_collapsed);
+
                 // Show content based on sidebar selection
                 match self.sidebar_selection {
                     SidebarMenuItem::Hosts => {
-                        host_grid_view(&self.search_query, filtered_groups, filtered_cards)
+                        host_grid_view(&self.search_query, filtered_groups, filtered_cards, column_count)
                     }
                     SidebarMenuItem::Sftp => {
                         // Show SFTP host picker
@@ -996,7 +1016,7 @@ impl Portal {
                     }
                     SidebarMenuItem::Snippets | SidebarMenuItem::Settings => {
                         // These open dialogs, show hosts grid as fallback
-                        host_grid_view(&self.search_query, filtered_groups, filtered_cards)
+                        host_grid_view(&self.search_query, filtered_groups, filtered_cards, column_count)
                     }
                 }
             }
@@ -1097,12 +1117,17 @@ impl Portal {
 
     /// Keyboard subscription for shortcuts
     pub fn subscription(&self) -> Subscription<Message> {
-        event::listen_with(|event, _status, _id| {
-            if let iced::Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) = event {
-                Some(Message::KeyboardEvent(key, modifiers))
-            } else {
-                None
-            }
-        })
+        Subscription::batch([
+            // Keyboard events
+            event::listen_with(|event, _status, _id| {
+                if let iced::Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) = event {
+                    Some(Message::KeyboardEvent(key, modifiers))
+                } else {
+                    None
+                }
+            }),
+            // Window resize events
+            window::resize_events().map(|(_id, size)| Message::WindowResized(size)),
+        ])
     }
 }

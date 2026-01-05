@@ -5,7 +5,10 @@ use uuid::Uuid;
 use crate::config::DetectedOs;
 use crate::icons::{self, icon_with_color};
 use crate::message::Message;
-use crate::theme::{BORDER_RADIUS, CARD_BORDER_RADIUS, THEME};
+use crate::theme::{
+    BORDER_RADIUS, CARD_BORDER_RADIUS, CARD_HEIGHT, GRID_PADDING, GRID_SPACING,
+    MIN_CARD_WIDTH, SIDEBAR_WIDTH, SIDEBAR_WIDTH_COLLAPSED, THEME,
+};
 
 /// Group card data for the grid view
 #[derive(Debug, Clone)]
@@ -24,11 +27,32 @@ pub struct HostCard {
     pub detected_os: Option<DetectedOs>,
 }
 
+/// Calculate the number of columns based on available width
+pub fn calculate_columns(window_width: f32, sidebar_collapsed: bool) -> usize {
+    let sidebar_width = if sidebar_collapsed {
+        SIDEBAR_WIDTH_COLLAPSED
+    } else {
+        SIDEBAR_WIDTH
+    };
+
+    // Available width for the grid
+    let content_width = window_width - sidebar_width - GRID_PADDING;
+
+    // Calculate how many cards fit
+    // Formula: content_width >= n * MIN_CARD_WIDTH + (n-1) * GRID_SPACING
+    // Solving: n <= (content_width + GRID_SPACING) / (MIN_CARD_WIDTH + GRID_SPACING)
+    let columns = ((content_width + GRID_SPACING) / (MIN_CARD_WIDTH + GRID_SPACING)).floor() as usize;
+
+    // Clamp between 1 and 4 columns
+    columns.clamp(1, 4)
+}
+
 /// Build the host grid view (main content area)
 pub fn host_grid_view(
     search_query: &str,
     groups: Vec<GroupCard>,
     hosts: Vec<HostCard>,
+    column_count: usize,
 ) -> Element<'static, Message> {
     // Header with search bar and NEW HOST button
     let search_input = text_input("Find a host or ssh user@hostname...", search_query)
@@ -95,7 +119,7 @@ pub fn host_grid_view(
 
     // Groups section (if any groups exist)
     if !groups_empty {
-        let groups_section = build_groups_section(groups);
+        let groups_section = build_groups_section(groups, column_count);
         content = content.push(groups_section);
     }
 
@@ -103,7 +127,7 @@ pub fn host_grid_view(
     if hosts_empty && groups_empty {
         content = content.push(empty_state());
     } else if !hosts_empty {
-        let hosts_section = build_hosts_section(hosts);
+        let hosts_section = build_hosts_section(hosts, column_count);
         content = content.push(hosts_section);
     }
 
@@ -124,22 +148,22 @@ pub fn host_grid_view(
 }
 
 /// Build the groups section
-fn build_groups_section(groups: Vec<GroupCard>) -> Element<'static, Message> {
+fn build_groups_section(groups: Vec<GroupCard>, column_count: usize) -> Element<'static, Message> {
     let section_header = text("Groups")
         .size(14)
         .color(THEME.text_secondary);
 
-    // Build grid of group cards (3 columns)
+    // Build grid of group cards (dynamic columns)
     let mut rows: Vec<Element<'static, Message>> = Vec::new();
     let mut current_row: Vec<Element<'static, Message>> = Vec::new();
 
     for group in groups {
         current_row.push(group_card(group));
 
-        if current_row.len() >= 3 {
+        if current_row.len() >= column_count {
             rows.push(
                 Row::with_children(std::mem::take(&mut current_row))
-                    .spacing(16)
+                    .spacing(GRID_SPACING as u16)
                     .into(),
             );
         }
@@ -147,17 +171,17 @@ fn build_groups_section(groups: Vec<GroupCard>) -> Element<'static, Message> {
 
     // Add remaining cards in the last row
     if !current_row.is_empty() {
-        while current_row.len() < 3 {
+        while current_row.len() < column_count {
             current_row.push(
                 container(text(""))
                     .width(Length::FillPortion(1))
                     .into(),
             );
         }
-        rows.push(Row::with_children(current_row).spacing(16).into());
+        rows.push(Row::with_children(current_row).spacing(GRID_SPACING as u16).into());
     }
 
-    let grid = Column::with_children(rows).spacing(16);
+    let grid = Column::with_children(rows).spacing(GRID_SPACING as u16);
 
     column![section_header, grid]
         .spacing(12)
@@ -165,22 +189,22 @@ fn build_groups_section(groups: Vec<GroupCard>) -> Element<'static, Message> {
 }
 
 /// Build the hosts section
-fn build_hosts_section(hosts: Vec<HostCard>) -> Element<'static, Message> {
+fn build_hosts_section(hosts: Vec<HostCard>, column_count: usize) -> Element<'static, Message> {
     let section_header = text("Hosts")
         .size(14)
         .color(THEME.text_secondary);
 
-    // Build grid of host cards (3 columns)
+    // Build grid of host cards (dynamic columns)
     let mut rows: Vec<Element<'static, Message>> = Vec::new();
     let mut current_row: Vec<Element<'static, Message>> = Vec::new();
 
     for host in hosts {
         current_row.push(host_card(host));
 
-        if current_row.len() >= 3 {
+        if current_row.len() >= column_count {
             rows.push(
                 Row::with_children(std::mem::take(&mut current_row))
-                    .spacing(16)
+                    .spacing(GRID_SPACING as u16)
                     .into(),
             );
         }
@@ -188,17 +212,17 @@ fn build_hosts_section(hosts: Vec<HostCard>) -> Element<'static, Message> {
 
     // Add remaining cards in the last row
     if !current_row.is_empty() {
-        while current_row.len() < 3 {
+        while current_row.len() < column_count {
             current_row.push(
                 container(text(""))
                     .width(Length::FillPortion(1))
                     .into(),
             );
         }
-        rows.push(Row::with_children(current_row).spacing(16).into());
+        rows.push(Row::with_children(current_row).spacing(GRID_SPACING as u16).into());
     }
 
-    let grid = Column::with_children(rows).spacing(16);
+    let grid = Column::with_children(rows).spacing(GRID_SPACING as u16);
 
     column![section_header, grid]
         .spacing(12)
@@ -246,7 +270,9 @@ fn group_card(group: GroupCard) -> Element<'static, Message> {
     button(
         container(card_content)
             .padding(12)
-            .width(Length::Fill),
+            .width(Length::Fill)
+            .height(Length::Fixed(CARD_HEIGHT))
+            .align_y(Alignment::Center),
     )
     .style(|_theme, status| {
         let bg = match status {
@@ -270,6 +296,7 @@ fn group_card(group: GroupCard) -> Element<'static, Message> {
     })
     .padding(0)
     .width(Length::FillPortion(1))
+    .height(Length::Fixed(CARD_HEIGHT))
     .on_press(Message::FolderToggle(group_id))
     .into()
 }
@@ -364,7 +391,9 @@ fn host_card(host: HostCard) -> Element<'static, Message> {
     button(
         container(card_content)
             .padding(14)
-            .width(Length::Fill),
+            .width(Length::Fill)
+            .height(Length::Fixed(CARD_HEIGHT))
+            .align_y(Alignment::Center),
     )
     .style(|_theme, status| {
         let (bg, shadow_alpha) = match status {
@@ -388,6 +417,7 @@ fn host_card(host: HostCard) -> Element<'static, Message> {
     })
     .padding(0)
     .width(Length::FillPortion(1))
+    .height(Length::Fixed(CARD_HEIGHT))
     .on_press(Message::HostConnect(host_id))
     .into()
 }
