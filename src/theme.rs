@@ -15,19 +15,19 @@ pub struct Theme {
 }
 
 impl Theme {
-    /// Dark theme (default)
+    /// Dark theme (default) - Royal TSX-style navy blue-gray
     pub fn dark() -> Self {
         Self {
-            background: Color::from_rgb8(0x1a, 0x1a, 0x1a),    // #1a1a1a
-            surface: Color::from_rgb8(0x25, 0x25, 0x26),       // #252526
-            sidebar: Color::from_rgb8(0x1e, 0x1e, 0x1e),       // #1e1e1e
-            accent: Color::from_rgb8(0x00, 0x78, 0xd4),        // #0078d4
-            text_primary: Color::from_rgb8(0xe0, 0xe0, 0xe0), // #e0e0e0
-            text_secondary: Color::from_rgb8(0xa0, 0xa0, 0xa0), // #a0a0a0
-            text_muted: Color::from_rgb8(0x70, 0x70, 0x70),    // #707070
-            border: Color::from_rgb8(0x3c, 0x3c, 0x3c),        // #3c3c3c
-            hover: Color::from_rgb8(0x2a, 0x2a, 0x2a),         // #2a2a2a
-            selected: Color::from_rgb8(0x09, 0x45, 0x71),      // #094571
+            background: Color::from_rgb8(0x1e, 0x22, 0x33),    // #1e2233 - dark navy blue
+            surface: Color::from_rgb8(0x2a, 0x31, 0x42),       // #2a3142 - slate blue-gray
+            sidebar: Color::from_rgb8(0x1a, 0x1d, 0x2b),       // #1a1d2b - darker navy
+            accent: Color::from_rgb8(0x00, 0x78, 0xd4),        // #0078d4 - bright blue
+            text_primary: Color::from_rgb8(0xe8, 0xe8, 0xe8),  // #e8e8e8 - bright white
+            text_secondary: Color::from_rgb8(0x9a, 0xa0, 0xb0), // #9aa0b0 - blue-gray text
+            text_muted: Color::from_rgb8(0x6a, 0x70, 0x80),    // #6a7080 - muted blue-gray
+            border: Color::from_rgb8(0x3a, 0x40, 0x55),        // #3a4055 - navy border
+            hover: Color::from_rgb8(0x35, 0x3d, 0x50),         // #353d50 - hover blue-gray
+            selected: Color::from_rgb8(0x2a, 0x4a, 0x6d),      // #2a4a6d - selected blue
         }
     }
 
@@ -52,8 +52,14 @@ impl Theme {
 /// Global theme instance (dark by default)
 pub static THEME: std::sync::LazyLock<Theme> = std::sync::LazyLock::new(Theme::dark);
 
-/// Sidebar width in pixels
-pub const SIDEBAR_WIDTH: f32 = 220.0;
+/// Sidebar width when expanded
+pub const SIDEBAR_WIDTH: f32 = 200.0;
+
+/// Sidebar width when collapsed (icons only)
+pub const SIDEBAR_WIDTH_COLLAPSED: f32 = 60.0;
 
 /// Border radius for UI elements
 pub const BORDER_RADIUS: f32 = 4.0;
+
+/// Border radius for cards
+pub const CARD_BORDER_RADIUS: f32 = 8.0;
