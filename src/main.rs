@@ -1,6 +1,7 @@
 mod app;
 mod config;
 mod error;
+mod fonts;
 mod icons;
 mod local_fs;
 mod message;
@@ -27,5 +28,6 @@ fn main() -> iced::Result {
         .theme(Portal::theme)
         .subscription(Portal::subscription)
         .window_size(Size::new(1200.0, 800.0))
+        .font(fonts::JETBRAINS_MONO_NERD_BYTES)
         .run_with(Portal::new)
 }

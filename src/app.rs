@@ -9,7 +9,7 @@ use iced::widget::{column, container, row, text, stack, Space};
 use iced::{event, time, window, Element, Fill, Length, Subscription, Task, Theme as IcedTheme};
 use uuid::Uuid;
 
-use crate::config::{AuthMethod, HistoryConfig, Host, HostsConfig, Snippet, SnippetsConfig};
+use crate::config::{AuthMethod, HistoryConfig, Host, HostsConfig, SettingsConfig, Snippet, SnippetsConfig};
 use crate::message::{HostDialogField, Message, SessionId, SidebarMenuItem, SnippetField};
 use crate::sftp::SharedSftpSession;
 use crate::ssh::SshSession;
@@ -79,6 +79,9 @@ pub struct Portal {
     // Theme preference
     dark_mode: bool,
 
+    // Terminal settings
+    terminal_font_size: f32,
+
     // Data from config
     hosts_config: HostsConfig,
     snippets_config: SnippetsConfig,
@@ -147,6 +150,18 @@ impl Portal {
             }
         };
 
+        // Load settings from config file
+        let settings_config = match SettingsConfig::load() {
+            Ok(config) => {
+                tracing::info!("Loaded settings: font_size={}", config.terminal_font_size);
+                config
+            }
+            Err(e) => {
+                tracing::warn!("Failed to load settings config: {}, using defaults", e);
+                SettingsConfig::default()
+            }
+        };
+
         // Create demo terminal session and add some test content
         let demo_terminal = TerminalSession::new("Demo Terminal");
         // Add some demo output to show the terminal is working
@@ -172,7 +187,8 @@ impl Portal {
             settings_dialog: None,
             snippets_dialog: None,
             host_key_dialog: None,
-            dark_mode: true,
+            dark_mode: settings_config.dark_mode,
+            terminal_font_size: settings_config.terminal_font_size,
             hosts_config,
             snippets_config,
             history_config,
@@ -250,6 +266,7 @@ impl Portal {
                     SidebarMenuItem::Settings => {
                         self.settings_dialog = Some(SettingsDialogState {
                             dark_mode: self.dark_mode,
+                            terminal_font_size: self.terminal_font_size,
                         });
                     }
                     SidebarMenuItem::Snippets => {
@@ -800,6 +817,7 @@ impl Portal {
             Message::SettingsOpen => {
                 self.settings_dialog = Some(SettingsDialogState {
                     dark_mode: self.dark_mode,
+                    terminal_font_size: self.terminal_font_size,
                 });
             }
             Message::SettingsThemeToggle(enabled) => {
@@ -807,6 +825,14 @@ impl Portal {
                 if let Some(ref mut dialog) = self.settings_dialog {
                     dialog.dark_mode = enabled;
                 }
+                self.save_settings();
+            }
+            Message::SettingsFontSizeChange(size) => {
+                self.terminal_font_size = size;
+                if let Some(ref mut dialog) = self.settings_dialog {
+                    dialog.terminal_font_size = size;
+                }
+                self.save_settings();
             }
             Message::SnippetsOpen => {
                 self.snippets_dialog = Some(SnippetsDialogState::new(
@@ -951,6 +977,7 @@ impl Portal {
                         session.session_start,
                         &session.host_name,
                         status_message,
+                        self.terminal_font_size,
                         move |_sid, bytes| Message::TerminalInput(session_id, bytes),
                         move |_sid, cols, rows| Message::TerminalResize(session_id, cols, rows),
                     )
@@ -973,6 +1000,7 @@ impl Portal {
                 if let Some(ref session) = self.demo_terminal {
                     terminal_view(
                         session,
+                        self.terminal_font_size,
                         |session_id, bytes| Message::TerminalInput(session_id, bytes),
                         |session_id, cols, rows| Message::TerminalResize(session_id, cols, rows),
                     )
@@ -1062,6 +1090,17 @@ impl Portal {
             IcedTheme::Dark
         } else {
             IcedTheme::Light
+        }
+    }
+
+    /// Save settings to config file
+    fn save_settings(&self) {
+        let settings = SettingsConfig {
+            terminal_font_size: self.terminal_font_size,
+            dark_mode: self.dark_mode,
+        };
+        if let Err(e) = settings.save() {
+            tracing::error!("Failed to save settings: {}", e);
         }
     }
 

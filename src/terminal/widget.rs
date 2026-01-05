@@ -19,6 +19,7 @@ use parking_lot::Mutex;
 
 use super::backend::{CursorInfo, EventProxy, RenderCell, TerminalSize};
 use super::colors::{ansi_to_iced, DEFAULT_BG, DEFAULT_FG};
+use crate::fonts::JETBRAINS_MONO_NERD;
 
 /// Terminal widget for iced
 pub struct TerminalWidget<'a, Message> {
@@ -41,7 +42,7 @@ impl<'a, Message> TerminalWidget<'a, Message> {
             size,
             on_input: Box::new(on_input),
             on_resize: None,
-            font_size: 14.0,
+            font_size: 9.0,
         }
     }
 
@@ -55,6 +56,16 @@ impl<'a, Message> TerminalWidget<'a, Message> {
     pub fn on_resize(mut self, callback: impl Fn(u16, u16) -> Message + 'a) -> Self {
         self.on_resize = Some(Box::new(callback));
         self
+    }
+
+    /// Calculate cell width based on font size (JetBrains Mono aspect ratio)
+    fn cell_width(&self) -> f32 {
+        self.font_size * 0.6
+    }
+
+    /// Calculate cell height based on font size (line height)
+    fn cell_height(&self) -> f32 {
+        self.font_size * 1.4
     }
 
     /// Get renderable cells from the terminal
@@ -128,8 +139,8 @@ impl<'a, Message> TerminalWidget<'a, Message> {
         if !bounds.contains(position) {
             return None;
         }
-        let col = ((position.x - bounds.x) / self.size.cell_width) as usize;
-        let row = ((position.y - bounds.y) / self.size.cell_height) as usize;
+        let col = ((position.x - bounds.x) / self.cell_width()) as usize;
+        let row = ((position.y - bounds.y) / self.cell_height()) as usize;
         Some((col, row))
     }
 
@@ -374,8 +385,8 @@ where
             Background::Color(DEFAULT_BG),
         );
 
-        let cell_width = self.size.cell_width;
-        let cell_height = self.size.cell_height;
+        let cell_width = self.cell_width();
+        let cell_height = self.cell_height();
 
         // Draw cells
         let cells = self.get_cells();
@@ -428,7 +439,7 @@ where
                     line_height: iced::advanced::text::LineHeight::Absolute(iced::Pixels(
                         cell_height,
                     )),
-                    font: iced::Font::MONOSPACE,
+                    font: JETBRAINS_MONO_NERD,
                     horizontal_alignment: iced::alignment::Horizontal::Left,
                     vertical_alignment: iced::alignment::Vertical::Top,
                     shaping: iced::advanced::text::Shaping::Basic,
@@ -583,8 +594,8 @@ where
         // Detect size changes and emit resize message
         if let Some(ref on_resize) = self.on_resize {
             // Calculate terminal dimensions from pixel bounds
-            let cols = (bounds.width / self.size.cell_width) as u16;
-            let rows = (bounds.height / self.size.cell_height) as u16;
+            let cols = (bounds.width / self.cell_width()) as u16;
+            let rows = (bounds.height / self.cell_height()) as u16;
 
             // Enforce minimum size
             let cols = cols.max(10);
@@ -614,7 +625,7 @@ where
                     if let Some(position) = cursor.position() {
                         if let Some(cell) = self.pixel_to_cell(&bounds, position) {
                             let now = std::time::Instant::now();
-                            let cols = (bounds.width / self.size.cell_width) as usize;
+                            let cols = (bounds.width / self.cell_width()) as usize;
 
                             // Check for multi-click (same position, within time threshold)
                             let is_multi_click = state.last_click_time.map_or(false, |t| {
@@ -678,7 +689,7 @@ where
                 // Update selection while dragging
                 if state.is_selecting && cursor.is_over(bounds) {
                     if let Some(cell) = self.pixel_to_cell(&bounds, position) {
-                        let cols = (bounds.width / self.size.cell_width) as usize;
+                        let cols = (bounds.width / self.cell_width()) as usize;
 
                         match state.selection_mode {
                             SelectionMode::Word => {
@@ -746,7 +757,7 @@ where
                             mouse::ScrollDelta::Pixels { y, .. } => {
                                 // Accumulate pixels for smooth trackpad scrolling
                                 state.scroll_pixels -= y;
-                                let line_height = self.size.cell_height;
+                                let line_height = self.cell_height();
                                 let lines = (state.scroll_pixels / line_height) as i32;
                                 // Keep remainder for next scroll event
                                 state.scroll_pixels -= lines as f32 * line_height;
@@ -811,7 +822,7 @@ where
                         if let (Some(start), Some(end)) =
                             (state.selection_start, state.selection_end)
                         {
-                            let cols = (bounds.width / self.size.cell_width) as usize;
+                            let cols = (bounds.width / self.cell_width()) as usize;
                             let text = self.get_selected_text(start, end, cols);
                             if !text.is_empty() {
                                 clipboard.write(
@@ -838,8 +849,8 @@ where
 
                     if is_select_all {
                         // Select all visible content
-                        let cols = (bounds.width / self.size.cell_width) as usize;
-                        let rows = (bounds.height / self.size.cell_height) as usize;
+                        let cols = (bounds.width / self.cell_width()) as usize;
+                        let rows = (bounds.height / self.cell_height()) as usize;
                         state.selection_start = Some((0, 0));
                         state.selection_end =
                             Some((cols.saturating_sub(1), rows.saturating_sub(1)));

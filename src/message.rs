@@ -123,6 +123,7 @@ pub enum Message {
     // Settings
     SettingsOpen,
     SettingsThemeToggle(bool),
+    SettingsFontSizeChange(f32),
 
     // Snippets
     SnippetsOpen,

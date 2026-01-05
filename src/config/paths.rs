@@ -33,6 +33,11 @@ pub fn history_file() -> Option<PathBuf> {
     config_dir().map(|dir| dir.join("history.toml"))
 }
 
+/// Get the path to the settings config file
+pub fn settings_file() -> Option<PathBuf> {
+    config_dir().map(|dir| dir.join("settings.toml"))
+}
+
 /// Ensure the config directory exists
 pub fn ensure_config_dir() -> std::io::Result<PathBuf> {
     let dir = config_dir().ok_or_else(|| {
