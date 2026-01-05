@@ -50,20 +50,25 @@ impl TerminalSession {
     pub fn process_output(&self, bytes: &[u8]) {
         self.backend.process_input(bytes);
     }
+
+    /// Resize the terminal to new dimensions
+    pub fn resize(&mut self, cols: u16, rows: u16) {
+        self.backend.resize(cols, rows);
+    }
 }
 
 /// Build a terminal view element
 pub fn terminal_view<'a>(
     session: &'a TerminalSession,
     on_input: impl Fn(SessionId, Vec<u8>) -> Message + 'a,
+    on_resize: impl Fn(SessionId, u16, u16) -> Message + 'a,
 ) -> Element<'a, Message> {
     let session_id = session.id;
     let term = session.term();
     let size = session.size();
 
-    let terminal_widget = TerminalWidget::new(term, size, move |bytes| {
-        on_input(session_id, bytes)
-    });
+    let terminal_widget = TerminalWidget::new(term, size, move |bytes| on_input(session_id, bytes))
+        .on_resize(move |cols, rows| on_resize(session_id, cols, rows));
 
     container(terminal_widget)
         .width(Fill)

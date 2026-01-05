@@ -60,6 +60,7 @@ pub enum Message {
 
     // Terminal / Session
     TerminalInput(SessionId, Vec<u8>),
+    TerminalResize(SessionId, u16, u16),
 
     // SSH connection
     SshConnected {

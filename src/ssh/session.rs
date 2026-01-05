@@ -10,6 +10,7 @@ use super::SshEvent;
 /// Commands that can be sent to the channel task
 enum ChannelCommand {
     Data(Vec<u8>),
+    WindowChange { cols: u32, rows: u32 },
 }
 
 /// Active SSH session handle
@@ -76,6 +77,11 @@ impl SshSession {
                                     tracing::error!("Failed to send data: {}", e);
                                 }
                             }
+                            Some(ChannelCommand::WindowChange { cols, rows }) => {
+                                if let Err(e) = channel.window_change(cols, rows, 0, 0).await {
+                                    tracing::error!("Failed to send window change: {}", e);
+                                }
+                            }
                             None => {
                                 // Command channel closed, exit
                                 break;
@@ -95,6 +101,17 @@ impl SshSession {
     pub async fn send(&self, data: &[u8]) -> Result<(), SshError> {
         self.command_tx
             .send(ChannelCommand::Data(data.to_vec()))
+            .map_err(|e| SshError::Channel(e.to_string()))?;
+        Ok(())
+    }
+
+    /// Notify the remote shell of a window size change
+    pub fn window_change(&self, cols: u16, rows: u16) -> Result<(), SshError> {
+        self.command_tx
+            .send(ChannelCommand::WindowChange {
+                cols: cols as u32,
+                rows: rows as u32,
+            })
             .map_err(|e| SshError::Channel(e.to_string()))?;
         Ok(())
     }

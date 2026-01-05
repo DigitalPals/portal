@@ -64,7 +64,11 @@ pub struct TerminalSize {
     pub lines: u16,
     pub cell_width: f32,
     pub cell_height: f32,
+    pub history_size: usize,
 }
+
+/// Default scrollback history size (number of lines to keep)
+const DEFAULT_HISTORY_SIZE: usize = 10000;
 
 impl TerminalSize {
     pub fn new(columns: u16, lines: u16, cell_width: f32, cell_height: f32) -> Self {
@@ -73,6 +77,7 @@ impl TerminalSize {
             lines,
             cell_width,
             cell_height,
+            history_size: DEFAULT_HISTORY_SIZE,
         }
     }
 
@@ -88,7 +93,7 @@ impl TerminalSize {
 
 impl Dimensions for TerminalSize {
     fn total_lines(&self) -> usize {
-        self.lines as usize
+        self.lines as usize + self.history_size
     }
 
     fn screen_lines(&self) -> usize {
@@ -145,8 +150,11 @@ impl TerminalBackend {
         let (event_tx, _event_rx) = mpsc::unbounded_channel();
         let event_proxy = EventProxy::new(event_tx);
 
-        // Create terminal config
-        let config = TermConfig::default();
+        // Create terminal config with scrollback history
+        let config = TermConfig {
+            scrolling_history: size.history_size,
+            ..TermConfig::default()
+        };
 
         // Create the terminal
         let term = Term::new(config, &size, event_proxy);
@@ -176,5 +184,23 @@ impl TerminalBackend {
         for byte in bytes {
             processor.advance(&mut *term, *byte);
         }
+    }
+
+    /// Resize the terminal to new dimensions
+    pub fn resize(&mut self, cols: u16, rows: u16) {
+        // Enforce minimum size
+        let cols = cols.max(10);
+        let rows = rows.max(3);
+
+        // Only resize if actually changed
+        if cols == self.size.columns && rows == self.size.lines {
+            return;
+        }
+
+        self.size.columns = cols;
+        self.size.lines = rows;
+
+        let mut term = self.term.lock();
+        term.resize(self.size);
     }
 }

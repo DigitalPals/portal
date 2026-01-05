@@ -387,6 +387,22 @@ impl Portal {
                     );
                 }
             }
+            Message::TerminalResize(session_id, cols, rows) => {
+                tracing::debug!(
+                    "Terminal resize for session {}: {}x{}",
+                    session_id,
+                    cols,
+                    rows
+                );
+                // Resize the terminal backend and notify SSH server
+                if let Some(session) = self.sessions.get_mut(&session_id) {
+                    session.terminal.resize(cols, rows);
+                    // Send window change to SSH server
+                    if let Err(e) = session.ssh_session.window_change(cols, rows) {
+                        tracing::error!("Failed to send window change: {}", e);
+                    }
+                }
+            }
             Message::SshConnected {
                 session_id,
                 host_name,
@@ -932,9 +948,11 @@ impl Portal {
             View::Terminal(session_id) => {
                 if let Some(session) = self.sessions.get(session_id) {
                     let session_id = *session_id;
-                    terminal_view(&session.terminal, move |_sid, bytes| {
-                        Message::TerminalInput(session_id, bytes)
-                    })
+                    terminal_view(
+                        &session.terminal,
+                        move |_sid, bytes| Message::TerminalInput(session_id, bytes),
+                        move |_sid, cols, rows| Message::TerminalResize(session_id, cols, rows),
+                    )
                 } else {
                     text("Session not found").into()
                 }
@@ -948,9 +966,11 @@ impl Portal {
             }
             View::TerminalDemo => {
                 if let Some(ref session) = self.demo_terminal {
-                    terminal_view(session, |session_id, bytes| {
-                        Message::TerminalInput(session_id, bytes)
-                    })
+                    terminal_view(
+                        session,
+                        |session_id, bytes| Message::TerminalInput(session_id, bytes),
+                        |session_id, cols, rows| Message::TerminalResize(session_id, cols, rows),
+                    )
                 } else {
                     text("No terminal session").into()
                 }

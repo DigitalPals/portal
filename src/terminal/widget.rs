@@ -4,8 +4,9 @@
 
 use std::sync::Arc;
 
+use alacritty_terminal::grid::Scroll;
 use alacritty_terminal::term::cell::Flags as CellFlags;
-use alacritty_terminal::term::Term;
+use alacritty_terminal::term::{Term, TermMode};
 use alacritty_terminal::vte::ansi::CursorShape;
 use iced::advanced::layout::{self, Layout};
 use iced::advanced::renderer::{self, Quad};
@@ -24,6 +25,7 @@ pub struct TerminalWidget<'a, Message> {
     term: Arc<Mutex<Term<EventProxy>>>,
     size: TerminalSize,
     on_input: Box<dyn Fn(Vec<u8>) -> Message + 'a>,
+    on_resize: Option<Box<dyn Fn(u16, u16) -> Message + 'a>>,
     font_size: f32,
 }
 
@@ -38,6 +40,7 @@ impl<'a, Message> TerminalWidget<'a, Message> {
             term,
             size,
             on_input: Box::new(on_input),
+            on_resize: None,
             font_size: 14.0,
         }
     }
@@ -48,16 +51,35 @@ impl<'a, Message> TerminalWidget<'a, Message> {
         self
     }
 
+    /// Set resize callback
+    pub fn on_resize(mut self, callback: impl Fn(u16, u16) -> Message + 'a) -> Self {
+        self.on_resize = Some(Box::new(callback));
+        self
+    }
+
     /// Get renderable cells from the terminal
     fn get_cells(&self) -> Vec<RenderCell> {
         use alacritty_terminal::vte::ansi::NamedColor;
 
         let term = self.term.lock();
         let content = term.renderable_content();
+        let display_offset = content.display_offset;
         let mut cells = Vec::new();
 
         for indexed in content.display_iter {
             let cell = &indexed.cell;
+
+            // Convert grid line to screen line by adding display_offset
+            // When scrolled back, cells have negative line numbers
+            // e.g., with display_offset=24, line=-24 should render at screen line 0
+            let screen_line = indexed.point.line.0 + display_offset as i32;
+
+            // Skip if outside visible screen
+            if screen_line < 0 {
+                continue;
+            }
+            let line = screen_line as usize;
+
             // Include cells with content or non-default background
             if cell.c != ' '
                 || cell.bg
@@ -66,7 +88,7 @@ impl<'a, Message> TerminalWidget<'a, Message> {
             {
                 cells.push(RenderCell {
                     column: indexed.point.column.0,
-                    line: indexed.point.line.0 as usize,
+                    line,
                     character: cell.c,
                     fg: cell.fg,
                     bg: cell.bg,
@@ -75,21 +97,30 @@ impl<'a, Message> TerminalWidget<'a, Message> {
             }
         }
 
+
         cells
     }
 
     /// Get cursor information
-    fn get_cursor(&self) -> CursorInfo {
+    fn get_cursor(&self) -> Option<CursorInfo> {
         let term = self.term.lock();
         let content = term.renderable_content();
         let cursor = content.cursor;
 
-        CursorInfo {
+        // Convert grid line to screen line by adding display_offset
+        let screen_line = cursor.point.line.0 + content.display_offset as i32;
+
+        // Skip cursor if outside visible screen (scrolled out of view)
+        if screen_line < 0 {
+            return None;
+        }
+
+        Some(CursorInfo {
             column: cursor.point.column.0,
-            line: cursor.point.line.0 as usize,
+            line: screen_line as usize,
             shape: cursor.shape,
             visible: true, // Cursor visibility handled by mode flags
-        }
+        })
     }
 }
 
@@ -98,6 +129,8 @@ impl<'a, Message> TerminalWidget<'a, Message> {
 struct TerminalState {
     is_focused: bool,
     cursor_visible: bool,
+    last_size: Option<(u16, u16)>,
+    scroll_pixels: f32, // Accumulated scroll pixels for trackpad
 }
 
 impl Default for TerminalState {
@@ -105,6 +138,8 @@ impl Default for TerminalState {
         Self {
             is_focused: true,
             cursor_visible: true,
+            last_size: None,
+            scroll_pixels: 0.0,
         }
     }
 }
@@ -126,12 +161,8 @@ where
         _renderer: &Renderer,
         limits: &layout::Limits,
     ) -> layout::Node {
-        let size = limits
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .resolve(self.size.pixel_width(), self.size.pixel_height(), Size::ZERO);
-
-        layout::Node::new(size)
+        // Fill all available space - the resize detection will adjust the terminal grid
+        layout::Node::new(limits.max())
     }
 
     fn tag(&self) -> widget::tree::Tag {
@@ -142,6 +173,8 @@ where
         widget::tree::State::new(TerminalState {
             is_focused: true,
             cursor_visible: true,
+            last_size: None,
+            scroll_pixels: 0.0,
         })
     }
 
@@ -238,85 +271,86 @@ where
             }
         }
 
-        // Draw cursor
+        // Draw cursor (only if visible and in valid position)
         if state.is_focused && state.cursor_visible {
-            let cursor_info = self.get_cursor();
-            if cursor_info.visible {
-                let cursor_x = bounds.x + cursor_info.column as f32 * cell_width;
-                let cursor_y = bounds.y + cursor_info.line as f32 * cell_height;
+            if let Some(cursor_info) = self.get_cursor() {
+                if cursor_info.visible {
+                    let cursor_x = bounds.x + cursor_info.column as f32 * cell_width;
+                    let cursor_y = bounds.y + cursor_info.line as f32 * cell_height;
 
-                let cursor_color = DEFAULT_FG;
+                    let cursor_color = DEFAULT_FG;
 
-                match cursor_info.shape {
-                    CursorShape::Block => {
-                        renderer.fill_quad(
-                            Quad {
-                                bounds: Rectangle {
-                                    x: cursor_x,
-                                    y: cursor_y,
-                                    width: cell_width,
-                                    height: cell_height,
+                    match cursor_info.shape {
+                        CursorShape::Block => {
+                            renderer.fill_quad(
+                                Quad {
+                                    bounds: Rectangle {
+                                        x: cursor_x,
+                                        y: cursor_y,
+                                        width: cell_width,
+                                        height: cell_height,
+                                    },
+                                    border: Border::default(),
+                                    shadow: Shadow::default(),
                                 },
-                                border: Border::default(),
-                                shadow: Shadow::default(),
-                            },
-                            Background::Color(Color::from_rgba(
-                                cursor_color.r,
-                                cursor_color.g,
-                                cursor_color.b,
-                                0.7,
-                            )),
-                        );
-                    }
-                    CursorShape::Underline => {
-                        renderer.fill_quad(
-                            Quad {
-                                bounds: Rectangle {
-                                    x: cursor_x,
-                                    y: cursor_y + cell_height - 2.0,
-                                    width: cell_width,
-                                    height: 2.0,
+                                Background::Color(Color::from_rgba(
+                                    cursor_color.r,
+                                    cursor_color.g,
+                                    cursor_color.b,
+                                    0.7,
+                                )),
+                            );
+                        }
+                        CursorShape::Underline => {
+                            renderer.fill_quad(
+                                Quad {
+                                    bounds: Rectangle {
+                                        x: cursor_x,
+                                        y: cursor_y + cell_height - 2.0,
+                                        width: cell_width,
+                                        height: 2.0,
+                                    },
+                                    border: Border::default(),
+                                    shadow: Shadow::default(),
                                 },
-                                border: Border::default(),
-                                shadow: Shadow::default(),
-                            },
-                            Background::Color(cursor_color),
-                        );
-                    }
-                    CursorShape::Beam => {
-                        renderer.fill_quad(
-                            Quad {
-                                bounds: Rectangle {
-                                    x: cursor_x,
-                                    y: cursor_y,
-                                    width: 2.0,
-                                    height: cell_height,
+                                Background::Color(cursor_color),
+                            );
+                        }
+                        CursorShape::Beam => {
+                            renderer.fill_quad(
+                                Quad {
+                                    bounds: Rectangle {
+                                        x: cursor_x,
+                                        y: cursor_y,
+                                        width: 2.0,
+                                        height: cell_height,
+                                    },
+                                    border: Border::default(),
+                                    shadow: Shadow::default(),
                                 },
-                                border: Border::default(),
-                                shadow: Shadow::default(),
-                            },
-                            Background::Color(cursor_color),
-                        );
-                    }
-                    _ => {
-                        // Default to block for hidden/other
-                        renderer.fill_quad(
-                            Quad {
-                                bounds: Rectangle {
-                                    x: cursor_x,
-                                    y: cursor_y,
-                                    width: cell_width,
-                                    height: cell_height,
+                                Background::Color(cursor_color),
+                            );
+                        }
+                        _ => {
+                            // Default to block for hidden/other
+                            renderer.fill_quad(
+                                Quad {
+                                    bounds: Rectangle {
+                                        x: cursor_x,
+                                        y: cursor_y,
+                                        width: cell_width,
+                                        height: cell_height,
+                                    },
+                                    border: Border {
+                                        color: cursor_color,
+                                        width: 1.0,
+                                        radius: 0.0.into(),
+                                    },
+                                    shadow: Shadow::default(),
                                 },
-                                border: Border {
-                                    color: cursor_color,
-                                    width: 1.0,
-                                    radius: 0.0.into(),
-                                },
-                                shadow: Shadow::default(),
-                            },
-                            Background::Color(Color::TRANSPARENT),
-                        );
+                                Background::Color(Color::TRANSPARENT),
+                            );
+                        }
                     }
                 }
             }
@@ -337,6 +371,28 @@ where
         let state = tree.state.downcast_mut::<TerminalState>();
         let bounds = layout.bounds();
 
+        // Detect size changes and emit resize message
+        if let Some(ref on_resize) = self.on_resize {
+            // Calculate terminal dimensions from pixel bounds
+            let cols = (bounds.width / self.size.cell_width) as u16;
+            let rows = (bounds.height / self.size.cell_height) as u16;
+
+            // Enforce minimum size
+            let cols = cols.max(10);
+            let rows = rows.max(3);
+
+            // Check if size changed
+            let size_changed = match state.last_size {
+                Some((last_cols, last_rows)) => cols != last_cols || rows != last_rows,
+                None => true, // First time - emit initial size
+            };
+
+            if size_changed {
+                state.last_size = Some((cols, rows));
+                shell.publish((on_resize)(cols, rows));
+            }
+        }
+
         match event {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 if cursor.is_over(bounds) {
@@ -346,9 +402,42 @@ where
                     state.is_focused = false;
                 }
             }
-            Event::Mouse(mouse::Event::WheelScrolled { .. }) => {
-                if state.is_focused && cursor.is_over(bounds) {
-                    // Handle scroll - could emit message for scrollback
+            Event::Mouse(mouse::Event::WheelScrolled { delta }) => {
+                if cursor.is_over(bounds) {
+                    // Focus the terminal on scroll
+                    state.is_focused = true;
+
+                    // Check if in alternate screen mode (vim, htop, etc.) - no scrollback there
+                    let in_alt_screen = {
+                        let term = self.term.lock();
+                        term.mode().contains(TermMode::ALT_SCREEN)
+                    };
+
+                    if !in_alt_screen {
+                        // Calculate scroll lines from delta
+                        let lines = match delta {
+                            mouse::ScrollDelta::Lines { y, .. } => {
+                                // Reset pixel accumulator on line-based scroll
+                                state.scroll_pixels = 0.0;
+                                -y as i32 * 3 // 3 lines per scroll step
+                            }
+                            mouse::ScrollDelta::Pixels { y, .. } => {
+                                // Accumulate pixels for smooth trackpad scrolling
+                                state.scroll_pixels -= y;
+                                let line_height = self.size.cell_height;
+                                let lines = (state.scroll_pixels / line_height) as i32;
+                                // Keep remainder for next scroll event
+                                state.scroll_pixels -= lines as f32 * line_height;
+                                lines
+                            }
+                        };
+
+                        if lines != 0 {
+                            let mut term = self.term.lock();
+                            term.scroll_display(Scroll::Delta(lines));
+                        }
+                    }
+
                     return iced::event::Status::Captured;
                 }
             }
