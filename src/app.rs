@@ -8,7 +8,7 @@ use iced::widget::{button, column, container, row, text, stack};
 use iced::{event, window, Element, Fill, Subscription, Task, Theme as IcedTheme};
 use uuid::Uuid;
 
-use crate::config::{HistoryConfig, Host, HostsConfig, Snippet, SnippetsConfig};
+use crate::config::{AuthMethod, HistoryConfig, Host, HostsConfig, Snippet, SnippetsConfig};
 use crate::message::{HostDialogField, Message, SessionId, SidebarMenuItem, SnippetField};
 use crate::sftp::SharedSftpSession;
 use crate::ssh::SshSession;
@@ -282,6 +282,69 @@ impl Portal {
                 if let Some(host) = self.hosts_config.find_host(id) {
                     self.dialog = Some(HostDialogState::edit_host(host));
                 }
+            }
+            Message::QuickConnect => {
+                // Parse search query as [ssh] [user@]hostname[:port]
+                let query = self.search_query.trim();
+                if query.is_empty() {
+                    self.status_message = Some("Enter a hostname to connect".to_string());
+                    return Task::none();
+                }
+
+                // Strip optional "ssh " prefix
+                let query = query.strip_prefix("ssh ").unwrap_or(query);
+
+                // Parse user@hostname:port
+                let (user_part, host_part) = if let Some(at_pos) = query.rfind('@') {
+                    (Some(&query[..at_pos]), &query[at_pos + 1..])
+                } else {
+                    (None, query)
+                };
+
+                let (hostname, port) = if let Some(colon_pos) = host_part.rfind(':') {
+                    let port_str = &host_part[colon_pos + 1..];
+                    if let Ok(port) = port_str.parse::<u16>() {
+                        (&host_part[..colon_pos], port)
+                    } else {
+                        (host_part, 22)
+                    }
+                } else {
+                    (host_part, 22)
+                };
+
+                // Get current username as default
+                let username = user_part
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| {
+                        std::env::var("USER")
+                            .or_else(|_| std::env::var("USERNAME"))
+                            .unwrap_or_else(|_| "root".to_string())
+                    });
+
+                let now = chrono::Utc::now();
+                let temp_host = Host {
+                    id: Uuid::new_v4(),
+                    name: format!("{}@{}", username, hostname),
+                    hostname: hostname.to_string(),
+                    port,
+                    username,
+                    auth: AuthMethod::Agent,
+                    group_id: None,
+                    notes: None,
+                    tags: vec![],
+                    created_at: now,
+                    updated_at: now,
+                    detected_os: None,
+                    last_connected: None,
+                };
+
+                tracing::info!("Quick connect to: {}@{}:{}", temp_host.username, temp_host.hostname, temp_host.port);
+                return self.connect_to_host(&temp_host);
+            }
+            Message::LocalTerminal => {
+                // Stub for now - local terminal support coming later
+                self.status_message = Some("Local terminal coming soon".to_string());
+                tracing::info!("Local terminal requested (not yet implemented)");
             }
             Message::DialogClose => {
                 self.dialog = None;

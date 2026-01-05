@@ -54,30 +54,33 @@ pub fn host_grid_view(
     hosts: Vec<HostCard>,
     column_count: usize,
 ) -> Element<'static, Message> {
-    // Header with search bar and NEW HOST button
-    let search_input = text_input("Find a host or ssh user@hostname...", search_query)
+    // Row 1: Search bar with Connect button (pill-shaped)
+    let search_input: iced::widget::TextInput<'static, Message> = text_input("Find a host or ssh user@hostname...", search_query)
         .on_input(Message::SearchChanged)
-        .padding(12)
-        .width(Length::Fill);
-
-    let search_container = container(search_input)
-        .style(|_theme| container::Style {
-            background: Some(THEME.surface.into()),
-            border: iced::Border {
-                color: THEME.border,
-                width: 1.0,
-                radius: BORDER_RADIUS.into(),
-            },
-            ..Default::default()
+        .padding([12, 20])
+        .width(Length::Fill)
+        .style(|_theme, status| {
+            use iced::widget::text_input::{Status, Style};
+            let border_color = match status {
+                Status::Focused => THEME.accent,
+                _ => THEME.border,
+            };
+            Style {
+                background: THEME.surface.into(),
+                border: iced::Border {
+                    color: border_color,
+                    width: 1.0,
+                    radius: 22.0.into(),  // Pill-shaped
+                },
+                icon: THEME.text_muted,
+                placeholder: THEME.text_muted,
+                value: THEME.text_primary,
+                selection: THEME.selected,
+            }
         });
 
-    let new_host_btn = button(
-        row![
-            icon_with_color(icons::ui::PLUS, 14, iced::Color::WHITE),
-            text("NEW HOST").size(12).color(iced::Color::WHITE),
-        ]
-        .spacing(6)
-        .align_y(Alignment::Center),
+    let connect_btn = button(
+        text("Connect").size(14).color(iced::Color::WHITE),
     )
     .style(|_theme, status| {
         let bg = match status {
@@ -88,27 +91,87 @@ pub fn host_grid_view(
             background: Some(bg.into()),
             text_color: iced::Color::WHITE,
             border: iced::Border {
-                radius: BORDER_RADIUS.into(),
+                radius: 22.0.into(),  // Match pill-shaped search bar
                 ..Default::default()
-            },
-            shadow: iced::Shadow {
-                color: iced::Color::from_rgba8(0, 120, 212, 0.3),
-                offset: iced::Vector::new(0.0, 2.0),
-                blur_radius: 4.0,
             },
             ..Default::default()
         }
     })
-    .padding([10, 16])
+    .padding([12, 24])
+    .on_press(Message::QuickConnect);
+
+    let search_row = row![
+        search_input,
+        Space::with_width(12),
+        connect_btn,
+    ]
+    .align_y(Alignment::Center);
+
+    // Row 2: Action toolbar
+    let new_host_btn = button(
+        row![
+            icon_with_color(icons::ui::PLUS, 14, iced::Color::WHITE),
+            text("NEW HOST").size(12).color(iced::Color::WHITE),
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center),
+    )
+    .style(|_theme, status| {
+        let bg = match status {
+            button::Status::Hovered => THEME.hover,
+            _ => THEME.surface,
+        };
+        button::Style {
+            background: Some(bg.into()),
+            text_color: iced::Color::WHITE,
+            border: iced::Border {
+                color: THEME.border,
+                width: 1.0,
+                radius: BORDER_RADIUS.into(),  // Now 8px from theme
+            },
+            ..Default::default()
+        }
+    })
+    .padding([10, 18])
     .on_press(Message::HostAdd);
 
-    let header = row![
-        search_container,
-        Space::with_width(16),
+    let terminal_btn = button(
+        row![
+            icon_with_color(icons::ui::TERMINAL, 14, THEME.text_primary),
+            text("TERMINAL").size(12).color(THEME.text_primary),
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center),
+    )
+    .style(|_theme, status| {
+        let bg = match status {
+            button::Status::Hovered => THEME.hover,
+            _ => THEME.surface,
+        };
+        button::Style {
+            background: Some(bg.into()),
+            text_color: THEME.text_primary,
+            border: iced::Border {
+                color: THEME.border,
+                width: 1.0,
+                radius: BORDER_RADIUS.into(),  // Now 8px from theme
+            },
+            ..Default::default()
+        }
+    })
+    .padding([10, 18])
+    .on_press(Message::LocalTerminal);
+
+    let toolbar_row = row![
         new_host_btn,
+        Space::with_width(12),
+        terminal_btn,
     ]
-    .align_y(Alignment::Center)
-    .padding(Padding::new(24.0).bottom(16.0));
+    .align_y(Alignment::Center);
+
+    let header = column![search_row, toolbar_row]
+        .spacing(12)
+        .padding(Padding::new(24.0).bottom(16.0));
 
     // Main scrollable content
     let mut content = Column::new().spacing(24).padding(Padding::new(24.0).top(0.0));
@@ -150,8 +213,8 @@ pub fn host_grid_view(
 /// Build the groups section
 fn build_groups_section(groups: Vec<GroupCard>, column_count: usize) -> Element<'static, Message> {
     let section_header = text("Groups")
-        .size(14)
-        .color(THEME.text_secondary);
+        .size(16)
+        .color(THEME.text_primary);
 
     // Build grid of group cards (dynamic columns)
     let mut rows: Vec<Element<'static, Message>> = Vec::new();
@@ -191,8 +254,8 @@ fn build_groups_section(groups: Vec<GroupCard>, column_count: usize) -> Element<
 /// Build the hosts section
 fn build_hosts_section(hosts: Vec<HostCard>, column_count: usize) -> Element<'static, Message> {
     let section_header = text("Hosts")
-        .size(14)
-        .color(THEME.text_secondary);
+        .size(16)
+        .color(THEME.text_primary);
 
     // Build grid of host cards (dynamic columns)
     let mut rows: Vec<Element<'static, Message>> = Vec::new();
@@ -233,18 +296,18 @@ fn build_hosts_section(hosts: Vec<HostCard>, column_count: usize) -> Element<'st
 fn group_card(group: GroupCard) -> Element<'static, Message> {
     let group_id = group.id;
 
-    // Folder icon
+    // Folder icon with vibrant accent background
     let icon_widget = container(
-        icon_with_color(icons::ui::FOLDER_CLOSED, 22, THEME.accent)
+        icon_with_color(icons::ui::FOLDER_CLOSED, 22, iced::Color::WHITE)
     )
-    .width(44)
-    .height(44)
+    .width(48)
+    .height(48)
     .align_x(Alignment::Center)
     .align_y(Alignment::Center)
     .style(|_theme| container::Style {
-        background: Some(THEME.selected.into()),
+        background: Some(THEME.accent.into()),
         border: iced::Border {
-            radius: 8.0.into(),
+            radius: CARD_BORDER_RADIUS.into(),
             ..Default::default()
         },
         ..Default::default()
@@ -258,18 +321,18 @@ fn group_card(group: GroupCard) -> Element<'static, Message> {
     };
 
     let info = column![
-        text(group.name).size(14).color(THEME.text_primary),
-        text(host_text).size(12).color(THEME.text_muted),
+        text(group.name).size(16).color(THEME.text_primary),
+        text(host_text).size(12).color(THEME.text_secondary),
     ]
-    .spacing(2);
+    .spacing(4);
 
     let card_content = row![icon_widget, info]
-        .spacing(12)
+        .spacing(14)
         .align_y(Alignment::Center);
 
     button(
         container(card_content)
-            .padding(12)
+            .padding(16)
             .width(Length::Fill)
             .height(Length::Fixed(CARD_HEIGHT))
             .align_y(Alignment::Center),
@@ -355,18 +418,18 @@ fn host_card(host: HostCard) -> Element<'static, Message> {
     let os_icon_bytes = os_icon_data(&host.detected_os);
     let os_color = os_icon_color(&host.detected_os);
 
-    // OS icon with brand color
+    // OS icon with vibrant solid background and white icon
     let icon_widget = container(
-        icon_with_color(os_icon_bytes, 24, os_color)
+        icon_with_color(os_icon_bytes, 24, iced::Color::WHITE)
     )
-    .width(44)
-    .height(44)
+    .width(48)
+    .height(48)
     .align_x(Alignment::Center)
     .align_y(Alignment::Center)
     .style(move |_theme| container::Style {
-        background: Some(iced::Color::from_rgba(os_color.r, os_color.g, os_color.b, 0.15).into()),
+        background: Some(iced::Color::from_rgba(os_color.r, os_color.g, os_color.b, 0.85).into()),
         border: iced::Border {
-            radius: 8.0.into(),
+            radius: CARD_BORDER_RADIUS.into(),
             ..Default::default()
         },
         ..Default::default()
@@ -379,10 +442,10 @@ fn host_card(host: HostCard) -> Element<'static, Message> {
     };
 
     let info = column![
-        text(host.name.clone()).size(15).color(THEME.text_primary),
+        text(host.name.clone()).size(16).color(THEME.text_primary),
         text(os_text).size(12).color(THEME.text_secondary),
     ]
-    .spacing(3);
+    .spacing(4);
 
     let card_content = row![icon_widget, info]
         .spacing(14)
@@ -390,7 +453,7 @@ fn host_card(host: HostCard) -> Element<'static, Message> {
 
     button(
         container(card_content)
-            .padding(14)
+            .padding(16)
             .width(Length::Fill)
             .height(Length::Fixed(CARD_HEIGHT))
             .align_y(Alignment::Center),

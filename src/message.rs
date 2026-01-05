@@ -52,6 +52,8 @@ pub enum Message {
     HostConnect(Uuid),
     HostAdd,
     HostEdit(Uuid),
+    QuickConnect,   // Parse search query as user@host:port and connect
+    LocalTerminal,  // Open local terminal (stubbed for now)
 
     // Dialog
     DialogClose,
