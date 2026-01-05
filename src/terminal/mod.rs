@@ -6,5 +6,4 @@ pub mod backend;
 mod colors;
 pub mod widget;
 
-pub use backend::{EventProxy, TerminalBackend, TerminalEvent, TerminalSize};
-pub use widget::TerminalWidget;
+pub use backend::TerminalBackend;

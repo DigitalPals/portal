@@ -38,11 +38,6 @@ impl ResolvedAuth {
             AuthMethod::Agent => Ok(ResolvedAuth::Agent),
         }
     }
-
-    /// Check if this auth method requires a password prompt
-    pub fn needs_password(method: &AuthMethod) -> bool {
-        matches!(method, AuthMethod::Password)
-    }
 }
 
 /// Find the first available default SSH key

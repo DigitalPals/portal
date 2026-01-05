@@ -10,14 +10,13 @@ pub mod known_hosts;
 pub mod session;
 
 pub use client::SshClient;
-pub use host_key_verification::{
-    HostKeyInfo, HostKeyVerificationRequest, HostKeyVerificationResponse,
-};
-pub use known_hosts::{HostKeyStatus, KnownHostsManager};
 pub use session::SshSession;
+
+use host_key_verification::HostKeyVerificationRequest;
 
 /// Events emitted by the SSH layer
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum SshEvent {
     /// SSH connection established
     Connected,

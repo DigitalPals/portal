@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use alacritty_terminal::event::{Event, EventListener, WindowSize};
+use alacritty_terminal::event::{Event, EventListener};
 use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::term::cell::Flags as CellFlags;
 use alacritty_terminal::term::Config as TermConfig;
@@ -137,15 +137,13 @@ pub struct TerminalBackend {
     term: Arc<Mutex<Term<EventProxy>>>,
     processor: Mutex<Processor>,
     size: TerminalSize,
-    event_rx: mpsc::UnboundedReceiver<TerminalEvent>,
-    event_tx: mpsc::UnboundedSender<TerminalEvent>,
 }
 
 impl TerminalBackend {
     /// Create a new terminal backend with the given size
     pub fn new(size: TerminalSize) -> Self {
-        let (event_tx, event_rx) = mpsc::unbounded_channel();
-        let event_proxy = EventProxy::new(event_tx.clone());
+        let (event_tx, _event_rx) = mpsc::unbounded_channel();
+        let event_proxy = EventProxy::new(event_tx);
 
         // Create terminal config
         let config = TermConfig::default();
@@ -157,8 +155,6 @@ impl TerminalBackend {
             term: Arc::new(Mutex::new(term)),
             processor: Mutex::new(Processor::new()),
             size,
-            event_rx,
-            event_tx,
         }
     }
 
@@ -172,13 +168,6 @@ impl TerminalBackend {
         self.size
     }
 
-    /// Resize the terminal
-    pub fn resize(&mut self, size: TerminalSize) {
-        self.size = size;
-        let mut term = self.term.lock();
-        term.resize(size);
-    }
-
     /// Process input bytes from PTY/SSH
     pub fn process_input(&self, bytes: &[u8]) {
         let mut term = self.term.lock();
@@ -186,75 +175,6 @@ impl TerminalBackend {
 
         for byte in bytes {
             processor.advance(&mut *term, *byte);
-        }
-    }
-
-    /// Get cells to render
-    pub fn renderable_cells(&self) -> Vec<RenderCell> {
-        let term = self.term.lock();
-        let content = term.renderable_content();
-        let mut cells = Vec::new();
-
-        for indexed in content.display_iter {
-            let cell = &indexed.cell;
-            // Skip empty cells with default background
-            if cell.c == ' ' && cell.bg == AnsiColor::Named(alacritty_terminal::vte::ansi::NamedColor::Background) && cell.flags.is_empty() {
-                continue;
-            }
-
-            cells.push(RenderCell {
-                column: indexed.point.column.0,
-                line: indexed.point.line.0 as usize,
-                character: cell.c,
-                fg: cell.fg,
-                bg: cell.bg,
-                flags: cell.flags,
-            });
-        }
-
-        cells
-    }
-
-    /// Get cursor information
-    pub fn cursor(&self) -> CursorInfo {
-        let term = self.term.lock();
-        let content = term.renderable_content();
-        let cursor = content.cursor;
-
-        CursorInfo {
-            column: cursor.point.column.0,
-            line: cursor.point.line.0 as usize,
-            shape: cursor.shape,
-            visible: true, // Cursor visibility handled by mode flags
-        }
-    }
-
-    /// Poll for terminal events (non-blocking)
-    pub fn poll_event(&mut self) -> Option<TerminalEvent> {
-        self.event_rx.try_recv().ok()
-    }
-
-    /// Get the event sender for external use
-    pub fn event_sender(&self) -> mpsc::UnboundedSender<TerminalEvent> {
-        self.event_tx.clone()
-    }
-
-    /// Scroll the terminal
-    pub fn scroll(&self, lines: i32) {
-        use alacritty_terminal::grid::Scroll;
-        if lines != 0 {
-            let mut term = self.term.lock();
-            term.scroll_display(Scroll::Delta(lines));
-        }
-    }
-
-    /// Get window size for PTY
-    pub fn window_size(&self) -> WindowSize {
-        WindowSize {
-            num_cols: self.size.columns,
-            num_lines: self.size.lines,
-            cell_width: self.size.cell_width as u16,
-            cell_height: self.size.cell_height as u16,
         }
     }
 }

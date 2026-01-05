@@ -4,20 +4,16 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use chrono::{TimeZone, Utc};
-use russh::client::Handle;
-use russh::Disconnect;
 use russh_sftp::client::SftpSession as RusshSftpSession;
 use tokio::sync::Mutex;
 
 use crate::error::SftpError;
-use crate::ssh::handler::ClientHandler;
 
 use super::types::FileEntry;
 
 /// SFTP session wrapper for file operations
 pub struct SftpSession {
     sftp: Mutex<RusshSftpSession>,
-    handle: Mutex<Handle<ClientHandler>>,
     home_dir: PathBuf,
 }
 
@@ -31,10 +27,9 @@ impl std::fmt::Debug for SftpSession {
 
 impl SftpSession {
     /// Create a new SFTP session
-    pub fn new(sftp: RusshSftpSession, handle: Handle<ClientHandler>, home_dir: PathBuf) -> Self {
+    pub fn new(sftp: RusshSftpSession, home_dir: PathBuf) -> Self {
         Self {
             sftp: Mutex::new(sftp),
-            handle: Mutex::new(handle),
             home_dir,
         }
     }
@@ -154,22 +149,6 @@ impl SftpSession {
         }
     }
 
-    /// Rename a file or directory
-    pub async fn rename(&self, from: &Path, to: &Path) -> Result<(), SftpError> {
-        let sftp = self.sftp.lock().await;
-        let from_str = from.to_string_lossy().to_string();
-        let to_str = to.to_string_lossy().to_string();
-
-        sftp.rename(from_str.clone(), to_str.clone())
-            .await
-            .map_err(|e| {
-                SftpError::FileOperation(format!(
-                    "Failed to rename {} to {}: {}",
-                    from_str, to_str, e
-                ))
-            })
-    }
-
     /// Download a file from remote to local
     pub async fn download(&self, remote_path: &Path, local_path: &Path) -> Result<u64, SftpError> {
         let sftp = self.sftp.lock().await;
@@ -214,113 +193,6 @@ impl SftpSession {
             })?;
 
         Ok(contents.len() as u64)
-    }
-
-    /// Download a file or directory recursively from remote to local
-    pub async fn download_recursive(
-        &self,
-        remote_path: &Path,
-        local_path: &Path,
-    ) -> Result<(), SftpError> {
-        let is_dir = {
-            let sftp = self.sftp.lock().await;
-            let remote_str = remote_path.to_string_lossy().to_string();
-            let metadata = sftp.metadata(remote_str.clone()).await.map_err(|e| {
-                SftpError::FileOperation(format!(
-                    "Failed to get metadata for {}: {}",
-                    remote_str, e
-                ))
-            })?;
-            metadata.is_dir()
-        };
-
-        if is_dir {
-            // Create local directory
-            tokio::fs::create_dir_all(local_path).await.map_err(|e| {
-                SftpError::LocalIo(format!(
-                    "Failed to create directory {}: {}",
-                    local_path.display(),
-                    e
-                ))
-            })?;
-
-            // Download contents
-            let entries = self.list_dir(remote_path).await?;
-            for entry in entries {
-                if entry.name == ".." {
-                    continue;
-                }
-                let local_dest = local_path.join(&entry.name);
-                Box::pin(self.download_recursive(&entry.path, &local_dest)).await?;
-            }
-            Ok(())
-        } else {
-            // Ensure parent directory exists
-            if let Some(parent) = local_path.parent() {
-                tokio::fs::create_dir_all(parent).await.map_err(|e| {
-                    SftpError::LocalIo(format!(
-                        "Failed to create directory {}: {}",
-                        parent.display(),
-                        e
-                    ))
-                })?;
-            }
-            self.download(remote_path, local_path).await?;
-            Ok(())
-        }
-    }
-
-    /// Upload a file or directory recursively from local to remote
-    pub async fn upload_recursive(
-        &self,
-        local_path: &Path,
-        remote_path: &Path,
-    ) -> Result<(), SftpError> {
-        let metadata = tokio::fs::metadata(local_path).await.map_err(|e| {
-            SftpError::LocalIo(format!(
-                "Failed to get metadata for {}: {}",
-                local_path.display(),
-                e
-            ))
-        })?;
-
-        if metadata.is_dir() {
-            // Create remote directory (ignore error if exists)
-            let _ = self.create_dir(remote_path).await;
-
-            // Upload contents
-            let mut read_dir = tokio::fs::read_dir(local_path).await.map_err(|e| {
-                SftpError::LocalIo(format!(
-                    "Failed to read directory {}: {}",
-                    local_path.display(),
-                    e
-                ))
-            })?;
-
-            while let Some(entry) = read_dir
-                .next_entry()
-                .await
-                .map_err(|e| SftpError::LocalIo(format!("Failed to read directory entry: {}", e)))?
-            {
-                let local_entry_path = entry.path();
-                let remote_dest = remote_path.join(entry.file_name());
-                Box::pin(self.upload_recursive(&local_entry_path, &remote_dest)).await?;
-            }
-            Ok(())
-        } else {
-            self.upload(local_path, remote_path).await?;
-            Ok(())
-        }
-    }
-
-    /// Close the SFTP session
-    pub async fn close(self) -> Result<(), SftpError> {
-        let handle = self.handle.into_inner();
-        handle
-            .disconnect(Disconnect::ByApplication, "SFTP session closed", "")
-            .await
-            .map_err(|e| SftpError::ConnectionFailed(format!("Failed to disconnect: {}", e)))?;
-        Ok(())
     }
 }
 

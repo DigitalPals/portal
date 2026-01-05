@@ -3,7 +3,6 @@
 //! This implements the iced Widget trait for rendering terminal content.
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 
 use alacritty_terminal::term::cell::Flags as CellFlags;
 use alacritty_terminal::term::Term;
@@ -19,13 +18,6 @@ use parking_lot::Mutex;
 
 use super::backend::{CursorInfo, EventProxy, RenderCell, TerminalSize};
 use super::colors::{ansi_to_iced, DEFAULT_BG, DEFAULT_FG};
-
-/// Default cell dimensions
-const CELL_WIDTH: f32 = 9.0;
-const CELL_HEIGHT: f32 = 18.0;
-
-/// Cursor blink interval
-const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 
 /// Terminal widget for iced
 pub struct TerminalWidget<'a, Message> {
@@ -106,7 +98,6 @@ impl<'a, Message> TerminalWidget<'a, Message> {
 struct TerminalState {
     is_focused: bool,
     cursor_visible: bool,
-    last_blink: Instant,
 }
 
 impl Default for TerminalState {
@@ -114,7 +105,6 @@ impl Default for TerminalState {
         Self {
             is_focused: true,
             cursor_visible: true,
-            last_blink: Instant::now(),
         }
     }
 }
@@ -152,7 +142,6 @@ where
         widget::tree::State::new(TerminalState {
             is_focused: true,
             cursor_visible: true,
-            last_blink: Instant::now(),
         })
     }
 
@@ -357,7 +346,7 @@ where
                     state.is_focused = false;
                 }
             }
-            Event::Mouse(mouse::Event::WheelScrolled { delta }) => {
+            Event::Mouse(mouse::Event::WheelScrolled { .. }) => {
                 if state.is_focused && cursor.is_over(bounds) {
                     // Handle scroll - could emit message for scrollback
                     return iced::event::Status::Captured;
@@ -384,13 +373,12 @@ where
 
     fn mouse_interaction(
         &self,
-        tree: &Tree,
+        _tree: &Tree,
         layout: Layout<'_>,
         cursor: Cursor,
         _viewport: &Rectangle,
         _renderer: &Renderer,
     ) -> mouse::Interaction {
-        let state = tree.state.downcast_ref::<TerminalState>();
         if cursor.is_over(layout.bounds()) {
             mouse::Interaction::Text
         } else {

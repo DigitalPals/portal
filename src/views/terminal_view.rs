@@ -23,17 +23,15 @@ pub type SessionId = Uuid;
 /// Terminal session state
 pub struct TerminalSession {
     pub id: SessionId,
-    pub title: String,
     pub backend: TerminalBackend,
 }
 
 impl TerminalSession {
     /// Create a new terminal session
-    pub fn new(title: impl Into<String>) -> Self {
+    pub fn new(_title: impl Into<String>) -> Self {
         let size = TerminalSize::new(80, 24, 9.0, 18.0);
         Self {
             id: Uuid::new_v4(),
-            title: title.into(),
             backend: TerminalBackend::new(size),
         }
     }
@@ -51,12 +49,6 @@ impl TerminalSession {
     /// Process input bytes (from SSH or PTY)
     pub fn process_output(&self, bytes: &[u8]) {
         self.backend.process_input(bytes);
-    }
-
-    /// Resize the terminal
-    pub fn resize(&mut self, cols: u16, rows: u16) {
-        let size = TerminalSize::new(cols, rows, 9.0, 18.0);
-        self.backend.resize(size);
     }
 }
 

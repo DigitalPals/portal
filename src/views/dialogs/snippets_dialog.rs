@@ -55,10 +55,6 @@ impl SnippetsDialogState {
         self.edit_description.clear();
     }
 
-    pub fn selected_snippet(&self) -> Option<&Snippet> {
-        self.selected_id.and_then(|id| self.snippets.iter().find(|s| s.id == id))
-    }
-
     pub fn is_form_valid(&self) -> bool {
         !self.edit_name.trim().is_empty() && !self.edit_command.trim().is_empty()
     }

@@ -7,7 +7,5 @@ pub mod session;
 pub mod types;
 
 pub use client::SftpClient;
-pub use session::{SharedSftpSession, SftpSession};
-pub use types::{
-    format_size, FileEntry, SortOrder, TransferDirection, TransferOperation, TransferProgress,
-};
+pub use session::SharedSftpSession;
+pub use types::{format_size, FileEntry, SortOrder};

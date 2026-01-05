@@ -8,11 +8,6 @@ pub fn config_dir() -> Option<PathBuf> {
         .map(|proj_dirs| proj_dirs.config_dir().to_path_buf())
 }
 
-/// Get the path to the main config file
-pub fn config_file() -> Option<PathBuf> {
-    config_dir().map(|dir| dir.join("config.toml"))
-}
-
 /// Get the path to the hosts config file
 pub fn hosts_file() -> Option<PathBuf> {
     config_dir().map(|dir| dir.join("hosts.toml"))
@@ -26,11 +21,6 @@ pub fn known_hosts_file() -> Option<PathBuf> {
 /// Get the path to the user's SSH known_hosts file
 pub fn ssh_known_hosts_file() -> Option<PathBuf> {
     ssh_dir().map(|dir| dir.join("known_hosts"))
-}
-
-/// Get the path to the connection history file
-pub fn history_file() -> Option<PathBuf> {
-    config_dir().map(|dir| dir.join("history.json"))
 }
 
 /// Get the path to the snippets config file

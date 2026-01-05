@@ -4,7 +4,6 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-use crate::config::Host;
 use crate::sftp::{FileEntry, SharedSftpSession};
 use crate::ssh::{SshEvent, SshSession};
 
@@ -19,20 +18,14 @@ pub enum Message {
     HostConnect(Uuid),
     HostAdd,
     HostEdit(Uuid),
-    HostSave(Host),
-    HostDelete(Uuid),
 
     // Dialog
-    DialogOpen(DialogType),
     DialogClose,
     DialogSubmit,
     DialogFieldChanged(String, String),
 
     // Terminal / Session
     TerminalInput(SessionId, Vec<u8>),
-    TerminalOutput(SessionId, Vec<u8>),
-    SessionCreated(SessionId),
-    SessionClosed(SessionId),
 
     // SSH connection
     SshConnected {
@@ -66,7 +59,6 @@ pub enum Message {
     SftpUpload(SessionId),
     SftpMkdir(SessionId),
     SftpDelete(SessionId, PathBuf),
-    SftpError(SessionId, String),
 
     // SFTP dialog actions
     SftpMkdirNameChanged(String),
@@ -114,13 +106,4 @@ impl Clone for EventReceiver {
         // Cloning returns None - only the original message has the receiver
         EventReceiver(None)
     }
-}
-
-/// Types of dialogs that can be opened
-#[derive(Debug, Clone)]
-pub enum DialogType {
-    AddHost,
-    EditHost(Uuid),
-    SftpMkdir(SessionId, PathBuf),
-    SftpDeleteConfirm(SessionId, PathBuf, bool), // session_id, path, is_directory
 }

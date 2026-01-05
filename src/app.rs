@@ -3,14 +3,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures::stream;
-use iced::keyboard::{self, Key, Modifiers};
+use iced::keyboard::{self, Key};
 use iced::widget::{button, column, container, row, text, stack};
 use iced::{event, Element, Fill, Subscription, Task, Theme as IcedTheme};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::config::{Host, HostsConfig, Snippet, SnippetsConfig};
-use crate::message::{DialogType, EventReceiver, Message, SessionId};
+use crate::message::{EventReceiver, Message, SessionId};
 use crate::sftp::{SharedSftpSession, SftpClient};
 use crate::ssh::{SshClient, SshEvent, SshSession};
 use crate::theme::THEME;
@@ -25,7 +25,7 @@ use crate::views::dialogs::snippets_dialog::{snippets_dialog_view, SnippetsDialo
 use crate::views::host_grid::{host_grid_view, HostCard};
 use crate::views::sftp_view::{sftp_browser_view, SftpBrowserState};
 use crate::views::sidebar::{sidebar_view, SidebarFolder, SidebarHost};
-use crate::views::tabs::{tab_bar_view, Tab, TabType};
+use crate::views::tabs::{tab_bar_view, Tab};
 use crate::views::terminal_view::{terminal_view, TerminalSession};
 
 /// The active view in the main content area
@@ -42,7 +42,6 @@ pub enum View {
 pub struct ActiveSession {
     pub ssh_session: Arc<SshSession>,
     pub terminal: TerminalSession,
-    pub host_name: String,
 }
 
 /// Active SFTP session
@@ -79,12 +78,10 @@ pub struct Portal {
     // Demo terminal session
     demo_terminal: Option<TerminalSession>,
 
-    // SSH client and active sessions
-    ssh_client: SshClient,
+    // Active sessions
     sessions: HashMap<SessionId, ActiveSession>,
 
-    // SFTP client and sessions
-    sftp_client: SftpClient,
+    // SFTP sessions
     sftp_sessions: HashMap<SessionId, SftpSessionState>,
 
     // Connection status message
@@ -119,7 +116,7 @@ impl Portal {
         };
 
         // Create demo terminal session and add some test content
-        let mut demo_terminal = TerminalSession::new("Demo Terminal");
+        let demo_terminal = TerminalSession::new("Demo Terminal");
         // Add some demo output to show the terminal is working
         let demo_content = b"\x1b[1;32mWelcome to Portal Terminal!\x1b[0m\r\n\r\n\
             This is a \x1b[1;34mtest\x1b[0m of the terminal widget.\r\n\r\n\
@@ -146,9 +143,7 @@ impl Portal {
             hosts_config,
             snippets_config,
             demo_terminal: Some(demo_terminal),
-            ssh_client: SshClient::default(),
             sessions: HashMap::new(),
-            sftp_client: SftpClient::default(),
             sftp_sessions: HashMap::new(),
             status_message: None,
         };
@@ -164,7 +159,7 @@ impl Portal {
         self.status_message = Some(format!("Connecting to {}...", host.name));
 
         // Create channel for SSH events
-        let (event_tx, mut event_rx) = mpsc::unbounded_channel::<SshEvent>();
+        let (event_tx, event_rx) = mpsc::unbounded_channel::<SshEvent>();
 
         // Clone what we need for the async task
         let ssh_client = SshClient::default();
@@ -286,24 +281,6 @@ impl Portal {
                     self.dialog = Some(HostDialogState::edit_host(host));
                 }
             }
-            Message::DialogOpen(dialog_type) => {
-                match dialog_type {
-                    DialogType::AddHost => {
-                        self.dialog = Some(HostDialogState::new_host());
-                    }
-                    DialogType::EditHost(id) => {
-                        if let Some(host) = self.hosts_config.find_host(id) {
-                            self.dialog = Some(HostDialogState::edit_host(host));
-                        }
-                    }
-                    DialogType::SftpMkdir(session_id, parent_path) => {
-                        self.mkdir_dialog = Some(MkdirDialogState::new(session_id, parent_path));
-                    }
-                    DialogType::SftpDeleteConfirm(session_id, path, is_dir) => {
-                        self.delete_dialog = Some(DeleteConfirmDialogState::new(session_id, path, is_dir));
-                    }
-                }
-            }
             Message::DialogClose => {
                 self.dialog = None;
                 self.mkdir_dialog = None;
@@ -375,31 +352,6 @@ impl Portal {
                     }
                 }
             }
-            Message::HostSave(host) => {
-                if self.hosts_config.find_host(host.id).is_some() {
-                    if let Err(e) = self.hosts_config.update_host(host) {
-                        tracing::error!("Failed to update host: {}", e);
-                    }
-                } else {
-                    self.hosts_config.add_host(host);
-                }
-                if let Err(e) = self.hosts_config.save() {
-                    tracing::error!("Failed to save config: {}", e);
-                }
-            }
-            Message::HostDelete(id) => {
-                match self.hosts_config.delete_host(id) {
-                    Ok(host) => {
-                        tracing::info!("Deleted host: {}", host.name);
-                        if let Err(e) = self.hosts_config.save() {
-                            tracing::error!("Failed to save config: {}", e);
-                        }
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to delete host: {}", e);
-                    }
-                }
-            }
             Message::Noop => {}
             // Terminal messages
             Message::TerminalInput(session_id, bytes) => {
@@ -415,21 +367,6 @@ impl Portal {
                         },
                         |_| Message::Noop,
                     );
-                }
-            }
-            Message::TerminalOutput(session_id, bytes) => {
-                tracing::debug!("Terminal output for session {}: {} bytes", session_id, bytes.len());
-                // TODO: Process through terminal backend
-            }
-            Message::SessionCreated(session_id) => {
-                tracing::info!("Session created: {}", session_id);
-            }
-            Message::SessionClosed(session_id) => {
-                tracing::info!("Session closed: {}", session_id);
-                self.sessions.remove(&session_id);
-                // If this was the active view, go back to host grid
-                if matches!(self.active_view, View::Terminal(id) if id == session_id) {
-                    self.active_view = View::HostGrid;
                 }
             }
             Message::SshConnected {
@@ -450,7 +387,6 @@ impl Portal {
                     ActiveSession {
                         ssh_session,
                         terminal,
-                        host_name: host_name.clone(),
                     },
                 );
 
@@ -826,12 +762,6 @@ impl Portal {
                             }
                         }
                     }
-                }
-            }
-            Message::SftpError(session_id, error) => {
-                tracing::error!("SFTP error for {}: {}", session_id, error);
-                if let Some(state) = self.sftp_sessions.get_mut(&session_id) {
-                    state.browser_state.set_error(error);
                 }
             }
             Message::KeyboardEvent(key, modifiers) => {

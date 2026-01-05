@@ -41,10 +41,6 @@ impl Snippet {
         }
     }
 
-    /// Update the timestamp
-    pub fn touch(&mut self) {
-        self.updated_at = chrono::Utc::now();
-    }
 }
 
 /// Root configuration for snippets.toml
@@ -69,17 +65,6 @@ impl SnippetsConfig {
     /// Add a new snippet
     pub fn add_snippet(&mut self, snippet: Snippet) {
         self.snippets.push(snippet);
-    }
-
-    /// Update an existing snippet
-    pub fn update_snippet(&mut self, snippet: Snippet) -> Result<(), ConfigError> {
-        let existing = self
-            .snippets
-            .iter_mut()
-            .find(|s| s.id == snippet.id)
-            .ok_or(ConfigError::SnippetNotFound(snippet.id))?;
-        *existing = snippet;
-        Ok(())
     }
 
     /// Delete a snippet by ID

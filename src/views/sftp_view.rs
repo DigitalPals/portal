@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use iced::widget::{button, column, container, row, scrollable, text, Column, Row};
+use iced::widget::{button, column, container, row, scrollable, text, Column};
 use iced::{Alignment, Element, Fill, Length, Padding};
 use uuid::Uuid;
 

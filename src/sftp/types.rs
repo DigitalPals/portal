@@ -21,11 +21,6 @@ impl FileEntry {
         self.name == ".."
     }
 
-    /// Check if this is a hidden file (starts with .)
-    pub fn is_hidden(&self) -> bool {
-        self.name.starts_with('.') && self.name != ".."
-    }
-
     /// Get file extension if any
     pub fn extension(&self) -> Option<&str> {
         if self.is_dir {
@@ -67,36 +62,9 @@ impl FileEntry {
 pub enum SortOrder {
     #[default]
     NameAsc,
-    NameDesc,
-    SizeAsc,
-    SizeDesc,
-    DateAsc,
-    DateDesc,
 }
 
 impl SortOrder {
-    pub fn cycle(self) -> Self {
-        match self {
-            SortOrder::NameAsc => SortOrder::NameDesc,
-            SortOrder::NameDesc => SortOrder::SizeAsc,
-            SortOrder::SizeAsc => SortOrder::SizeDesc,
-            SortOrder::SizeDesc => SortOrder::DateAsc,
-            SortOrder::DateAsc => SortOrder::DateDesc,
-            SortOrder::DateDesc => SortOrder::NameAsc,
-        }
-    }
-
-    pub fn display_name(self) -> &'static str {
-        match self {
-            SortOrder::NameAsc => "Name ↑",
-            SortOrder::NameDesc => "Name ↓",
-            SortOrder::SizeAsc => "Size ↑",
-            SortOrder::SizeDesc => "Size ↓",
-            SortOrder::DateAsc => "Date ↑",
-            SortOrder::DateDesc => "Date ↓",
-        }
-    }
-
     /// Sort file entries according to this order
     pub fn sort(&self, entries: &mut [FileEntry]) {
         // Always keep ".." at the top, then directories, then files
@@ -121,50 +89,9 @@ impl SortOrder {
             // Apply sort order
             match self {
                 SortOrder::NameAsc => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-                SortOrder::NameDesc => b.name.to_lowercase().cmp(&a.name.to_lowercase()),
-                SortOrder::SizeAsc => a.size.cmp(&b.size),
-                SortOrder::SizeDesc => b.size.cmp(&a.size),
-                SortOrder::DateAsc => a.modified.cmp(&b.modified),
-                SortOrder::DateDesc => b.modified.cmp(&a.modified),
             }
         });
     }
-}
-
-/// Transfer progress information for file operations
-#[derive(Debug, Clone)]
-pub struct TransferProgress {
-    pub current_file: String,
-    pub bytes_transferred: u64,
-    pub total_bytes: u64,
-    pub files_completed: usize,
-    pub total_files: usize,
-}
-
-impl TransferProgress {
-    pub fn percentage(&self) -> f64 {
-        if self.total_bytes == 0 {
-            0.0
-        } else {
-            (self.bytes_transferred as f64 / self.total_bytes as f64) * 100.0
-        }
-    }
-}
-
-/// Direction of file transfer for determining operation type
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TransferDirection {
-    LocalToLocal,
-    LocalToRemote,
-    RemoteToLocal,
-    RemoteToRemote,
-}
-
-/// Type of transfer operation
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TransferOperation {
-    Copy,
-    Move,
 }
 
 /// Format file size for display

@@ -9,6 +9,7 @@ use tokio::sync::oneshot;
 
 /// Information about a host key requiring verification
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct HostKeyInfo {
     pub host: String,
     pub port: u16,
@@ -18,6 +19,7 @@ pub struct HostKeyInfo {
 }
 
 /// Request for host key verification sent to the UI
+#[allow(dead_code)]
 pub enum HostKeyVerificationRequest {
     /// New unknown host - user should verify fingerprint
     NewHost {
@@ -52,6 +54,7 @@ impl std::fmt::Debug for HostKeyVerificationRequest {
 
 /// User's response to host key verification
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum HostKeyVerificationResponse {
     /// Accept the key and save to known_hosts
     Accept,

@@ -11,11 +11,11 @@ case "${1:-run}" in
         ;;
     run)
         echo "Building and running Portal2..."
-        cargo run --release
+        nix-shell -p wayland --run "cargo run --release"
         ;;
     dev)
         echo "Running Portal2 in debug mode..."
-        cargo run
+        nix-shell -p wayland --run "cargo run"
         ;;
     check)
         echo "Checking Portal2..."

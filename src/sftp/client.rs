@@ -137,7 +137,7 @@ impl SftpClient {
         // Get the remote home directory
         let home_dir = self.get_home_dir(&sftp).await?;
 
-        let session = Arc::new(SftpSession::new(sftp, handle, home_dir));
+        let session = Arc::new(SftpSession::new(sftp, home_dir));
         Ok(session)
     }
 
