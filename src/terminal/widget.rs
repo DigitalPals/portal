@@ -873,6 +873,11 @@ where
                     if let Some(bytes) = key_to_escape_sequence(&key, modifiers, text.as_deref())
                     {
                         shell.publish((self.on_input)(bytes));
+
+                        // Scroll back to bottom when user types (after scrolling up in history)
+                        let mut term = self.term.lock();
+                        term.scroll_display(Scroll::Bottom);
+
                         return iced::event::Status::Captured;
                     }
                 }
