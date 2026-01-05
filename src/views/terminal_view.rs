@@ -14,7 +14,7 @@ use crate::message::Message;
 use crate::terminal::backend::{EventProxy, TerminalSize};
 use crate::terminal::TerminalBackend;
 use crate::terminal::widget::TerminalWidget;
-use crate::theme::THEME;
+use crate::theme::Theme;
 
 use super::terminal_status_bar::terminal_status_bar;
 use alacritty_terminal::term::Term;
@@ -31,7 +31,7 @@ pub struct TerminalSession {
 impl TerminalSession {
     /// Create a new terminal session
     pub fn new(_title: impl Into<String>) -> Self {
-        let size = TerminalSize::new(80, 24, 9.0, 18.0);
+        let size = TerminalSize::new(80, 24);
         Self {
             id: Uuid::new_v4(),
             backend: TerminalBackend::new(size),
@@ -41,11 +41,6 @@ impl TerminalSession {
     /// Get the terminal for rendering
     pub fn term(&self) -> Arc<Mutex<Term<EventProxy>>> {
         self.backend.term()
-    }
-
-    /// Get the terminal size
-    pub fn size(&self) -> TerminalSize {
-        self.backend.size()
     }
 
     /// Process input bytes (from SSH or PTY)
@@ -60,32 +55,9 @@ impl TerminalSession {
 }
 
 /// Build a terminal view element
-pub fn terminal_view<'a>(
-    session: &'a TerminalSession,
-    font_size: f32,
-    on_input: impl Fn(SessionId, Vec<u8>) -> Message + 'a,
-    on_resize: impl Fn(SessionId, u16, u16) -> Message + 'a,
-) -> Element<'a, Message> {
-    let session_id = session.id;
-    let term = session.term();
-    let size = session.size();
-
-    let terminal_widget = TerminalWidget::new(term, size, move |bytes| on_input(session_id, bytes))
-        .on_resize(move |cols, rows| on_resize(session_id, cols, rows))
-        .font_size(font_size);
-
-    container(terminal_widget)
-        .width(Fill)
-        .height(Fill)
-        .style(|_theme| container::Style {
-            background: Some(THEME.background.into()),
-            ..Default::default()
-        })
-        .into()
-}
-
 /// Build a terminal view element with status bar
 pub fn terminal_view_with_status<'a>(
+    theme: Theme,
     session: &'a TerminalSession,
     session_start: Instant,
     host_name: &'a str,
@@ -96,21 +68,19 @@ pub fn terminal_view_with_status<'a>(
 ) -> Element<'a, Message> {
     let session_id = session.id;
     let term = session.term();
-    let size = session.size();
-
-    let terminal_widget = TerminalWidget::new(term, size, move |bytes| on_input(session_id, bytes))
+    let terminal_widget = TerminalWidget::new(term, move |bytes| on_input(session_id, bytes))
         .on_resize(move |cols, rows| on_resize(session_id, cols, rows))
         .font_size(font_size);
 
     let terminal_container = container(terminal_widget)
         .width(Fill)
         .height(Fill)
-        .style(|_theme| container::Style {
-            background: Some(THEME.background.into()),
+        .style(move |_theme| container::Style {
+            background: Some(theme.background.into()),
             ..Default::default()
         });
 
-    let status_bar = terminal_status_bar(host_name, session_start, status_message);
+    let status_bar = terminal_status_bar(theme, host_name, session_start, status_message);
 
     column![terminal_container, status_bar].into()
 }

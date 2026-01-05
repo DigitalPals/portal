@@ -8,7 +8,7 @@ use crate::message::Message;
 use crate::ssh::host_key_verification::{
     HostKeyInfo, HostKeyVerificationRequest, HostKeyVerificationResponse,
 };
-use crate::theme::{BORDER_RADIUS, THEME};
+use crate::theme::{Theme, BORDER_RADIUS};
 
 /// State for the host key verification dialog
 pub struct HostKeyDialogState {
@@ -85,43 +85,43 @@ impl HostKeyDialogState {
 }
 
 /// Build the host key dialog view
-pub fn host_key_dialog_view(state: &HostKeyDialogState) -> Element<'static, Message> {
+pub fn host_key_dialog_view(state: &HostKeyDialogState, theme: Theme) -> Element<'static, Message> {
     if state.is_changed_host {
-        changed_host_dialog_view(state)
+        changed_host_dialog_view(state, theme)
     } else {
-        new_host_dialog_view(state)
+        new_host_dialog_view(state, theme)
     }
 }
 
 /// Dialog for new unknown hosts
-fn new_host_dialog_view(state: &HostKeyDialogState) -> Element<'static, Message> {
-    let key_icon = text("@").size(32).color(THEME.accent);
+fn new_host_dialog_view(state: &HostKeyDialogState, theme: Theme) -> Element<'static, Message> {
+    let key_icon = text("@").size(32).color(theme.accent);
 
-    let title = text("Unknown Host").size(20).color(THEME.text_primary);
+    let title = text("Unknown Host").size(20).color(theme.text_primary);
 
     let host_info = text(format!("{}:{}", state.host, state.port))
         .size(14)
-        .color(THEME.text_secondary);
+        .color(theme.text_secondary);
 
     let message = text("The authenticity of this host cannot be established.")
         .size(14)
-        .color(THEME.text_secondary);
+        .color(theme.text_secondary);
 
     let key_type_label = text(format!("{} key fingerprint:", state.key_type))
         .size(12)
-        .color(THEME.text_muted);
+        .color(theme.text_muted);
 
     let fingerprint_text = text(state.fingerprint.clone())
         .size(11)
-        .color(THEME.text_primary);
+        .color(theme.text_primary);
 
     let fingerprint_box = container(fingerprint_text)
         .padding(10)
         .width(Length::Fill)
-        .style(|_theme| container::Style {
-            background: Some(THEME.background.into()),
+        .style(move |_theme| container::Style {
+            background: Some(theme.background.into()),
             border: iced::Border {
-                color: THEME.border,
+                color: theme.border,
                 width: 1.0,
                 radius: BORDER_RADIUS.into(),
             },
@@ -130,15 +130,15 @@ fn new_host_dialog_view(state: &HostKeyDialogState) -> Element<'static, Message>
 
     let question = text("Are you sure you want to continue connecting?")
         .size(14)
-        .color(THEME.text_secondary);
+        .color(theme.text_secondary);
 
-    let reject_button = button(text("Reject").size(14).color(THEME.text_primary))
+    let reject_button = button(text("Reject").size(14).color(theme.text_primary))
         .padding([8, 16])
-        .style(|_theme, _status| button::Style {
-            background: Some(THEME.surface.into()),
-            text_color: THEME.text_primary,
+        .style(move |_theme, _status| button::Style {
+            background: Some(theme.surface.into()),
+            text_color: theme.text_primary,
             border: iced::Border {
-                color: THEME.border,
+                color: theme.border,
                 width: 1.0,
                 radius: BORDER_RADIUS.into(),
             },
@@ -146,16 +146,16 @@ fn new_host_dialog_view(state: &HostKeyDialogState) -> Element<'static, Message>
         })
         .on_press(Message::HostKeyVerificationReject);
 
-    let accept_button = button(text("Accept").size(14).color(THEME.text_primary))
+    let accept_button = button(text("Accept").size(14).color(theme.text_primary))
         .padding([8, 16])
-        .style(|_theme, status| {
+        .style(move |_theme, status| {
             let bg = match status {
-                button::Status::Hovered => THEME.accent,
-                _ => THEME.accent,
+                button::Status::Hovered => theme.accent,
+                _ => theme.accent,
             };
             button::Style {
                 background: Some(bg.into()),
-                text_color: THEME.text_primary,
+                text_color: theme.text_primary,
                 border: iced::Border {
                     radius: BORDER_RADIUS.into(),
                     ..Default::default()
@@ -190,11 +190,11 @@ fn new_host_dialog_view(state: &HostKeyDialogState) -> Element<'static, Message>
     .padding(24)
     .width(Length::Fixed(480.0));
 
-    dialog_backdrop(content)
+    dialog_backdrop(content, theme)
 }
 
 /// Dialog for hosts with changed keys (MITM warning)
-fn changed_host_dialog_view(state: &HostKeyDialogState) -> Element<'static, Message> {
+fn changed_host_dialog_view(state: &HostKeyDialogState, theme: Theme) -> Element<'static, Message> {
     let warning_color = iced::Color::from_rgb8(220, 50, 50);
 
     let warning_icon = text("!").size(48).color(warning_color);
@@ -205,7 +205,7 @@ fn changed_host_dialog_view(state: &HostKeyDialogState) -> Element<'static, Mess
 
     let host_info = text(format!("{}:{}", state.host, state.port))
         .size(14)
-        .color(THEME.text_secondary);
+        .color(theme.text_secondary);
 
     let mitm_warning = text(
         "IT IS POSSIBLE THAT SOMEONE IS DOING SOMETHING NASTY!\n\
@@ -213,24 +213,24 @@ fn changed_host_dialog_view(state: &HostKeyDialogState) -> Element<'static, Mess
         It is also possible that a host key has just been changed.",
     )
     .size(13)
-    .color(THEME.text_primary);
+    .color(theme.text_primary);
 
     let old_fp_label = text("Previous fingerprint:")
         .size(12)
-        .color(THEME.text_muted);
+        .color(theme.text_muted);
 
     let old_fingerprint = state.old_fingerprint.as_deref().unwrap_or("unknown");
     let old_fp_text = text(old_fingerprint.to_string())
         .size(11)
-        .color(THEME.text_secondary);
+        .color(theme.text_secondary);
 
     let new_fp_label = text(format!("New {} fingerprint:", state.key_type))
         .size(12)
-        .color(THEME.text_muted);
+        .color(theme.text_muted);
 
     let new_fp_text = text(state.fingerprint.clone())
         .size(11)
-        .color(THEME.text_primary);
+        .color(theme.text_primary);
 
     let fingerprint_box = container(
         column![old_fp_label, old_fp_text, Space::with_height(8), new_fp_label, new_fp_text,]
@@ -238,8 +238,8 @@ fn changed_host_dialog_view(state: &HostKeyDialogState) -> Element<'static, Mess
     )
     .padding(12)
     .width(Length::Fill)
-    .style(|_theme| container::Style {
-        background: Some(THEME.background.into()),
+    .style(move |_theme| container::Style {
+        background: Some(theme.background.into()),
         border: iced::Border {
             color: iced::Color::from_rgb8(180, 40, 40),
             width: 1.0,
@@ -249,16 +249,16 @@ fn changed_host_dialog_view(state: &HostKeyDialogState) -> Element<'static, Mess
     });
 
     // For changed host, make Reject the primary action
-    let accept_button = button(text("Accept Anyway").size(14).color(THEME.text_primary))
+    let accept_button = button(text("Accept Anyway").size(14).color(theme.text_primary))
         .padding([8, 16])
-        .style(|_theme, status| {
+        .style(move |_theme, status| {
             let bg = match status {
                 button::Status::Hovered => iced::Color::from_rgb8(180, 40, 40),
                 _ => iced::Color::from_rgb8(140, 30, 30),
             };
             button::Style {
                 background: Some(bg.into()),
-                text_color: THEME.text_primary,
+                text_color: theme.text_primary,
                 border: iced::Border {
                     radius: BORDER_RADIUS.into(),
                     ..Default::default()
@@ -268,16 +268,16 @@ fn changed_host_dialog_view(state: &HostKeyDialogState) -> Element<'static, Mess
         })
         .on_press(Message::HostKeyVerificationAccept);
 
-    let reject_button = button(text("Reject").size(14).color(THEME.text_primary))
+    let reject_button = button(text("Reject").size(14).color(theme.text_primary))
         .padding([8, 16])
-        .style(|_theme, status| {
+        .style(move |_theme, status| {
             let bg = match status {
-                button::Status::Hovered => THEME.accent,
-                _ => THEME.accent,
+                button::Status::Hovered => theme.accent,
+                _ => theme.accent,
             };
             button::Style {
                 background: Some(bg.into()),
-                text_color: THEME.text_primary,
+                text_color: theme.text_primary,
                 border: iced::Border {
                     radius: BORDER_RADIUS.into(),
                     ..Default::default()
@@ -309,15 +309,18 @@ fn changed_host_dialog_view(state: &HostKeyDialogState) -> Element<'static, Mess
     .padding(24)
     .width(Length::Fixed(520.0));
 
-    dialog_backdrop(content)
+    dialog_backdrop(content, theme)
 }
 
 /// Helper to wrap dialog content in a backdrop
-fn dialog_backdrop(content: impl Into<Element<'static, Message>>) -> Element<'static, Message> {
-    let dialog_box = container(content).style(|_theme| container::Style {
-        background: Some(THEME.surface.into()),
+fn dialog_backdrop(
+    content: impl Into<Element<'static, Message>>,
+    theme: Theme,
+) -> Element<'static, Message> {
+    let dialog_box = container(content).style(move |_theme| container::Style {
+        background: Some(theme.surface.into()),
         border: iced::Border {
-            color: THEME.border,
+            color: theme.border,
             width: 1.0,
             radius: (BORDER_RADIUS * 2.0).into(),
         },
@@ -338,7 +341,7 @@ fn dialog_backdrop(content: impl Into<Element<'static, Message>>) -> Element<'st
     )
     .width(Length::Fill)
     .height(Length::Fill)
-    .style(|_theme| container::Style {
+    .style(move |_theme| container::Style {
         background: Some(iced::Color::from_rgba8(0, 0, 0, 0.7).into()),
         ..Default::default()
     })

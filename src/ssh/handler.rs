@@ -91,7 +91,6 @@ impl Handler for ClientHandler {
                             port,
                             fingerprint: fingerprint.clone(),
                             key_type: key_type.clone(),
-                            key: key.clone(),
                         },
                         responder: tx,
                     };
@@ -162,7 +161,6 @@ impl Handler for ClientHandler {
                             port,
                             fingerprint: new_fingerprint.clone(),
                             key_type: key_type.clone(),
-                            key: key.clone(),
                         },
                         old_fingerprint: old_fingerprint.clone(),
                         responder: tx,

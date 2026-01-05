@@ -10,7 +10,7 @@ use uuid::Uuid;
 use crate::icons::{self, icon_with_color};
 use crate::message::Message;
 use crate::sftp::{format_size, FileEntry, FileIcon, SortOrder};
-use crate::theme::THEME;
+use crate::theme::Theme;
 use crate::widgets::mouse_area;
 
 // ============================================================================
@@ -76,18 +76,6 @@ impl FilePaneState {
         }
     }
 
-    pub fn new_remote(session_id: SessionId, host_name: String, home_dir: PathBuf) -> Self {
-        Self {
-            source: PaneSource::Remote { session_id, host_name },
-            current_path: home_dir,
-            entries: Vec::new(),
-            selected_indices: HashSet::new(),
-            last_selected_index: None,
-            sort_order: SortOrder::default(),
-            loading: true,
-            error: None,
-        }
-    }
 
     pub fn set_entries(&mut self, mut entries: Vec<FileEntry>) {
         self.sort_order.sort(&mut entries);
@@ -110,31 +98,6 @@ impl FilePaneState {
         self.last_selected_index = Some(index);
     }
 
-    /// Toggle selection of an item (Ctrl+click)
-    pub fn toggle_select(&mut self, index: usize) {
-        if self.selected_indices.contains(&index) {
-            self.selected_indices.remove(&index);
-        } else {
-            self.selected_indices.insert(index);
-        }
-        self.last_selected_index = Some(index);
-    }
-
-    /// Select a range from last selection to index (Shift+click)
-    pub fn range_select(&mut self, index: usize) {
-        if let Some(anchor) = self.last_selected_index {
-            let (start, end) = if anchor <= index {
-                (anchor, index)
-            } else {
-                (index, anchor)
-            };
-            for i in start..=end {
-                self.selected_indices.insert(i);
-            }
-        } else {
-            self.select(index);
-        }
-    }
 
     /// Check if an index is selected
     pub fn is_selected(&self, index: usize) -> bool {
@@ -149,31 +112,7 @@ impl FilePaneState {
             .collect()
     }
 
-    /// Get the first selected entry (for single selection operations)
-    pub fn selected_entry(&self) -> Option<&FileEntry> {
-        self.selected_indices
-            .iter()
-            .next()
-            .and_then(|&i| self.entries.get(i))
-    }
 
-    /// Clear all selections
-    pub fn clear_selection(&mut self) {
-        self.selected_indices.clear();
-        self.last_selected_index = None;
-    }
-
-    /// Select all entries
-    pub fn select_all(&mut self) {
-        self.selected_indices = (0..self.entries.len()).collect();
-    }
-}
-
-/// Available source option for pane dropdown
-#[derive(Debug, Clone)]
-pub struct SourceOption {
-    pub source: PaneSource,
-    pub display_name: String,
 }
 
 /// Context menu action types
@@ -486,6 +425,7 @@ fn file_icon_data(icon_type: FileIcon) -> &'static [u8] {
 pub fn dual_pane_sftp_view(
     state: &DualPaneSftpState,
     available_hosts: Vec<(Uuid, String)>,
+    theme: Theme,
 ) -> Element<'_, Message> {
     let left_pane = single_pane_view(
         &state.left_pane,
@@ -493,6 +433,7 @@ pub fn dual_pane_sftp_view(
         state.tab_id,
         available_hosts.clone(),
         state.active_pane == PaneId::Left,
+        theme,
     );
 
     let right_pane = single_pane_view(
@@ -501,14 +442,15 @@ pub fn dual_pane_sftp_view(
         state.tab_id,
         available_hosts,
         state.active_pane == PaneId::Right,
+        theme,
     );
 
     // Vertical divider between panes
     let divider = container(Space::with_width(0))
         .width(Length::Fixed(1.0))
         .height(Fill)
-        .style(|_| container::Style {
-            background: Some(THEME.border.into()),
+        .style(move |_| container::Style {
+            background: Some(theme.border.into()),
             ..Default::default()
         });
 
@@ -517,22 +459,22 @@ pub fn dual_pane_sftp_view(
     let main = container(content)
         .width(Fill)
         .height(Fill)
-        .style(|_theme| container::Style {
-            background: Some(THEME.background.into()),
+        .style(move |_theme| container::Style {
+            background: Some(theme.background.into()),
             ..Default::default()
         });
 
     // Overlay dialog if open (context menu is rendered at app level for correct positioning)
     if state.dialog.is_some() {
-        stack![main, sftp_dialog_view(state)].into()
+        stack![main, sftp_dialog_view(state, theme)].into()
     } else {
         main.into()
     }
 }
 
 /// Build the context menu overlay - should be rendered at app level for correct window positioning
-pub fn sftp_context_menu_overlay(state: &DualPaneSftpState) -> Element<'_, Message> {
-    context_menu_view(state)
+pub fn sftp_context_menu_overlay(state: &DualPaneSftpState, theme: Theme) -> Element<'_, Message> {
+    context_menu_view(state, theme)
 }
 
 /// Build a single pane view for the dual-pane browser
@@ -542,10 +484,11 @@ fn single_pane_view(
     tab_id: SessionId,
     available_hosts: Vec<(Uuid, String)>,
     is_active: bool,
+    theme: Theme,
 ) -> Element<'_, Message> {
-    let header = pane_header(state, pane_id, tab_id, available_hosts, is_active);
-    let file_list = pane_file_list(state, pane_id, tab_id);
-    let footer = pane_footer(state, pane_id, tab_id);
+    let header = pane_header(state, pane_id, tab_id, available_hosts, is_active, theme);
+    let file_list = pane_file_list(state, pane_id, tab_id, theme);
+    let footer = pane_footer(state, pane_id, tab_id, theme);
 
     let content = column![header, file_list, footer].spacing(0);
 
@@ -563,6 +506,7 @@ fn pane_header(
     tab_id: SessionId,
     available_hosts: Vec<(Uuid, String)>,
     is_active: bool,
+    theme: Theme,
 ) -> Element<'_, Message> {
     let path_text = state.current_path.to_string_lossy().to_string();
 
@@ -599,15 +543,15 @@ fn pane_header(
     .padding([4, 8]);
 
     // Navigation buttons
-    let up_btn = button(icon_with_color(icons::ui::CHEVRON_LEFT, 14, THEME.text_primary))
-        .style(|_theme, status| {
+    let up_btn = button(icon_with_color(icons::ui::CHEVRON_LEFT, 14, theme.text_primary))
+        .style(move |_theme, status| {
             let bg = match status {
-                iced::widget::button::Status::Hovered => Some(THEME.hover.into()),
-                _ => Some(THEME.surface.into()),
+                iced::widget::button::Status::Hovered => Some(theme.hover.into()),
+                _ => Some(theme.surface.into()),
             };
             iced::widget::button::Style {
                 background: bg,
-                text_color: THEME.text_primary,
+                text_color: theme.text_primary,
                 border: iced::Border {
                     radius: 4.0.into(),
                     ..Default::default()
@@ -618,15 +562,15 @@ fn pane_header(
         .padding([4, 8])
         .on_press(Message::DualSftpPaneNavigateUp(tab_id, pane_id));
 
-    let refresh_btn = button(icon_with_color(icons::ui::REFRESH, 14, THEME.text_primary))
-        .style(|_theme, status| {
+    let refresh_btn = button(icon_with_color(icons::ui::REFRESH, 14, theme.text_primary))
+        .style(move |_theme, status| {
             let bg = match status {
-                iced::widget::button::Status::Hovered => Some(THEME.hover.into()),
-                _ => Some(THEME.surface.into()),
+                iced::widget::button::Status::Hovered => Some(theme.hover.into()),
+                _ => Some(theme.surface.into()),
             };
             iced::widget::button::Style {
                 background: bg,
-                text_color: THEME.text_primary,
+                text_color: theme.text_primary,
                 border: iced::Border {
                     radius: 4.0.into(),
                     ..Default::default()
@@ -638,13 +582,13 @@ fn pane_header(
         .on_press(Message::DualSftpPaneRefresh(tab_id, pane_id));
 
     // Path bar
-    let path_bar = container(text(path_text).size(12).color(THEME.text_primary))
+    let path_bar = container(text(path_text).size(12).color(theme.text_primary))
         .padding(Padding::new(6.0).left(8.0).right(8.0))
         .width(Fill)
-        .style(|_theme| container::Style {
-            background: Some(THEME.surface.into()),
+        .style(move |_theme| container::Style {
+            background: Some(theme.surface.into()),
             border: iced::Border {
-                color: THEME.border,
+                color: theme.border,
                 width: 1.0,
                 radius: 4.0.into(),
             },
@@ -652,7 +596,7 @@ fn pane_header(
         });
 
     // Active pane indicator: colored top border
-    let border_color = if is_active { THEME.accent } else { THEME.border };
+    let border_color = if is_active { theme.accent } else { theme.border };
 
     container(
         row![source_picker, up_btn, refresh_btn, path_bar]
@@ -662,7 +606,7 @@ fn pane_header(
     )
     .width(Fill)
     .style(move |_theme| container::Style {
-        background: Some(THEME.surface.into()),
+        background: Some(theme.surface.into()),
         border: iced::Border {
             color: border_color,
             width: if is_active { 2.0 } else { 1.0 },
@@ -678,9 +622,10 @@ fn pane_file_list<'a>(
     state: &'a FilePaneState,
     pane_id: PaneId,
     tab_id: SessionId,
+    theme: Theme,
 ) -> Element<'a, Message> {
     if state.loading {
-        return container(text("Loading...").size(14).color(THEME.text_muted))
+        return container(text("Loading...").size(14).color(theme.text_muted))
             .width(Fill)
             .height(Fill)
             .align_x(Alignment::Center)
@@ -691,8 +636,8 @@ fn pane_file_list<'a>(
     if let Some(ref error) = state.error {
         return container(
             column![
-                text("Error").size(16).color(THEME.text_primary),
-                text(error).size(12).color(THEME.text_muted),
+                text("Error").size(16).color(theme.text_primary),
+                text(error).size(12).color(theme.text_muted),
             ]
             .spacing(8)
             .align_x(Alignment::Center),
@@ -707,8 +652,8 @@ fn pane_file_list<'a>(
     if state.entries.is_empty() {
         return container(
             column![
-                icon_with_color(icons::files::FOLDER, 32, THEME.text_muted),
-                text("Empty directory").size(14).color(THEME.text_muted),
+                icon_with_color(icons::files::FOLDER, 32, theme.text_muted),
+                text("Empty directory").size(14).color(theme.text_muted),
             ]
             .spacing(8)
             .align_x(Alignment::Center),
@@ -725,28 +670,28 @@ fn pane_file_list<'a>(
         row![
             text("Name")
                 .size(12)
-                .color(THEME.text_muted)
+                .color(theme.text_muted)
                 .width(Length::FillPortion(4)),
             text("Date Modified")
                 .size(12)
-                .color(THEME.text_muted)
+                .color(theme.text_muted)
                 .width(Length::FillPortion(2)),
             text("Size")
                 .size(12)
-                .color(THEME.text_muted)
+                .color(theme.text_muted)
                 .width(Length::FillPortion(1)),
             text("Kind")
                 .size(12)
-                .color(THEME.text_muted)
+                .color(theme.text_muted)
                 .width(Length::FillPortion(2)),
         ]
         .spacing(8)
         .padding(Padding::new(8.0).left(12.0).right(12.0)),
     )
-    .style(|_theme| container::Style {
-        background: Some(THEME.surface.into()),
+    .style(move |_theme| container::Style {
+        background: Some(theme.surface.into()),
         border: iced::Border {
-            color: THEME.border,
+            color: theme.border,
             width: 1.0,
             radius: 0.0.into(),
         },
@@ -759,7 +704,7 @@ fn pane_file_list<'a>(
         .iter()
         .enumerate()
         .map(|(index, entry)| {
-            pane_file_entry_row(entry, index, state.is_selected(index), tab_id, pane_id)
+            pane_file_entry_row(entry, index, state.is_selected(index), tab_id, pane_id, theme)
         })
         .collect();
 
@@ -777,6 +722,7 @@ fn pane_file_entry_row(
     is_selected: bool,
     tab_id: SessionId,
     pane_id: PaneId,
+    theme: Theme,
 ) -> Element<'static, Message> {
     let icon_type = entry.icon_type();
     let icon_data = file_icon_data(icon_type);
@@ -788,23 +734,23 @@ fn pane_file_entry_row(
     };
 
     let bg_color = if is_selected {
-        THEME.accent
+        theme.accent
     } else {
-        THEME.background
+        theme.background
     };
 
     let text_color = if is_selected {
-        THEME.background
+        theme.background
     } else {
-        THEME.text_primary
+        theme.text_primary
     };
 
     let icon_color = if is_selected {
-        THEME.background
+        theme.background
     } else if entry.is_dir {
-        THEME.accent
+        theme.accent
     } else {
-        THEME.text_secondary
+        theme.text_secondary
     };
 
     let path = entry.path.clone();
@@ -823,7 +769,7 @@ fn pane_file_entry_row(
     let secondary_color = if is_selected {
         text_color
     } else {
-        THEME.text_secondary
+        theme.text_secondary
     };
 
     let content = row![
@@ -851,7 +797,7 @@ fn pane_file_entry_row(
     )
     .style(move |_theme, status| {
         let background = match status {
-            iced::widget::button::Status::Hovered if !is_selected => THEME.hover,
+            iced::widget::button::Status::Hovered if !is_selected => theme.hover,
             _ => bg_color,
         };
         iced::widget::button::Style {
@@ -882,6 +828,7 @@ fn pane_footer<'a>(
     state: &'a FilePaneState,
     _pane_id: PaneId,
     _tab_id: SessionId,
+    theme: Theme,
 ) -> Element<'a, Message> {
     let item_count = state.entries.len();
     let selected_count = state.selected_indices.len();
@@ -894,16 +841,16 @@ fn pane_footer<'a>(
     };
 
     container(
-        row![text(status).size(12).color(THEME.text_muted),]
+        row![text(status).size(12).color(theme.text_muted),]
             .spacing(8)
             .padding(8)
             .align_y(Alignment::Center),
     )
     .width(Fill)
-    .style(|_theme| container::Style {
-        background: Some(THEME.surface.into()),
+    .style(move |_theme| container::Style {
+        background: Some(theme.surface.into()),
         border: iced::Border {
-            color: THEME.border,
+            color: theme.border,
             width: 1.0,
             radius: 0.0.into(),
         },
@@ -922,11 +869,12 @@ fn context_menu_item<'a>(
     action: ContextMenuAction,
     tab_id: SessionId,
     enabled: bool,
+    theme: Theme,
 ) -> Element<'a, Message> {
     let text_color = if enabled {
-        THEME.text_primary
+        theme.text_primary
     } else {
-        THEME.text_muted
+        theme.text_muted
     };
 
     let btn = button(
@@ -937,7 +885,7 @@ fn context_menu_item<'a>(
     .style(move |_theme, status| {
         let bg = if enabled {
             match status {
-                iced::widget::button::Status::Hovered => Some(THEME.hover.into()),
+                iced::widget::button::Status::Hovered => Some(theme.hover.into()),
                 _ => None,
             }
         } else {
@@ -959,11 +907,11 @@ fn context_menu_item<'a>(
 }
 
 /// Build a divider for context menu
-fn context_menu_divider<'a>() -> Element<'a, Message> {
+fn context_menu_divider<'a>(theme: Theme) -> Element<'a, Message> {
     container(Space::with_height(1))
         .width(Fill)
-        .style(|_| container::Style {
-            background: Some(THEME.border.into()),
+        .style(move |_| container::Style {
+            background: Some(theme.border.into()),
             ..Default::default()
         })
         .padding([4, 8])
@@ -973,6 +921,7 @@ fn context_menu_divider<'a>() -> Element<'a, Message> {
 /// Build the context menu overlay
 fn context_menu_view(
     state: &DualPaneSftpState,
+    theme: Theme,
 ) -> Element<'_, Message> {
     if !state.context_menu.visible {
         return Space::new(0, 0).into();
@@ -995,46 +944,46 @@ fn context_menu_view(
 
     // Open / Open With (only for single file selection)
     if is_single && is_file_selected {
-        items.push(context_menu_item("Open", ContextMenuAction::Open, tab_id, true));
-        items.push(context_menu_item("Open With...", ContextMenuAction::OpenWith, tab_id, true));
-        items.push(context_menu_divider());
+        items.push(context_menu_item("Open", ContextMenuAction::Open, tab_id, true, theme));
+        items.push(context_menu_item("Open With...", ContextMenuAction::OpenWith, tab_id, true, theme));
+        items.push(context_menu_divider(theme));
     }
 
     // Copy to target (for any selection except parent directory)
     if has_selection && !has_parent {
-        items.push(context_menu_item("Copy to Target", ContextMenuAction::CopyToTarget, tab_id, true));
+        items.push(context_menu_item("Copy to Target", ContextMenuAction::CopyToTarget, tab_id, true, theme));
     }
 
     // Rename (only for single non-parent selection)
     if is_single && !has_parent {
-        items.push(context_menu_item("Rename", ContextMenuAction::Rename, tab_id, true));
+        items.push(context_menu_item("Rename", ContextMenuAction::Rename, tab_id, true, theme));
     }
 
     // Delete (for any selection except parent directory)
     if has_selection && !has_parent {
-        items.push(context_menu_item("Delete", ContextMenuAction::Delete, tab_id, true));
+        items.push(context_menu_item("Delete", ContextMenuAction::Delete, tab_id, true, theme));
     }
 
     if has_selection && !has_parent {
-        items.push(context_menu_divider());
+        items.push(context_menu_divider(theme));
     }
 
     // Always available actions
-    items.push(context_menu_item("Refresh", ContextMenuAction::Refresh, tab_id, true));
-    items.push(context_menu_item("New Folder", ContextMenuAction::NewFolder, tab_id, true));
+    items.push(context_menu_item("Refresh", ContextMenuAction::Refresh, tab_id, true, theme));
+    items.push(context_menu_item("New Folder", ContextMenuAction::NewFolder, tab_id, true, theme));
 
     // Edit Permissions (only for single file/folder selection, not parent)
     if is_single && !has_parent {
-        items.push(context_menu_divider());
-        items.push(context_menu_item("Edit Permissions", ContextMenuAction::EditPermissions, tab_id, true));
+        items.push(context_menu_divider(theme));
+        items.push(context_menu_item("Edit Permissions", ContextMenuAction::EditPermissions, tab_id, true, theme));
     }
 
     let menu = container(Column::with_children(items).spacing(2))
         .padding(4)
-        .style(|_| container::Style {
-            background: Some(THEME.surface.into()),
+        .style(move |_| container::Style {
+            background: Some(theme.surface.into()),
             border: iced::Border {
-                color: THEME.border,
+                color: theme.border,
                 width: 1.0,
                 radius: 6.0.into(),
             },
@@ -1072,7 +1021,7 @@ fn context_menu_view(
 // ============================================================================
 
 /// Build the SFTP dialog overlay (New Folder, Rename, or Delete)
-fn sftp_dialog_view(state: &DualPaneSftpState) -> Element<'_, Message> {
+fn sftp_dialog_view(state: &DualPaneSftpState, theme: Theme) -> Element<'_, Message> {
     let Some(ref dialog) = state.dialog else {
         return Space::new(0, 0).into();
     };
@@ -1082,22 +1031,22 @@ fn sftp_dialog_view(state: &DualPaneSftpState) -> Element<'_, Message> {
     // Build dialog content based on type
     let dialog_content: Element<'_, Message> = match &dialog.dialog_type {
         SftpDialogType::Delete { entries } => {
-            build_delete_dialog(tab_id, entries, dialog.error.as_deref())
+            build_delete_dialog(tab_id, entries, dialog.error.as_deref(), theme)
         }
         SftpDialogType::EditPermissions { name, permissions, .. } => {
-            build_permissions_dialog(tab_id, name, permissions, dialog.error.as_deref())
+            build_permissions_dialog(tab_id, name, permissions, dialog.error.as_deref(), theme)
         }
         _ => {
-            build_input_dialog(tab_id, dialog)
+            build_input_dialog(tab_id, dialog, theme)
         }
     };
 
     // Dialog box with styling
     let dialog_box = container(dialog_content)
-        .style(|_| container::Style {
-            background: Some(THEME.surface.into()),
+        .style(move |_| container::Style {
+            background: Some(theme.surface.into()),
             border: iced::Border {
-                color: THEME.border,
+                color: theme.border,
                 width: 1.0,
                 radius: 8.0.into(),
             },
@@ -1119,7 +1068,7 @@ fn sftp_dialog_view(state: &DualPaneSftpState) -> Element<'_, Message> {
     )
     .width(Fill)
     .height(Fill)
-    .style(|_| container::Style {
+    .style(move |_| container::Style {
         background: Some(iced::Color::from_rgba8(0, 0, 0, 0.5).into()),
         ..Default::default()
     });
@@ -1128,7 +1077,11 @@ fn sftp_dialog_view(state: &DualPaneSftpState) -> Element<'_, Message> {
 }
 
 /// Build input dialog for New Folder, Rename, or Open With
-fn build_input_dialog(tab_id: SessionId, dialog: &SftpDialogState) -> Element<'_, Message> {
+fn build_input_dialog(
+    tab_id: SessionId,
+    dialog: &SftpDialogState,
+    theme: Theme,
+) -> Element<'_, Message> {
     let (title, placeholder, submit_label, subtitle) = match &dialog.dialog_type {
         SftpDialogType::NewFolder => ("New Folder", "Folder name", "Create", None),
         SftpDialogType::Rename { .. } => ("Rename", "New name", "Rename", None),
@@ -1141,7 +1094,7 @@ fn build_input_dialog(tab_id: SessionId, dialog: &SftpDialogState) -> Element<'_
         SftpDialogType::Delete { .. } | SftpDialogType::EditPermissions { .. } => unreachable!(),
     };
 
-    let title_text = text(title).size(18).color(THEME.text_primary);
+    let title_text = text(title).size(18).color(theme.text_primary);
 
     let input_value = dialog.input_value.clone();
     let input = text_input(placeholder, &input_value)
@@ -1149,17 +1102,17 @@ fn build_input_dialog(tab_id: SessionId, dialog: &SftpDialogState) -> Element<'_
         .on_submit(Message::DualSftpDialogSubmit(tab_id))
         .padding([10, 12])
         .size(14)
-        .style(|_theme, _status| text_input::Style {
-            background: THEME.background.into(),
+        .style(move |_theme, _status| text_input::Style {
+            background: theme.background.into(),
             border: iced::Border {
-                color: THEME.border,
+                color: theme.border,
                 width: 1.0,
                 radius: 4.0.into(),
             },
-            icon: THEME.text_muted,
-            placeholder: THEME.text_muted,
-            value: THEME.text_primary,
-            selection: THEME.accent,
+            icon: theme.text_muted,
+            placeholder: theme.text_muted,
+            value: theme.text_primary,
+            selection: theme.accent,
         });
 
     // Error message if any
@@ -1172,10 +1125,10 @@ fn build_input_dialog(tab_id: SessionId, dialog: &SftpDialogState) -> Element<'_
         Space::new(0, 0).into()
     };
 
-    let cancel_btn = dialog_cancel_button(tab_id);
+    let cancel_btn = dialog_cancel_button(tab_id, theme);
 
     let is_valid = dialog.is_valid();
-    let submit_btn = dialog_submit_button(tab_id, submit_label, is_valid, false);
+    let submit_btn = dialog_submit_button(tab_id, submit_label, is_valid, false, theme);
 
     let button_row = row![Space::with_width(Fill), cancel_btn, submit_btn].spacing(8);
 
@@ -1183,7 +1136,7 @@ fn build_input_dialog(tab_id: SessionId, dialog: &SftpDialogState) -> Element<'_
     let subtitle_element: Element<'_, Message> = if let Some(subtitle) = subtitle {
         text(subtitle)
             .size(13)
-            .color(THEME.text_muted)
+            .color(theme.text_muted)
             .into()
     } else {
         Space::new(0, 0).into()
@@ -1209,8 +1162,9 @@ fn build_delete_dialog<'a>(
     tab_id: SessionId,
     entries: &'a [(String, PathBuf, bool)],
     error: Option<&'a str>,
+    theme: Theme,
 ) -> Element<'a, Message> {
-    let title_text = text("Delete").size(18).color(THEME.text_primary);
+    let title_text = text("Delete").size(18).color(theme.text_primary);
 
     // Build the confirmation message
     let count = entries.len();
@@ -1231,7 +1185,7 @@ fn build_delete_dialog<'a>(
 
     let warning_text = text(warning_msg)
         .size(14)
-        .color(THEME.text_secondary);
+        .color(theme.text_secondary);
 
     // List the items to be deleted (show up to 5)
     let items_list: Element<'_, Message> = if count <= 5 {
@@ -1243,8 +1197,8 @@ fn build_delete_dialog<'a>(
                 } else {
                     crate::icons::files::FILE
                 };
-                let icon = icon_with_color(icon_data, 14, THEME.text_muted);
-                row![icon, text(name).size(13).color(THEME.text_secondary)]
+                let icon = icon_with_color(icon_data, 14, theme.text_muted);
+                row![icon, text(name).size(13).color(theme.text_secondary)]
                     .spacing(8)
                     .align_y(Alignment::Center)
                     .into()
@@ -1266,8 +1220,8 @@ fn build_delete_dialog<'a>(
                 } else {
                     crate::icons::files::FILE
                 };
-                let icon = icon_with_color(icon_data, 14, THEME.text_muted);
-                row![icon, text(name).size(13).color(THEME.text_secondary)]
+                let icon = icon_with_color(icon_data, 14, theme.text_muted);
+                row![icon, text(name).size(13).color(theme.text_secondary)]
                     .spacing(8)
                     .align_y(Alignment::Center)
                     .into()
@@ -1277,7 +1231,7 @@ fn build_delete_dialog<'a>(
         items.push(
             text(format!("... and {} more", count - 3))
                 .size(13)
-                .color(THEME.text_muted)
+                .color(theme.text_muted)
                 .into()
         );
 
@@ -1290,10 +1244,10 @@ fn build_delete_dialog<'a>(
     // Items container with background
     let items_container = container(items_list)
         .width(Fill)
-        .style(|_| container::Style {
-            background: Some(THEME.background.into()),
+        .style(move |_| container::Style {
+            background: Some(theme.background.into()),
             border: iced::Border {
-                color: THEME.border,
+                color: theme.border,
                 width: 1.0,
                 radius: 4.0.into(),
             },
@@ -1320,8 +1274,8 @@ fn build_delete_dialog<'a>(
         Space::new(0, 0).into()
     };
 
-    let cancel_btn = dialog_cancel_button(tab_id);
-    let delete_btn = dialog_submit_button(tab_id, "Delete", true, true);
+    let cancel_btn = dialog_cancel_button(tab_id, theme);
+    let delete_btn = dialog_submit_button(tab_id, "Delete", true, true, theme);
 
     let button_row = row![Space::with_width(Fill), cancel_btn, delete_btn].spacing(8);
 
@@ -1349,13 +1303,14 @@ fn build_permissions_dialog<'a>(
     name: &'a str,
     permissions: &'a PermissionBits,
     error: Option<&'a str>,
+    theme: Theme,
 ) -> Element<'a, Message> {
-    let title_text = text("Edit Permissions").size(18).color(THEME.text_primary);
+    let title_text = text("Edit Permissions").size(18).color(theme.text_primary);
 
     // File name display
     let file_info = row![
-        icon_with_color(crate::icons::files::FILE, 16, THEME.text_muted),
-        text(name).size(14).color(THEME.text_secondary)
+        icon_with_color(crate::icons::files::FILE, 16, theme.text_muted),
+        text(name).size(14).color(theme.text_secondary)
     ]
     .spacing(8)
     .align_y(Alignment::Center);
@@ -1363,14 +1318,14 @@ fn build_permissions_dialog<'a>(
     // Current mode display
     let mode_text = text(format!("Mode: {}", permissions.as_octal_string()))
         .size(13)
-        .color(THEME.text_muted);
+        .color(theme.text_muted);
 
     // Permission grid headers
     let header_row = row![
         Space::with_width(Length::Fixed(80.0)),
-        text("Read").size(12).color(THEME.text_muted).width(Length::Fixed(60.0)),
-        text("Write").size(12).color(THEME.text_muted).width(Length::Fixed(60.0)),
-        text("Execute").size(12).color(THEME.text_muted).width(Length::Fixed(60.0)),
+        text("Read").size(12).color(theme.text_muted).width(Length::Fixed(60.0)),
+        text("Write").size(12).color(theme.text_muted).width(Length::Fixed(60.0)),
+        text("Execute").size(12).color(theme.text_muted).width(Length::Fixed(60.0)),
     ]
     .spacing(8)
     .align_y(Alignment::Center);
@@ -1385,6 +1340,7 @@ fn build_permissions_dialog<'a>(
         PermissionBit::OwnerRead,
         PermissionBit::OwnerWrite,
         PermissionBit::OwnerExecute,
+        theme,
     );
 
     // Group row
@@ -1397,6 +1353,7 @@ fn build_permissions_dialog<'a>(
         PermissionBit::GroupRead,
         PermissionBit::GroupWrite,
         PermissionBit::GroupExecute,
+        theme,
     );
 
     // Other row
@@ -1409,6 +1366,7 @@ fn build_permissions_dialog<'a>(
         PermissionBit::OtherRead,
         PermissionBit::OtherWrite,
         PermissionBit::OtherExecute,
+        theme,
     );
 
     // Permission grid
@@ -1417,10 +1375,10 @@ fn build_permissions_dialog<'a>(
     )
     .padding(12)
     .width(Fill)
-    .style(|_| container::Style {
-        background: Some(THEME.background.into()),
+    .style(move |_| container::Style {
+        background: Some(theme.background.into()),
         border: iced::Border {
-            color: THEME.border,
+            color: theme.border,
             width: 1.0,
             radius: 4.0.into(),
         },
@@ -1437,8 +1395,8 @@ fn build_permissions_dialog<'a>(
         Space::new(0, 0).into()
     };
 
-    let cancel_btn = dialog_cancel_button(tab_id);
-    let apply_btn = dialog_submit_button(tab_id, "Apply", true, false);
+    let cancel_btn = dialog_cancel_button(tab_id, theme);
+    let apply_btn = dialog_submit_button(tab_id, "Apply", true, false, theme);
 
     let button_row = row![Space::with_width(Fill), cancel_btn, apply_btn].spacing(8);
 
@@ -1469,12 +1427,13 @@ fn permission_row<'a>(
     read_bit: PermissionBit,
     write_bit: PermissionBit,
     execute_bit: PermissionBit,
+    theme: Theme,
 ) -> Element<'a, Message> {
     row![
-        text(label).size(13).color(THEME.text_primary).width(Length::Fixed(80.0)),
-        permission_checkbox(tab_id, read, read_bit),
-        permission_checkbox(tab_id, write, write_bit),
-        permission_checkbox(tab_id, execute, execute_bit),
+        text(label).size(13).color(theme.text_primary).width(Length::Fixed(80.0)),
+        permission_checkbox(tab_id, read, read_bit, theme),
+        permission_checkbox(tab_id, write, write_bit, theme),
+        permission_checkbox(tab_id, execute, execute_bit, theme),
     ]
     .spacing(8)
     .align_y(Alignment::Center)
@@ -1486,10 +1445,11 @@ fn permission_checkbox(
     tab_id: SessionId,
     checked: bool,
     bit: PermissionBit,
+    theme: Theme,
 ) -> iced::widget::Button<'static, Message> {
     let icon = if checked { "✓" } else { "" };
-    let bg_color = if checked { THEME.accent } else { THEME.background };
-    let text_color = if checked { THEME.background } else { THEME.text_muted };
+    let bg_color = if checked { theme.accent } else { theme.background };
+    let text_color = if checked { theme.background } else { theme.text_muted };
 
     button(
         container(text(icon).size(12).color(text_color))
@@ -1506,7 +1466,7 @@ fn permission_checkbox(
                 if checked {
                     iced::Color::from_rgb8(0, 100, 180)
                 } else {
-                    THEME.hover
+                    theme.hover
                 }
             }
             _ => bg_color,
@@ -1515,7 +1475,7 @@ fn permission_checkbox(
             background: Some(bg.into()),
             text_color,
             border: iced::Border {
-                color: THEME.border,
+                color: theme.border,
                 width: 1.0,
                 radius: 4.0.into(),
             },
@@ -1526,19 +1486,19 @@ fn permission_checkbox(
 }
 
 /// Create a cancel button for dialogs
-fn dialog_cancel_button(tab_id: SessionId) -> iced::widget::Button<'static, Message> {
-    button(text("Cancel").size(13).color(THEME.text_primary))
+fn dialog_cancel_button(tab_id: SessionId, theme: Theme) -> iced::widget::Button<'static, Message> {
+    button(text("Cancel").size(13).color(theme.text_primary))
         .padding([8, 16])
-        .style(|_theme, status| {
+        .style(move |_theme, status| {
             let bg = match status {
-                iced::widget::button::Status::Hovered => THEME.hover,
-                _ => THEME.surface,
+                iced::widget::button::Status::Hovered => theme.hover,
+                _ => theme.surface,
             };
             iced::widget::button::Style {
                 background: Some(bg.into()),
-                text_color: THEME.text_primary,
+                text_color: theme.text_primary,
                 border: iced::Border {
-                    color: THEME.border,
+                    color: theme.border,
                     width: 1.0,
                     radius: 4.0.into(),
                 },
@@ -1554,6 +1514,7 @@ fn dialog_submit_button(
     label: &str,
     is_valid: bool,
     is_destructive: bool,
+    theme: Theme,
 ) -> iced::widget::Button<'static, Message> {
     let (normal_color, hover_color) = if is_destructive {
         (
@@ -1561,10 +1522,10 @@ fn dialog_submit_button(
             iced::Color::from_rgb8(200, 70, 70),
         )
     } else {
-        (THEME.accent, iced::Color::from_rgb8(0, 100, 180))
+        (theme.accent, iced::Color::from_rgb8(0, 100, 180))
     };
 
-    let btn = button(text(label.to_string()).size(13).color(if is_valid { THEME.background } else { THEME.text_muted }))
+    let btn = button(text(label.to_string()).size(13).color(if is_valid { theme.background } else { theme.text_muted }))
         .padding([8, 16])
         .style(move |_theme, status| {
             let bg = if is_valid {
@@ -1573,11 +1534,11 @@ fn dialog_submit_button(
                     _ => normal_color,
                 }
             } else {
-                THEME.surface
+                theme.surface
             };
             iced::widget::button::Style {
                 background: Some(bg.into()),
-                text_color: if is_valid { THEME.background } else { THEME.text_muted },
+                text_color: if is_valid { theme.background } else { theme.text_muted },
                 border: iced::Border {
                     radius: 4.0.into(),
                     ..Default::default()

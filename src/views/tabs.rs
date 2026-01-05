@@ -5,7 +5,7 @@ use iced::{Alignment, Element, Length, Padding};
 use uuid::Uuid;
 
 use crate::message::Message;
-use crate::theme::THEME;
+use crate::theme::Theme;
 
 /// Represents a single tab
 #[derive(Debug, Clone)]
@@ -44,16 +44,17 @@ impl Tab {
 pub fn tab_bar_view<'a>(
     tabs: &'a [Tab],
     active_tab: Option<Uuid>,
+    theme: Theme,
 ) -> Element<'a, Message> {
     let mut tab_elements: Vec<Element<'a, Message>> = Vec::new();
 
     for tab in tabs {
         let is_active = active_tab == Some(tab.id);
-        tab_elements.push(tab_button(tab, is_active));
+        tab_elements.push(tab_button(tab, is_active, theme));
     }
 
     // Add "+" button for new connection
-    tab_elements.push(new_tab_button());
+    tab_elements.push(new_tab_button(theme));
 
     let tabs_row = Row::with_children(tab_elements)
         .spacing(2)
@@ -70,10 +71,10 @@ pub fn tab_bar_view<'a>(
         .padding(Padding::new(5.0).left(8.0).right(8.0)),
     )
     .width(Length::Fill)
-    .style(|_theme| container::Style {
-        background: Some(THEME.surface.into()),
+    .style(move |_theme| container::Style {
+        background: Some(theme.surface.into()),
         border: iced::Border {
-            color: THEME.border,
+            color: theme.border,
             width: 1.0,
             radius: 0.0.into(),
         },
@@ -83,7 +84,7 @@ pub fn tab_bar_view<'a>(
 }
 
 /// Single tab button
-fn tab_button(tab: &Tab, is_active: bool) -> Element<'_, Message> {
+fn tab_button(tab: &Tab, is_active: bool, theme: Theme) -> Element<'_, Message> {
     let tab_id = tab.id;
 
     // Tab icon based on type
@@ -102,16 +103,16 @@ fn tab_button(tab: &Tab, is_active: bool) -> Element<'_, Message> {
     let content = row![
         text(icon).size(11),
         text(title).size(13).color(if is_active {
-            THEME.text_primary
+            theme.text_primary
         } else {
-            THEME.text_secondary
+            theme.text_secondary
         }),
         // Close button
-        button(text("×").size(15).color(THEME.text_muted))
-            .style(|_theme, status| {
+        button(text("×").size(15).color(theme.text_muted))
+            .style(move |_theme, status| {
                 let text_color = match status {
-                    iced::widget::button::Status::Hovered => THEME.text_primary,
-                    _ => THEME.text_muted,
+                    iced::widget::button::Status::Hovered => theme.text_primary,
+                    _ => theme.text_muted,
                 };
                 iced::widget::button::Style {
                     background: None,
@@ -126,22 +127,22 @@ fn tab_button(tab: &Tab, is_active: bool) -> Element<'_, Message> {
     .align_y(Alignment::Center);
 
     let bg_color = if is_active {
-        THEME.background
+        theme.background
     } else {
-        THEME.surface
+        theme.surface
     };
 
     button(container(content).padding(Padding::new(7.0).left(11.0).right(6.0)))
         .style(move |_theme, status| {
             let background = match status {
-                iced::widget::button::Status::Hovered if !is_active => THEME.hover,
+                iced::widget::button::Status::Hovered if !is_active => theme.hover,
                 _ => bg_color,
             };
             iced::widget::button::Style {
                 background: Some(background.into()),
-                text_color: THEME.text_primary,
+                text_color: theme.text_primary,
                 border: iced::Border {
-                    color: if is_active { THEME.accent } else { THEME.border },
+                    color: if is_active { theme.accent } else { theme.border },
                     width: 0.0,
                     radius: iced::border::Radius {
                         top_left: 4.0,
@@ -159,19 +160,19 @@ fn tab_button(tab: &Tab, is_active: bool) -> Element<'_, Message> {
 }
 
 /// New tab "+" button
-fn new_tab_button() -> Element<'static, Message> {
+fn new_tab_button(theme: Theme) -> Element<'static, Message> {
     button(
-        container(text("+").size(17).color(THEME.text_secondary))
+        container(text("+").size(17).color(theme.text_secondary))
             .padding(Padding::new(5.0).left(10.0).right(10.0)),
     )
-    .style(|_theme, status| {
+    .style(move |_theme, status| {
         let background = match status {
-            iced::widget::button::Status::Hovered => Some(THEME.hover.into()),
+            iced::widget::button::Status::Hovered => Some(theme.hover.into()),
             _ => None,
         };
         iced::widget::button::Style {
             background,
-            text_color: THEME.text_secondary,
+            text_color: theme.text_secondary,
             border: iced::Border {
                 radius: 4.0.into(),
                 ..Default::default()

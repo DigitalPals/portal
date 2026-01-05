@@ -1,6 +1,7 @@
 use iced::Color;
 
 /// Dark theme colors based on the UI specification
+#[derive(Clone, Copy)]
 pub struct Theme {
     pub background: Color,
     pub surface: Color,
@@ -32,7 +33,6 @@ impl Theme {
     }
 
     /// Light theme
-    #[allow(dead_code)]
     pub fn light() -> Self {
         Self {
             background: Color::from_rgb8(0xff, 0xff, 0xff),    // #ffffff
@@ -49,8 +49,14 @@ impl Theme {
     }
 }
 
-/// Global theme instance (dark by default)
-pub static THEME: std::sync::LazyLock<Theme> = std::sync::LazyLock::new(Theme::dark);
+/// Select theme based on preference.
+pub fn theme_for(dark_mode: bool) -> Theme {
+    if dark_mode {
+        Theme::dark()
+    } else {
+        Theme::light()
+    }
+}
 
 /// Sidebar width when expanded
 pub const SIDEBAR_WIDTH: f32 = 200.0;

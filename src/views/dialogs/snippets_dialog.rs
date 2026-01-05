@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use crate::config::Snippet;
 use crate::message::{Message, SnippetField};
-use crate::theme::{BORDER_RADIUS, THEME};
+use crate::theme::{Theme, BORDER_RADIUS};
 
 /// State for the snippets dialog
 #[derive(Debug, Clone)]
@@ -61,13 +61,13 @@ impl SnippetsDialogState {
 }
 
 /// Build the snippets dialog view
-pub fn snippets_dialog_view(state: &SnippetsDialogState) -> Element<'static, Message> {
-    let title = text("Snippets").size(20).color(THEME.text_primary);
+pub fn snippets_dialog_view(state: &SnippetsDialogState, theme: Theme) -> Element<'static, Message> {
+    let title = text("Snippets").size(20).color(theme.text_primary);
 
     let content = if state.editing {
-        snippet_edit_form(state)
+        snippet_edit_form(state, theme)
     } else {
-        snippet_list_view(state)
+        snippet_list_view(state, theme)
     };
 
     let form = column![title, Space::with_height(16), content,]
@@ -75,10 +75,10 @@ pub fn snippets_dialog_view(state: &SnippetsDialogState) -> Element<'static, Mes
         .padding(24)
         .width(Length::Fixed(500.0));
 
-    dialog_backdrop(form)
+    dialog_backdrop(form, theme)
 }
 
-fn snippet_list_view(state: &SnippetsDialogState) -> Element<'static, Message> {
+fn snippet_list_view(state: &SnippetsDialogState, theme: Theme) -> Element<'static, Message> {
     // Snippet list
     let snippet_items: Vec<Element<'static, Message>> = state
         .snippets
@@ -90,13 +90,13 @@ fn snippet_list_view(state: &SnippetsDialogState) -> Element<'static, Message> {
             let command = snippet.command.clone();
 
             let content = column![
-                text(name).size(14).color(THEME.text_primary),
-                text(command).size(12).color(THEME.text_muted),
+                text(name).size(14).color(theme.text_primary),
+                text(command).size(12).color(theme.text_muted),
             ]
             .spacing(2);
 
             let bg_color = if is_selected {
-                Some(THEME.selected.into())
+                Some(theme.selected.into())
             } else {
                 None
             };
@@ -108,12 +108,12 @@ fn snippet_list_view(state: &SnippetsDialogState) -> Element<'static, Message> {
             )
             .style(move |_theme, status| {
                 let background = match status {
-                    button::Status::Hovered if !is_selected => Some(THEME.hover.into()),
+                    button::Status::Hovered if !is_selected => Some(theme.hover.into()),
                     _ => bg_color,
                 };
                 button::Style {
                     background,
-                    text_color: THEME.text_primary,
+                    text_color: theme.text_primary,
                     border: iced::Border::default(),
                     ..Default::default()
                 }
@@ -129,7 +129,7 @@ fn snippet_list_view(state: &SnippetsDialogState) -> Element<'static, Message> {
         container(
             text("No snippets yet. Click 'New' to create one.")
                 .size(14)
-                .color(THEME.text_muted),
+                .color(theme.text_muted),
         )
         .padding(20)
         .align_x(Alignment::Center)
@@ -146,17 +146,17 @@ fn snippet_list_view(state: &SnippetsDialogState) -> Element<'static, Message> {
     };
 
     // Action buttons
-    let new_btn = button(text("New").size(12).color(THEME.text_primary))
-        .style(|_theme, status| {
+    let new_btn = button(text("New").size(12).color(theme.text_primary))
+        .style(move |_theme, status| {
             let bg = match status {
-                button::Status::Hovered => THEME.accent,
-                _ => THEME.surface,
+                button::Status::Hovered => theme.accent,
+                _ => theme.surface,
             };
             button::Style {
                 background: Some(bg.into()),
-                text_color: THEME.text_primary,
+                text_color: theme.text_primary,
                 border: iced::Border {
-                    color: THEME.border,
+                    color: theme.border,
                     width: 1.0,
                     radius: BORDER_RADIUS.into(),
                 },
@@ -166,18 +166,18 @@ fn snippet_list_view(state: &SnippetsDialogState) -> Element<'static, Message> {
         .padding([6, 14])
         .on_press(Message::SnippetNew);
 
-    let edit_btn = button(text("Edit").size(12).color(THEME.text_primary))
-        .style(|_theme, status| {
+    let edit_btn = button(text("Edit").size(12).color(theme.text_primary))
+        .style(move |_theme, status| {
             let bg = match status {
-                button::Status::Hovered => THEME.hover,
-                button::Status::Disabled => THEME.surface,
-                _ => THEME.surface,
+                button::Status::Hovered => theme.hover,
+                button::Status::Disabled => theme.surface,
+                _ => theme.surface,
             };
             button::Style {
                 background: Some(bg.into()),
-                text_color: THEME.text_primary,
+                text_color: theme.text_primary,
                 border: iced::Border {
-                    color: THEME.border,
+                    color: theme.border,
                     width: 1.0,
                     radius: BORDER_RADIUS.into(),
                 },
@@ -187,18 +187,18 @@ fn snippet_list_view(state: &SnippetsDialogState) -> Element<'static, Message> {
         .padding([6, 14])
         .on_press_maybe(state.selected_id.map(Message::SnippetEdit));
 
-    let delete_btn = button(text("Delete").size(12).color(THEME.text_primary))
-        .style(|_theme, status| {
+    let delete_btn = button(text("Delete").size(12).color(theme.text_primary))
+        .style(move |_theme, status| {
             let bg = match status {
                 button::Status::Hovered => iced::Color::from_rgb8(200, 60, 60),
-                button::Status::Disabled => THEME.surface,
-                _ => THEME.surface,
+                button::Status::Disabled => theme.surface,
+                _ => theme.surface,
             };
             button::Style {
                 background: Some(bg.into()),
-                text_color: THEME.text_primary,
+                text_color: theme.text_primary,
                 border: iced::Border {
-                    color: THEME.border,
+                    color: theme.border,
                     width: 1.0,
                     radius: BORDER_RADIUS.into(),
                 },
@@ -208,16 +208,16 @@ fn snippet_list_view(state: &SnippetsDialogState) -> Element<'static, Message> {
         .padding([6, 14])
         .on_press_maybe(state.selected_id.map(Message::SnippetDelete));
 
-    let insert_btn = button(text("Insert").size(12).color(THEME.text_primary))
-        .style(|_theme, status| {
+    let insert_btn = button(text("Insert").size(12).color(theme.text_primary))
+        .style(move |_theme, status| {
             let bg = match status {
-                button::Status::Hovered => THEME.accent,
-                button::Status::Disabled => THEME.surface,
-                _ => THEME.accent,
+                button::Status::Hovered => theme.accent,
+                button::Status::Disabled => theme.surface,
+                _ => theme.accent,
             };
             button::Style {
                 background: Some(bg.into()),
-                text_color: THEME.text_primary,
+                text_color: theme.text_primary,
                 border: iced::Border {
                     radius: BORDER_RADIUS.into(),
                     ..Default::default()
@@ -228,12 +228,12 @@ fn snippet_list_view(state: &SnippetsDialogState) -> Element<'static, Message> {
         .padding([6, 14])
         .on_press_maybe(state.selected_id.map(Message::SnippetInsert));
 
-    let close_btn = button(text("Close").size(12).color(THEME.text_primary))
-        .style(|_theme, _status| button::Style {
-            background: Some(THEME.surface.into()),
-            text_color: THEME.text_primary,
+    let close_btn = button(text("Close").size(12).color(theme.text_primary))
+        .style(move |_theme, _status| button::Style {
+            background: Some(theme.surface.into()),
+            text_color: theme.text_primary,
             border: iced::Border {
-                color: THEME.border,
+                color: theme.border,
                 width: 1.0,
                 radius: BORDER_RADIUS.into(),
             },
@@ -249,17 +249,17 @@ fn snippet_list_view(state: &SnippetsDialogState) -> Element<'static, Message> {
     column![list, Space::with_height(16), action_row,].spacing(0).into()
 }
 
-fn snippet_edit_form(state: &SnippetsDialogState) -> Element<'static, Message> {
+fn snippet_edit_form(state: &SnippetsDialogState, theme: Theme) -> Element<'static, Message> {
     let title = if state.selected_id.is_some() {
         "Edit Snippet"
     } else {
         "New Snippet"
     };
 
-    let title_text = text(title).size(14).color(THEME.text_muted);
+    let title_text = text(title).size(14).color(theme.text_muted);
 
     let name_input = column![
-        text("Name").size(12).color(THEME.text_secondary),
+        text("Name").size(12).color(theme.text_secondary),
         text_input("e.g., List Files", &state.edit_name)
             .on_input(|s| Message::SnippetFieldChanged(SnippetField::Name, s))
             .padding(8)
@@ -268,7 +268,7 @@ fn snippet_edit_form(state: &SnippetsDialogState) -> Element<'static, Message> {
     .spacing(4);
 
     let command_input = column![
-        text("Command").size(12).color(THEME.text_secondary),
+        text("Command").size(12).color(theme.text_secondary),
         text_input("e.g., ls -la", &state.edit_command)
             .on_input(|s| Message::SnippetFieldChanged(SnippetField::Command, s))
             .padding(8)
@@ -277,7 +277,7 @@ fn snippet_edit_form(state: &SnippetsDialogState) -> Element<'static, Message> {
     .spacing(4);
 
     let description_input = column![
-        text("Description (optional)").size(12).color(THEME.text_secondary),
+        text("Description (optional)").size(12).color(theme.text_secondary),
         text_input("Optional description", &state.edit_description)
             .on_input(|s| Message::SnippetFieldChanged(SnippetField::Description, s))
             .padding(8)
@@ -287,12 +287,12 @@ fn snippet_edit_form(state: &SnippetsDialogState) -> Element<'static, Message> {
 
     let is_valid = state.is_form_valid();
 
-    let cancel_btn = button(text("Cancel").size(12).color(THEME.text_primary))
-        .style(|_theme, _status| button::Style {
-            background: Some(THEME.surface.into()),
-            text_color: THEME.text_primary,
+    let cancel_btn = button(text("Cancel").size(12).color(theme.text_primary))
+        .style(move |_theme, _status| button::Style {
+            background: Some(theme.surface.into()),
+            text_color: theme.text_primary,
             border: iced::Border {
-                color: THEME.border,
+                color: theme.border,
                 width: 1.0,
                 radius: BORDER_RADIUS.into(),
             },
@@ -301,15 +301,15 @@ fn snippet_edit_form(state: &SnippetsDialogState) -> Element<'static, Message> {
         .padding([6, 14])
         .on_press(Message::SnippetEditCancel);
 
-    let save_btn = button(text("Save").size(12).color(THEME.text_primary))
-        .style(|_theme, status| {
+    let save_btn = button(text("Save").size(12).color(theme.text_primary))
+        .style(move |_theme, status| {
             let bg = match status {
-                button::Status::Disabled => THEME.surface,
-                _ => THEME.accent,
+                button::Status::Disabled => theme.surface,
+                _ => theme.accent,
             };
             button::Style {
                 background: Some(bg.into()),
-                text_color: THEME.text_primary,
+                text_color: theme.text_primary,
                 border: iced::Border {
                     radius: BORDER_RADIUS.into(),
                     ..Default::default()
@@ -340,12 +340,15 @@ fn snippet_edit_form(state: &SnippetsDialogState) -> Element<'static, Message> {
 }
 
 /// Helper to wrap dialog content in a backdrop
-fn dialog_backdrop(content: impl Into<Element<'static, Message>>) -> Element<'static, Message> {
+fn dialog_backdrop(
+    content: impl Into<Element<'static, Message>>,
+    theme: Theme,
+) -> Element<'static, Message> {
     let dialog_box = container(content)
-        .style(|_theme| container::Style {
-            background: Some(THEME.surface.into()),
+        .style(move |_theme| container::Style {
+            background: Some(theme.surface.into()),
             border: iced::Border {
-                color: THEME.border,
+                color: theme.border,
                 width: 1.0,
                 radius: (BORDER_RADIUS * 2.0).into(),
             },
@@ -366,7 +369,7 @@ fn dialog_backdrop(content: impl Into<Element<'static, Message>>) -> Element<'st
     )
     .width(Length::Fill)
     .height(Length::Fill)
-    .style(|_theme| container::Style {
+    .style(move |_theme| container::Style {
         background: Some(iced::Color::from_rgba8(0, 0, 0, 0.7).into()),
         ..Default::default()
     })

@@ -1,13 +1,12 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::config::DetectedOs;
 use crate::sftp::{FileEntry, SharedSftpSession};
 use crate::ssh::host_key_verification::HostKeyVerificationRequest;
-use crate::ssh::{SshEvent, SshSession};
+use crate::ssh::SshSession;
 use crate::views::sftp_view::{ContextMenuAction, PaneId, PaneSource, PermissionBit};
 
 /// Session ID type alias
@@ -46,13 +45,10 @@ pub enum SnippetField {
 
 /// Application messages for the Elm-style update loop
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub enum Message {
     // Host management
-    HostSelected(Uuid),
     HostConnect(Uuid),
     HostAdd,
-    HostEdit(Uuid),
     QuickConnect,   // Parse search query as user@host:port and connect
     LocalTerminal,  // Open local terminal (stubbed for now)
 
@@ -70,7 +66,6 @@ pub enum Message {
         session_id: SessionId,
         host_name: String,
         ssh_session: Arc<SshSession>,
-        event_rx: EventReceiver,
         host_id: uuid::Uuid,
         detected_os: Option<DetectedOs>,
     },
@@ -90,17 +85,13 @@ pub enum Message {
     DualSftpPaneNavigateUp(SessionId, PaneId),                      // Go to parent directory
     DualSftpPaneRefresh(SessionId, PaneId),                         // Refresh current directory
     DualSftpPaneSelect(SessionId, PaneId, usize),                   // Select file by index
-    DualSftpPaneSelectToggle(SessionId, PaneId, usize),             // Toggle selection (Ctrl+click)
-    DualSftpPaneSelectRange(SessionId, PaneId, usize),              // Range select (Shift+click)
-    DualSftpPaneSelectAll(SessionId, PaneId),                       // Select all items (Ctrl+A)
-    DualSftpPaneClearSelection(SessionId, PaneId),                  // Clear selection
     DualSftpPaneListResult(SessionId, PaneId, Result<Vec<FileEntry>, String>), // Directory listing result
-    DualSftpPaneFocus(SessionId, PaneId),                           // Set active pane
     DualSftpConnectHost(SessionId, PaneId, Uuid),                   // Connect pane to remote host
     DualSftpConnected {                                              // Connection succeeded for pane
         tab_id: SessionId,
         pane_id: PaneId,
         sftp_session_id: SessionId,
+        host_id: Uuid,
         host_name: String,
         sftp_session: SharedSftpSession,
     },
@@ -130,14 +121,10 @@ pub enum Message {
     // UI navigation
     SearchChanged(String),
     FolderToggle(Uuid),
-    ToggleTerminalDemo,
 
     // Sidebar navigation
     SidebarItemSelect(SidebarMenuItem),
     SidebarToggleCollapse,
-
-    // OS Detection
-    OsDetectionResult(Uuid, Result<DetectedOs, String>),
 
     // History
     HistoryClear,
@@ -146,13 +133,10 @@ pub enum Message {
     // Keyboard shortcuts
     KeyboardEvent(iced::keyboard::Key, iced::keyboard::Modifiers),
 
-    // Settings
-    SettingsOpen,
     SettingsThemeToggle(bool),
     SettingsFontSizeChange(f32),
 
     // Snippets
-    SnippetsOpen,
     SnippetSelect(Uuid),
     SnippetNew,
     SnippetEdit(Uuid),
@@ -183,20 +167,8 @@ pub enum Message {
     Noop,
 }
 
-/// Wrapper for event receiver that implements Clone (by wrapping in Option)
-/// This allows it to be used in iced Messages which require Clone
-#[derive(Debug)]
-pub struct EventReceiver(pub Option<mpsc::UnboundedReceiver<SshEvent>>);
-
-impl Clone for EventReceiver {
-    fn clone(&self) -> Self {
-        // Cloning returns None - only the original message has the receiver
-        EventReceiver(None)
-    }
-}
-
 /// Wrapper for host key verification request that implements Clone (by wrapping in Option)
-/// The oneshot::Sender inside is not Clone, so we use the same pattern as EventReceiver
+/// The oneshot::Sender inside is not Clone, so we use a wrapper to allow cloning.
 pub struct VerificationRequestWrapper(pub Option<Box<HostKeyVerificationRequest>>);
 
 impl Clone for VerificationRequestWrapper {

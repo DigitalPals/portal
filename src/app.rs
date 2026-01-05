@@ -13,7 +13,7 @@ use crate::config::{AuthMethod, HistoryConfig, Host, HostsConfig, SettingsConfig
 use crate::message::{HostDialogField, Message, SessionId, SidebarMenuItem, SnippetField};
 use crate::sftp::SharedSftpSession;
 use crate::ssh::SshSession;
-use crate::theme::SIDEBAR_AUTO_COLLAPSE_THRESHOLD;
+use crate::theme::{theme_for, SIDEBAR_AUTO_COLLAPSE_THRESHOLD};
 use crate::ssh::host_key_verification::HostKeyVerificationResponse;
 use crate::views::dialogs::host_dialog::{
     host_dialog_view, AuthMethodChoice, HostDialogState,
@@ -29,7 +29,7 @@ use crate::views::sftp_view::{
 };
 use crate::views::sidebar::sidebar_view;
 use crate::views::tabs::{tab_bar_view, Tab};
-use crate::views::terminal_view::{terminal_view, terminal_view_with_status, TerminalSession};
+use crate::views::terminal_view::{terminal_view_with_status, TerminalSession};
 use crate::views::toast::{toast_overlay_view, Toast, ToastManager};
 
 use self::view_model::{filter_group_cards, filter_host_cards, group_cards, host_cards};
@@ -39,7 +39,6 @@ use self::view_model::{filter_group_cards, filter_host_cards, group_cards, host_
 pub enum View {
     #[default]
     HostGrid,
-    TerminalDemo,
     Terminal(SessionId),
     DualSftp(SessionId),  // Dual-pane SFTP browser
 }
@@ -49,8 +48,8 @@ pub struct ActiveSession {
     pub ssh_session: Arc<SshSession>,
     pub terminal: TerminalSession,
     pub session_start: Instant,
-    pub host_id: Uuid,
     pub host_name: String,
+    pub history_entry_id: Uuid,
     /// Transient status message (message, shown_at) - auto-expires after 3 seconds
     pub status_message: Option<(String, Instant)>,
 }
@@ -60,7 +59,6 @@ pub struct Portal {
     // UI state
     active_view: View,
     search_query: String,
-    selected_host: Option<Uuid>,
 
     // Sidebar state
     sidebar_collapsed: bool,
@@ -88,8 +86,6 @@ pub struct Portal {
     history_config: HistoryConfig,
 
     // Demo terminal session
-    demo_terminal: Option<TerminalSession>,
-
     // Active sessions
     sessions: HashMap<SessionId, ActiveSession>,
 
@@ -98,6 +94,7 @@ pub struct Portal {
 
     // Shared SFTP connections pool (can be used by multiple panes)
     sftp_connections: HashMap<SessionId, SharedSftpSession>,
+    sftp_history_entries: HashMap<SessionId, Uuid>,
 
     // Pending dual-pane SFTP connection (tab_id, pane_id, host_id)
     // Used to track which pane is waiting for connection after host key verification
@@ -162,23 +159,9 @@ impl Portal {
             }
         };
 
-        // Create demo terminal session and add some test content
-        let demo_terminal = TerminalSession::new("Demo Terminal");
-        // Add some demo output to show the terminal is working
-        let demo_content = b"\x1b[1;32mWelcome to Portal Terminal!\x1b[0m\r\n\r\n\
-            This is a \x1b[1;34mtest\x1b[0m of the terminal widget.\r\n\r\n\
-            \x1b[33mFeatures:\x1b[0m\r\n\
-            - ANSI color support\r\n\
-            - Cursor rendering\r\n\
-            - Keyboard input\r\n\r\n\
-            \x1b[36mType something to test input:\x1b[0m \r\n\
-            $ ";
-        demo_terminal.process_output(demo_content);
-
         let app = Self {
             active_view: View::HostGrid,
             search_query: String::new(),
-            selected_host: None,
             sidebar_collapsed: false,
             sidebar_selection: SidebarMenuItem::Hosts,
             tabs: Vec::new(),
@@ -192,10 +175,10 @@ impl Portal {
             hosts_config,
             snippets_config,
             history_config,
-            demo_terminal: Some(demo_terminal),
             sessions: HashMap::new(),
             dual_sftp_tabs: HashMap::new(),
             sftp_connections: HashMap::new(),
+            sftp_history_entries: HashMap::new(),
             pending_dual_sftp_connection: None,
             toast_manager: ToastManager::new(),
             window_size: iced::Size::new(1200.0, 800.0),
@@ -210,10 +193,6 @@ impl Portal {
     /// Handle messages
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::HostSelected(id) => {
-                self.selected_host = Some(id);
-                tracing::info!("Host selected: {}", id);
-            }
             Message::HostConnect(id) => {
                 tracing::info!("Connect to host: {}", id);
                 if let Some(host) = self.hosts_config.find_host(id).cloned() {
@@ -230,13 +209,6 @@ impl Portal {
                         tracing::error!("Failed to save config: {}", e);
                     }
                 }
-            }
-            Message::ToggleTerminalDemo => {
-                self.active_view = match self.active_view {
-                    View::TerminalDemo => View::HostGrid,
-                    _ => View::TerminalDemo,
-                };
-                tracing::info!("Switched to view: {:?}", self.active_view);
             }
             Message::SidebarItemSelect(item) => {
                 self.sidebar_selection = item;
@@ -282,23 +254,6 @@ impl Portal {
                 self.sidebar_manually_collapsed = self.sidebar_collapsed;
                 tracing::info!("Sidebar collapsed: {} (manual)", self.sidebar_collapsed);
             }
-            Message::OsDetectionResult(host_id, result) => {
-                match result {
-                    Ok(detected_os) => {
-                        tracing::info!("OS detected for host {}: {:?}", host_id, detected_os);
-                        if let Some(host) = self.hosts_config.find_host_mut(host_id) {
-                            host.detected_os = Some(detected_os);
-                            host.updated_at = chrono::Utc::now();
-                            if let Err(e) = self.hosts_config.save() {
-                                tracing::error!("Failed to save hosts config: {}", e);
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!("Failed to detect OS for host {}: {}", host_id, e);
-                    }
-                }
-            }
             Message::HistoryClear => {
                 self.history_config.clear();
                 if let Err(e) = self.history_config.save() {
@@ -315,11 +270,6 @@ impl Portal {
             }
             Message::HostAdd => {
                 self.dialog = Some(HostDialogState::new_host());
-            }
-            Message::HostEdit(id) => {
-                if let Some(host) = self.hosts_config.find_host(id) {
-                    self.dialog = Some(HostDialogState::edit_host(host));
-                }
             }
             Message::QuickConnect => {
                 // Parse search query as [ssh] [user@]hostname[:port]
@@ -529,7 +479,6 @@ impl Portal {
                 session_id,
                 host_name,
                 ssh_session,
-                event_rx: _, // Event listener already running from connect_to_host
                 host_id,
                 detected_os,
             } => {
@@ -554,6 +503,25 @@ impl Portal {
                     }
                 }
 
+                // Create history entry for this connection
+                let history_entry_id = if let Some(host) = self.hosts_config.find_host(host_id) {
+                    let entry = crate::config::HistoryEntry::new(
+                        host.id,
+                        host.name.clone(),
+                        host.hostname.clone(),
+                        host.username.clone(),
+                        crate::config::SessionType::Ssh,
+                    );
+                    let entry_id = entry.id;
+                    self.history_config.add_entry(entry);
+                    if let Err(e) = self.history_config.save() {
+                        tracing::error!("Failed to save history config: {}", e);
+                    }
+                    entry_id
+                } else {
+                    Uuid::new_v4()
+                };
+
                 // Create terminal session for this connection
                 let terminal = TerminalSession::new(&host_name);
 
@@ -564,8 +532,8 @@ impl Portal {
                         ssh_session,
                         terminal,
                         session_start: Instant::now(),
-                        host_id,
                         host_name: host_name.clone(),
+                        history_entry_id,
                         status_message: None,
                     },
                 );
@@ -587,6 +555,12 @@ impl Portal {
             }
             Message::SshDisconnected(session_id) => {
                 tracing::info!("SSH disconnected: {}", session_id);
+                if let Some(session) = self.sessions.get(&session_id) {
+                    self.history_config.mark_disconnected(session.history_entry_id);
+                    if let Err(e) = self.history_config.save() {
+                        tracing::error!("Failed to save history config: {}", e);
+                    }
+                }
                 self.close_tab(session_id);
             }
             Message::SshError(error) => {
@@ -721,26 +695,6 @@ impl Portal {
                 if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
                     tab_state.active_pane = pane_id;
                     tab_state.pane_mut(pane_id).select(index);
-                }
-            }
-            Message::DualSftpPaneSelectToggle(tab_id, pane_id, index) => {
-                if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
-                    tab_state.pane_mut(pane_id).toggle_select(index);
-                }
-            }
-            Message::DualSftpPaneSelectRange(tab_id, pane_id, index) => {
-                if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
-                    tab_state.pane_mut(pane_id).range_select(index);
-                }
-            }
-            Message::DualSftpPaneSelectAll(tab_id, pane_id) => {
-                if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
-                    tab_state.pane_mut(pane_id).select_all();
-                }
-            }
-            Message::DualSftpPaneClearSelection(tab_id, pane_id) => {
-                if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
-                    tab_state.pane_mut(pane_id).clear_selection();
                 }
             }
             Message::DualSftpShowContextMenu(tab_id, pane_id, x, y, index) => {
@@ -910,11 +864,6 @@ impl Portal {
                     }
                 }
             }
-            Message::DualSftpPaneFocus(tab_id, pane_id) => {
-                if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
-                    tab_state.active_pane = pane_id;
-                }
-            }
             Message::DualSftpConnectHost(tab_id, pane_id, host_id) => {
                 // Connect to a remote host for a specific pane
                 tracing::info!("Connecting to host {} for pane {:?}", host_id, pane_id);
@@ -926,11 +875,28 @@ impl Portal {
                 tab_id,
                 pane_id,
                 sftp_session_id,
+                host_id,
                 host_name,
                 sftp_session,
             } => {
                 tracing::info!("SFTP connected to {} for pane {:?}", host_name, pane_id);
                 self.pending_dual_sftp_connection = None;
+
+                if let Some(host) = self.hosts_config.find_host(host_id) {
+                    let entry = crate::config::HistoryEntry::new(
+                        host.id,
+                        host.name.clone(),
+                        host.hostname.clone(),
+                        host.username.clone(),
+                        crate::config::SessionType::Sftp,
+                    );
+                    let entry_id = entry.id;
+                    self.history_config.add_entry(entry);
+                    self.sftp_history_entries.insert(sftp_session_id, entry_id);
+                    if let Err(e) = self.history_config.save() {
+                        tracing::error!("Failed to save history config: {}", e);
+                    }
+                }
 
                 // Store the SFTP connection in the pool
                 let home_dir = sftp_session.home_dir().to_path_buf();
@@ -1001,12 +967,6 @@ impl Portal {
                     _ => {}
                 }
             }
-            Message::SettingsOpen => {
-                self.settings_dialog = Some(SettingsDialogState {
-                    dark_mode: self.dark_mode,
-                    terminal_font_size: self.terminal_font_size,
-                });
-            }
             Message::SettingsThemeToggle(enabled) => {
                 self.dark_mode = enabled;
                 if let Some(ref mut dialog) = self.settings_dialog {
@@ -1020,11 +980,6 @@ impl Portal {
                     dialog.terminal_font_size = size;
                 }
                 self.save_settings();
-            }
-            Message::SnippetsOpen => {
-                self.snippets_dialog = Some(SnippetsDialogState::new(
-                    self.snippets_config.snippets.clone(),
-                ));
             }
             Message::SnippetSelect(id) => {
                 if let Some(ref mut dialog) = self.snippets_dialog {
@@ -1142,8 +1097,11 @@ impl Portal {
         let filtered_cards = filter_host_cards(&self.search_query, all_cards);
         let filtered_groups = filter_group_cards(&self.search_query, all_groups);
 
+        let theme = theme_for(self.dark_mode);
+
         // Sidebar (new collapsible icon menu)
         let sidebar = sidebar_view(
+            theme,
             self.sidebar_collapsed,
             self.sidebar_selection,
         );
@@ -1160,6 +1118,7 @@ impl Portal {
                         .map(|(msg, _)| msg.as_str());
 
                     terminal_view_with_status(
+                        theme,
                         &session.terminal,
                         session.session_start,
                         &session.host_name,
@@ -1178,21 +1137,9 @@ impl Portal {
                     let available_hosts: Vec<_> = self.hosts_config.hosts.iter()
                         .map(|h| (h.id, h.name.clone()))
                         .collect();
-                    dual_pane_sftp_view(state, available_hosts)
+                    dual_pane_sftp_view(state, available_hosts, theme)
                 } else {
                     text("File browser not found").into()
-                }
-            }
-            View::TerminalDemo => {
-                if let Some(ref session) = self.demo_terminal {
-                    terminal_view(
-                        session,
-                        self.terminal_font_size,
-                        |session_id, bytes| Message::TerminalInput(session_id, bytes),
-                        |session_id, cols, rows| Message::TerminalResize(session_id, cols, rows),
-                    )
-                } else {
-                    text("No terminal session").into()
                 }
             }
             View::HostGrid => {
@@ -1203,14 +1150,14 @@ impl Portal {
                 match self.sidebar_selection {
                     SidebarMenuItem::Hosts | SidebarMenuItem::Sftp => {
                         // SFTP now opens directly into dual-pane view, so show hosts grid as fallback
-                        host_grid_view(&self.search_query, filtered_groups, filtered_cards, column_count)
+                        host_grid_view(&self.search_query, filtered_groups, filtered_cards, column_count, theme)
                     }
                     SidebarMenuItem::History => {
-                        history_view(&self.history_config)
+                        history_view(&self.history_config, theme)
                     }
                     SidebarMenuItem::Snippets | SidebarMenuItem::Settings => {
                         // These open dialogs, show hosts grid as fallback
-                        host_grid_view(&self.search_query, filtered_groups, filtered_cards, column_count)
+                        host_grid_view(&self.search_query, filtered_groups, filtered_cards, column_count, theme)
                     }
                 }
             }
@@ -1218,7 +1165,7 @@ impl Portal {
 
         // Tab bar - only show when there are tabs
         let header: Element<'_, Message> = if !self.tabs.is_empty() {
-            tab_bar_view(&self.tabs, self.active_tab)
+            tab_bar_view(&self.tabs, self.active_tab, theme)
         } else {
             Space::with_height(0).into()
         };
@@ -1234,16 +1181,16 @@ impl Portal {
 
         // Overlay dialog if open - host key dialog takes priority as it's connection-critical
         let with_dialog: Element<'_, Message> = if let Some(ref host_key_state) = self.host_key_dialog {
-            let dialog = host_key_dialog_view(host_key_state);
+            let dialog = host_key_dialog_view(host_key_state, theme);
             stack![main_layout, dialog].into()
         } else if let Some(ref dialog_state) = self.dialog {
-            let dialog = host_dialog_view(dialog_state, &self.hosts_config.groups);
+            let dialog = host_dialog_view(dialog_state, &self.hosts_config.groups, theme);
             stack![main_layout, dialog].into()
         } else if let Some(ref settings_state) = self.settings_dialog {
-            let dialog = settings_dialog_view(settings_state);
+            let dialog = settings_dialog_view(settings_state, theme);
             stack![main_layout, dialog].into()
         } else if let Some(ref snippets_state) = self.snippets_dialog {
-            let dialog = snippets_dialog_view(snippets_state);
+            let dialog = snippets_dialog_view(snippets_state, theme);
             stack![main_layout, dialog].into()
         } else {
             main_layout
@@ -1253,7 +1200,7 @@ impl Portal {
         let with_context_menu: Element<'_, Message> = if let Some(tab_id) = self.active_tab {
             if let Some(sftp_state) = self.dual_sftp_tabs.get(&tab_id) {
                 if sftp_state.context_menu.visible {
-                    stack![with_dialog, sftp_context_menu_overlay(sftp_state)].into()
+                    stack![with_dialog, sftp_context_menu_overlay(sftp_state, theme)].into()
                 } else {
                     with_dialog
                 }
@@ -1266,7 +1213,7 @@ impl Portal {
 
         // Overlay toast notifications on top of everything
         if self.toast_manager.has_toasts() {
-            stack![with_context_menu, toast_overlay_view(&self.toast_manager)].into()
+            stack![with_context_menu, toast_overlay_view(&self.toast_manager, theme)].into()
         } else {
             with_context_menu
         }

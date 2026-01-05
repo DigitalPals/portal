@@ -3,7 +3,7 @@ use iced::{Alignment, Element, Fill, Length};
 
 use crate::icons::{self, icon_with_color};
 use crate::message::{Message, SidebarMenuItem};
-use crate::theme::{BORDER_RADIUS, SIDEBAR_WIDTH, SIDEBAR_WIDTH_COLLAPSED, THEME};
+use crate::theme::{Theme, BORDER_RADIUS, SIDEBAR_WIDTH, SIDEBAR_WIDTH_COLLAPSED};
 
 /// Menu item definition
 struct MenuItem {
@@ -42,6 +42,7 @@ const MENU_ITEMS: &[MenuItem] = &[
 
 /// Build the sidebar view
 pub fn sidebar_view(
+    theme: Theme,
     collapsed: bool,
     selected: SidebarMenuItem,
 ) -> Element<'static, Message> {
@@ -56,7 +57,7 @@ pub fn sidebar_view(
 
     for menu_item in MENU_ITEMS {
         let is_selected = selected == menu_item.item;
-        let item_element = menu_item_button(menu_item, is_selected, collapsed);
+        let item_element = menu_item_button(menu_item, is_selected, collapsed, theme);
         menu_items = menu_items.push(item_element);
     }
 
@@ -68,18 +69,18 @@ pub fn sidebar_view(
     };
 
     let toggle_btn = button(
-        container(icon_with_color(toggle_icon, 16, THEME.text_secondary))
+        container(icon_with_color(toggle_icon, 16, theme.text_secondary))
             .width(Length::Fill)
             .align_x(Alignment::Center),
     )
-    .style(|_theme, status| {
+    .style(move |_theme, status| {
         let bg = match status {
-            button::Status::Hovered => Some(THEME.hover.into()),
+            button::Status::Hovered => Some(theme.hover.into()),
             _ => None,
         };
         button::Style {
             background: bg,
-            text_color: THEME.text_secondary,
+            text_color: theme.text_secondary,
             border: iced::Border {
                 radius: BORDER_RADIUS.into(),
                 ..Default::default()
@@ -105,10 +106,10 @@ pub fn sidebar_view(
     container(sidebar_content)
         .width(Length::Fixed(sidebar_width))
         .height(Fill)
-        .style(|_theme| container::Style {
-            background: Some(THEME.sidebar.into()),
+        .style(move |_theme| container::Style {
+            background: Some(theme.sidebar.into()),
             border: iced::Border {
-                color: THEME.border,
+                color: theme.border,
                 width: 0.0,
                 radius: 0.0.into(),
             },
@@ -122,11 +123,12 @@ fn menu_item_button(
     menu_item: &MenuItem,
     is_selected: bool,
     collapsed: bool,
+    theme: Theme,
 ) -> Element<'static, Message> {
     let icon_color = if is_selected {
-        THEME.accent
+        theme.accent
     } else {
-        THEME.text_secondary
+        theme.text_secondary
     };
 
     let icon_widget = icon_with_color(menu_item.icon, 18, icon_color);
@@ -144,9 +146,9 @@ fn menu_item_button(
             text(menu_item.label)
                 .size(16)
                 .color(if is_selected {
-                    THEME.text_primary
+                    theme.text_primary
                 } else {
-                    THEME.text_secondary
+                    theme.text_secondary
                 }),
         ]
         .spacing(8)
@@ -155,7 +157,7 @@ fn menu_item_button(
     };
 
     let bg_color = if is_selected {
-        Some(THEME.selected.into())
+        Some(theme.selected.into())
     } else {
         None
     };
@@ -163,12 +165,12 @@ fn menu_item_button(
     let btn = button(content)
         .style(move |_theme, status| {
             let background = match status {
-                button::Status::Hovered if !is_selected => Some(THEME.hover.into()),
+                button::Status::Hovered if !is_selected => Some(theme.hover.into()),
                 _ => bg_color,
             };
             button::Style {
                 background,
-                text_color: THEME.text_primary,
+                text_color: theme.text_primary,
                 border: iced::Border {
                     radius: BORDER_RADIUS.into(),
                     ..Default::default()
@@ -187,10 +189,10 @@ fn menu_item_button(
             text(menu_item.label).size(12),
             tooltip::Position::Right,
         )
-        .style(|_theme| container::Style {
-            background: Some(THEME.surface.into()),
+        .style(move |_theme| container::Style {
+            background: Some(theme.surface.into()),
             border: iced::Border {
-                color: THEME.border,
+                color: theme.border,
                 width: 1.0,
                 radius: 4.0.into(),
             },

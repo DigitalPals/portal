@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 use crate::config::{DetectedOs, Host};
 use crate::local_fs::list_local_dir;
-use crate::message::{EventReceiver, Message, SessionId, VerificationRequestWrapper};
+use crate::message::{Message, SessionId, VerificationRequestWrapper};
 use crate::sftp::SftpClient;
 use crate::ssh::{SshClient, SshEvent};
 use crate::views::sftp_view::{ContextMenuAction, PaneId, PaneSource, PermissionBits, SftpDialogType};
@@ -25,9 +25,46 @@ impl Portal {
     }
 
     pub(super) fn close_tab(&mut self, tab_id: Uuid) {
+        let sftp_sessions_to_close = self
+            .dual_sftp_tabs
+            .get(&tab_id)
+            .map(|state| {
+                let mut ids = Vec::new();
+                for pane in [&state.left_pane, &state.right_pane] {
+                    if let PaneSource::Remote { session_id, .. } = pane.source {
+                        if !ids.contains(&session_id) {
+                            ids.push(session_id);
+                        }
+                    }
+                }
+                ids
+            })
+            .unwrap_or_default();
+
         self.tabs.retain(|t| t.id != tab_id);
         self.sessions.remove(&tab_id);
         self.dual_sftp_tabs.remove(&tab_id);
+
+        let mut history_changed = false;
+        for session_id in sftp_sessions_to_close {
+            let still_used = self.dual_sftp_tabs.values().any(|state| {
+                matches!(state.left_pane.source, PaneSource::Remote { session_id: id, .. } if id == session_id)
+                    || matches!(state.right_pane.source, PaneSource::Remote { session_id: id, .. } if id == session_id)
+            });
+            if !still_used {
+                self.sftp_connections.remove(&session_id);
+                if let Some(entry_id) = self.sftp_history_entries.remove(&session_id) {
+                    self.history_config.mark_disconnected(entry_id);
+                    history_changed = true;
+                }
+            }
+        }
+
+        if history_changed {
+            if let Err(e) = self.history_config.save() {
+                tracing::error!("Failed to save history config: {}", e);
+            }
+        }
 
         if self.active_tab == Some(tab_id) {
             if let Some(last_tab) = self.tabs.last() {
@@ -104,7 +141,6 @@ impl Portal {
             move |event| match event {
                 SshEvent::Data(data) => Message::SshData(session_id, data),
                 SshEvent::Disconnected => Message::SshDisconnected(session_id),
-                SshEvent::Error(e) => Message::SshError(e),
                 SshEvent::HostKeyVerification(request) => {
                     Message::HostKeyVerification(VerificationRequestWrapper(Some(request)))
                 }
@@ -137,8 +173,6 @@ impl Portal {
                         session_id,
                         host_name,
                         ssh_session,
-                        // No longer passing event_rx here - it's already being listened to
-                        event_rx: EventReceiver(None),
                         host_id,
                         detected_os,
                     }
@@ -149,29 +183,6 @@ impl Portal {
 
         // Run both tasks: listener starts immediately, connection proceeds in parallel
         Task::batch([event_listener, connect_task])
-    }
-
-    pub(super) fn start_ssh_event_listener(
-        &self,
-        session_id: SessionId,
-        mut event_rx: EventReceiver,
-    ) -> Task<Message> {
-        if let Some(rx) = event_rx.0.take() {
-            return Task::run(
-                stream::unfold(rx, |mut rx| async move { rx.recv().await.map(|event| (event, rx)) }),
-                move |event| match event {
-                    SshEvent::Data(data) => Message::SshData(session_id, data),
-                    SshEvent::Disconnected => Message::SshDisconnected(session_id),
-                    SshEvent::Error(e) => Message::SshError(e),
-                    SshEvent::HostKeyVerification(request) => {
-                        Message::HostKeyVerification(VerificationRequestWrapper(Some(request)))
-                    }
-                    SshEvent::Connected => Message::Noop,
-                },
-            );
-        }
-
-        Task::none()
     }
 
     /// Load directory contents for a dual-pane SFTP browser pane
@@ -225,9 +236,10 @@ impl Portal {
     ) -> Task<Message> {
         let host = host.clone();
         let sftp_session_id = Uuid::new_v4();
+        let host_id = host.id;
 
         // Store pending connection info for host key verification
-        self.pending_dual_sftp_connection = Some((tab_id, pane_id, host.id));
+        self.pending_dual_sftp_connection = Some((tab_id, pane_id, host_id));
 
         // Create event channel for SSH events (including host key verification)
         let (event_tx, event_rx) = mpsc::unbounded_channel::<SshEvent>();
@@ -258,15 +270,14 @@ impl Portal {
                 (tab_id, pane_id, sftp_session_id, host_name, result)
             },
             move |(tab_id, pane_id, sftp_session_id, host_name, result)| match result {
-                Ok(sftp_session) => {
-                    Message::DualSftpConnected {
-                        tab_id,
-                        pane_id,
-                        sftp_session_id,
-                        host_name,
-                        sftp_session,
-                    }
-                }
+                Ok(sftp_session) => Message::DualSftpConnected {
+                    tab_id,
+                    pane_id,
+                    sftp_session_id,
+                    host_id,
+                    host_name,
+                    sftp_session,
+                },
                 Err(e) => Message::SshError(format!("SFTP connection failed: {}", e)),
             },
         );

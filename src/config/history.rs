@@ -34,7 +34,6 @@ pub struct HistoryEntry {
     pub session_type: SessionType,
 }
 
-#[allow(dead_code)]
 impl HistoryEntry {
     /// Create a new history entry for a connection
     pub fn new(
@@ -99,7 +98,6 @@ impl Default for HistoryConfig {
     }
 }
 
-#[allow(dead_code)]
 impl HistoryConfig {
     /// Add a new history entry, trimming old entries if over limit
     pub fn add_entry(&mut self, entry: HistoryEntry) {

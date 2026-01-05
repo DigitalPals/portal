@@ -19,7 +19,6 @@ use host_key_verification::HostKeyVerificationRequest;
 
 /// Events emitted by the SSH layer
 #[derive(Debug)]
-#[allow(dead_code)]
 pub enum SshEvent {
     /// SSH connection established
     Connected,
@@ -29,6 +28,4 @@ pub enum SshEvent {
     Disconnected,
     /// Host key verification required
     HostKeyVerification(Box<HostKeyVerificationRequest>),
-    /// Error occurred
-    Error(String),
 }

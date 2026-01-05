@@ -4,7 +4,7 @@ use uuid::Uuid;
 
 use crate::config::{AuthMethod, Host, HostGroup};
 use crate::message::{HostDialogField, Message};
-use crate::theme::{BORDER_RADIUS, THEME};
+use crate::theme::{Theme, BORDER_RADIUS};
 
 /// State for the host dialog (add or edit)
 #[derive(Debug, Clone)]
@@ -64,35 +64,6 @@ impl HostDialogState {
             group_id: None,
             tags: String::new(),
             notes: String::new(),
-        }
-    }
-
-    /// Create a dialog pre-filled with an existing host for editing
-    pub fn edit_host(host: &Host) -> Self {
-        let auth_method = match &host.auth {
-            AuthMethod::Agent => AuthMethodChoice::Agent,
-            AuthMethod::Password => AuthMethodChoice::Password,
-            AuthMethod::PublicKey { .. } => AuthMethodChoice::PublicKey,
-        };
-
-        let key_path = match &host.auth {
-            AuthMethod::PublicKey { key_path } => {
-                key_path.as_ref().map(|p| p.display().to_string()).unwrap_or_default()
-            }
-            _ => String::new(),
-        };
-
-        Self {
-            editing_id: Some(host.id),
-            name: host.name.clone(),
-            hostname: host.hostname.clone(),
-            port: host.port.to_string(),
-            username: host.username.clone(),
-            auth_method,
-            key_path,
-            group_id: host.group_id,
-            tags: host.tags.join(", "),
-            notes: host.notes.clone().unwrap_or_default(),
         }
     }
 
@@ -182,6 +153,7 @@ impl std::fmt::Display for GroupChoice {
 pub fn host_dialog_view(
     state: &HostDialogState,
     groups: &[HostGroup],
+    theme: Theme,
 ) -> Element<'static, Message> {
     let title = if state.editing_id.is_some() {
         "Edit Host"
@@ -219,7 +191,7 @@ pub fn host_dialog_view(
 
     // Form fields using owned values
     let name_input = column![
-        text("Name").size(12).color(THEME.text_secondary),
+        text("Name").size(12).color(theme.text_secondary),
         text_input("my-server", &name_value)
             .on_input(|s| Message::DialogFieldChanged(HostDialogField::Name, s))
             .padding(8)
@@ -228,7 +200,7 @@ pub fn host_dialog_view(
     .spacing(4);
 
     let hostname_input = column![
-        text("Hostname / IP").size(12).color(THEME.text_secondary),
+        text("Hostname / IP").size(12).color(theme.text_secondary),
         text_input("192.168.1.100", &hostname_value)
             .on_input(|s| Message::DialogFieldChanged(HostDialogField::Hostname, s))
             .padding(8)
@@ -237,7 +209,7 @@ pub fn host_dialog_view(
     .spacing(4);
 
     let port_input = column![
-        text("Port").size(12).color(THEME.text_secondary),
+        text("Port").size(12).color(theme.text_secondary),
         text_input("22", &port_value)
             .on_input(|s| Message::DialogFieldChanged(HostDialogField::Port, s))
             .padding(8)
@@ -246,7 +218,7 @@ pub fn host_dialog_view(
     .spacing(4);
 
     let username_input = column![
-        text("Username").size(12).color(THEME.text_secondary),
+        text("Username").size(12).color(theme.text_secondary),
         text_input(&username_placeholder, &username_value)
             .on_input(|s| Message::DialogFieldChanged(HostDialogField::Username, s))
             .padding(8)
@@ -256,7 +228,7 @@ pub fn host_dialog_view(
 
     // Auth method picker
     let auth_picker = column![
-        text("Authentication").size(12).color(THEME.text_secondary),
+        text("Authentication").size(12).color(theme.text_secondary),
         pick_list(
             AuthMethodChoice::ALL.as_slice(),
             Some(auth_method),
@@ -270,7 +242,7 @@ pub fn host_dialog_view(
     // Key path (only shown for PublicKey auth)
     let key_path_section: Element<'static, Message> = if auth_method == AuthMethodChoice::PublicKey {
         column![
-            text("Key Path").size(12).color(THEME.text_secondary),
+            text("Key Path").size(12).color(theme.text_secondary),
             text_input("~/.ssh/id_ed25519", &key_path_value)
                 .on_input(|s| Message::DialogFieldChanged(HostDialogField::KeyPath, s))
                 .padding(8)
@@ -284,7 +256,7 @@ pub fn host_dialog_view(
 
     // Group picker
     let group_picker = column![
-        text("Folder").size(12).color(THEME.text_secondary),
+        text("Folder").size(12).color(theme.text_secondary),
         pick_list(
             group_choices.clone(),
             selected_group,
@@ -297,7 +269,7 @@ pub fn host_dialog_view(
     .spacing(4);
 
     let tags_input = column![
-        text("Tags").size(12).color(THEME.text_secondary),
+        text("Tags").size(12).color(theme.text_secondary),
         text_input("web, production", &tags_value)
             .on_input(|s| Message::DialogFieldChanged(HostDialogField::Tags, s))
             .padding(8)
@@ -306,7 +278,7 @@ pub fn host_dialog_view(
     .spacing(4);
 
     let notes_input = column![
-        text("Notes").size(12).color(THEME.text_secondary),
+        text("Notes").size(12).color(theme.text_secondary),
         text_input("Optional notes...", &notes_value)
             .on_input(|s| Message::DialogFieldChanged(HostDialogField::Notes, s))
             .padding(8)
@@ -316,14 +288,14 @@ pub fn host_dialog_view(
 
     // Buttons
     let cancel_button = button(
-        text("Cancel").size(14).color(THEME.text_primary)
+        text("Cancel").size(14).color(theme.text_primary)
     )
     .padding([8, 16])
-    .style(|_theme, _status| button::Style {
-        background: Some(THEME.surface.into()),
-        text_color: THEME.text_primary,
+    .style(move |_theme, _status| button::Style {
+        background: Some(theme.surface.into()),
+        text_color: theme.text_primary,
         border: iced::Border {
-            color: THEME.border,
+            color: theme.border,
             width: 1.0,
             radius: BORDER_RADIUS.into(),
         },
@@ -332,17 +304,17 @@ pub fn host_dialog_view(
     .on_press(Message::DialogClose);
 
     let save_button = button(
-        text("Save").size(14).color(THEME.text_primary)
+        text("Save").size(14).color(theme.text_primary)
     )
     .padding([8, 16])
-    .style(|_theme, status| {
+    .style(move |_theme, status| {
         let bg = match status {
-            button::Status::Hovered => THEME.accent,
-            _ => THEME.accent,
+            button::Status::Hovered => theme.accent,
+            _ => theme.accent,
         };
         button::Style {
             background: Some(bg.into()),
-            text_color: THEME.text_primary,
+            text_color: theme.text_primary,
             border: iced::Border {
                 radius: BORDER_RADIUS.into(),
                 ..Default::default()
@@ -366,7 +338,7 @@ pub fn host_dialog_view(
 
     // Form layout
     let form = column![
-        text(title).size(20).color(THEME.text_primary),
+        text(title).size(20).color(theme.text_primary),
         Space::with_height(16),
         name_input,
         row![
@@ -388,10 +360,10 @@ pub fn host_dialog_view(
 
     // Dialog container
     let dialog_box = container(form)
-        .style(|_theme| container::Style {
-            background: Some(THEME.surface.into()),
+        .style(move |_theme| container::Style {
+            background: Some(theme.surface.into()),
             border: iced::Border {
-                color: THEME.border,
+                color: theme.border,
                 width: 1.0,
                 radius: (BORDER_RADIUS * 2.0).into(),
             },
@@ -413,7 +385,7 @@ pub fn host_dialog_view(
     )
     .width(Length::Fill)
     .height(Length::Fill)
-    .style(|_theme| container::Style {
+    .style(move |_theme| container::Style {
         background: Some(iced::Color::from_rgba8(0, 0, 0, 0.7).into()),
         ..Default::default()
     });

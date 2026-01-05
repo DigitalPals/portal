@@ -4,7 +4,7 @@ use iced::widget::{button, column, container, row, slider, text, toggler, Space}
 use iced::{Alignment, Element, Length};
 
 use crate::message::Message;
-use crate::theme::{BORDER_RADIUS, THEME};
+use crate::theme::{Theme, BORDER_RADIUS};
 
 /// State for the settings dialog
 #[derive(Debug, Clone)]
@@ -23,12 +23,12 @@ impl Default for SettingsDialogState {
 }
 
 /// Build the settings dialog view
-pub fn settings_dialog_view(state: &SettingsDialogState) -> Element<'static, Message> {
-    let title = text("Settings").size(20).color(THEME.text_primary);
+pub fn settings_dialog_view(state: &SettingsDialogState, theme: Theme) -> Element<'static, Message> {
+    let title = text("Settings").size(20).color(theme.text_primary);
 
     // Theme toggle
     let theme_row = row![
-        text("Dark Mode").size(14).color(THEME.text_primary),
+        text("Dark Mode").size(14).color(theme.text_primary),
         Space::with_width(Length::Fill),
         toggler(state.dark_mode)
             .on_toggle(Message::SettingsThemeToggle)
@@ -38,7 +38,7 @@ pub fn settings_dialog_view(state: &SettingsDialogState) -> Element<'static, Mes
     .spacing(12);
 
     let theme_section = column![
-        text("Appearance").size(12).color(THEME.text_muted),
+        text("Appearance").size(12).color(theme.text_muted),
         Space::with_height(8),
         theme_row,
     ]
@@ -47,7 +47,7 @@ pub fn settings_dialog_view(state: &SettingsDialogState) -> Element<'static, Mes
     // Terminal section
     let font_size = state.terminal_font_size;
     let font_size_row = row![
-        text("Font Size").size(14).color(THEME.text_primary),
+        text("Font Size").size(14).color(theme.text_primary),
         Space::with_width(Length::Fill),
         slider(6.0..=20.0, font_size, Message::SettingsFontSizeChange)
             .step(1.0)
@@ -55,14 +55,14 @@ pub fn settings_dialog_view(state: &SettingsDialogState) -> Element<'static, Mes
         Space::with_width(8),
         text(format!("{:.0}", font_size))
             .size(14)
-            .color(THEME.text_secondary)
+            .color(theme.text_secondary)
             .width(Length::Fixed(24.0)),
     ]
     .align_y(Alignment::Center)
     .spacing(8);
 
     let terminal_section = column![
-        text("Terminal").size(12).color(THEME.text_muted),
+        text("Terminal").size(12).color(theme.text_muted),
         Space::with_height(8),
         font_size_row,
     ]
@@ -70,26 +70,26 @@ pub fn settings_dialog_view(state: &SettingsDialogState) -> Element<'static, Mes
 
     // About section
     let about_section = column![
-        text("About").size(12).color(THEME.text_muted),
+        text("About").size(12).color(theme.text_muted),
         Space::with_height(8),
-        text(format!("Portal SSH Client v{}", env!("CARGO_PKG_VERSION"))).size(14).color(THEME.text_secondary),
-        text("A modern SSH client built with Rust and iced").size(12).color(THEME.text_muted),
+        text(format!("Portal SSH Client v{}", env!("CARGO_PKG_VERSION"))).size(14).color(theme.text_secondary),
+        text("A modern SSH client built with Rust and iced").size(12).color(theme.text_muted),
     ]
     .spacing(4);
 
     // Close button
-    let close_button = button(text("Close").size(14).color(THEME.text_primary))
+    let close_button = button(text("Close").size(14).color(theme.text_primary))
         .padding([8, 16])
-        .style(|_theme, status| {
+        .style(move |_theme, status| {
             let bg = match status {
-                button::Status::Hovered => THEME.accent,
-                _ => THEME.surface,
+                button::Status::Hovered => theme.accent,
+                _ => theme.surface,
             };
             button::Style {
                 background: Some(bg.into()),
-                text_color: THEME.text_primary,
+                text_color: theme.text_primary,
                 border: iced::Border {
-                    color: THEME.border,
+                    color: theme.border,
                     width: 1.0,
                     radius: BORDER_RADIUS.into(),
                 },
@@ -115,16 +115,19 @@ pub fn settings_dialog_view(state: &SettingsDialogState) -> Element<'static, Mes
     .padding(24)
     .width(Length::Fixed(400.0));
 
-    dialog_backdrop(form)
+    dialog_backdrop(form, theme)
 }
 
 /// Helper to wrap dialog content in a backdrop
-fn dialog_backdrop(content: impl Into<Element<'static, Message>>) -> Element<'static, Message> {
+fn dialog_backdrop(
+    content: impl Into<Element<'static, Message>>,
+    theme: Theme,
+) -> Element<'static, Message> {
     let dialog_box = container(content)
-        .style(|_theme| container::Style {
-            background: Some(THEME.surface.into()),
+        .style(move |_theme| container::Style {
+            background: Some(theme.surface.into()),
             border: iced::Border {
-                color: THEME.border,
+                color: theme.border,
                 width: 1.0,
                 radius: (BORDER_RADIUS * 2.0).into(),
             },
@@ -145,7 +148,7 @@ fn dialog_backdrop(content: impl Into<Element<'static, Message>>) -> Element<'st
     )
     .width(Length::Fill)
     .height(Length::Fill)
-    .style(|_theme| container::Style {
+    .style(move |_theme| container::Style {
         background: Some(iced::Color::from_rgba8(0, 0, 0, 0.7).into()),
         ..Default::default()
     })

@@ -17,14 +17,13 @@ use iced::mouse::{self, Cursor};
 use iced::{Background, Border, Color, Element, Event, Length, Rectangle, Shadow, Size};
 use parking_lot::Mutex;
 
-use super::backend::{CursorInfo, EventProxy, RenderCell, TerminalSize};
+use super::backend::{CursorInfo, EventProxy, RenderCell};
 use super::colors::{ansi_to_iced, DEFAULT_BG, DEFAULT_FG};
 use crate::fonts::JETBRAINS_MONO_NERD;
 
 /// Terminal widget for iced
 pub struct TerminalWidget<'a, Message> {
     term: Arc<Mutex<Term<EventProxy>>>,
-    size: TerminalSize,
     on_input: Box<dyn Fn(Vec<u8>) -> Message + 'a>,
     on_resize: Option<Box<dyn Fn(u16, u16) -> Message + 'a>>,
     font_size: f32,
@@ -34,12 +33,10 @@ impl<'a, Message> TerminalWidget<'a, Message> {
     /// Create a new terminal widget
     pub fn new(
         term: Arc<Mutex<Term<EventProxy>>>,
-        size: TerminalSize,
         on_input: impl Fn(Vec<u8>) -> Message + 'a,
     ) -> Self {
         Self {
             term,
-            size,
             on_input: Box::new(on_input),
             on_resize: None,
             font_size: 9.0,

@@ -2,4 +2,4 @@
 
 mod mouse_area;
 
-pub use mouse_area::{mouse_area, MouseArea};
+pub use mouse_area::mouse_area;

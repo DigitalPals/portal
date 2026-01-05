@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use crate::icons::{icon_with_color, ui};
 use crate::message::Message;
-use crate::theme::{BORDER_RADIUS, THEME};
+use crate::theme::{Theme, BORDER_RADIUS};
 
 /// Type of toast notification (determines color and icon)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -124,7 +124,7 @@ impl ToastManager {
 }
 
 /// Render the toast overlay (positioned at bottom-right)
-pub fn toast_overlay_view(manager: &ToastManager) -> Element<'static, Message> {
+pub fn toast_overlay_view(manager: &ToastManager, theme: Theme) -> Element<'static, Message> {
     if !manager.has_toasts() {
         return Space::new(0, 0).into();
     }
@@ -134,7 +134,7 @@ pub fn toast_overlay_view(manager: &ToastManager) -> Element<'static, Message> {
             .toasts()
             .iter()
             .rev()
-            .map(|toast| toast_item_view(toast)),
+            .map(|toast| toast_item_view(toast, theme)),
     )
     .spacing(8)
     .into();
@@ -154,7 +154,7 @@ pub fn toast_overlay_view(manager: &ToastManager) -> Element<'static, Message> {
 }
 
 /// Render a single toast notification
-fn toast_item_view(toast: &Toast) -> Element<'static, Message> {
+fn toast_item_view(toast: &Toast, theme: Theme) -> Element<'static, Message> {
     let toast_id = toast.id;
     let accent_color = toast.toast_type.color();
     let message = toast.message.clone();
@@ -163,11 +163,11 @@ fn toast_item_view(toast: &Toast) -> Element<'static, Message> {
     let type_icon = icon_with_color(toast.toast_type.icon(), 16, accent_color);
 
     // Dismiss button
-    let dismiss_btn = button(icon_with_color(ui::X, 12, THEME.text_secondary))
+    let dismiss_btn = button(icon_with_color(ui::X, 12, theme.text_secondary))
         .padding(4)
-        .style(|_theme, status| {
+        .style(move |_theme, status| {
             let bg = match status {
-                button::Status::Hovered => Some(THEME.hover.into()),
+                button::Status::Hovered => Some(theme.hover.into()),
                 _ => None,
             };
             button::Style {
@@ -183,7 +183,7 @@ fn toast_item_view(toast: &Toast) -> Element<'static, Message> {
 
     let content = row![
         container(type_icon).padding(Padding::from([0, 8])),
-        text(message).size(13).color(THEME.text_primary),
+        text(message).size(13).color(theme.text_primary),
         Space::with_width(Length::Fill),
         dismiss_btn,
     ]
@@ -193,7 +193,7 @@ fn toast_item_view(toast: &Toast) -> Element<'static, Message> {
         .padding([10, 14])
         .width(Length::Fixed(360.0))
         .style(move |_theme| container::Style {
-            background: Some(THEME.surface.into()),
+            background: Some(theme.surface.into()),
             border: iced::Border {
                 color: accent_color,
                 width: 1.0,

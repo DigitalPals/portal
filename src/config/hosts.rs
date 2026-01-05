@@ -257,12 +257,6 @@ impl HostsConfig {
         self.hosts.iter_mut().find(|h| h.id == id)
     }
 
-    /// Find group by ID
-    #[allow(dead_code)]
-    pub fn find_group(&self, id: Uuid) -> Option<&HostGroup> {
-        self.groups.iter().find(|g| g.id == id)
-    }
-
     /// Find group by ID (mutable)
     pub fn find_group_mut(&mut self, id: Uuid) -> Option<&mut HostGroup> {
         self.groups.iter_mut().find(|g| g.id == id)

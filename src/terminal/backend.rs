@@ -62,8 +62,6 @@ impl EventListener for EventProxy {
 pub struct TerminalSize {
     pub columns: u16,
     pub lines: u16,
-    pub cell_width: f32,
-    pub cell_height: f32,
     pub history_size: usize,
 }
 
@@ -71,23 +69,12 @@ pub struct TerminalSize {
 const DEFAULT_HISTORY_SIZE: usize = 10000;
 
 impl TerminalSize {
-    pub fn new(columns: u16, lines: u16, cell_width: f32, cell_height: f32) -> Self {
+    pub fn new(columns: u16, lines: u16) -> Self {
         Self {
             columns,
             lines,
-            cell_width,
-            cell_height,
             history_size: DEFAULT_HISTORY_SIZE,
         }
-    }
-
-    /// Calculate pixel dimensions
-    pub fn pixel_width(&self) -> f32 {
-        self.columns as f32 * self.cell_width
-    }
-
-    pub fn pixel_height(&self) -> f32 {
-        self.lines as f32 * self.cell_height
     }
 }
 
@@ -172,10 +159,6 @@ impl TerminalBackend {
     }
 
     /// Get the terminal size
-    pub fn size(&self) -> TerminalSize {
-        self.size
-    }
-
     /// Process input bytes from PTY/SSH
     pub fn process_input(&self, bytes: &[u8]) {
         let mut term = self.term.lock();

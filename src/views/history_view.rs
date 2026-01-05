@@ -4,31 +4,31 @@ use iced::{Alignment, Element, Fill, Length};
 use crate::config::{HistoryConfig, SessionType};
 use crate::icons::{self, icon_with_color};
 use crate::message::Message;
-use crate::theme::{BORDER_RADIUS, CARD_BORDER_RADIUS, THEME};
+use crate::theme::{Theme, BORDER_RADIUS, CARD_BORDER_RADIUS};
 
 /// Build the history view showing recent connections
-pub fn history_view(history: &HistoryConfig) -> Element<'static, Message> {
+pub fn history_view(history: &HistoryConfig, theme: Theme) -> Element<'static, Message> {
     // Header
     let header = row![
         text("Connection History")
             .size(18)
-            .color(THEME.text_primary),
+            .color(theme.text_primary),
         Space::with_width(Length::Fill),
         button(
             text("Clear History")
                 .size(12)
-                .color(THEME.text_secondary),
+                .color(theme.text_secondary),
         )
-        .style(|_theme, status| {
+        .style(move |_theme, status| {
             let bg = match status {
-                button::Status::Hovered => Some(THEME.hover.into()),
+                button::Status::Hovered => Some(theme.hover.into()),
                 _ => None,
             };
             button::Style {
                 background: bg,
-                text_color: THEME.text_secondary,
+                text_color: theme.text_secondary,
                 border: iced::Border {
-                    color: THEME.border,
+                    color: theme.border,
                     width: 1.0,
                     radius: BORDER_RADIUS.into(),
                 },
@@ -43,12 +43,12 @@ pub fn history_view(history: &HistoryConfig) -> Element<'static, Message> {
 
     // History entries
     let content: Element<'static, Message> = if history.entries.is_empty() {
-        empty_state()
+        empty_state(theme)
     } else {
         let mut entries_column = Column::new().spacing(8).padding(iced::Padding::new(24.0).top(0.0));
 
         for entry in &history.entries {
-            entries_column = entries_column.push(history_entry_row(entry));
+            entries_column = entries_column.push(history_entry_row(entry, theme));
         }
 
         scrollable(entries_column)
@@ -62,15 +62,15 @@ pub fn history_view(history: &HistoryConfig) -> Element<'static, Message> {
     container(main_content)
         .width(Fill)
         .height(Fill)
-        .style(|_theme| container::Style {
-            background: Some(THEME.background.into()),
+        .style(move |_theme| container::Style {
+            background: Some(theme.background.into()),
             ..Default::default()
         })
         .into()
 }
 
 /// Single history entry row
-fn history_entry_row(entry: &crate::config::HistoryEntry) -> Element<'static, Message> {
+fn history_entry_row(entry: &crate::config::HistoryEntry, theme: Theme) -> Element<'static, Message> {
     let entry_id = entry.id;
 
     // Session type icon
@@ -96,16 +96,16 @@ fn history_entry_row(entry: &crate::config::HistoryEntry) -> Element<'static, Me
         row![
             text(host_name)
                 .size(14)
-                .color(THEME.text_primary),
+                .color(theme.text_primary),
             Space::with_width(8),
             container(
                 text(type_text)
                     .size(10)
-                    .color(THEME.text_secondary),
+                    .color(theme.text_secondary),
             )
             .padding([2, 6])
-            .style(|_theme| container::Style {
-                background: Some(THEME.surface.into()),
+            .style(move |_theme| container::Style {
+                background: Some(theme.surface.into()),
                 border: iced::Border {
                     radius: 2.0.into(),
                     ..Default::default()
@@ -119,21 +119,21 @@ fn history_entry_row(entry: &crate::config::HistoryEntry) -> Element<'static, Me
             username, hostname, time_str, duration_str
         ))
         .size(12)
-        .color(THEME.text_muted),
+        .color(theme.text_muted),
     ]
     .spacing(4);
 
     let icon_widget = container(
-        icon_with_color(icon_data, 18, THEME.accent)
+        icon_with_color(icon_data, 18, theme.accent)
     )
     .width(36)
     .height(36)
     .align_x(Alignment::Center)
     .align_y(Alignment::Center)
-    .style(|_theme| container::Style {
-        background: Some(THEME.selected.into()),
-        border: iced::Border {
-            radius: BORDER_RADIUS.into(),
+    .style(move |_theme| container::Style {
+            background: Some(theme.selected.into()),
+            border: iced::Border {
+                radius: BORDER_RADIUS.into(),
             ..Default::default()
         },
         ..Default::default()
@@ -141,22 +141,22 @@ fn history_entry_row(entry: &crate::config::HistoryEntry) -> Element<'static, Me
 
     let reconnect_btn = button(
         row![
-            icon_with_color(icons::ui::REFRESH, 12, THEME.text_primary),
+            icon_with_color(icons::ui::REFRESH, 12, theme.text_primary),
             text("Reconnect")
                 .size(12)
-                .color(THEME.text_primary),
+                .color(theme.text_primary),
         ]
         .spacing(4)
         .align_y(Alignment::Center),
     )
-    .style(|_theme, status| {
+    .style(move |_theme, status| {
         let bg = match status {
-            button::Status::Hovered => THEME.accent,
-            _ => THEME.surface,
+            button::Status::Hovered => theme.accent,
+            _ => theme.surface,
         };
         button::Style {
             background: Some(bg.into()),
-            text_color: THEME.text_primary,
+            text_color: theme.text_primary,
             border: iced::Border {
                 radius: BORDER_RADIUS.into(),
                 ..Default::default()
@@ -179,8 +179,8 @@ fn history_entry_row(entry: &crate::config::HistoryEntry) -> Element<'static, Me
     container(card_content)
         .padding(12)
         .width(Fill)
-        .style(|_theme| container::Style {
-            background: Some(THEME.surface.into()),
+        .style(move |_theme| container::Style {
+            background: Some(theme.surface.into()),
             border: iced::Border {
                 radius: CARD_BORDER_RADIUS.into(),
                 ..Default::default()
@@ -196,13 +196,13 @@ fn history_entry_row(entry: &crate::config::HistoryEntry) -> Element<'static, Me
 }
 
 /// Empty state when no history
-fn empty_state() -> Element<'static, Message> {
+fn empty_state(theme: Theme) -> Element<'static, Message> {
     let content = column![
-        icon_with_color(icons::ui::HISTORY, 48, THEME.text_muted),
-        text("No connection history").size(18).color(THEME.text_primary),
+        icon_with_color(icons::ui::HISTORY, 48, theme.text_muted),
+        text("No connection history").size(18).color(theme.text_primary),
         text("Your recent connections will appear here")
             .size(14)
-            .color(THEME.text_muted),
+            .color(theme.text_muted),
     ]
     .spacing(8)
     .align_x(Alignment::Center);

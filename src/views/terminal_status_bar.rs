@@ -9,7 +9,7 @@ use iced::widget::{container, row, text, Space};
 use iced::{Alignment, Element, Length};
 
 use crate::message::Message;
-use crate::theme::THEME;
+use crate::theme::Theme;
 
 /// Format duration as MM:SS or HH:MM:SS
 fn format_duration(start: Instant) -> String {
@@ -28,6 +28,7 @@ fn format_duration(start: Instant) -> String {
 
 /// Build the terminal status bar element
 pub fn terminal_status_bar<'a>(
+    theme: Theme,
     host_name: &'a str,
     session_start: Instant,
     status_message: Option<&'a str>,
@@ -36,23 +37,23 @@ pub fn terminal_status_bar<'a>(
 
     // Left side: hostname and duration
     let left = row![
-        text(host_name).size(12).color(THEME.text_secondary),
-        text(" | ").size(12).color(THEME.text_muted),
-        text(duration).size(12).color(THEME.text_secondary),
+        text(host_name).size(12).color(theme.text_secondary),
+        text(" | ").size(12).color(theme.text_muted),
+        text(duration).size(12).color(theme.text_secondary),
     ]
     .align_y(Alignment::Center);
 
     // Center: transient status message (if any)
     let center: Element<'_, Message> = if let Some(msg) = status_message {
-        text(msg).size(12).color(THEME.accent).into()
+        text(msg).size(12).color(theme.accent).into()
     } else {
         Space::new(0, 0).into()
     };
 
     // Right side: shortcut hint
     let right = row![
-        text("Ctrl+Shift+K").size(11).color(THEME.text_muted),
-        text(" Install SSH Key").size(11).color(THEME.text_secondary),
+        text("Ctrl+Shift+K").size(11).color(theme.text_muted),
+        text(" Install SSH Key").size(11).color(theme.text_secondary),
     ]
     .align_y(Alignment::Center);
 
@@ -68,10 +69,10 @@ pub fn terminal_status_bar<'a>(
 
     container(content)
         .width(Length::Fill)
-        .style(|_theme| container::Style {
-            background: Some(THEME.surface.into()),
+        .style(move |_theme| container::Style {
+            background: Some(theme.surface.into()),
             border: iced::Border {
-                color: THEME.border,
+                color: theme.border,
                 width: 1.0,
                 radius: 0.0.into(),
             },
