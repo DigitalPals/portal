@@ -25,7 +25,7 @@ use crate::views::history_view::history_view;
 use crate::views::host_grid::{calculate_columns, host_grid_view, search_input_id};
 use iced::widget::text_input;
 use crate::views::sftp_view::{
-    dual_pane_sftp_view, DualPaneSftpState, PaneId, PaneSource,
+    dual_pane_sftp_view, sftp_context_menu_overlay, DualPaneSftpState, PaneId, PaneSource,
 };
 use crate::views::sidebar::sidebar_view;
 use crate::views::tabs::{tab_bar_view, Tab};
@@ -692,6 +692,7 @@ impl Portal {
             }
             Message::DualSftpPaneNavigate(tab_id, pane_id, path) => {
                 if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
+                    tab_state.active_pane = pane_id;
                     let pane = tab_state.pane_mut(pane_id);
                     pane.current_path = path;
                     pane.loading = true;
@@ -700,6 +701,7 @@ impl Portal {
             }
             Message::DualSftpPaneNavigateUp(tab_id, pane_id) => {
                 if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
+                    tab_state.active_pane = pane_id;
                     let pane = tab_state.pane_mut(pane_id);
                     if let Some(parent) = pane.current_path.parent() {
                         pane.current_path = parent.to_path_buf();
@@ -710,13 +712,193 @@ impl Portal {
             }
             Message::DualSftpPaneRefresh(tab_id, pane_id) => {
                 if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
+                    tab_state.active_pane = pane_id;
                     tab_state.pane_mut(pane_id).loading = true;
                     return self.load_dual_pane_directory(tab_id, pane_id);
                 }
             }
             Message::DualSftpPaneSelect(tab_id, pane_id, index) => {
                 if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
-                    tab_state.pane_mut(pane_id).selected_index = Some(index);
+                    tab_state.active_pane = pane_id;
+                    tab_state.pane_mut(pane_id).select(index);
+                }
+            }
+            Message::DualSftpPaneSelectToggle(tab_id, pane_id, index) => {
+                if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
+                    tab_state.pane_mut(pane_id).toggle_select(index);
+                }
+            }
+            Message::DualSftpPaneSelectRange(tab_id, pane_id, index) => {
+                if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
+                    tab_state.pane_mut(pane_id).range_select(index);
+                }
+            }
+            Message::DualSftpPaneSelectAll(tab_id, pane_id) => {
+                if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
+                    tab_state.pane_mut(pane_id).select_all();
+                }
+            }
+            Message::DualSftpPaneClearSelection(tab_id, pane_id) => {
+                if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
+                    tab_state.pane_mut(pane_id).clear_selection();
+                }
+            }
+            Message::DualSftpShowContextMenu(tab_id, pane_id, x, y, index) => {
+                if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
+                    tab_state.active_pane = pane_id;
+                    // Select the item if index provided and not already selected
+                    if let Some(idx) = index {
+                        if !tab_state.pane(pane_id).is_selected(idx) {
+                            tab_state.pane_mut(pane_id).select(idx);
+                        }
+                    }
+                    tab_state.show_context_menu(pane_id, x, y);
+                }
+            }
+            Message::DualSftpHideContextMenu(tab_id) => {
+                if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
+                    tab_state.hide_context_menu();
+                }
+            }
+            Message::DualSftpContextMenuAction(tab_id, action) => {
+                if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
+                    tab_state.hide_context_menu();
+                    // Handle context menu actions - implemented below
+                    return self.handle_sftp_context_action(tab_id, action);
+                }
+            }
+            Message::DualSftpDialogInputChanged(tab_id, value) => {
+                if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
+                    if let Some(ref mut dialog) = tab_state.dialog {
+                        dialog.input_value = value;
+                        dialog.error = None; // Clear error when user types
+                    }
+                }
+            }
+            Message::DualSftpDialogCancel(tab_id) => {
+                if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
+                    tab_state.close_dialog();
+                }
+            }
+            Message::DualSftpDialogSubmit(tab_id) => {
+                if let Some(tab_state) = self.dual_sftp_tabs.get(&tab_id) {
+                    if let Some(ref dialog) = tab_state.dialog {
+                        if dialog.is_valid() {
+                            return self.handle_sftp_dialog_submit(tab_id);
+                        }
+                    }
+                }
+            }
+            Message::DualSftpNewFolderResult(tab_id, pane_id, result) => {
+                if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
+                    match result {
+                        Ok(()) => {
+                            self.toast_manager.push(Toast::success("Folder created"));
+                            tab_state.close_dialog();
+                            tab_state.pane_mut(pane_id).loading = true;
+                            return self.load_dual_pane_directory(tab_id, pane_id);
+                        }
+                        Err(error) => {
+                            if let Some(ref mut dialog) = tab_state.dialog {
+                                dialog.error = Some(error);
+                            }
+                        }
+                    }
+                }
+            }
+            Message::DualSftpRenameResult(tab_id, pane_id, result) => {
+                if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
+                    match result {
+                        Ok(()) => {
+                            self.toast_manager.push(Toast::success("Renamed successfully"));
+                            tab_state.close_dialog();
+                            tab_state.pane_mut(pane_id).loading = true;
+                            return self.load_dual_pane_directory(tab_id, pane_id);
+                        }
+                        Err(error) => {
+                            if let Some(ref mut dialog) = tab_state.dialog {
+                                dialog.error = Some(error);
+                            }
+                        }
+                    }
+                }
+            }
+            Message::DualSftpDeleteResult(tab_id, pane_id, result) => {
+                if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
+                    match result {
+                        Ok(count) => {
+                            tracing::info!("Deleted {} item(s)", count);
+                            let msg = if count == 1 {
+                                "Deleted 1 item".to_string()
+                            } else {
+                                format!("Deleted {} items", count)
+                            };
+                            self.toast_manager.push(Toast::success(msg));
+                            tab_state.close_dialog();
+                            tab_state.pane_mut(pane_id).loading = true;
+                            return self.load_dual_pane_directory(tab_id, pane_id);
+                        }
+                        Err(error) => {
+                            if let Some(ref mut dialog) = tab_state.dialog {
+                                dialog.error = Some(error);
+                            }
+                        }
+                    }
+                }
+            }
+            Message::DualSftpCopyToTarget(tab_id) => {
+                return self.handle_copy_to_target(tab_id);
+            }
+            Message::DualSftpCopyResult(tab_id, target_pane_id, result) => {
+                if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
+                    match result {
+                        Ok(count) => {
+                            tracing::info!("Copied {} item(s)", count);
+                            let msg = if count == 1 {
+                                "Copied 1 item".to_string()
+                            } else {
+                                format!("Copied {} items", count)
+                            };
+                            self.toast_manager.push(Toast::success(msg));
+                            // Refresh the target pane to show newly copied files
+                            tab_state.pane_mut(target_pane_id).loading = true;
+                            return self.load_dual_pane_directory(tab_id, target_pane_id);
+                        }
+                        Err(error) => {
+                            tracing::error!("Copy failed: {}", error);
+                            self.toast_manager.push(Toast::error(format!("Copy failed: {}", error)));
+                        }
+                    }
+                }
+            }
+            Message::DualSftpPermissionToggle(tab_id, bit, value) => {
+                if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
+                    if let Some(ref mut dialog) = tab_state.dialog {
+                        dialog.set_permission(bit, value);
+                    }
+                }
+            }
+            Message::DualSftpPermissionsResult(tab_id, pane_id, result) => {
+                if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
+                    match result {
+                        Ok(()) => {
+                            tracing::info!("Permissions updated successfully");
+                            self.toast_manager.push(Toast::success("Permissions updated"));
+                            tab_state.close_dialog();
+                            tab_state.pane_mut(pane_id).loading = true;
+                            return self.load_dual_pane_directory(tab_id, pane_id);
+                        }
+                        Err(error) => {
+                            if let Some(ref mut dialog) = tab_state.dialog {
+                                dialog.error = Some(error);
+                            }
+                        }
+                    }
+                }
+            }
+            Message::DualSftpOpenWithResult(result) => {
+                if let Err(error) = result {
+                    self.toast_manager.push(Toast::error(error));
                 }
             }
             Message::DualSftpPaneListResult(tab_id, pane_id, result) => {
@@ -773,7 +955,7 @@ impl Portal {
             Message::KeyboardEvent(key, modifiers) => {
                 // Handle global keyboard shortcuts
                 match (key, modifiers.control(), modifiers.shift()) {
-                    // Escape - close dialogs
+                    // Escape - close dialogs and context menus
                     (Key::Named(keyboard::key::Named::Escape), _, _) => {
                         // Host key dialog - Escape means reject
                         if let Some(ref mut dialog) = self.host_key_dialog {
@@ -785,6 +967,11 @@ impl Portal {
                             self.dialog = None;
                             self.settings_dialog = None;
                             self.snippets_dialog = None;
+                        }
+                        // Close any open SFTP context menu or dialog
+                        for tab_state in self.dual_sftp_tabs.values_mut() {
+                            tab_state.hide_context_menu();
+                            tab_state.close_dialog();
                         }
                     }
                     // Ctrl+N - new tab / go to host grid
@@ -1062,11 +1249,26 @@ impl Portal {
             main_layout
         };
 
-        // Overlay toast notifications on top of everything
-        if self.toast_manager.has_toasts() {
-            stack![with_dialog, toast_overlay_view(&self.toast_manager)].into()
+        // Overlay SFTP context menu if visible (rendered at app level for correct window positioning)
+        let with_context_menu: Element<'_, Message> = if let Some(tab_id) = self.active_tab {
+            if let Some(sftp_state) = self.dual_sftp_tabs.get(&tab_id) {
+                if sftp_state.context_menu.visible {
+                    stack![with_dialog, sftp_context_menu_overlay(sftp_state)].into()
+                } else {
+                    with_dialog
+                }
+            } else {
+                with_dialog
+            }
         } else {
             with_dialog
+        };
+
+        // Overlay toast notifications on top of everything
+        if self.toast_manager.has_toasts() {
+            stack![with_context_menu, toast_overlay_view(&self.toast_manager)].into()
+        } else {
+            with_context_menu
         }
     }
 

@@ -1,15 +1,17 @@
 //! SFTP file browser view - Dual-pane implementation
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 
-use iced::widget::{button, column, container, pick_list, row, scrollable, text, Column, Space};
-use iced::{Alignment, Element, Fill, Length, Padding};
+use iced::widget::{button, column, container, pick_list, row, scrollable, stack, text, text_input, Column, Space};
+use iced::{Alignment, Element, Fill, Length, Padding, Point};
 use uuid::Uuid;
 
 use crate::icons::{self, icon_with_color};
 use crate::message::Message;
 use crate::sftp::{format_size, FileEntry, FileIcon, SortOrder};
 use crate::theme::THEME;
+use crate::widgets::mouse_area;
 
 // ============================================================================
 // Dual-Pane SFTP Types
@@ -50,7 +52,8 @@ pub struct FilePaneState {
     pub source: PaneSource,
     pub current_path: PathBuf,
     pub entries: Vec<FileEntry>,
-    pub selected_index: Option<usize>,
+    pub selected_indices: HashSet<usize>,
+    pub last_selected_index: Option<usize>, // For shift-click range selection
     pub sort_order: SortOrder,
     pub loading: bool,
     pub error: Option<String>,
@@ -65,7 +68,8 @@ impl FilePaneState {
             source: PaneSource::Local,
             current_path: home_dir,
             entries: Vec::new(),
-            selected_index: None,
+            selected_indices: HashSet::new(),
+            last_selected_index: None,
             sort_order: SortOrder::default(),
             loading: true,
             error: None,
@@ -77,7 +81,8 @@ impl FilePaneState {
             source: PaneSource::Remote { session_id, host_name },
             current_path: home_dir,
             entries: Vec::new(),
-            selected_index: None,
+            selected_indices: HashSet::new(),
+            last_selected_index: None,
             sort_order: SortOrder::default(),
             loading: true,
             error: None,
@@ -87,11 +92,8 @@ impl FilePaneState {
     pub fn set_entries(&mut self, mut entries: Vec<FileEntry>) {
         self.sort_order.sort(&mut entries);
         self.entries = entries;
-        self.selected_index = if self.entries.is_empty() {
-            None
-        } else {
-            Some(0)
-        };
+        self.selected_indices.clear();
+        self.last_selected_index = None;
         self.loading = false;
         self.error = None;
     }
@@ -101,8 +103,69 @@ impl FilePaneState {
         self.loading = false;
     }
 
+    /// Select a single item (clear other selections)
+    pub fn select(&mut self, index: usize) {
+        self.selected_indices.clear();
+        self.selected_indices.insert(index);
+        self.last_selected_index = Some(index);
+    }
+
+    /// Toggle selection of an item (Ctrl+click)
+    pub fn toggle_select(&mut self, index: usize) {
+        if self.selected_indices.contains(&index) {
+            self.selected_indices.remove(&index);
+        } else {
+            self.selected_indices.insert(index);
+        }
+        self.last_selected_index = Some(index);
+    }
+
+    /// Select a range from last selection to index (Shift+click)
+    pub fn range_select(&mut self, index: usize) {
+        if let Some(anchor) = self.last_selected_index {
+            let (start, end) = if anchor <= index {
+                (anchor, index)
+            } else {
+                (index, anchor)
+            };
+            for i in start..=end {
+                self.selected_indices.insert(i);
+            }
+        } else {
+            self.select(index);
+        }
+    }
+
+    /// Check if an index is selected
+    pub fn is_selected(&self, index: usize) -> bool {
+        self.selected_indices.contains(&index)
+    }
+
+    /// Get all selected entries
+    pub fn selected_entries(&self) -> Vec<&FileEntry> {
+        self.selected_indices
+            .iter()
+            .filter_map(|&i| self.entries.get(i))
+            .collect()
+    }
+
+    /// Get the first selected entry (for single selection operations)
     pub fn selected_entry(&self) -> Option<&FileEntry> {
-        self.selected_index.and_then(|i| self.entries.get(i))
+        self.selected_indices
+            .iter()
+            .next()
+            .and_then(|&i| self.entries.get(i))
+    }
+
+    /// Clear all selections
+    pub fn clear_selection(&mut self) {
+        self.selected_indices.clear();
+        self.last_selected_index = None;
+    }
+
+    /// Select all entries
+    pub fn select_all(&mut self) {
+        self.selected_indices = (0..self.entries.len()).collect();
     }
 }
 
@@ -113,6 +176,212 @@ pub struct SourceOption {
     pub display_name: String,
 }
 
+/// Context menu action types
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContextMenuAction {
+    Open,
+    OpenWith,
+    CopyToTarget,
+    Rename,
+    Delete,
+    Refresh,
+    NewFolder,
+    EditPermissions,
+}
+
+/// State for the context menu
+#[derive(Debug, Clone)]
+pub struct ContextMenuState {
+    pub visible: bool,
+    pub position: Point,
+    pub target_pane: PaneId,
+}
+
+impl Default for ContextMenuState {
+    fn default() -> Self {
+        Self {
+            visible: false,
+            position: Point::ORIGIN,
+            target_pane: PaneId::Left,
+        }
+    }
+}
+
+/// Type of SFTP dialog currently open
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SftpDialogType {
+    NewFolder,
+    Rename { original_name: String },
+    Delete { entries: Vec<(String, PathBuf, bool)> }, // (name, path, is_dir)
+    EditPermissions {
+        name: String,
+        path: PathBuf,
+        permissions: PermissionBits,
+    },
+    OpenWith {
+        name: String,
+        path: PathBuf,
+        is_remote: bool,
+    },
+}
+
+/// Unix permission bits for a file or directory
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PermissionBits {
+    pub owner_read: bool,
+    pub owner_write: bool,
+    pub owner_execute: bool,
+    pub group_read: bool,
+    pub group_write: bool,
+    pub group_execute: bool,
+    pub other_read: bool,
+    pub other_write: bool,
+    pub other_execute: bool,
+}
+
+impl PermissionBits {
+    /// Create from a Unix mode (e.g., 0o755)
+    pub fn from_mode(mode: u32) -> Self {
+        Self {
+            owner_read: mode & 0o400 != 0,
+            owner_write: mode & 0o200 != 0,
+            owner_execute: mode & 0o100 != 0,
+            group_read: mode & 0o040 != 0,
+            group_write: mode & 0o020 != 0,
+            group_execute: mode & 0o010 != 0,
+            other_read: mode & 0o004 != 0,
+            other_write: mode & 0o002 != 0,
+            other_execute: mode & 0o001 != 0,
+        }
+    }
+
+    /// Convert to Unix mode
+    pub fn to_mode(&self) -> u32 {
+        let mut mode = 0u32;
+        if self.owner_read { mode |= 0o400; }
+        if self.owner_write { mode |= 0o200; }
+        if self.owner_execute { mode |= 0o100; }
+        if self.group_read { mode |= 0o040; }
+        if self.group_write { mode |= 0o020; }
+        if self.group_execute { mode |= 0o010; }
+        if self.other_read { mode |= 0o004; }
+        if self.other_write { mode |= 0o002; }
+        if self.other_execute { mode |= 0o001; }
+        mode
+    }
+
+    /// Format as octal string (e.g., "755")
+    pub fn as_octal_string(&self) -> String {
+        format!("{:03o}", self.to_mode())
+    }
+}
+
+impl Default for PermissionBits {
+    fn default() -> Self {
+        // Default to 644 (rw-r--r--)
+        Self::from_mode(0o644)
+    }
+}
+
+/// State for SFTP dialogs (New Folder, Rename, etc.)
+#[derive(Debug, Clone)]
+pub struct SftpDialogState {
+    pub dialog_type: SftpDialogType,
+    pub target_pane: PaneId,
+    pub input_value: String,
+    pub error: Option<String>,
+}
+
+impl SftpDialogState {
+    pub fn new_folder(pane_id: PaneId) -> Self {
+        Self {
+            dialog_type: SftpDialogType::NewFolder,
+            target_pane: pane_id,
+            input_value: String::new(),
+            error: None,
+        }
+    }
+
+    pub fn rename(pane_id: PaneId, original_name: String) -> Self {
+        Self {
+            dialog_type: SftpDialogType::Rename { original_name: original_name.clone() },
+            target_pane: pane_id,
+            input_value: original_name,
+            error: None,
+        }
+    }
+
+    pub fn delete(pane_id: PaneId, entries: Vec<(String, PathBuf, bool)>) -> Self {
+        Self {
+            dialog_type: SftpDialogType::Delete { entries },
+            target_pane: pane_id,
+            input_value: String::new(),
+            error: None,
+        }
+    }
+
+    pub fn edit_permissions(pane_id: PaneId, name: String, path: PathBuf, permissions: PermissionBits) -> Self {
+        Self {
+            dialog_type: SftpDialogType::EditPermissions { name, path, permissions },
+            target_pane: pane_id,
+            input_value: String::new(),
+            error: None,
+        }
+    }
+
+    pub fn open_with(pane_id: PaneId, name: String, path: PathBuf, is_remote: bool) -> Self {
+        Self {
+            dialog_type: SftpDialogType::OpenWith { name, path, is_remote },
+            target_pane: pane_id,
+            input_value: String::new(),
+            error: None,
+        }
+    }
+
+    pub fn is_valid(&self) -> bool {
+        match &self.dialog_type {
+            SftpDialogType::Delete { entries } => !entries.is_empty(),
+            SftpDialogType::EditPermissions { .. } => true, // Always valid
+            SftpDialogType::OpenWith { .. } => !self.input_value.trim().is_empty(), // Need a command
+            _ => {
+                let name = self.input_value.trim();
+                !name.is_empty() && !name.contains('/') && !name.contains('\\') && name != "." && name != ".."
+            }
+        }
+    }
+
+    /// Update a permission bit (for EditPermissions dialog)
+    pub fn set_permission(&mut self, bit: PermissionBit, value: bool) {
+        if let SftpDialogType::EditPermissions { permissions, .. } = &mut self.dialog_type {
+            match bit {
+                PermissionBit::OwnerRead => permissions.owner_read = value,
+                PermissionBit::OwnerWrite => permissions.owner_write = value,
+                PermissionBit::OwnerExecute => permissions.owner_execute = value,
+                PermissionBit::GroupRead => permissions.group_read = value,
+                PermissionBit::GroupWrite => permissions.group_write = value,
+                PermissionBit::GroupExecute => permissions.group_execute = value,
+                PermissionBit::OtherRead => permissions.other_read = value,
+                PermissionBit::OtherWrite => permissions.other_write = value,
+                PermissionBit::OtherExecute => permissions.other_execute = value,
+            }
+        }
+    }
+}
+
+/// Individual permission bit identifier
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PermissionBit {
+    OwnerRead,
+    OwnerWrite,
+    OwnerExecute,
+    GroupRead,
+    GroupWrite,
+    GroupExecute,
+    OtherRead,
+    OtherWrite,
+    OtherExecute,
+}
+
 /// State for the dual-pane SFTP browser
 #[derive(Debug, Clone)]
 pub struct DualPaneSftpState {
@@ -120,6 +389,8 @@ pub struct DualPaneSftpState {
     pub left_pane: FilePaneState,
     pub right_pane: FilePaneState,
     pub active_pane: PaneId,
+    pub context_menu: ContextMenuState,
+    pub dialog: Option<SftpDialogState>,
 }
 
 impl DualPaneSftpState {
@@ -129,7 +400,49 @@ impl DualPaneSftpState {
             left_pane: FilePaneState::new_local(),
             right_pane: FilePaneState::new_local(),
             active_pane: PaneId::Left,
+            context_menu: ContextMenuState::default(),
+            dialog: None,
         }
+    }
+
+    pub fn show_context_menu(&mut self, pane_id: PaneId, x: f32, y: f32) {
+        self.context_menu.visible = true;
+        self.context_menu.position = Point::new(x, y);
+        self.context_menu.target_pane = pane_id;
+        self.active_pane = pane_id;
+    }
+
+    pub fn hide_context_menu(&mut self) {
+        self.context_menu.visible = false;
+    }
+
+    pub fn show_new_folder_dialog(&mut self) {
+        self.dialog = Some(SftpDialogState::new_folder(self.active_pane));
+        self.hide_context_menu();
+    }
+
+    pub fn show_rename_dialog(&mut self, original_name: String) {
+        self.dialog = Some(SftpDialogState::rename(self.active_pane, original_name));
+        self.hide_context_menu();
+    }
+
+    pub fn show_delete_dialog(&mut self, entries: Vec<(String, PathBuf, bool)>) {
+        self.dialog = Some(SftpDialogState::delete(self.active_pane, entries));
+        self.hide_context_menu();
+    }
+
+    pub fn show_permissions_dialog(&mut self, name: String, path: PathBuf, permissions: PermissionBits) {
+        self.dialog = Some(SftpDialogState::edit_permissions(self.active_pane, name, path, permissions));
+        self.hide_context_menu();
+    }
+
+    pub fn show_open_with_dialog(&mut self, name: String, path: PathBuf, is_remote: bool) {
+        self.dialog = Some(SftpDialogState::open_with(self.active_pane, name, path, is_remote));
+        self.hide_context_menu();
+    }
+
+    pub fn close_dialog(&mut self) {
+        self.dialog = None;
     }
 
     pub fn pane_mut(&mut self, pane_id: PaneId) -> &mut FilePaneState {
@@ -201,14 +514,25 @@ pub fn dual_pane_sftp_view(
 
     let content = row![left_pane, divider, right_pane];
 
-    container(content)
+    let main = container(content)
         .width(Fill)
         .height(Fill)
         .style(|_theme| container::Style {
             background: Some(THEME.background.into()),
             ..Default::default()
-        })
-        .into()
+        });
+
+    // Overlay dialog if open (context menu is rendered at app level for correct positioning)
+    if state.dialog.is_some() {
+        stack![main, sftp_dialog_view(state)].into()
+    } else {
+        main.into()
+    }
+}
+
+/// Build the context menu overlay - should be rendered at app level for correct window positioning
+pub fn sftp_context_menu_overlay(state: &DualPaneSftpState) -> Element<'_, Message> {
+    context_menu_view(state)
 }
 
 /// Build a single pane view for the dual-pane browser
@@ -219,38 +543,17 @@ fn single_pane_view(
     available_hosts: Vec<(Uuid, String)>,
     is_active: bool,
 ) -> Element<'_, Message> {
-    let header = pane_header(state, pane_id, tab_id, available_hosts);
+    let header = pane_header(state, pane_id, tab_id, available_hosts, is_active);
     let file_list = pane_file_list(state, pane_id, tab_id);
     let footer = pane_footer(state, pane_id, tab_id);
 
-    let border_color = if is_active { THEME.accent } else { THEME.background };
-
     let content = column![header, file_list, footer].spacing(0);
 
-    // Wrap in a button to handle focus
-    button(
-        container(content)
-            .width(Length::FillPortion(1))
-            .height(Fill)
-            .style(move |_theme| container::Style {
-                border: iced::Border {
-                    color: border_color,
-                    width: if is_active { 2.0 } else { 0.0 },
-                    radius: 0.0.into(),
-                },
-                ..Default::default()
-            }),
-    )
-    .style(|_theme, _status| iced::widget::button::Style {
-        background: None,
-        text_color: THEME.text_primary,
-        border: iced::Border::default(),
-        shadow: iced::Shadow::default(),
-    })
-    .padding(0)
-    .width(Length::FillPortion(1))
-    .on_press(Message::DualSftpPaneFocus(tab_id, pane_id))
-    .into()
+    // Simple container - focus is set via file clicks and context menu
+    container(content)
+        .width(Length::FillPortion(1))
+        .height(Fill)
+        .into()
 }
 
 /// Header with source dropdown, navigation buttons, and path bar
@@ -259,6 +562,7 @@ fn pane_header(
     pane_id: PaneId,
     tab_id: SessionId,
     available_hosts: Vec<(Uuid, String)>,
+    is_active: bool,
 ) -> Element<'_, Message> {
     let path_text = state.current_path.to_string_lossy().to_string();
 
@@ -347,18 +651,21 @@ fn pane_header(
             ..Default::default()
         });
 
+    // Active pane indicator: colored top border
+    let border_color = if is_active { THEME.accent } else { THEME.border };
+
     container(
         row![source_picker, up_btn, refresh_btn, path_bar]
-            .spacing(6)
-            .padding(6)
+            .spacing(8)
+            .padding(8)
             .align_y(Alignment::Center),
     )
     .width(Fill)
-    .style(|_theme| container::Style {
+    .style(move |_theme| container::Style {
         background: Some(THEME.surface.into()),
         border: iced::Border {
-            color: THEME.border,
-            width: 1.0,
+            color: border_color,
+            width: if is_active { 2.0 } else { 1.0 },
             radius: 0.0.into(),
         },
         ..Default::default()
@@ -417,18 +724,27 @@ fn pane_file_list<'a>(
     let headers = container(
         row![
             text("Name")
-                .size(11)
+                .size(12)
                 .color(THEME.text_muted)
                 .width(Length::FillPortion(4)),
+            text("Date Modified")
+                .size(12)
+                .color(THEME.text_muted)
+                .width(Length::FillPortion(2)),
             text("Size")
-                .size(11)
+                .size(12)
                 .color(THEME.text_muted)
                 .width(Length::FillPortion(1)),
+            text("Kind")
+                .size(12)
+                .color(THEME.text_muted)
+                .width(Length::FillPortion(2)),
         ]
         .spacing(8)
-        .padding(Padding::new(4.0).left(8.0).right(8.0)),
+        .padding(Padding::new(8.0).left(12.0).right(12.0)),
     )
     .style(|_theme| container::Style {
+        background: Some(THEME.surface.into()),
         border: iced::Border {
             color: THEME.border,
             width: 1.0,
@@ -443,7 +759,7 @@ fn pane_file_list<'a>(
         .iter()
         .enumerate()
         .map(|(index, entry)| {
-            pane_file_entry_row(entry, index, state.selected_index == Some(index), tab_id, pane_id)
+            pane_file_entry_row(entry, index, state.is_selected(index), tab_id, pane_id)
         })
         .collect();
 
@@ -494,30 +810,43 @@ fn pane_file_entry_row(
     let path = entry.path.clone();
     let is_dir = entry.is_dir;
 
-    let name_row = row![
-        icon_with_color(icon_data, 14, icon_color),
-        text(name).size(12).color(text_color),
-    ]
-    .spacing(6)
-    .align_y(Alignment::Center);
+    let modified = entry.formatted_modified();
+    let kind = entry.kind_description();
 
-    let content = row![
-        container(name_row).width(Length::FillPortion(4)),
-        text(size)
-            .size(11)
-            .color(if is_selected {
-                text_color
-            } else {
-                THEME.text_secondary
-            })
-            .width(Length::FillPortion(1)),
+    let name_row = row![
+        icon_with_color(icon_data, 16, icon_color),
+        text(name).size(13).color(text_color),
     ]
     .spacing(8)
     .align_y(Alignment::Center);
 
-    button(
+    let secondary_color = if is_selected {
+        text_color
+    } else {
+        THEME.text_secondary
+    };
+
+    let content = row![
+        container(name_row).width(Length::FillPortion(4)),
+        text(modified)
+            .size(12)
+            .color(secondary_color)
+            .width(Length::FillPortion(2)),
+        text(size)
+            .size(12)
+            .color(secondary_color)
+            .width(Length::FillPortion(1)),
+        text(kind)
+            .size(12)
+            .color(secondary_color)
+            .width(Length::FillPortion(2)),
+    ]
+    .spacing(8)
+    .align_y(Alignment::Center);
+
+    let btn = button(
         container(content)
-            .padding(Padding::new(4.0).left(8.0).right(8.0))
+            .padding(Padding::new(6.0).left(12.0).right(12.0))
             .width(Fill),
     )
     .style(move |_theme, status| {
@@ -538,8 +867,14 @@ fn pane_file_entry_row(
         Message::DualSftpPaneNavigate(tab_id, pane_id, path)
     } else {
         Message::DualSftpPaneSelect(tab_id, pane_id, index)
-    })
-    .into()
+    });
+
+    // Wrap in mouse_area to handle right-click
+    mouse_area(btn)
+        .on_right_press(move |x, y| {
+            Message::DualSftpShowContextMenu(tab_id, pane_id, x, y, Some(index))
+        })
+        .into()
 }
 
 /// Footer with status for a pane
@@ -549,16 +884,19 @@ fn pane_footer<'a>(
     _tab_id: SessionId,
 ) -> Element<'a, Message> {
     let item_count = state.entries.len();
+    let selected_count = state.selected_indices.len();
     let status = if state.loading {
         "Loading...".to_string()
+    } else if selected_count > 0 {
+        format!("{} of {} items selected", selected_count, item_count)
     } else {
         format!("{} items", item_count)
     };
 
     container(
-        row![text(status).size(11).color(THEME.text_muted),]
+        row![text(status).size(12).color(THEME.text_muted),]
             .spacing(8)
-            .padding(6)
+            .padding(8)
             .align_y(Alignment::Center),
     )
     .width(Fill)
@@ -572,4 +910,685 @@ fn pane_footer<'a>(
         ..Default::default()
     })
     .into()
+}
+
+// ============================================================================
+// Context Menu
+// ============================================================================
+
+/// Build a context menu item button
+fn context_menu_item<'a>(
+    label: &'static str,
+    action: ContextMenuAction,
+    tab_id: SessionId,
+    enabled: bool,
+) -> Element<'a, Message> {
+    let text_color = if enabled {
+        THEME.text_primary
+    } else {
+        THEME.text_muted
+    };
+
+    let btn = button(
+        text(label).size(13).color(text_color),
+    )
+    .padding([6, 16])
+    .width(Length::Fixed(200.0))
+    .style(move |_theme, status| {
+        let bg = if enabled {
+            match status {
+                iced::widget::button::Status::Hovered => Some(THEME.hover.into()),
+                _ => None,
+            }
+        } else {
+            None
+        };
+        iced::widget::button::Style {
+            background: bg,
+            text_color,
+            border: iced::Border::default(),
+            ..Default::default()
+        }
+    });
+
+    if enabled {
+        btn.on_press(Message::DualSftpContextMenuAction(tab_id, action)).into()
+    } else {
+        btn.into()
+    }
+}
+
+/// Build a divider for context menu
+fn context_menu_divider<'a>() -> Element<'a, Message> {
+    container(Space::with_height(1))
+        .width(Fill)
+        .style(|_| container::Style {
+            background: Some(THEME.border.into()),
+            ..Default::default()
+        })
+        .padding([4, 8])
+        .into()
+}
+
+/// Build the context menu overlay
+fn context_menu_view(
+    state: &DualPaneSftpState,
+) -> Element<'_, Message> {
+    if !state.context_menu.visible {
+        return Space::new(0, 0).into();
+    }
+
+    let pane = state.pane(state.context_menu.target_pane);
+    let selection_count = pane.selected_indices.len();
+    let has_selection = selection_count > 0;
+    let is_single = selection_count == 1;
+
+    // Check if any selected item is a directory or parent
+    let has_dir = pane.selected_entries().iter().any(|e| e.is_dir);
+    let has_parent = pane.selected_entries().iter().any(|e| e.is_parent());
+    let is_file_selected = has_selection && !has_dir && !has_parent;
+
+    let tab_id = state.tab_id;
+
+    // Build menu items based on selection context
+    let mut items: Vec<Element<'_, Message>> = vec![];
+
+    // Open / Open With (only for single file selection)
+    if is_single && is_file_selected {
+        items.push(context_menu_item("Open", ContextMenuAction::Open, tab_id, true));
+        items.push(context_menu_item("Open With...", ContextMenuAction::OpenWith, tab_id, true));
+        items.push(context_menu_divider());
+    }
+
+    // Copy to target (for any selection except parent directory)
+    if has_selection && !has_parent {
+        items.push(context_menu_item("Copy to Target", ContextMenuAction::CopyToTarget, tab_id, true));
+    }
+
+    // Rename (only for single non-parent selection)
+    if is_single && !has_parent {
+        items.push(context_menu_item("Rename", ContextMenuAction::Rename, tab_id, true));
+    }
+
+    // Delete (for any selection except parent directory)
+    if has_selection && !has_parent {
+        items.push(context_menu_item("Delete", ContextMenuAction::Delete, tab_id, true));
+    }
+
+    if has_selection && !has_parent {
+        items.push(context_menu_divider());
+    }
+
+    // Always available actions
+    items.push(context_menu_item("Refresh", ContextMenuAction::Refresh, tab_id, true));
+    items.push(context_menu_item("New Folder", ContextMenuAction::NewFolder, tab_id, true));
+
+    // Edit Permissions (only for single file/folder selection, not parent)
+    if is_single && !has_parent {
+        items.push(context_menu_divider());
+        items.push(context_menu_item("Edit Permissions", ContextMenuAction::EditPermissions, tab_id, true));
+    }
+
+    let menu = container(Column::with_children(items).spacing(2))
+        .padding(4)
+        .style(|_| container::Style {
+            background: Some(THEME.surface.into()),
+            border: iced::Border {
+                color: THEME.border,
+                width: 1.0,
+                radius: 6.0.into(),
+            },
+            shadow: iced::Shadow {
+                color: iced::Color::from_rgba8(0, 0, 0, 0.3),
+                offset: iced::Vector::new(2.0, 2.0),
+                blur_radius: 8.0,
+            },
+            ..Default::default()
+        });
+
+    // Position the menu at the click location
+    // Using container with absolute positioning
+    let pos = state.context_menu.position;
+
+    // Wrap in a clickable background to dismiss when clicking outside
+    let background = mouse_area(
+        container(Space::new(Fill, Fill))
+            .width(Fill)
+            .height(Fill)
+    )
+    .on_press(Message::DualSftpHideContextMenu(tab_id));
+
+    // Position the menu using margins
+    let positioned_menu = container(menu)
+        .width(Fill)
+        .height(Fill)
+        .padding(Padding::new(0.0).top(pos.y).left(pos.x));
+
+    stack![background, positioned_menu].into()
+}
+
+// ============================================================================
+// SFTP Dialog (New Folder, Rename)
+// ============================================================================
+
+/// Build the SFTP dialog overlay (New Folder, Rename, or Delete)
+fn sftp_dialog_view(state: &DualPaneSftpState) -> Element<'_, Message> {
+    let Some(ref dialog) = state.dialog else {
+        return Space::new(0, 0).into();
+    };
+
+    let tab_id = state.tab_id;
+
+    // Build dialog content based on type
+    let dialog_content: Element<'_, Message> = match &dialog.dialog_type {
+        SftpDialogType::Delete { entries } => {
+            build_delete_dialog(tab_id, entries, dialog.error.as_deref())
+        }
+        SftpDialogType::EditPermissions { name, permissions, .. } => {
+            build_permissions_dialog(tab_id, name, permissions, dialog.error.as_deref())
+        }
+        _ => {
+            build_input_dialog(tab_id, dialog)
+        }
+    };
+
+    // Dialog box with styling
+    let dialog_box = container(dialog_content)
+        .style(|_| container::Style {
+            background: Some(THEME.surface.into()),
+            border: iced::Border {
+                color: THEME.border,
+                width: 1.0,
+                radius: 8.0.into(),
+            },
+            shadow: iced::Shadow {
+                color: iced::Color::from_rgba8(0, 0, 0, 0.5),
+                offset: iced::Vector::new(0.0, 4.0),
+                blur_radius: 16.0,
+            },
+            ..Default::default()
+        });
+
+    // Backdrop
+    let backdrop = container(
+        container(dialog_box)
+            .width(Fill)
+            .height(Fill)
+            .align_x(Alignment::Center)
+            .align_y(Alignment::Center),
+    )
+    .width(Fill)
+    .height(Fill)
+    .style(|_| container::Style {
+        background: Some(iced::Color::from_rgba8(0, 0, 0, 0.5).into()),
+        ..Default::default()
+    });
+
+    backdrop.into()
+}
+
+/// Build input dialog for New Folder, Rename, or Open With
+fn build_input_dialog(tab_id: SessionId, dialog: &SftpDialogState) -> Element<'_, Message> {
+    let (title, placeholder, submit_label, subtitle) = match &dialog.dialog_type {
+        SftpDialogType::NewFolder => ("New Folder", "Folder name", "Create", None),
+        SftpDialogType::Rename { .. } => ("Rename", "New name", "Rename", None),
+        SftpDialogType::OpenWith { name, .. } => (
+            "Open With",
+            "Command (e.g., vim, code, nano)",
+            "Open",
+            Some(format!("Opening: {}", name)),
+        ),
+        SftpDialogType::Delete { .. } | SftpDialogType::EditPermissions { .. } => unreachable!(),
+    };
+
+    let title_text = text(title).size(18).color(THEME.text_primary);
+
+    let input_value = dialog.input_value.clone();
+    let input = text_input(placeholder, &input_value)
+        .on_input(move |value| Message::DualSftpDialogInputChanged(tab_id, value))
+        .on_submit(Message::DualSftpDialogSubmit(tab_id))
+        .padding([10, 12])
+        .size(14)
+        .style(|_theme, _status| text_input::Style {
+            background: THEME.background.into(),
+            border: iced::Border {
+                color: THEME.border,
+                width: 1.0,
+                radius: 4.0.into(),
+            },
+            icon: THEME.text_muted,
+            placeholder: THEME.text_muted,
+            value: THEME.text_primary,
+            selection: THEME.accent,
+        });
+
+    // Error message if any
+    let error_text: Element<'_, Message> = if let Some(ref error) = dialog.error {
+        text(error)
+            .size(12)
+            .color(iced::Color::from_rgb8(220, 80, 80))
+            .into()
+    } else {
+        Space::new(0, 0).into()
+    };
+
+    let cancel_btn = dialog_cancel_button(tab_id);
+
+    let is_valid = dialog.is_valid();
+    let submit_btn = dialog_submit_button(tab_id, submit_label, is_valid, false);
+
+    let button_row = row![Space::with_width(Fill), cancel_btn, submit_btn].spacing(8);
+
+    // Build subtitle element if present
+    let subtitle_element: Element<'_, Message> = if let Some(subtitle) = subtitle {
+        text(subtitle)
+            .size(13)
+            .color(THEME.text_muted)
+            .into()
+    } else {
+        Space::new(0, 0).into()
+    };
+
+    column![
+        title_text,
+        subtitle_element,
+        Space::with_height(12),
+        input,
+        error_text,
+        Space::with_height(16),
+        button_row,
+    ]
+    .spacing(4)
+    .padding(24)
+    .width(Length::Fixed(380.0))
+    .into()
+}
+
+/// Build delete confirmation dialog
+fn build_delete_dialog<'a>(
+    tab_id: SessionId,
+    entries: &'a [(String, PathBuf, bool)],
+    error: Option<&'a str>,
+) -> Element<'a, Message> {
+    let title_text = text("Delete").size(18).color(THEME.text_primary);
+
+    // Build the confirmation message
+    let count = entries.len();
+    let has_folders = entries.iter().any(|(_, _, is_dir)| *is_dir);
+
+    let warning_msg = if count == 1 {
+        let (name, _, is_dir) = &entries[0];
+        if *is_dir {
+            format!("Delete folder \"{}\" and all its contents?", name)
+        } else {
+            format!("Delete \"{}\"?", name)
+        }
+    } else if has_folders {
+        format!("Delete {} items? Folders will be deleted with all their contents.", count)
+    } else {
+        format!("Delete {} items?", count)
+    };
+
+    let warning_text = text(warning_msg)
+        .size(14)
+        .color(THEME.text_secondary);
+
+    // List the items to be deleted (show up to 5)
+    let items_list: Element<'_, Message> = if count <= 5 {
+        let items: Vec<Element<'_, Message>> = entries
+            .iter()
+            .map(|(name, _, is_dir)| {
+                let icon_data = if *is_dir {
+                    crate::icons::files::FOLDER
+                } else {
+                    crate::icons::files::FILE
+                };
+                let icon = icon_with_color(icon_data, 14, THEME.text_muted);
+                row![icon, text(name).size(13).color(THEME.text_secondary)]
+                    .spacing(8)
+                    .align_y(Alignment::Center)
+                    .into()
+            })
+            .collect();
+
+        Column::with_children(items)
+            .spacing(4)
+            .padding(Padding::from([8, 12]))
+            .into()
+    } else {
+        // Show first 3 items + "and X more"
+        let mut items: Vec<Element<'_, Message>> = entries
+            .iter()
+            .take(3)
+            .map(|(name, _, is_dir)| {
+                let icon_data = if *is_dir {
+                    crate::icons::files::FOLDER
+                } else {
+                    crate::icons::files::FILE
+                };
+                let icon = icon_with_color(icon_data, 14, THEME.text_muted);
+                row![icon, text(name).size(13).color(THEME.text_secondary)]
+                    .spacing(8)
+                    .align_y(Alignment::Center)
+                    .into()
+            })
+            .collect();
+
+        items.push(
+            text(format!("... and {} more", count - 3))
+                .size(13)
+                .color(THEME.text_muted)
+                .into()
+        );
+
+        Column::with_children(items)
+            .spacing(4)
+            .padding(Padding::from([8, 12]))
+            .into()
+    };
+
+    // Items container with background
+    let items_container = container(items_list)
+        .width(Fill)
+        .style(|_| container::Style {
+            background: Some(THEME.background.into()),
+            border: iced::Border {
+                color: THEME.border,
+                width: 1.0,
+                radius: 4.0.into(),
+            },
+            ..Default::default()
+        });
+
+    // Warning about permanent deletion
+    let permanent_warning = row![
+        icon_with_color(crate::icons::ui::ALERT_TRIANGLE, 16, iced::Color::from_rgb8(220, 160, 60)),
+        text("This action cannot be undone.")
+            .size(12)
+            .color(iced::Color::from_rgb8(220, 160, 60))
+    ]
+    .spacing(8)
+    .align_y(Alignment::Center);
+
+    // Error message if any
+    let error_text: Element<'_, Message> = if let Some(error) = error {
+        text(error)
+            .size(12)
+            .color(iced::Color::from_rgb8(220, 80, 80))
+            .into()
+    } else {
+        Space::new(0, 0).into()
+    };
+
+    let cancel_btn = dialog_cancel_button(tab_id);
+    let delete_btn = dialog_submit_button(tab_id, "Delete", true, true);
+
+    let button_row = row![Space::with_width(Fill), cancel_btn, delete_btn].spacing(8);
+
+    column![
+        title_text,
+        Space::with_height(12),
+        warning_text,
+        Space::with_height(12),
+        items_container,
+        Space::with_height(12),
+        permanent_warning,
+        error_text,
+        Space::with_height(16),
+        button_row,
+    ]
+    .spacing(4)
+    .padding(24)
+    .width(Length::Fixed(400.0))
+    .into()
+}
+
+/// Build the permissions dialog
+fn build_permissions_dialog<'a>(
+    tab_id: SessionId,
+    name: &'a str,
+    permissions: &'a PermissionBits,
+    error: Option<&'a str>,
+) -> Element<'a, Message> {
+    let title_text = text("Edit Permissions").size(18).color(THEME.text_primary);
+
+    // File name display
+    let file_info = row![
+        icon_with_color(crate::icons::files::FILE, 16, THEME.text_muted),
+        text(name).size(14).color(THEME.text_secondary)
+    ]
+    .spacing(8)
+    .align_y(Alignment::Center);
+
+    // Current mode display
+    let mode_text = text(format!("Mode: {}", permissions.as_octal_string()))
+        .size(13)
+        .color(THEME.text_muted);
+
+    // Permission grid headers
+    let header_row = row![
+        Space::with_width(Length::Fixed(80.0)),
+        text("Read").size(12).color(THEME.text_muted).width(Length::Fixed(60.0)),
+        text("Write").size(12).color(THEME.text_muted).width(Length::Fixed(60.0)),
+        text("Execute").size(12).color(THEME.text_muted).width(Length::Fixed(60.0)),
+    ]
+    .spacing(8)
+    .align_y(Alignment::Center);
+
+    // Owner row
+    let owner_row = permission_row(
+        tab_id,
+        "Owner",
+        permissions.owner_read,
+        permissions.owner_write,
+        permissions.owner_execute,
+        PermissionBit::OwnerRead,
+        PermissionBit::OwnerWrite,
+        PermissionBit::OwnerExecute,
+    );
+
+    // Group row
+    let group_row = permission_row(
+        tab_id,
+        "Group",
+        permissions.group_read,
+        permissions.group_write,
+        permissions.group_execute,
+        PermissionBit::GroupRead,
+        PermissionBit::GroupWrite,
+        PermissionBit::GroupExecute,
+    );
+
+    // Other row
+    let other_row = permission_row(
+        tab_id,
+        "Other",
+        permissions.other_read,
+        permissions.other_write,
+        permissions.other_execute,
+        PermissionBit::OtherRead,
+        PermissionBit::OtherWrite,
+        PermissionBit::OtherExecute,
+    );
+
+    // Permission grid
+    let permission_grid = container(
+        column![header_row, owner_row, group_row, other_row].spacing(8)
+    )
+    .padding(12)
+    .width(Fill)
+    .style(|_| container::Style {
+        background: Some(THEME.background.into()),
+        border: iced::Border {
+            color: THEME.border,
+            width: 1.0,
+            radius: 4.0.into(),
+        },
+        ..Default::default()
+    });
+
+    // Error message if any
+    let error_text: Element<'_, Message> = if let Some(error) = error {
+        text(error)
+            .size(12)
+            .color(iced::Color::from_rgb8(220, 80, 80))
+            .into()
+    } else {
+        Space::new(0, 0).into()
+    };
+
+    let cancel_btn = dialog_cancel_button(tab_id);
+    let apply_btn = dialog_submit_button(tab_id, "Apply", true, false);
+
+    let button_row = row![Space::with_width(Fill), cancel_btn, apply_btn].spacing(8);
+
+    column![
+        title_text,
+        Space::with_height(12),
+        file_info,
+        mode_text,
+        Space::with_height(12),
+        permission_grid,
+        error_text,
+        Space::with_height(16),
+        button_row,
+    ]
+    .spacing(4)
+    .padding(24)
+    .width(Length::Fixed(350.0))
+    .into()
+}
+
+/// Create a row of permission checkboxes for owner/group/other
+fn permission_row<'a>(
+    tab_id: SessionId,
+    label: &'a str,
+    read: bool,
+    write: bool,
+    execute: bool,
+    read_bit: PermissionBit,
+    write_bit: PermissionBit,
+    execute_bit: PermissionBit,
+) -> Element<'a, Message> {
+    row![
+        text(label).size(13).color(THEME.text_primary).width(Length::Fixed(80.0)),
+        permission_checkbox(tab_id, read, read_bit),
+        permission_checkbox(tab_id, write, write_bit),
+        permission_checkbox(tab_id, execute, execute_bit),
+    ]
+    .spacing(8)
+    .align_y(Alignment::Center)
+    .into()
+}
+
+/// Create a styled permission checkbox
+fn permission_checkbox(
+    tab_id: SessionId,
+    checked: bool,
+    bit: PermissionBit,
+) -> iced::widget::Button<'static, Message> {
+    let icon = if checked { "✓" } else { "" };
+    let bg_color = if checked { THEME.accent } else { THEME.background };
+    let text_color = if checked { THEME.background } else { THEME.text_muted };
+
+    button(
+        container(text(icon).size(12).color(text_color))
+            .width(Length::Fixed(20.0))
+            .height(Length::Fixed(20.0))
+            .align_x(Alignment::Center)
+            .align_y(Alignment::Center)
+    )
+    .padding(0)
+    .width(Length::Fixed(60.0))
+    .style(move |_theme, status| {
+        let bg = match status {
+            iced::widget::button::Status::Hovered => {
+                if checked {
+                    iced::Color::from_rgb8(0, 100, 180)
+                } else {
+                    THEME.hover
+                }
+            }
+            _ => bg_color,
+        };
+        iced::widget::button::Style {
+            background: Some(bg.into()),
+            text_color,
+            border: iced::Border {
+                color: THEME.border,
+                width: 1.0,
+                radius: 4.0.into(),
+            },
+            ..Default::default()
+        }
+    })
+    .on_press(Message::DualSftpPermissionToggle(tab_id, bit, !checked))
+}
+
+/// Create a cancel button for dialogs
+fn dialog_cancel_button(tab_id: SessionId) -> iced::widget::Button<'static, Message> {
+    button(text("Cancel").size(13).color(THEME.text_primary))
+        .padding([8, 16])
+        .style(|_theme, status| {
+            let bg = match status {
+                iced::widget::button::Status::Hovered => THEME.hover,
+                _ => THEME.surface,
+            };
+            iced::widget::button::Style {
+                background: Some(bg.into()),
+                text_color: THEME.text_primary,
+                border: iced::Border {
+                    color: THEME.border,
+                    width: 1.0,
+                    radius: 4.0.into(),
+                },
+                ..Default::default()
+            }
+        })
+        .on_press(Message::DualSftpDialogCancel(tab_id))
+}
+
+/// Create a submit button for dialogs
+fn dialog_submit_button(
+    tab_id: SessionId,
+    label: &str,
+    is_valid: bool,
+    is_destructive: bool,
+) -> iced::widget::Button<'static, Message> {
+    let (normal_color, hover_color) = if is_destructive {
+        (
+            iced::Color::from_rgb8(180, 60, 60),
+            iced::Color::from_rgb8(200, 70, 70),
+        )
+    } else {
+        (THEME.accent, iced::Color::from_rgb8(0, 100, 180))
+    };
+
+    let btn = button(text(label.to_string()).size(13).color(if is_valid { THEME.background } else { THEME.text_muted }))
+        .padding([8, 16])
+        .style(move |_theme, status| {
+            let bg = if is_valid {
+                match status {
+                    iced::widget::button::Status::Hovered => hover_color,
+                    _ => normal_color,
+                }
+            } else {
+                THEME.surface
+            };
+            iced::widget::button::Style {
+                background: Some(bg.into()),
+                text_color: if is_valid { THEME.background } else { THEME.text_muted },
+                border: iced::Border {
+                    radius: 4.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+        });
+
+    if is_valid {
+        btn.on_press(Message::DualSftpDialogSubmit(tab_id))
+    } else {
+        btn
+    }
 }

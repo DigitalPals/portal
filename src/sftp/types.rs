@@ -73,6 +73,95 @@ impl FileEntry {
         }
     }
 
+    /// Get file type description for the Kind column
+    pub fn kind_description(&self) -> &'static str {
+        if self.is_parent() {
+            "Parent Directory"
+        } else if self.is_dir {
+            "Folder"
+        } else if self.is_symlink {
+            "Symbolic Link"
+        } else {
+            match self.extension() {
+                Some("rs") => "Rust Source",
+                Some("py") => "Python Script",
+                Some("js") => "JavaScript",
+                Some("ts") => "TypeScript",
+                Some("c") => "C Source",
+                Some("cpp" | "cc" | "cxx") => "C++ Source",
+                Some("h" | "hpp") => "Header File",
+                Some("go") => "Go Source",
+                Some("java") => "Java Source",
+                Some("rb") => "Ruby Script",
+                Some("php") => "PHP Script",
+                Some("swift") => "Swift Source",
+                Some("kt") => "Kotlin Source",
+                Some("txt") => "Plain Text",
+                Some("md" | "markdown") => "Markdown",
+                Some("rst") => "reStructuredText",
+                Some("doc" | "docx") => "Word Document",
+                Some("rtf") => "Rich Text",
+                Some("json") => "JSON",
+                Some("toml") => "TOML Config",
+                Some("yaml" | "yml") => "YAML",
+                Some("xml") => "XML",
+                Some("ini" | "conf" | "cfg") => "Config File",
+                Some("jpg" | "jpeg") => "JPEG Image",
+                Some("png") => "PNG Image",
+                Some("gif") => "GIF Image",
+                Some("bmp") => "Bitmap Image",
+                Some("svg") => "SVG Image",
+                Some("ico") => "Icon",
+                Some("webp") => "WebP Image",
+                Some("tiff") => "TIFF Image",
+                Some("mp3") => "MP3 Audio",
+                Some("wav") => "WAV Audio",
+                Some("ogg") => "Ogg Audio",
+                Some("flac") => "FLAC Audio",
+                Some("m4a") => "M4A Audio",
+                Some("aac") => "AAC Audio",
+                Some("wma") => "WMA Audio",
+                Some("mp4") => "MP4 Video",
+                Some("mkv") => "Matroska Video",
+                Some("avi") => "AVI Video",
+                Some("mov") => "QuickTime Video",
+                Some("webm") => "WebM Video",
+                Some("wmv") => "WMV Video",
+                Some("flv") => "Flash Video",
+                Some("zip") => "ZIP Archive",
+                Some("tar") => "TAR Archive",
+                Some("gz" | "gzip") => "Gzip Archive",
+                Some("xz") => "XZ Archive",
+                Some("7z") => "7-Zip Archive",
+                Some("rar") => "RAR Archive",
+                Some("bz2") => "Bzip2 Archive",
+                Some("tgz") => "Tarball",
+                Some("sh" | "bash" | "zsh" | "fish") => "Shell Script",
+                Some("bat" | "cmd") => "Batch File",
+                Some("ps1") => "PowerShell Script",
+                Some("exe") => "Executable",
+                Some("bin") => "Binary",
+                Some("app") => "Application",
+                Some("dmg") => "Disk Image",
+                Some("deb") => "Debian Package",
+                Some("rpm") => "RPM Package",
+                Some("pdf") => "PDF Document",
+                Some("html" | "htm") => "HTML Document",
+                Some("css") => "Stylesheet",
+                Some("sql") => "SQL Script",
+                Some("log") => "Log File",
+                _ => "File",
+            }
+        }
+    }
+
+    /// Format modified date for display
+    pub fn formatted_modified(&self) -> String {
+        match &self.modified {
+            Some(dt) => dt.format("%Y-%m-%d %H:%M").to_string(),
+            None => "—".to_string(),
+        }
+    }
 }
 
 /// Sort order for file listings

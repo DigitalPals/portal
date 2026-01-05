@@ -8,7 +8,7 @@ use crate::config::DetectedOs;
 use crate::sftp::{FileEntry, SharedSftpSession};
 use crate::ssh::host_key_verification::HostKeyVerificationRequest;
 use crate::ssh::{SshEvent, SshSession};
-use crate::views::sftp_view::{PaneId, PaneSource};
+use crate::views::sftp_view::{ContextMenuAction, PaneId, PaneSource, PermissionBit};
 
 /// Session ID type alias
 pub type SessionId = Uuid;
@@ -90,6 +90,10 @@ pub enum Message {
     DualSftpPaneNavigateUp(SessionId, PaneId),                      // Go to parent directory
     DualSftpPaneRefresh(SessionId, PaneId),                         // Refresh current directory
     DualSftpPaneSelect(SessionId, PaneId, usize),                   // Select file by index
+    DualSftpPaneSelectToggle(SessionId, PaneId, usize),             // Toggle selection (Ctrl+click)
+    DualSftpPaneSelectRange(SessionId, PaneId, usize),              // Range select (Shift+click)
+    DualSftpPaneSelectAll(SessionId, PaneId),                       // Select all items (Ctrl+A)
+    DualSftpPaneClearSelection(SessionId, PaneId),                  // Clear selection
     DualSftpPaneListResult(SessionId, PaneId, Result<Vec<FileEntry>, String>), // Directory listing result
     DualSftpPaneFocus(SessionId, PaneId),                           // Set active pane
     DualSftpConnectHost(SessionId, PaneId, Uuid),                   // Connect pane to remote host
@@ -100,6 +104,28 @@ pub enum Message {
         host_name: String,
         sftp_session: SharedSftpSession,
     },
+
+    // Context menu
+    DualSftpShowContextMenu(SessionId, PaneId, f32, f32, Option<usize>), // Show context menu at position, optionally selecting item
+    DualSftpHideContextMenu(SessionId),                              // Hide context menu
+    DualSftpContextMenuAction(SessionId, ContextMenuAction),         // Execute context menu action
+
+    // SFTP dialogs (New Folder, Rename, Delete, Permissions)
+    DualSftpDialogInputChanged(SessionId, String),                   // Dialog input text changed
+    DualSftpDialogCancel(SessionId),                                 // Cancel/close dialog
+    DualSftpDialogSubmit(SessionId),                                 // Submit dialog action
+    DualSftpNewFolderResult(SessionId, PaneId, Result<(), String>),  // Result of folder creation
+    DualSftpRenameResult(SessionId, PaneId, Result<(), String>),     // Result of rename operation
+    DualSftpDeleteResult(SessionId, PaneId, Result<usize, String>),  // Result of delete (count deleted)
+    DualSftpPermissionToggle(SessionId, PermissionBit, bool),        // Toggle a permission checkbox
+    DualSftpPermissionsResult(SessionId, PaneId, Result<(), String>), // Result of chmod operation
+
+    // SFTP file transfer (Copy to Target)
+    DualSftpCopyToTarget(SessionId),                                 // Start copying selected files to target pane
+    DualSftpCopyResult(SessionId, PaneId, Result<usize, String>),    // Result of copy (count copied, target pane)
+
+    // Open With result
+    DualSftpOpenWithResult(Result<(), String>),                      // Result of open with command
 
     // UI navigation
     SearchChanged(String),

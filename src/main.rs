@@ -10,6 +10,7 @@ mod ssh;
 mod terminal;
 mod theme;
 mod views;
+mod widgets;
 
 use app::Portal;
 use iced::Size;

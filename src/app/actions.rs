@@ -10,7 +10,7 @@ use crate::local_fs::list_local_dir;
 use crate::message::{EventReceiver, Message, SessionId, VerificationRequestWrapper};
 use crate::sftp::SftpClient;
 use crate::ssh::{SshClient, SshEvent};
-use crate::views::sftp_view::{PaneId, PaneSource};
+use crate::views::sftp_view::{ContextMenuAction, PaneId, PaneSource, PermissionBits, SftpDialogType};
 
 use super::{Portal, View};
 
@@ -273,4 +273,659 @@ impl Portal {
 
         Task::batch([event_listener, connect_task])
     }
+
+    /// Handle context menu actions for SFTP panes
+    pub(super) fn handle_sftp_context_action(
+        &mut self,
+        tab_id: SessionId,
+        action: ContextMenuAction,
+    ) -> Task<Message> {
+        let Some(tab_state) = self.dual_sftp_tabs.get(&tab_id) else {
+            return Task::none();
+        };
+
+        let active_pane = tab_state.active_pane;
+        let pane = tab_state.pane(active_pane);
+        let selected_entries: Vec<_> = pane.selected_entries();
+
+        match action {
+            ContextMenuAction::Open => {
+                // Open file with default application
+                if let Some(entry) = selected_entries.first() {
+                    if !entry.is_dir && !entry.is_parent() {
+                        let file_name = entry.name.clone();
+                        let remote_path = entry.path.clone();
+
+                        match &pane.source {
+                            PaneSource::Local => {
+                                // For local files, open directly
+                                return Task::perform(
+                                    async move {
+                                        open::that(&remote_path)
+                                            .map_err(|e| format!("Failed to open file: {}", e))
+                                    },
+                                    Message::DualSftpOpenWithResult,
+                                );
+                            }
+                            PaneSource::Remote { session_id, .. } => {
+                                // For remote files, download to temp and open
+                                if let Some(sftp) = self.sftp_connections.get(session_id) {
+                                    let sftp = sftp.clone();
+                                    return Task::perform(
+                                        async move {
+                                            // Create temp directory for this file
+                                            let temp_dir = std::env::temp_dir()
+                                                .join("portal_open")
+                                                .join(format!("{}", uuid::Uuid::new_v4()));
+
+                                            tokio::fs::create_dir_all(&temp_dir).await
+                                                .map_err(|e| format!("Failed to create temp directory: {}", e))?;
+
+                                            let local_path = temp_dir.join(&file_name);
+
+                                            // Download the file
+                                            sftp.download(&remote_path, &local_path).await
+                                                .map_err(|e| format!("Failed to download file: {}", e))?;
+
+                                            // Open with default application
+                                            open::that(&local_path)
+                                                .map_err(|e| format!("Failed to open file: {}", e))
+                                        },
+                                        Message::DualSftpOpenWithResult,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            ContextMenuAction::OpenWith => {
+                // Show the Open With dialog for single selection
+                if let Some(entry) = selected_entries.first() {
+                    if !entry.is_dir && !entry.is_parent() {
+                        let file_name = entry.name.clone();
+                        let file_path = entry.path.clone();
+                        let is_remote = matches!(pane.source, PaneSource::Remote { .. });
+
+                        if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
+                            tab_state.show_open_with_dialog(file_name, file_path, is_remote);
+                        }
+                    }
+                }
+            }
+            ContextMenuAction::CopyToTarget => {
+                // Copy selected files to the target (other) pane
+                return Task::done(Message::DualSftpCopyToTarget(tab_id));
+            }
+            ContextMenuAction::Rename => {
+                // Show the Rename dialog for single selection
+                if let Some(entry) = selected_entries.first() {
+                    if !entry.is_parent() {
+                        let original_name = entry.name.clone();
+                        if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
+                            tab_state.show_rename_dialog(original_name);
+                        }
+                    }
+                }
+            }
+            ContextMenuAction::Delete => {
+                // Show delete confirmation dialog for selected entries
+                let entries_to_delete: Vec<_> = selected_entries
+                    .iter()
+                    .filter(|e| !e.is_parent())
+                    .map(|e| (e.name.clone(), e.path.clone(), e.is_dir))
+                    .collect();
+
+                if !entries_to_delete.is_empty() {
+                    if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
+                        tab_state.show_delete_dialog(entries_to_delete);
+                    }
+                }
+            }
+            ContextMenuAction::Refresh => {
+                // Refresh the current pane
+                if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
+                    tab_state.pane_mut(active_pane).loading = true;
+                }
+                return self.load_dual_pane_directory(tab_id, active_pane);
+            }
+            ContextMenuAction::NewFolder => {
+                // Show the New Folder dialog
+                if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
+                    tab_state.show_new_folder_dialog();
+                }
+            }
+            ContextMenuAction::EditPermissions => {
+                // Show permissions dialog for single selection
+                if let Some(entry) = selected_entries.first() {
+                    if !entry.is_parent() {
+                        let name = entry.name.clone();
+                        let path = entry.path.clone();
+
+                        // Get current permissions
+                        let permissions = match &pane.source {
+                            PaneSource::Local => {
+                                // Read permissions from local file
+                                #[cfg(unix)]
+                                {
+                                    use std::os::unix::fs::PermissionsExt;
+                                    std::fs::metadata(&path)
+                                        .map(|m| PermissionBits::from_mode(m.permissions().mode()))
+                                        .unwrap_or_default()
+                                }
+                                #[cfg(not(unix))]
+                                {
+                                    PermissionBits::default()
+                                }
+                            }
+                            PaneSource::Remote { .. } => {
+                                // For remote files, we'll use the mode from FileEntry if available
+                                // For now, use default permissions (644 for files, 755 for directories)
+                                if entry.is_dir {
+                                    PermissionBits::from_mode(0o755)
+                                } else {
+                                    PermissionBits::from_mode(0o644)
+                                }
+                            }
+                        };
+
+                        if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
+                            tab_state.show_permissions_dialog(name, path, permissions);
+                        }
+                    }
+                }
+            }
+        }
+
+        Task::none()
+    }
+
+    /// Handle dialog submission (New Folder or Rename)
+    pub(super) fn handle_sftp_dialog_submit(&mut self, tab_id: SessionId) -> Task<Message> {
+        let Some(tab_state) = self.dual_sftp_tabs.get(&tab_id) else {
+            return Task::none();
+        };
+
+        let Some(ref dialog) = tab_state.dialog else {
+            return Task::none();
+        };
+
+        let pane_id = dialog.target_pane;
+        let pane = tab_state.pane(pane_id);
+        let current_path = pane.current_path.clone();
+        let input_value = dialog.input_value.trim().to_string();
+
+        match &dialog.dialog_type {
+            SftpDialogType::NewFolder => {
+                let new_folder_path = current_path.join(&input_value);
+
+                match &pane.source {
+                    PaneSource::Local => {
+                        // Create local folder
+                        Task::perform(
+                            async move {
+                                match std::fs::create_dir(&new_folder_path) {
+                                    Ok(()) => Ok(()),
+                                    Err(e) => Err(e.to_string()),
+                                }
+                            },
+                            move |result| Message::DualSftpNewFolderResult(tab_id, pane_id, result),
+                        )
+                    }
+                    PaneSource::Remote { session_id, .. } => {
+                        // Create remote folder via SFTP
+                        if let Some(sftp) = self.sftp_connections.get(session_id) {
+                            let sftp = sftp.clone();
+                            Task::perform(
+                                async move {
+                                    sftp.create_dir(&new_folder_path)
+                                        .await
+                                        .map_err(|e| e.to_string())
+                                },
+                                move |result| Message::DualSftpNewFolderResult(tab_id, pane_id, result),
+                            )
+                        } else {
+                            Task::none()
+                        }
+                    }
+                }
+            }
+            SftpDialogType::Rename { original_name } => {
+                let old_path = current_path.join(original_name);
+                let new_path = current_path.join(&input_value);
+
+                match &pane.source {
+                    PaneSource::Local => {
+                        // Rename local file/folder
+                        Task::perform(
+                            async move {
+                                std::fs::rename(&old_path, &new_path).map_err(|e| e.to_string())
+                            },
+                            move |result| Message::DualSftpRenameResult(tab_id, pane_id, result),
+                        )
+                    }
+                    PaneSource::Remote { session_id, .. } => {
+                        // Rename remote file/folder via SFTP
+                        if let Some(sftp) = self.sftp_connections.get(session_id) {
+                            let sftp = sftp.clone();
+                            Task::perform(
+                                async move {
+                                    sftp.rename(&old_path, &new_path)
+                                        .await
+                                        .map_err(|e| e.to_string())
+                                },
+                                move |result| Message::DualSftpRenameResult(tab_id, pane_id, result),
+                            )
+                        } else {
+                            Task::none()
+                        }
+                    }
+                }
+            }
+            SftpDialogType::Delete { entries } => {
+                let entries = entries.clone();
+
+                match &pane.source {
+                    PaneSource::Local => {
+                        // Delete local files/folders
+                        Task::perform(
+                            async move {
+                                let mut deleted_count = 0;
+                                for (_, path, is_dir) in entries {
+                                    let result = if is_dir {
+                                        std::fs::remove_dir_all(&path)
+                                    } else {
+                                        std::fs::remove_file(&path)
+                                    };
+                                    match result {
+                                        Ok(()) => deleted_count += 1,
+                                        Err(e) => {
+                                            return Err(format!(
+                                                "Failed to delete {}: {}",
+                                                path.display(),
+                                                e
+                                            ))
+                                        }
+                                    }
+                                }
+                                Ok(deleted_count)
+                            },
+                            move |result| Message::DualSftpDeleteResult(tab_id, pane_id, result),
+                        )
+                    }
+                    PaneSource::Remote { session_id, .. } => {
+                        // Delete remote files/folders via SFTP
+                        if let Some(sftp) = self.sftp_connections.get(session_id) {
+                            let sftp = sftp.clone();
+                            Task::perform(
+                                async move {
+                                    let mut deleted_count = 0;
+                                    for (_, path, is_dir) in entries {
+                                        let result = if is_dir {
+                                            sftp.remove_recursive(&path).await
+                                        } else {
+                                            sftp.remove_file(&path).await
+                                        };
+                                        match result {
+                                            Ok(()) => deleted_count += 1,
+                                            Err(e) => {
+                                                return Err(format!(
+                                                    "Failed to delete {}: {}",
+                                                    path.display(),
+                                                    e
+                                                ))
+                                            }
+                                        }
+                                    }
+                                    Ok(deleted_count)
+                                },
+                                move |result| Message::DualSftpDeleteResult(tab_id, pane_id, result),
+                            )
+                        } else {
+                            Task::none()
+                        }
+                    }
+                }
+            }
+            SftpDialogType::EditPermissions { path, permissions, .. } => {
+                let path = path.clone();
+                let mode = permissions.to_mode();
+
+                match &pane.source {
+                    PaneSource::Local => {
+                        // Set local file permissions
+                        Task::perform(
+                            async move {
+                                #[cfg(unix)]
+                                {
+                                    use std::os::unix::fs::PermissionsExt;
+                                    let permissions = std::fs::Permissions::from_mode(mode);
+                                    std::fs::set_permissions(&path, permissions)
+                                        .map_err(|e| format!("Failed to set permissions: {}", e))
+                                }
+                                #[cfg(not(unix))]
+                                {
+                                    let _ = (path, mode);
+                                    Err("Permissions are only supported on Unix systems".to_string())
+                                }
+                            },
+                            move |result| Message::DualSftpPermissionsResult(tab_id, pane_id, result),
+                        )
+                    }
+                    PaneSource::Remote { session_id, .. } => {
+                        // Set remote file permissions via SFTP
+                        if let Some(sftp) = self.sftp_connections.get(session_id) {
+                            let sftp = sftp.clone();
+                            Task::perform(
+                                async move {
+                                    sftp.set_permissions(&path, mode)
+                                        .await
+                                        .map_err(|e| e.to_string())
+                                },
+                                move |result| Message::DualSftpPermissionsResult(tab_id, pane_id, result),
+                            )
+                        } else {
+                            Task::none()
+                        }
+                    }
+                }
+            }
+            SftpDialogType::OpenWith { path, is_remote, .. } => {
+                let path = path.clone();
+                let is_remote = *is_remote;
+                let command = input_value;
+                let pane_source = pane.source.clone();
+
+                // Close dialog immediately
+                if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
+                    tab_state.close_dialog();
+                }
+
+                if is_remote {
+                    // For remote files, download to temp first, then open with command
+                    if let PaneSource::Remote { session_id, .. } = &pane_source {
+                        if let Some(sftp) = self.sftp_connections.get(session_id) {
+                            let sftp = sftp.clone();
+                            let file_name = path.file_name()
+                                .map(|n| n.to_string_lossy().to_string())
+                                .unwrap_or_default();
+                            return Task::perform(
+                                async move {
+                                    // Create temp directory for this file
+                                    let temp_dir = std::env::temp_dir()
+                                        .join("portal_open")
+                                        .join(format!("{}", uuid::Uuid::new_v4()));
+
+                                    tokio::fs::create_dir_all(&temp_dir).await
+                                        .map_err(|e| format!("Failed to create temp directory: {}", e))?;
+
+                                    let local_path = temp_dir.join(&file_name);
+
+                                    // Download the file
+                                    sftp.download(&path, &local_path).await
+                                        .map_err(|e| format!("Failed to download file: {}", e))?;
+
+                                    // Open with specified command
+                                    let status = std::process::Command::new(&command)
+                                        .arg(&local_path)
+                                        .spawn();
+
+                                    match status {
+                                        Ok(_) => Ok(()),
+                                        Err(e) => Err(format!("Failed to run '{}': {}", command, e)),
+                                    }
+                                },
+                                Message::DualSftpOpenWithResult,
+                            );
+                        }
+                    }
+                    Task::none()
+                } else {
+                    // For local files, just run the command directly
+                    Task::perform(
+                        async move {
+                            let status = std::process::Command::new(&command)
+                                .arg(&path)
+                                .spawn();
+
+                            match status {
+                                Ok(_) => Ok(()),
+                                Err(e) => Err(format!("Failed to run '{}': {}", command, e)),
+                            }
+                        },
+                        Message::DualSftpOpenWithResult,
+                    )
+                }
+            }
+        }
+    }
+
+    /// Handle copying selected files from active pane to target pane
+    pub(super) fn handle_copy_to_target(&mut self, tab_id: SessionId) -> Task<Message> {
+        let Some(tab_state) = self.dual_sftp_tabs.get(&tab_id) else {
+            return Task::none();
+        };
+
+        let source_pane_id = tab_state.active_pane;
+        let target_pane_id = match source_pane_id {
+            PaneId::Left => PaneId::Right,
+            PaneId::Right => PaneId::Left,
+        };
+
+        let source_pane = tab_state.pane(source_pane_id);
+        let target_pane = tab_state.pane(target_pane_id);
+
+        // Collect entries to copy (exclude ".." parent entry)
+        let entries_to_copy: Vec<_> = source_pane
+            .selected_entries()
+            .into_iter()
+            .filter(|e| !e.is_parent())
+            .map(|e| (e.name.clone(), e.path.clone(), e.is_dir))
+            .collect();
+
+        if entries_to_copy.is_empty() {
+            return Task::none();
+        }
+
+        let target_dir = target_pane.current_path.clone();
+        let source = source_pane.source.clone();
+        let target = target_pane.source.clone();
+
+        match (&source, &target) {
+            (PaneSource::Local, PaneSource::Local) => {
+                // Local to Local copy
+                Task::perform(
+                    async move {
+                        let mut count = 0;
+                        for (name, source_path, is_dir) in entries_to_copy {
+                            let target_path = target_dir.join(&name);
+                            if is_dir {
+                                copy_dir_recursive(&source_path, &target_path)?;
+                                count += count_items_in_dir(&source_path)?;
+                            } else {
+                                std::fs::copy(&source_path, &target_path).map_err(|e| {
+                                    format!("Failed to copy {}: {}", source_path.display(), e)
+                                })?;
+                                count += 1;
+                            }
+                        }
+                        Ok(count)
+                    },
+                    move |result| Message::DualSftpCopyResult(tab_id, target_pane_id, result),
+                )
+            }
+            (PaneSource::Local, PaneSource::Remote { session_id, .. }) => {
+                // Local to Remote upload
+                let sftp_session_id = *session_id;
+                if let Some(sftp) = self.sftp_connections.get(&sftp_session_id) {
+                    let sftp = sftp.clone();
+                    Task::perform(
+                        async move {
+                            let mut count = 0;
+                            for (name, source_path, is_dir) in entries_to_copy {
+                                let target_path = target_dir.join(&name);
+                                if is_dir {
+                                    count += sftp
+                                        .upload_recursive(&source_path, &target_path)
+                                        .await
+                                        .map_err(|e| e.to_string())?;
+                                } else {
+                                    sftp.upload(&source_path, &target_path)
+                                        .await
+                                        .map_err(|e| e.to_string())?;
+                                    count += 1;
+                                }
+                            }
+                            Ok(count)
+                        },
+                        move |result| Message::DualSftpCopyResult(tab_id, target_pane_id, result),
+                    )
+                } else {
+                    Task::none()
+                }
+            }
+            (PaneSource::Remote { session_id, .. }, PaneSource::Local) => {
+                // Remote to Local download
+                let sftp_session_id = *session_id;
+                if let Some(sftp) = self.sftp_connections.get(&sftp_session_id) {
+                    let sftp = sftp.clone();
+                    Task::perform(
+                        async move {
+                            let mut count = 0;
+                            for (name, source_path, is_dir) in entries_to_copy {
+                                let target_path = target_dir.join(&name);
+                                if is_dir {
+                                    count += sftp
+                                        .download_recursive(&source_path, &target_path)
+                                        .await
+                                        .map_err(|e| e.to_string())?;
+                                } else {
+                                    sftp.download(&source_path, &target_path)
+                                        .await
+                                        .map_err(|e| e.to_string())?;
+                                    count += 1;
+                                }
+                            }
+                            Ok(count)
+                        },
+                        move |result| Message::DualSftpCopyResult(tab_id, target_pane_id, result),
+                    )
+                } else {
+                    Task::none()
+                }
+            }
+            (
+                PaneSource::Remote { session_id: source_session_id, .. },
+                PaneSource::Remote { session_id: target_session_id, .. },
+            ) => {
+                // Remote to Remote copy (via local temp)
+                let source_sftp_id = *source_session_id;
+                let target_sftp_id = *target_session_id;
+
+                let source_sftp = self.sftp_connections.get(&source_sftp_id).cloned();
+                let target_sftp = self.sftp_connections.get(&target_sftp_id).cloned();
+
+                if let (Some(source_sftp), Some(target_sftp)) = (source_sftp, target_sftp) {
+                    Task::perform(
+                        async move {
+                            let mut count = 0;
+                            let temp_dir = std::env::temp_dir().join(format!("portal_copy_{}", uuid::Uuid::new_v4()));
+                            tokio::fs::create_dir_all(&temp_dir).await.map_err(|e| {
+                                format!("Failed to create temp directory: {}", e)
+                            })?;
+
+                            for (name, source_path, is_dir) in entries_to_copy {
+                                let temp_path = temp_dir.join(&name);
+                                let target_path = target_dir.join(&name);
+
+                                // Download to temp
+                                if is_dir {
+                                    source_sftp
+                                        .download_recursive(&source_path, &temp_path)
+                                        .await
+                                        .map_err(|e| e.to_string())?;
+                                } else {
+                                    source_sftp
+                                        .download(&source_path, &temp_path)
+                                        .await
+                                        .map_err(|e| e.to_string())?;
+                                }
+
+                                // Upload from temp to target
+                                if is_dir {
+                                    count += target_sftp
+                                        .upload_recursive(&temp_path, &target_path)
+                                        .await
+                                        .map_err(|e| e.to_string())?;
+                                } else {
+                                    target_sftp
+                                        .upload(&temp_path, &target_path)
+                                        .await
+                                        .map_err(|e| e.to_string())?;
+                                    count += 1;
+                                }
+                            }
+
+                            // Clean up temp directory
+                            let _ = tokio::fs::remove_dir_all(&temp_dir).await;
+
+                            Ok(count)
+                        },
+                        move |result| Message::DualSftpCopyResult(tab_id, target_pane_id, result),
+                    )
+                } else {
+                    Task::none()
+                }
+            }
+        }
+    }
+}
+
+/// Recursively copy a directory (local to local)
+fn copy_dir_recursive(source: &std::path::Path, target: &std::path::Path) -> Result<(), String> {
+    std::fs::create_dir_all(target)
+        .map_err(|e| format!("Failed to create directory {}: {}", target.display(), e))?;
+
+    for entry in std::fs::read_dir(source)
+        .map_err(|e| format!("Failed to read directory {}: {}", source.display(), e))?
+    {
+        let entry = entry.map_err(|e| format!("Failed to read entry: {}", e))?;
+        let file_type = entry
+            .file_type()
+            .map_err(|e| format!("Failed to get file type: {}", e))?;
+
+        let source_path = entry.path();
+        let target_path = target.join(entry.file_name());
+
+        if file_type.is_dir() {
+            copy_dir_recursive(&source_path, &target_path)?;
+        } else if file_type.is_file() {
+            std::fs::copy(&source_path, &target_path)
+                .map_err(|e| format!("Failed to copy {}: {}", source_path.display(), e))?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Count items in a directory recursively
+fn count_items_in_dir(dir: &std::path::Path) -> Result<usize, String> {
+    let mut count = 0;
+
+    for entry in std::fs::read_dir(dir)
+        .map_err(|e| format!("Failed to read directory {}: {}", dir.display(), e))?
+    {
+        let entry = entry.map_err(|e| format!("Failed to read entry: {}", e))?;
+        let file_type = entry
+            .file_type()
+            .map_err(|e| format!("Failed to get file type: {}", e))?;
+
+        if file_type.is_dir() {
+            count += count_items_in_dir(&entry.path())?;
+        } else if file_type.is_file() {
+            count += 1;
+        }
+    }
+
+    Ok(count)
 }

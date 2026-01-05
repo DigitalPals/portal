@@ -101,6 +101,31 @@ impl SftpSession {
         })
     }
 
+    /// Rename a file or directory
+    pub async fn rename(&self, old_path: &Path, new_path: &Path) -> Result<(), SftpError> {
+        let sftp = self.sftp.lock().await;
+        let old_path_str = old_path.to_string_lossy().to_string();
+        let new_path_str = new_path.to_string_lossy().to_string();
+
+        sftp.rename(old_path_str.clone(), new_path_str.clone()).await.map_err(|e| {
+            SftpError::FileOperation(format!("Failed to rename {} to {}: {}", old_path_str, new_path_str, e))
+        })
+    }
+
+    /// Set file/directory permissions (chmod)
+    pub async fn set_permissions(&self, path: &Path, mode: u32) -> Result<(), SftpError> {
+        let sftp = self.sftp.lock().await;
+        let path_str = path.to_string_lossy().to_string();
+
+        // Create file attributes with only permissions set
+        let mut attrs = russh_sftp::protocol::FileAttributes::default();
+        attrs.permissions = Some(mode);
+
+        sftp.set_metadata(path_str.clone(), attrs).await.map_err(|e| {
+            SftpError::FileOperation(format!("Failed to set permissions on {}: {}", path_str, e))
+        })
+    }
+
     /// Remove a file
     pub async fn remove_file(&self, path: &Path) -> Result<(), SftpError> {
         let sftp = self.sftp.lock().await;
@@ -193,6 +218,83 @@ impl SftpSession {
             })?;
 
         Ok(contents.len() as u64)
+    }
+
+    /// Download a directory recursively from remote to local
+    pub async fn download_recursive(
+        &self,
+        remote_path: &Path,
+        local_path: &Path,
+    ) -> Result<usize, SftpError> {
+        // Create local directory
+        tokio::fs::create_dir_all(local_path).await.map_err(|e| {
+            SftpError::LocalIo(format!(
+                "Failed to create local directory {}: {}",
+                local_path.display(),
+                e
+            ))
+        })?;
+
+        let entries = self.list_dir(remote_path).await?;
+        let mut count = 0;
+
+        for entry in entries {
+            if entry.name == ".." {
+                continue;
+            }
+
+            let target_path = local_path.join(&entry.name);
+
+            if entry.is_dir {
+                count += Box::pin(self.download_recursive(&entry.path, &target_path)).await?;
+            } else {
+                self.download(&entry.path, &target_path).await?;
+                count += 1;
+            }
+        }
+
+        Ok(count)
+    }
+
+    /// Upload a directory recursively from local to remote
+    pub async fn upload_recursive(
+        &self,
+        local_path: &Path,
+        remote_path: &Path,
+    ) -> Result<usize, SftpError> {
+        // Create remote directory
+        self.create_dir(remote_path).await?;
+
+        let mut count = 0;
+        let mut entries = tokio::fs::read_dir(local_path).await.map_err(|e| {
+            SftpError::LocalIo(format!(
+                "Failed to read local directory {}: {}",
+                local_path.display(),
+                e
+            ))
+        })?;
+
+        while let Some(entry) = entries.next_entry().await.map_err(|e| {
+            SftpError::LocalIo(format!("Failed to read directory entry: {}", e))
+        })? {
+            let file_type = entry.file_type().await.map_err(|e| {
+                SftpError::LocalIo(format!("Failed to get file type: {}", e))
+            })?;
+
+            let entry_name = entry.file_name();
+            let local_entry_path = entry.path();
+            let remote_entry_path = remote_path.join(&entry_name);
+
+            if file_type.is_dir() {
+                count += Box::pin(self.upload_recursive(&local_entry_path, &remote_entry_path)).await?;
+            } else if file_type.is_file() {
+                self.upload(&local_entry_path, &remote_entry_path).await?;
+                count += 1;
+            }
+            // Skip symlinks for now
+        }
+
+        Ok(count)
     }
 }
 
