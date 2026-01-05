@@ -20,15 +20,11 @@ use crate::views::dialogs::host_dialog::{
 };
 use crate::views::dialogs::host_key_dialog::{host_key_dialog_view, HostKeyDialogState};
 use crate::views::dialogs::settings_dialog::{settings_dialog_view, SettingsDialogState};
-use crate::views::dialogs::sftp_dialogs::{
-    delete_confirm_dialog_view, mkdir_dialog_view, DeleteConfirmDialogState, MkdirDialogState,
-};
 use crate::views::dialogs::snippets_dialog::{snippets_dialog_view, SnippetsDialogState};
 use crate::views::history_view::history_view;
 use crate::views::host_grid::{calculate_columns, host_grid_view};
-use crate::views::sftp_picker::{sftp_picker_view, SftpHostCard};
 use crate::views::sftp_view::{
-    dual_pane_sftp_view, sftp_browser_view, DualPaneSftpState, PaneId, PaneSource, SftpBrowserState,
+    dual_pane_sftp_view, DualPaneSftpState, PaneId, PaneSource,
 };
 use crate::views::sidebar::sidebar_view;
 use crate::views::tabs::{tab_bar_view, Tab};
@@ -44,7 +40,6 @@ pub enum View {
     HostGrid,
     TerminalDemo,
     Terminal(SessionId),
-    Sftp(SessionId),
     DualSftp(SessionId),  // Dual-pane SFTP browser
 }
 
@@ -52,12 +47,6 @@ pub enum View {
 pub struct ActiveSession {
     pub ssh_session: Arc<SshSession>,
     pub terminal: TerminalSession,
-}
-
-/// Active SFTP session
-pub struct SftpSessionState {
-    pub sftp_session: SharedSftpSession,
-    pub browser_state: SftpBrowserState,
 }
 
 /// Main application state
@@ -77,8 +66,6 @@ pub struct Portal {
 
     // Dialog state
     dialog: Option<HostDialogState>,
-    mkdir_dialog: Option<MkdirDialogState>,
-    delete_dialog: Option<DeleteConfirmDialogState>,
     settings_dialog: Option<SettingsDialogState>,
     snippets_dialog: Option<SnippetsDialogState>,
     host_key_dialog: Option<HostKeyDialogState>,
@@ -96,9 +83,6 @@ pub struct Portal {
 
     // Active sessions
     sessions: HashMap<SessionId, ActiveSession>,
-
-    // SFTP sessions (single-pane, legacy)
-    sftp_sessions: HashMap<SessionId, SftpSessionState>,
 
     // Dual-pane SFTP tabs
     dual_sftp_tabs: HashMap<SessionId, DualPaneSftpState>,
@@ -179,8 +163,6 @@ impl Portal {
             tabs: Vec::new(),
             active_tab: None,
             dialog: None,
-            mkdir_dialog: None,
-            delete_dialog: None,
             settings_dialog: None,
             snippets_dialog: None,
             host_key_dialog: None,
@@ -190,7 +172,6 @@ impl Portal {
             history_config,
             demo_terminal: Some(demo_terminal),
             sessions: HashMap::new(),
-            sftp_sessions: HashMap::new(),
             dual_sftp_tabs: HashMap::new(),
             sftp_connections: HashMap::new(),
             pending_dual_sftp_connection: None,
@@ -375,8 +356,6 @@ impl Portal {
             }
             Message::DialogClose => {
                 self.dialog = None;
-                self.mkdir_dialog = None;
-                self.delete_dialog = None;
                 self.settings_dialog = None;
                 self.snippets_dialog = None;
             }
@@ -594,291 +573,6 @@ impl Portal {
                 // Go to host grid to select a new connection
                 self.active_view = View::HostGrid;
             }
-            // SFTP messages
-            Message::SftpOpen(host_id) => {
-                tracing::info!("Opening SFTP for host: {}", host_id);
-                if let Some(host) = self.hosts_config.find_host(host_id).cloned() {
-                    return self.connect_sftp(&host);
-                }
-            }
-            Message::SftpConnected {
-                session_id,
-                host_name,
-                sftp_session,
-            } => {
-                tracing::info!("SFTP connected to {}", host_name);
-                let home_dir = sftp_session.home_dir().to_path_buf();
-
-                // Store in shared connections pool (for dual-pane use)
-                self.sftp_connections.insert(session_id, sftp_session.clone());
-
-                // Create browser state
-                let browser_state = SftpBrowserState::new(session_id, host_name.clone(), home_dir.clone());
-
-                // Store SFTP session (for single-pane legacy view)
-                self.sftp_sessions.insert(
-                    session_id,
-                    SftpSessionState {
-                        sftp_session: sftp_session.clone(),
-                        browser_state,
-                    },
-                );
-
-                // Create tab
-                let tab = Tab::new_sftp(session_id, host_name);
-                self.tabs.push(tab);
-                self.active_tab = Some(session_id);
-                self.active_view = View::Sftp(session_id);
-
-                // Start loading directory
-                return self.load_sftp_directory(session_id, home_dir);
-            }
-            Message::SftpNavigate(session_id, path) => {
-                if let Some(state) = self.sftp_sessions.get_mut(&session_id) {
-                    state.browser_state.current_path = path.clone();
-                    state.browser_state.loading = true;
-                    return self.load_sftp_directory(session_id, path);
-                }
-            }
-            Message::SftpNavigateUp(session_id) => {
-                if let Some(state) = self.sftp_sessions.get_mut(&session_id) {
-                    if let Some(parent) = state.browser_state.current_path.parent() {
-                        let path = parent.to_path_buf();
-                        state.browser_state.current_path = path.clone();
-                        state.browser_state.loading = true;
-                        return self.load_sftp_directory(session_id, path);
-                    }
-                }
-            }
-            Message::SftpRefresh(session_id) => {
-                if let Some(state) = self.sftp_sessions.get_mut(&session_id) {
-                    let path = state.browser_state.current_path.clone();
-                    state.browser_state.loading = true;
-                    return self.load_sftp_directory(session_id, path);
-                }
-            }
-            Message::SftpSelect(session_id, index) => {
-                if let Some(state) = self.sftp_sessions.get_mut(&session_id) {
-                    state.browser_state.selected_index = Some(index);
-                }
-            }
-            Message::SftpListResult(session_id, result) => {
-                if let Some(state) = self.sftp_sessions.get_mut(&session_id) {
-                    match result {
-                        Ok(entries) => {
-                            state.browser_state.set_entries(entries);
-                        }
-                        Err(e) => {
-                            state.browser_state.set_error(e);
-                        }
-                    }
-                }
-            }
-            Message::SftpDownload(session_id, path) => {
-                tracing::info!("Download requested: {:?}", path);
-                if let Some(state) = self.sftp_sessions.get(&session_id) {
-                    let sftp = state.sftp_session.clone();
-                    let file_name = path.file_name()
-                        .map(|n| n.to_string_lossy().to_string())
-                        .unwrap_or_else(|| "download".to_string());
-
-                    return Task::perform(
-                        async move {
-                            // Open native save dialog
-                            let file_handle = rfd::AsyncFileDialog::new()
-                                .set_file_name(&file_name)
-                                .save_file()
-                                .await;
-
-                            if let Some(handle) = file_handle {
-                                let local_path = handle.path().to_path_buf();
-                                match sftp.download(&path, &local_path).await {
-                                    Ok(_) => Ok(local_path),
-                                    Err(e) => Err(e.to_string()),
-                                }
-                            } else {
-                                Err("Download cancelled".to_string())
-                            }
-                        },
-                        move |result| Message::SftpDownloadComplete(session_id, result),
-                    );
-                }
-            }
-            Message::SftpUpload(session_id) => {
-                tracing::info!("Upload requested for session: {}", session_id);
-                if let Some(state) = self.sftp_sessions.get(&session_id) {
-                    let sftp = state.sftp_session.clone();
-                    let current_path = state.browser_state.current_path.clone();
-
-                    return Task::perform(
-                        async move {
-                            // Open native file picker
-                            let file_handle = rfd::AsyncFileDialog::new()
-                                .pick_file()
-                                .await;
-
-                            if let Some(handle) = file_handle {
-                                let local_path = handle.path().to_path_buf();
-                                let file_name = local_path.file_name()
-                                    .map(|n| n.to_os_string())
-                                    .unwrap_or_default();
-                                let remote_path = current_path.join(file_name);
-
-                                match sftp.upload(&local_path, &remote_path).await {
-                                    Ok(_) => Ok(()),
-                                    Err(e) => Err(e.to_string()),
-                                }
-                            } else {
-                                Err("Upload cancelled".to_string())
-                            }
-                        },
-                        move |result| Message::SftpUploadComplete(session_id, result),
-                    );
-                }
-            }
-            Message::SftpMkdir(session_id) => {
-                tracing::info!("Mkdir requested for session: {}", session_id);
-                if let Some(state) = self.sftp_sessions.get(&session_id) {
-                    let current_path = state.browser_state.current_path.clone();
-                    self.mkdir_dialog = Some(MkdirDialogState::new(session_id, current_path));
-                }
-            }
-            Message::SftpMkdirNameChanged(name) => {
-                if let Some(ref mut dialog) = self.mkdir_dialog {
-                    dialog.folder_name = name;
-                }
-            }
-            Message::SftpMkdirSubmit => {
-                if let Some(dialog) = self.mkdir_dialog.take() {
-                    if dialog.is_valid() {
-                        let session_id = dialog.session_id;
-                        let full_path = dialog.full_path();
-
-                        if let Some(state) = self.sftp_sessions.get(&session_id) {
-                            let sftp = state.sftp_session.clone();
-
-                            return Task::perform(
-                                async move {
-                                    match sftp.create_dir(&full_path).await {
-                                        Ok(()) => Ok(full_path),
-                                        Err(e) => Err(e.to_string()),
-                                    }
-                                },
-                                move |result| Message::SftpMkdirResult(session_id, result),
-                            );
-                        }
-                    }
-                }
-            }
-            Message::SftpMkdirResult(session_id, result) => {
-                match result {
-                    Ok(path) => {
-                        tracing::info!("Created directory: {:?}", path);
-                        // Refresh the directory listing
-                        if let Some(state) = self.sftp_sessions.get(&session_id) {
-                            let current_path = state.browser_state.current_path.clone();
-                            return self.load_sftp_directory(session_id, current_path);
-                        }
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to create directory: {}", e);
-                        if let Some(state) = self.sftp_sessions.get_mut(&session_id) {
-                            state.browser_state.set_error(format!("Failed to create folder: {}", e));
-                        }
-                    }
-                }
-            }
-            Message::SftpDelete(session_id, path) => {
-                tracing::info!("Delete requested: {:?}", path);
-                // Check if it's a directory
-                let is_dir = if let Some(state) = self.sftp_sessions.get(&session_id) {
-                    state.browser_state.selected_entry()
-                        .map(|e| e.is_dir)
-                        .unwrap_or(false)
-                } else {
-                    false
-                };
-                self.delete_dialog = Some(DeleteConfirmDialogState::new(session_id, path, is_dir));
-            }
-            Message::SftpDeleteConfirm => {
-                if let Some(dialog) = self.delete_dialog.take() {
-                    let session_id = dialog.session_id;
-                    let path = dialog.path.clone();
-                    let is_dir = dialog.is_directory;
-
-                    if let Some(state) = self.sftp_sessions.get(&session_id) {
-                        let sftp = state.sftp_session.clone();
-
-                        return Task::perform(
-                            async move {
-                                let result = if is_dir {
-                                    sftp.remove_recursive(&path).await
-                                } else {
-                                    sftp.remove_file(&path).await
-                                };
-                                match result {
-                                    Ok(()) => Ok(path),
-                                    Err(e) => Err(e.to_string()),
-                                }
-                            },
-                            move |result| Message::SftpDeleteResult(session_id, result),
-                        );
-                    }
-                }
-            }
-            Message::SftpDeleteResult(session_id, result) => {
-                match result {
-                    Ok(path) => {
-                        tracing::info!("Deleted: {:?}", path);
-                        // Refresh the directory listing
-                        if let Some(state) = self.sftp_sessions.get(&session_id) {
-                            let current_path = state.browser_state.current_path.clone();
-                            return self.load_sftp_directory(session_id, current_path);
-                        }
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to delete: {}", e);
-                        if let Some(state) = self.sftp_sessions.get_mut(&session_id) {
-                            state.browser_state.set_error(format!("Failed to delete: {}", e));
-                        }
-                    }
-                }
-            }
-            Message::SftpDownloadComplete(session_id, result) => {
-                match result {
-                    Ok(path) => {
-                        tracing::info!("Download complete: {:?}", path);
-                    }
-                    Err(e) => {
-                        if e != "Download cancelled" {
-                            tracing::error!("Download failed: {}", e);
-                            if let Some(state) = self.sftp_sessions.get_mut(&session_id) {
-                                state.browser_state.set_error(format!("Download failed: {}", e));
-                            }
-                        }
-                    }
-                }
-            }
-            Message::SftpUploadComplete(session_id, result) => {
-                match result {
-                    Ok(()) => {
-                        tracing::info!("Upload complete");
-                        // Refresh the directory listing
-                        if let Some(state) = self.sftp_sessions.get(&session_id) {
-                            let current_path = state.browser_state.current_path.clone();
-                            return self.load_sftp_directory(session_id, current_path);
-                        }
-                    }
-                    Err(e) => {
-                        if e != "Upload cancelled" {
-                            tracing::error!("Upload failed: {}", e);
-                            if let Some(state) = self.sftp_sessions.get_mut(&session_id) {
-                                state.browser_state.set_error(format!("Upload failed: {}", e));
-                            }
-                        }
-                    }
-                }
-            }
 
             // Dual-pane SFTP browser messages
             Message::DualSftpOpen => {
@@ -1019,12 +713,9 @@ impl Portal {
                             dialog.respond(HostKeyVerificationResponse::Reject);
                             self.toast_manager.push(Toast::warning("Connection cancelled"));
                             self.host_key_dialog = None;
-                        } else if self.dialog.is_some() || self.mkdir_dialog.is_some()
-                            || self.delete_dialog.is_some() || self.settings_dialog.is_some()
+                        } else if self.dialog.is_some() || self.settings_dialog.is_some()
                             || self.snippets_dialog.is_some() {
                             self.dialog = None;
-                            self.mkdir_dialog = None;
-                            self.delete_dialog = None;
                             self.settings_dialog = None;
                             self.snippets_dialog = None;
                         }
@@ -1200,13 +891,6 @@ impl Portal {
                     text("Session not found").into()
                 }
             }
-            View::Sftp(session_id) => {
-                if let Some(state) = self.sftp_sessions.get(session_id) {
-                    sftp_browser_view(&state.browser_state)
-                } else {
-                    text("SFTP session not found").into()
-                }
-            }
             View::DualSftp(tab_id) => {
                 if let Some(state) = self.dual_sftp_tabs.get(tab_id) {
                     // Build available sources list for dropdown
@@ -1235,18 +919,9 @@ impl Portal {
 
                 // Show content based on sidebar selection
                 match self.sidebar_selection {
-                    SidebarMenuItem::Hosts => {
+                    SidebarMenuItem::Hosts | SidebarMenuItem::Sftp => {
+                        // SFTP now opens directly into dual-pane view, so show hosts grid as fallback
                         host_grid_view(&self.search_query, filtered_groups, filtered_cards, column_count)
-                    }
-                    SidebarMenuItem::Sftp => {
-                        // Show SFTP host picker
-                        let sftp_hosts: Vec<SftpHostCard> = self.hosts_config.hosts.iter()
-                            .map(|h| SftpHostCard {
-                                id: h.id,
-                                name: h.name.clone(),
-                            })
-                            .collect();
-                        sftp_picker_view(&self.search_query, sftp_hosts)
                     }
                     SidebarMenuItem::History => {
                         history_view(&self.history_config)
@@ -1297,12 +972,6 @@ impl Portal {
             stack![main_layout, dialog].into()
         } else if let Some(ref dialog_state) = self.dialog {
             let dialog = host_dialog_view(dialog_state, &self.hosts_config.groups);
-            stack![main_layout, dialog].into()
-        } else if let Some(ref mkdir_state) = self.mkdir_dialog {
-            let dialog = mkdir_dialog_view(mkdir_state);
-            stack![main_layout, dialog].into()
-        } else if let Some(ref delete_state) = self.delete_dialog {
-            let dialog = delete_confirm_dialog_view(delete_state);
             stack![main_layout, dialog].into()
         } else if let Some(ref settings_state) = self.settings_dialog {
             let dialog = settings_dialog_view(settings_state);

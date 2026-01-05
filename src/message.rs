@@ -83,32 +83,6 @@ pub enum Message {
     TabClose(Uuid),
     TabNew,
 
-    // SFTP browser
-    SftpOpen(Uuid),  // Open SFTP browser for a host
-    SftpConnected {
-        session_id: SessionId,
-        host_name: String,
-        sftp_session: SharedSftpSession,
-    },
-    SftpNavigate(SessionId, PathBuf),
-    SftpNavigateUp(SessionId),
-    SftpRefresh(SessionId),
-    SftpSelect(SessionId, usize),
-    SftpListResult(SessionId, Result<Vec<FileEntry>, String>),
-    SftpDownload(SessionId, PathBuf),
-    SftpUpload(SessionId),
-    SftpMkdir(SessionId),
-    SftpDelete(SessionId, PathBuf),
-
-    // SFTP dialog actions
-    SftpMkdirNameChanged(String),
-    SftpMkdirSubmit,
-    SftpMkdirResult(SessionId, Result<PathBuf, String>),
-    SftpDeleteConfirm,
-    SftpDeleteResult(SessionId, Result<PathBuf, String>),
-    SftpDownloadComplete(SessionId, Result<PathBuf, String>),
-    SftpUploadComplete(SessionId, Result<(), String>),
-
     // Dual-pane SFTP browser
     DualSftpOpen,                                                    // Open dual-pane SFTP tab
     DualSftpPaneSourceChanged(SessionId, PaneId, PaneSource),        // Dropdown changed

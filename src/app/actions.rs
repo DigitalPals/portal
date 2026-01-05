@@ -1,4 +1,3 @@
-use std::path::PathBuf;
 use std::time::Duration;
 
 use futures::stream;
@@ -20,8 +19,6 @@ impl Portal {
         self.active_tab = Some(tab_id);
         if self.sessions.contains_key(&tab_id) {
             self.active_view = View::Terminal(tab_id);
-        } else if self.sftp_sessions.contains_key(&tab_id) {
-            self.active_view = View::Sftp(tab_id);
         } else if self.dual_sftp_tabs.contains_key(&tab_id) {
             self.active_view = View::DualSftp(tab_id);
         }
@@ -30,7 +27,6 @@ impl Portal {
     pub(super) fn close_tab(&mut self, tab_id: Uuid) {
         self.tabs.retain(|t| t.id != tab_id);
         self.sessions.remove(&tab_id);
-        self.sftp_sessions.remove(&tab_id);
         self.dual_sftp_tabs.remove(&tab_id);
 
         if self.active_tab == Some(tab_id) {
@@ -39,6 +35,7 @@ impl Portal {
             } else {
                 self.active_tab = None;
                 self.active_view = View::HostGrid;
+                self.sidebar_selection = crate::message::SidebarMenuItem::Hosts;
             }
         }
     }
@@ -152,52 +149,6 @@ impl Portal {
 
         // Run both tasks: listener starts immediately, connection proceeds in parallel
         Task::batch([event_listener, connect_task])
-    }
-
-    pub(super) fn connect_sftp(&self, host: &Host) -> Task<Message> {
-        let host = host.clone();
-        let session_id = Uuid::new_v4();
-
-        let (event_tx, _event_rx) = mpsc::unbounded_channel::<SshEvent>();
-
-        let sftp_client = SftpClient::default();
-        let host_clone = host.clone();
-
-        Task::perform(
-            async move {
-                let result = sftp_client
-                    .connect(&host_clone, event_tx, Duration::from_secs(30), None)
-                    .await;
-
-                (session_id, host_clone.name.clone(), result)
-            },
-            |(session_id, host_name, result)| match result {
-                Ok(sftp_session) => Message::SftpConnected {
-                    session_id,
-                    host_name,
-                    sftp_session,
-                },
-                Err(e) => Message::SshError(format!("SFTP connection failed: {}", e)),
-            },
-        )
-    }
-
-    pub(super) fn load_sftp_directory(
-        &self,
-        session_id: SessionId,
-        path: PathBuf,
-    ) -> Task<Message> {
-        if let Some(state) = self.sftp_sessions.get(&session_id) {
-            let sftp = state.sftp_session.clone();
-            Task::perform(
-                async move { sftp.list_dir(&path).await },
-                move |result| {
-                    Message::SftpListResult(session_id, result.map_err(|e| e.to_string()))
-                },
-            )
-        } else {
-            Task::none()
-        }
     }
 
     pub(super) fn start_ssh_event_listener(
