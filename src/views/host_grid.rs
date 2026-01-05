@@ -226,13 +226,13 @@ pub fn host_grid_view(
             .font(Font::MONOSPACE),
     )
     .width(Length::Fill)
-    .padding(Padding::new(24.0).bottom(16.0))
+    .padding(Padding::new(16.0).top(48.0))
     .align_x(Alignment::Center);
 
     // Main scrollable content (with bottom padding for bar clearance)
     let mut content = Column::new()
         .spacing(24)
-        .padding(Padding::new(24.0).top(0.0).bottom(16.0));
+        .padding(Padding::new(24.0).top(24.0).bottom(16.0));
 
     // Check emptiness before moving
     let groups_empty = groups.is_empty();
@@ -252,6 +252,9 @@ pub fn host_grid_view(
         content = content.push(hosts_section);
     }
 
+    // Add logo below hosts
+    content = content.push(logo_section);
+
     let scrollable_content = iced::widget::scrollable(content)
         .height(Fill)
         .width(Fill);
@@ -259,8 +262,8 @@ pub fn host_grid_view(
     // Bottom bar (fixed at bottom)
     let bottom_bar = build_bottom_bar(search_query);
 
-    // Main layout: logo at top, scrollable content fills space, bottom bar fixed
-    let main_content = column![logo_section, scrollable_content, bottom_bar];
+    // Main layout: scrollable content fills space, bottom bar fixed
+    let main_content = column![scrollable_content, bottom_bar];
 
     container(main_content)
         .width(Fill)
