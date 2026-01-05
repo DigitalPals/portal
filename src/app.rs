@@ -22,7 +22,8 @@ use crate::views::dialogs::host_key_dialog::{host_key_dialog_view, HostKeyDialog
 use crate::views::dialogs::settings_dialog::{settings_dialog_view, SettingsDialogState};
 use crate::views::dialogs::snippets_dialog::{snippets_dialog_view, SnippetsDialogState};
 use crate::views::history_view::history_view;
-use crate::views::host_grid::{calculate_columns, host_grid_view};
+use crate::views::host_grid::{calculate_columns, host_grid_view, search_input_id};
+use iced::widget::text_input;
 use crate::views::sftp_view::{
     dual_pane_sftp_view, DualPaneSftpState, PaneId, PaneSource,
 };
@@ -185,7 +186,9 @@ impl Portal {
             sidebar_manually_collapsed: false,
         };
 
-        (app, Task::none())
+        // Focus the search input on startup
+        let focus_task = text_input::focus(search_input_id());
+        (app, focus_task)
     }
 
     /// Handle messages
@@ -224,9 +227,13 @@ impl Portal {
                 tracing::info!("Sidebar item selected: {:?}", item);
                 // Handle view changes based on selection
                 match item {
-                    SidebarMenuItem::Hosts | SidebarMenuItem::History => {
-                        // Always switch to HostGrid view for navigation items
-                        // The view() method uses sidebar_selection to determine which content to show
+                    SidebarMenuItem::Hosts => {
+                        // Switch to HostGrid view and focus the search input
+                        self.active_view = View::HostGrid;
+                        return text_input::focus(search_input_id());
+                    }
+                    SidebarMenuItem::History => {
+                        // Switch to HostGrid view (history uses the same view container)
                         self.active_view = View::HostGrid;
                     }
                     SidebarMenuItem::Sftp => {

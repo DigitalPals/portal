@@ -2,6 +2,11 @@ use iced::widget::{button, column, container, row, text, text_input, Column, Row
 use iced::{Alignment, Element, Fill, Font, Length, Padding};
 use uuid::Uuid;
 
+/// Search input ID for auto-focus
+pub fn search_input_id() -> text_input::Id {
+    text_input::Id::new("hosts_search")
+}
+
 use crate::config::DetectedOs;
 use crate::icons::{self, icon_with_color};
 use crate::message::Message;
@@ -10,15 +15,17 @@ use crate::theme::{
     MIN_CARD_WIDTH, SIDEBAR_WIDTH, SIDEBAR_WIDTH_COLLAPSED, THEME,
 };
 
-const PORTAL_LOGO: &str = r#"                                  .             oooo
+const PORTAL_LOGO_TOP: &str = r#"                                  .             oooo
                                 .o8             `888
 oo.ooooo.   .ooooo.  oooo d8b .o888oo  .oooo.    888
  888' `88b d88' `88b `888""8P   888   `P  )88b   888
  888   888 888   888  888       888    .oP"888   888
  888   888 888   888  888       888 . d8(  888   888
  888bod8P' `Y8bod8P' d888b      "888" `Y888""8o o888o
- 888
-o888o"#;
+ 888"#;
+
+const PORTAL_LOGO_LAST_LINE: &str = "o888o";
+const LOGO_WIDTH: usize = 54;
 
 /// Group card data for the grid view
 #[derive(Debug, Clone)]
@@ -57,88 +64,61 @@ pub fn calculate_columns(window_width: f32, sidebar_collapsed: bool) -> usize {
     columns.clamp(1, 4)
 }
 
-/// Build the host grid view (main content area)
-pub fn host_grid_view(
-    search_query: &str,
-    groups: Vec<GroupCard>,
-    hosts: Vec<HostCard>,
-    column_count: usize,
-) -> Element<'static, Message> {
-    // ASCII Logo with version - centered
-    let logo_section = container(
-        column![
-            text(PORTAL_LOGO)
-                .size(10)
-                .color(THEME.text_secondary)
-                .font(Font::MONOSPACE),
-            text(format!("v{}", env!("CARGO_PKG_VERSION")))
-                .size(11)
-                .color(THEME.text_secondary),
-        ]
-        .spacing(4)
-        .align_x(Alignment::Center)
-    )
-    .width(Length::Fill)
-    .align_x(Alignment::Center);
+/// Build the bottom action bar with search, connect, new host, and terminal buttons
+fn build_bottom_bar(search_query: &str) -> Element<'static, Message> {
+    // Search input - pill-shaped, auto-focused
+    let search_input: iced::widget::TextInput<'static, Message> =
+        text_input("Find a host or ssh user@hostname...", search_query)
+            .id(search_input_id())
+            .on_input(Message::SearchChanged)
+            .on_submit(Message::QuickConnect)
+            .padding([12, 20])
+            .width(Length::Fill)
+            .style(|_theme, status| {
+                use iced::widget::text_input::{Status, Style};
+                let border_color = match status {
+                    Status::Focused => THEME.accent,
+                    _ => THEME.border,
+                };
+                Style {
+                    background: THEME.background.into(),
+                    border: iced::Border {
+                        color: border_color,
+                        width: 1.0,
+                        radius: 22.0.into(),
+                    },
+                    icon: THEME.text_muted,
+                    placeholder: THEME.text_muted,
+                    value: THEME.text_primary,
+                    selection: THEME.selected,
+                }
+            });
 
-    // Row 1: Search bar with Connect button (pill-shaped)
-    let search_input: iced::widget::TextInput<'static, Message> = text_input("Find a host or ssh user@hostname...", search_query)
-        .on_input(Message::SearchChanged)
-        .padding([12, 20])
-        .width(Length::Fill)
+    // Connect button - pill-shaped, accent color
+    let connect_btn = button(text("Connect").size(14).color(iced::Color::WHITE))
         .style(|_theme, status| {
-            use iced::widget::text_input::{Status, Style};
-            let border_color = match status {
-                Status::Focused => THEME.accent,
-                _ => THEME.border,
+            let bg = match status {
+                button::Status::Hovered => iced::Color::from_rgb8(0x00, 0x8B, 0xE8),
+                _ => THEME.accent,
             };
-            Style {
-                background: THEME.surface.into(),
+            button::Style {
+                background: Some(bg.into()),
+                text_color: iced::Color::WHITE,
                 border: iced::Border {
-                    color: border_color,
-                    width: 1.0,
-                    radius: 22.0.into(),  // Pill-shaped
+                    radius: 22.0.into(),
+                    ..Default::default()
                 },
-                icon: THEME.text_muted,
-                placeholder: THEME.text_muted,
-                value: THEME.text_primary,
-                selection: THEME.selected,
-            }
-        });
-
-    let connect_btn = button(
-        text("Connect").size(14).color(iced::Color::WHITE),
-    )
-    .style(|_theme, status| {
-        let bg = match status {
-            button::Status::Hovered => iced::Color::from_rgb8(0x00, 0x8B, 0xE8),
-            _ => THEME.accent,
-        };
-        button::Style {
-            background: Some(bg.into()),
-            text_color: iced::Color::WHITE,
-            border: iced::Border {
-                radius: 22.0.into(),  // Match pill-shaped search bar
                 ..Default::default()
-            },
-            ..Default::default()
-        }
-    })
-    .padding([12, 24])
-    .on_press(Message::QuickConnect);
+            }
+        })
+        .padding([12, 24])
+        .on_press(Message::QuickConnect);
 
-    let search_row = row![
-        search_input,
-        Space::with_width(12),
-        connect_btn,
-    ]
-    .align_y(Alignment::Center);
-
-    // Row 2: Action toolbar
+    // New Host button - pill-shaped with border
     let new_host_btn = button(
         row![
-            icon_with_color(icons::ui::PLUS, 14, iced::Color::WHITE),
-            text("NEW HOST").size(12).color(iced::Color::WHITE),
+            icon_with_color(icons::ui::PLUS, 14, THEME.text_primary),
+            text("New Host").size(13).color(THEME.text_primary),
         ]
         .spacing(6)
         .align_y(Alignment::Center),
@@ -146,34 +126,7 @@ pub fn host_grid_view(
     .style(|_theme, status| {
         let bg = match status {
             button::Status::Hovered => THEME.hover,
-            _ => THEME.surface,
-        };
-        button::Style {
-            background: Some(bg.into()),
-            text_color: iced::Color::WHITE,
-            border: iced::Border {
-                color: THEME.border,
-                width: 1.0,
-                radius: BORDER_RADIUS.into(),  // Now 8px from theme
-            },
-            ..Default::default()
-        }
-    })
-    .padding([10, 18])
-    .on_press(Message::HostAdd);
-
-    let terminal_btn = button(
-        row![
-            icon_with_color(icons::ui::TERMINAL, 14, THEME.text_primary),
-            text("TERMINAL").size(12).color(THEME.text_primary),
-        ]
-        .spacing(6)
-        .align_y(Alignment::Center),
-    )
-    .style(|_theme, status| {
-        let bg = match status {
-            button::Status::Hovered => THEME.hover,
-            _ => THEME.surface,
+            _ => THEME.background,
         };
         button::Style {
             background: Some(bg.into()),
@@ -181,27 +134,105 @@ pub fn host_grid_view(
             border: iced::Border {
                 color: THEME.border,
                 width: 1.0,
-                radius: BORDER_RADIUS.into(),  // Now 8px from theme
+                radius: 22.0.into(),
             },
             ..Default::default()
         }
     })
-    .padding([10, 18])
+    .padding([12, 20])
+    .on_press(Message::HostAdd);
+
+    // Terminal button - pill-shaped with border
+    let terminal_btn = button(
+        row![
+            icon_with_color(icons::ui::TERMINAL, 14, THEME.text_primary),
+            text("Terminal").size(13).color(THEME.text_primary),
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center),
+    )
+    .style(|_theme, status| {
+        let bg = match status {
+            button::Status::Hovered => THEME.hover,
+            _ => THEME.background,
+        };
+        button::Style {
+            background: Some(bg.into()),
+            text_color: THEME.text_primary,
+            border: iced::Border {
+                color: THEME.border,
+                width: 1.0,
+                radius: 22.0.into(),
+            },
+            ..Default::default()
+        }
+    })
+    .padding([12, 20])
     .on_press(Message::LocalTerminal);
 
-    let toolbar_row = row![
-        new_host_btn,
+    // Build the bar row
+    let bar_content = row![
+        search_input,
         Space::with_width(12),
+        connect_btn,
+        Space::with_width(12),
+        new_host_btn,
+        Space::with_width(8),
         terminal_btn,
     ]
     .align_y(Alignment::Center);
 
-    let header = column![logo_section, search_row, toolbar_row]
-        .spacing(12)
-        .padding(Padding::new(24.0).bottom(16.0));
+    // Container with top border and padding
+    container(bar_content)
+        .width(Fill)
+        .padding([16, 24])
+        .style(|_theme| container::Style {
+            background: Some(THEME.surface.into()),
+            border: iced::Border {
+                color: THEME.border,
+                width: 1.0,
+                radius: 0.0.into(),
+            },
+            ..Default::default()
+        })
+        .into()
+}
 
-    // Main scrollable content
-    let mut content = Column::new().spacing(24).padding(Padding::new(24.0).top(0.0));
+/// Build the host grid view (main content area)
+pub fn host_grid_view(
+    search_query: &str,
+    groups: Vec<GroupCard>,
+    hosts: Vec<HostCard>,
+    column_count: usize,
+) -> Element<'static, Message> {
+    // ASCII Logo with version on last line (right-aligned)
+    let version = format!("v{}", env!("CARGO_PKG_VERSION"));
+    let padding_len = LOGO_WIDTH
+        .saturating_sub(PORTAL_LOGO_LAST_LINE.len())
+        .saturating_sub(version.len())
+        .saturating_sub(1); // 1 char from right edge
+    let last_line = format!(
+        "{}{} {}",
+        PORTAL_LOGO_LAST_LINE,
+        " ".repeat(padding_len),
+        version
+    );
+    let full_logo = format!("{}\n{}", PORTAL_LOGO_TOP, last_line);
+
+    let logo_section = container(
+        text(full_logo)
+            .size(10)
+            .color(THEME.text_secondary)
+            .font(Font::MONOSPACE),
+    )
+    .width(Length::Fill)
+    .padding(Padding::new(24.0).bottom(16.0))
+    .align_x(Alignment::Center);
+
+    // Main scrollable content (with bottom padding for bar clearance)
+    let mut content = Column::new()
+        .spacing(24)
+        .padding(Padding::new(24.0).top(0.0).bottom(16.0));
 
     // Check emptiness before moving
     let groups_empty = groups.is_empty();
@@ -225,7 +256,11 @@ pub fn host_grid_view(
         .height(Fill)
         .width(Fill);
 
-    let main_content = column![header, scrollable_content];
+    // Bottom bar (fixed at bottom)
+    let bottom_bar = build_bottom_bar(search_query);
+
+    // Main layout: logo at top, scrollable content fills space, bottom bar fixed
+    let main_content = column![logo_section, scrollable_content, bottom_bar];
 
     container(main_content)
         .width(Fill)
