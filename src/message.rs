@@ -169,6 +169,10 @@ pub enum Message {
     // Window resize
     WindowResized(iced::Size),
 
+    // Toast notifications
+    ToastDismiss(Uuid),  // User clicked X to dismiss
+    ToastTick,           // Timer tick for auto-dismiss cleanup
+
     // Placeholder for future messages
     Noop,
 }

@@ -93,8 +93,6 @@ impl Portal {
             Some(_) => false,
         };
 
-        self.status_message = Some(format!("Connecting to {}...", host.name));
-
         // Create two channels:
         // 1. For sending events during connection (verification requests)
         // 2. For ongoing session data after connection

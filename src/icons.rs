@@ -20,6 +20,8 @@ pub mod ui {
     pub const FOLDER_CLOSED: &[u8] = include_bytes!("../assets/icons/ui/folder-closed.svg");
     pub const TERMINAL: &[u8] = include_bytes!("../assets/icons/ui/terminal.svg");
     pub const REFRESH: &[u8] = include_bytes!("../assets/icons/ui/refresh-cw.svg");
+    pub const X: &[u8] = include_bytes!("../assets/icons/ui/x.svg");
+    pub const ALERT_TRIANGLE: &[u8] = include_bytes!("../assets/icons/ui/alert-triangle.svg");
 }
 
 /// File type icons for SFTP browser

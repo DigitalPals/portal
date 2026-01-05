@@ -3,9 +3,10 @@ mod view_model;
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 use iced::keyboard::{self, Key};
 use iced::widget::{column, container, row, text, stack};
-use iced::{event, window, Element, Fill, Subscription, Task, Theme as IcedTheme};
+use iced::{event, time, window, Element, Fill, Subscription, Task, Theme as IcedTheme};
 use uuid::Uuid;
 
 use crate::config::{AuthMethod, HistoryConfig, Host, HostsConfig, Snippet, SnippetsConfig};
@@ -32,6 +33,7 @@ use crate::views::sftp_view::{
 use crate::views::sidebar::sidebar_view;
 use crate::views::tabs::{tab_bar_view, Tab};
 use crate::views::terminal_view::{terminal_view, TerminalSession};
+use crate::views::toast::{toast_overlay_view, Toast, ToastManager};
 
 use self::view_model::{filter_group_cards, filter_host_cards, group_cards, host_cards};
 
@@ -108,8 +110,8 @@ pub struct Portal {
     // Used to track which pane is waiting for connection after host key verification
     pending_dual_sftp_connection: Option<(SessionId, PaneId, Uuid)>,
 
-    // Connection status message
-    status_message: Option<String>,
+    // Toast notifications
+    toast_manager: ToastManager,
 
     // Responsive layout
     window_size: iced::Size,
@@ -192,7 +194,7 @@ impl Portal {
             dual_sftp_tabs: HashMap::new(),
             sftp_connections: HashMap::new(),
             pending_dual_sftp_connection: None,
-            status_message: None,
+            toast_manager: ToastManager::new(),
             window_size: iced::Size::new(1200.0, 800.0),
             sidebar_manually_collapsed: false,
         };
@@ -313,7 +315,7 @@ impl Portal {
                 // Parse search query as [ssh] [user@]hostname[:port]
                 let query = self.search_query.trim();
                 if query.is_empty() {
-                    self.status_message = Some("Enter a hostname to connect".to_string());
+                    self.toast_manager.push(Toast::warning("Enter a hostname to connect"));
                     return Task::none();
                 }
 
@@ -369,7 +371,6 @@ impl Portal {
             }
             Message::LocalTerminal => {
                 // Stub for now - local terminal support coming later
-                self.status_message = Some("Local terminal coming soon".to_string());
                 tracing::info!("Local terminal requested (not yet implemented)");
             }
             Message::DialogClose => {
@@ -443,6 +444,13 @@ impl Portal {
                 }
             }
             Message::Noop => {}
+            // Toast notifications
+            Message::ToastDismiss(id) => {
+                self.toast_manager.dismiss(id);
+            }
+            Message::ToastTick => {
+                self.toast_manager.cleanup_expired();
+            }
             // Window resize for responsive layout
             Message::WindowResized(size) => {
                 self.window_size = size;
@@ -470,10 +478,10 @@ impl Portal {
                 if let Some(ref mut dialog) = self.host_key_dialog {
                     dialog.respond(HostKeyVerificationResponse::Reject);
                     tracing::info!("Host key rejected for {}:{}", dialog.host, dialog.port);
-                    self.status_message = Some(format!(
+                    self.toast_manager.push(Toast::error(format!(
                         "Connection rejected: host key verification failed for {}",
                         dialog.host
-                    ));
+                    )));
                 }
                 self.host_key_dialog = None;
             }
@@ -518,7 +526,6 @@ impl Portal {
                 detected_os,
             } => {
                 tracing::info!("SSH connected to {}", host_name);
-                self.status_message = Some(format!("Connected to {}", host_name));
 
                 // Update host with detected OS if available
                 if let Some(os) = detected_os {
@@ -568,12 +575,11 @@ impl Portal {
             }
             Message::SshDisconnected(session_id) => {
                 tracing::info!("SSH disconnected: {}", session_id);
-                self.status_message = Some("Disconnected".to_string());
                 self.close_tab(session_id);
             }
             Message::SshError(error) => {
                 tracing::error!("SSH error: {}", error);
-                self.status_message = Some(error);
+                self.toast_manager.push(Toast::error(error));
             }
             Message::TabSelect(tab_id) => {
                 tracing::info!("Tab selected: {}", tab_id);
@@ -842,7 +848,6 @@ impl Portal {
                 match result {
                     Ok(path) => {
                         tracing::info!("Download complete: {:?}", path);
-                        self.status_message = Some(format!("Downloaded to {}", path.display()));
                     }
                     Err(e) => {
                         if e != "Download cancelled" {
@@ -858,7 +863,6 @@ impl Portal {
                 match result {
                     Ok(()) => {
                         tracing::info!("Upload complete");
-                        self.status_message = Some("Upload complete".to_string());
                         // Refresh the directory listing
                         if let Some(state) = self.sftp_sessions.get(&session_id) {
                             let current_path = state.browser_state.current_path.clone();
@@ -972,7 +976,6 @@ impl Portal {
                 // Connect to a remote host for a specific pane
                 tracing::info!("Connecting to host {} for pane {:?}", host_id, pane_id);
                 if let Some(host) = self.hosts_config.find_host(host_id).cloned() {
-                    self.status_message = Some(format!("Connecting to {}...", host.name));
                     return self.connect_sftp_for_pane(tab_id, pane_id, &host);
                 }
             }
@@ -984,7 +987,6 @@ impl Portal {
                 sftp_session,
             } => {
                 tracing::info!("SFTP connected to {} for pane {:?}", host_name, pane_id);
-                self.status_message = Some(format!("Connected to {}", host_name));
                 self.pending_dual_sftp_connection = None;
 
                 // Store the SFTP connection in the pool
@@ -1015,7 +1017,7 @@ impl Portal {
                         // Host key dialog - Escape means reject
                         if let Some(ref mut dialog) = self.host_key_dialog {
                             dialog.respond(HostKeyVerificationResponse::Reject);
-                            self.status_message = Some("Connection cancelled".to_string());
+                            self.toast_manager.push(Toast::warning("Connection cancelled"));
                             self.host_key_dialog = None;
                         } else if self.dialog.is_some() || self.mkdir_dialog.is_some()
                             || self.delete_dialog.is_some() || self.settings_dialog.is_some()
@@ -1290,7 +1292,7 @@ impl Portal {
             .into();
 
         // Overlay dialog if open - host key dialog takes priority as it's connection-critical
-        if let Some(ref host_key_state) = self.host_key_dialog {
+        let with_dialog: Element<'_, Message> = if let Some(ref host_key_state) = self.host_key_dialog {
             let dialog = host_key_dialog_view(host_key_state);
             stack![main_layout, dialog].into()
         } else if let Some(ref dialog_state) = self.dialog {
@@ -1310,6 +1312,13 @@ impl Portal {
             stack![main_layout, dialog].into()
         } else {
             main_layout
+        };
+
+        // Overlay toast notifications on top of everything
+        if self.toast_manager.has_toasts() {
+            stack![with_dialog, toast_overlay_view(&self.toast_manager)].into()
+        } else {
+            with_dialog
         }
     }
 
@@ -1324,7 +1333,7 @@ impl Portal {
 
     /// Keyboard subscription for shortcuts
     pub fn subscription(&self) -> Subscription<Message> {
-        Subscription::batch([
+        let mut subscriptions = vec![
             // Keyboard events
             event::listen_with(|event, _status, _id| {
                 if let iced::Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) = event {
@@ -1335,6 +1344,15 @@ impl Portal {
             }),
             // Window resize events
             window::resize_events().map(|(_id, size)| Message::WindowResized(size)),
-        ])
+        ];
+
+        // Toast tick timer (only when toasts are visible)
+        if self.toast_manager.has_toasts() {
+            subscriptions.push(
+                time::every(Duration::from_millis(100)).map(|_| Message::ToastTick)
+            );
+        }
+
+        Subscription::batch(subscriptions)
     }
 }
