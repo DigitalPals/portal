@@ -2,6 +2,7 @@ mod app;
 mod config;
 mod error;
 mod icons;
+mod local_fs;
 mod message;
 mod sftp;
 mod ssh;

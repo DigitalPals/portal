@@ -7,9 +7,11 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::config::{DetectedOs, Host};
+use crate::local_fs::list_local_dir;
 use crate::message::{EventReceiver, Message, SessionId, VerificationRequestWrapper};
 use crate::sftp::SftpClient;
 use crate::ssh::{SshClient, SshEvent};
+use crate::views::sftp_view::{PaneId, PaneSource};
 
 use super::{Portal, View};
 
@@ -20,6 +22,8 @@ impl Portal {
             self.active_view = View::Terminal(tab_id);
         } else if self.sftp_sessions.contains_key(&tab_id) {
             self.active_view = View::Sftp(tab_id);
+        } else if self.dual_sftp_tabs.contains_key(&tab_id) {
+            self.active_view = View::DualSftp(tab_id);
         }
     }
 
@@ -27,6 +31,7 @@ impl Portal {
         self.tabs.retain(|t| t.id != tab_id);
         self.sessions.remove(&tab_id);
         self.sftp_sessions.remove(&tab_id);
+        self.dual_sftp_tabs.remove(&tab_id);
 
         if self.active_tab == Some(tab_id) {
             if let Some(last_tab) = self.tabs.last() {
@@ -218,5 +223,105 @@ impl Portal {
         }
 
         Task::none()
+    }
+
+    /// Load directory contents for a dual-pane SFTP browser pane
+    pub(super) fn load_dual_pane_directory(
+        &self,
+        tab_id: SessionId,
+        pane_id: PaneId,
+    ) -> Task<Message> {
+        if let Some(tab_state) = self.dual_sftp_tabs.get(&tab_id) {
+            let pane = tab_state.pane(pane_id);
+            let path = pane.current_path.clone();
+
+            match &pane.source {
+                PaneSource::Local => {
+                    // Load local directory
+                    Task::perform(
+                        async move { list_local_dir(&path).await },
+                        move |result| Message::DualSftpPaneListResult(tab_id, pane_id, result),
+                    )
+                }
+                PaneSource::Remote { session_id, .. } => {
+                    // Load remote directory via SFTP
+                    if let Some(sftp) = self.sftp_connections.get(session_id) {
+                        let sftp = sftp.clone();
+                        Task::perform(
+                            async move { sftp.list_dir(&path).await },
+                            move |result| {
+                                Message::DualSftpPaneListResult(
+                                    tab_id,
+                                    pane_id,
+                                    result.map_err(|e| e.to_string()),
+                                )
+                            },
+                        )
+                    } else {
+                        Task::none()
+                    }
+                }
+            }
+        } else {
+            Task::none()
+        }
+    }
+
+    /// Connect to an SFTP host for use in a dual-pane browser
+    pub(super) fn connect_sftp_for_pane(
+        &mut self,
+        tab_id: SessionId,
+        pane_id: PaneId,
+        host: &Host,
+    ) -> Task<Message> {
+        let host = host.clone();
+        let sftp_session_id = Uuid::new_v4();
+
+        // Store pending connection info for host key verification
+        self.pending_dual_sftp_connection = Some((tab_id, pane_id, host.id));
+
+        // Create event channel for SSH events (including host key verification)
+        let (event_tx, event_rx) = mpsc::unbounded_channel::<SshEvent>();
+
+        let sftp_client = SftpClient::default();
+        let host_name = host.name.clone();
+
+        // Start listening for SSH events (host key verification)
+        let event_listener = Task::run(
+            futures::stream::unfold(event_rx, |mut rx| async move {
+                rx.recv().await.map(|event| (event, rx))
+            }),
+            move |event| match event {
+                SshEvent::HostKeyVerification(request) => {
+                    Message::HostKeyVerification(VerificationRequestWrapper(Some(request)))
+                }
+                _ => Message::Noop,
+            },
+        );
+
+        // Connection task
+        let connect_task = Task::perform(
+            async move {
+                let result = sftp_client
+                    .connect(&host, event_tx, Duration::from_secs(30), None)
+                    .await;
+
+                (tab_id, pane_id, sftp_session_id, host_name, result)
+            },
+            move |(tab_id, pane_id, sftp_session_id, host_name, result)| match result {
+                Ok(sftp_session) => {
+                    Message::DualSftpConnected {
+                        tab_id,
+                        pane_id,
+                        sftp_session_id,
+                        host_name,
+                        sftp_session,
+                    }
+                }
+                Err(e) => Message::SshError(format!("SFTP connection failed: {}", e)),
+            },
+        );
+
+        Task::batch([event_listener, connect_task])
     }
 }

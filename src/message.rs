@@ -8,6 +8,7 @@ use crate::config::DetectedOs;
 use crate::sftp::{FileEntry, SharedSftpSession};
 use crate::ssh::host_key_verification::HostKeyVerificationRequest;
 use crate::ssh::{SshEvent, SshSession};
+use crate::views::sftp_view::{PaneId, PaneSource};
 
 /// Session ID type alias
 pub type SessionId = Uuid;
@@ -107,6 +108,24 @@ pub enum Message {
     SftpDeleteResult(SessionId, Result<PathBuf, String>),
     SftpDownloadComplete(SessionId, Result<PathBuf, String>),
     SftpUploadComplete(SessionId, Result<(), String>),
+
+    // Dual-pane SFTP browser
+    DualSftpOpen,                                                    // Open dual-pane SFTP tab
+    DualSftpPaneSourceChanged(SessionId, PaneId, PaneSource),        // Dropdown changed
+    DualSftpPaneNavigate(SessionId, PaneId, PathBuf),               // Navigate to path
+    DualSftpPaneNavigateUp(SessionId, PaneId),                      // Go to parent directory
+    DualSftpPaneRefresh(SessionId, PaneId),                         // Refresh current directory
+    DualSftpPaneSelect(SessionId, PaneId, usize),                   // Select file by index
+    DualSftpPaneListResult(SessionId, PaneId, Result<Vec<FileEntry>, String>), // Directory listing result
+    DualSftpPaneFocus(SessionId, PaneId),                           // Set active pane
+    DualSftpConnectHost(SessionId, PaneId, Uuid),                   // Connect pane to remote host
+    DualSftpConnected {                                              // Connection succeeded for pane
+        tab_id: SessionId,
+        pane_id: PaneId,
+        sftp_session_id: SessionId,
+        host_name: String,
+        sftp_session: SharedSftpSession,
+    },
 
     // UI navigation
     SearchChanged(String),

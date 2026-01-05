@@ -26,7 +26,9 @@ use crate::views::dialogs::snippets_dialog::{snippets_dialog_view, SnippetsDialo
 use crate::views::history_view::history_view;
 use crate::views::host_grid::{calculate_columns, host_grid_view};
 use crate::views::sftp_picker::{sftp_picker_view, SftpHostCard};
-use crate::views::sftp_view::{sftp_browser_view, SftpBrowserState};
+use crate::views::sftp_view::{
+    dual_pane_sftp_view, sftp_browser_view, DualPaneSftpState, PaneId, PaneSource, SftpBrowserState,
+};
 use crate::views::sidebar::sidebar_view;
 use crate::views::tabs::{tab_bar_view, Tab};
 use crate::views::terminal_view::{terminal_view, TerminalSession};
@@ -41,6 +43,7 @@ pub enum View {
     TerminalDemo,
     Terminal(SessionId),
     Sftp(SessionId),
+    DualSftp(SessionId),  // Dual-pane SFTP browser
 }
 
 /// Active SSH session with its terminal
@@ -92,8 +95,18 @@ pub struct Portal {
     // Active sessions
     sessions: HashMap<SessionId, ActiveSession>,
 
-    // SFTP sessions
+    // SFTP sessions (single-pane, legacy)
     sftp_sessions: HashMap<SessionId, SftpSessionState>,
+
+    // Dual-pane SFTP tabs
+    dual_sftp_tabs: HashMap<SessionId, DualPaneSftpState>,
+
+    // Shared SFTP connections pool (can be used by multiple panes)
+    sftp_connections: HashMap<SessionId, SharedSftpSession>,
+
+    // Pending dual-pane SFTP connection (tab_id, pane_id, host_id)
+    // Used to track which pane is waiting for connection after host key verification
+    pending_dual_sftp_connection: Option<(SessionId, PaneId, Uuid)>,
 
     // Connection status message
     status_message: Option<String>,
@@ -176,6 +189,9 @@ impl Portal {
             demo_terminal: Some(demo_terminal),
             sessions: HashMap::new(),
             sftp_sessions: HashMap::new(),
+            dual_sftp_tabs: HashMap::new(),
+            sftp_connections: HashMap::new(),
+            pending_dual_sftp_connection: None,
             status_message: None,
             window_size: iced::Size::new(1200.0, 800.0),
             sidebar_manually_collapsed: false,
@@ -220,9 +236,20 @@ impl Portal {
                 tracing::info!("Sidebar item selected: {:?}", item);
                 // Handle view changes based on selection
                 match item {
-                    SidebarMenuItem::Hosts => {
-                        if self.active_tab.is_none() {
-                            self.active_view = View::HostGrid;
+                    SidebarMenuItem::Hosts | SidebarMenuItem::History => {
+                        // Always switch to HostGrid view for navigation items
+                        // The view() method uses sidebar_selection to determine which content to show
+                        self.active_view = View::HostGrid;
+                    }
+                    SidebarMenuItem::Sftp => {
+                        // Open dual-pane SFTP browser directly
+                        // Check if we already have a dual sftp tab open
+                        if let Some(tab_id) = self.dual_sftp_tabs.keys().next().cloned() {
+                            // Switch to existing dual sftp tab
+                            self.set_active_tab(tab_id);
+                        } else {
+                            // Create a new dual-pane SFTP tab
+                            return self.update(Message::DualSftpOpen);
                         }
                     }
                     SidebarMenuItem::Settings => {
@@ -235,7 +262,6 @@ impl Portal {
                             self.snippets_config.snippets.clone(),
                         ));
                     }
-                    _ => {}
                 }
             }
             Message::SidebarToggleCollapse => {
@@ -577,10 +603,13 @@ impl Portal {
                 tracing::info!("SFTP connected to {}", host_name);
                 let home_dir = sftp_session.home_dir().to_path_buf();
 
+                // Store in shared connections pool (for dual-pane use)
+                self.sftp_connections.insert(session_id, sftp_session.clone());
+
                 // Create browser state
                 let browser_state = SftpBrowserState::new(session_id, host_name.clone(), home_dir.clone());
 
-                // Store SFTP session
+                // Store SFTP session (for single-pane legacy view)
                 self.sftp_sessions.insert(
                     session_id,
                     SftpSessionState {
@@ -846,6 +875,138 @@ impl Portal {
                     }
                 }
             }
+
+            // Dual-pane SFTP browser messages
+            Message::DualSftpOpen => {
+                // Create a new dual-pane SFTP tab with both panes starting as Local
+                let tab_id = Uuid::new_v4();
+                let dual_state = DualPaneSftpState::new(tab_id);
+                self.dual_sftp_tabs.insert(tab_id, dual_state);
+
+                // Create tab and switch view
+                let tab = Tab::new_sftp(tab_id, "File Browser".to_string());
+                self.tabs.push(tab);
+                self.active_tab = Some(tab_id);
+                self.active_view = View::DualSftp(tab_id);
+
+                // Load both panes (both start as Local)
+                let left_task = self.load_dual_pane_directory(tab_id, PaneId::Left);
+                let right_task = self.load_dual_pane_directory(tab_id, PaneId::Right);
+                return Task::batch([left_task, right_task]);
+            }
+            Message::DualSftpPaneSourceChanged(tab_id, pane_id, new_source) => {
+                if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
+                    let pane = tab_state.pane_mut(pane_id);
+
+                    // Update source and reset path
+                    match &new_source {
+                        PaneSource::Local => {
+                            let home_dir = directories::BaseDirs::new()
+                                .map(|d| d.home_dir().to_path_buf())
+                                .unwrap_or_else(|| std::path::PathBuf::from("/"));
+                            pane.source = new_source;
+                            pane.current_path = home_dir;
+                        }
+                        PaneSource::Remote { session_id, host_name: _ } => {
+                            // Get home dir from existing connection if available
+                            if let Some(sftp) = self.sftp_connections.get(session_id) {
+                                pane.source = new_source;
+                                pane.current_path = sftp.home_dir().to_path_buf();
+                            } else {
+                                // Connection not available - shouldn't happen with proper UI
+                                tracing::warn!("SFTP connection {} not found", session_id);
+                                return Task::none();
+                            }
+                        }
+                    }
+                    pane.loading = true;
+                    pane.entries.clear();
+
+                    return self.load_dual_pane_directory(tab_id, pane_id);
+                }
+            }
+            Message::DualSftpPaneNavigate(tab_id, pane_id, path) => {
+                if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
+                    let pane = tab_state.pane_mut(pane_id);
+                    pane.current_path = path;
+                    pane.loading = true;
+                    return self.load_dual_pane_directory(tab_id, pane_id);
+                }
+            }
+            Message::DualSftpPaneNavigateUp(tab_id, pane_id) => {
+                if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
+                    let pane = tab_state.pane_mut(pane_id);
+                    if let Some(parent) = pane.current_path.parent() {
+                        pane.current_path = parent.to_path_buf();
+                        pane.loading = true;
+                        return self.load_dual_pane_directory(tab_id, pane_id);
+                    }
+                }
+            }
+            Message::DualSftpPaneRefresh(tab_id, pane_id) => {
+                if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
+                    tab_state.pane_mut(pane_id).loading = true;
+                    return self.load_dual_pane_directory(tab_id, pane_id);
+                }
+            }
+            Message::DualSftpPaneSelect(tab_id, pane_id, index) => {
+                if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
+                    tab_state.pane_mut(pane_id).selected_index = Some(index);
+                }
+            }
+            Message::DualSftpPaneListResult(tab_id, pane_id, result) => {
+                if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
+                    let pane = tab_state.pane_mut(pane_id);
+                    match result {
+                        Ok(entries) => pane.set_entries(entries),
+                        Err(e) => pane.set_error(e),
+                    }
+                }
+            }
+            Message::DualSftpPaneFocus(tab_id, pane_id) => {
+                if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
+                    tab_state.active_pane = pane_id;
+                }
+            }
+            Message::DualSftpConnectHost(tab_id, pane_id, host_id) => {
+                // Connect to a remote host for a specific pane
+                tracing::info!("Connecting to host {} for pane {:?}", host_id, pane_id);
+                if let Some(host) = self.hosts_config.find_host(host_id).cloned() {
+                    self.status_message = Some(format!("Connecting to {}...", host.name));
+                    return self.connect_sftp_for_pane(tab_id, pane_id, &host);
+                }
+            }
+            Message::DualSftpConnected {
+                tab_id,
+                pane_id,
+                sftp_session_id,
+                host_name,
+                sftp_session,
+            } => {
+                tracing::info!("SFTP connected to {} for pane {:?}", host_name, pane_id);
+                self.status_message = Some(format!("Connected to {}", host_name));
+                self.pending_dual_sftp_connection = None;
+
+                // Store the SFTP connection in the pool
+                let home_dir = sftp_session.home_dir().to_path_buf();
+                self.sftp_connections.insert(sftp_session_id, sftp_session);
+
+                // Update the pane source to point to this connection
+                if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
+                    let pane = tab_state.pane_mut(pane_id);
+                    pane.source = PaneSource::Remote {
+                        session_id: sftp_session_id,
+                        host_name,
+                    };
+                    pane.current_path = home_dir;
+                    pane.loading = true;
+                    pane.entries.clear();
+
+                    // Load directory for the newly connected pane
+                    return self.load_dual_pane_directory(tab_id, pane_id);
+                }
+            }
+
             Message::KeyboardEvent(key, modifiers) => {
                 // Handle global keyboard shortcuts
                 match (key, modifiers.control(), modifiers.shift()) {
@@ -1042,6 +1203,17 @@ impl Portal {
                     sftp_browser_view(&state.browser_state)
                 } else {
                     text("SFTP session not found").into()
+                }
+            }
+            View::DualSftp(tab_id) => {
+                if let Some(state) = self.dual_sftp_tabs.get(tab_id) {
+                    // Build available sources list for dropdown
+                    let available_hosts: Vec<_> = self.hosts_config.hosts.iter()
+                        .map(|h| (h.id, h.name.clone()))
+                        .collect();
+                    dual_pane_sftp_view(state, available_hosts)
+                } else {
+                    text("File browser not found").into()
                 }
             }
             View::TerminalDemo => {
