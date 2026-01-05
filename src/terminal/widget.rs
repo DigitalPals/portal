@@ -122,6 +122,147 @@ impl<'a, Message> TerminalWidget<'a, Message> {
             visible: true, // Cursor visibility handled by mode flags
         })
     }
+
+    /// Convert pixel coordinates to terminal cell coordinates
+    fn pixel_to_cell(&self, bounds: &Rectangle, position: iced::Point) -> Option<(usize, usize)> {
+        if !bounds.contains(position) {
+            return None;
+        }
+        let col = ((position.x - bounds.x) / self.size.cell_width) as usize;
+        let row = ((position.y - bounds.y) / self.size.cell_height) as usize;
+        Some((col, row))
+    }
+
+    /// Check if a character is a word boundary
+    fn is_word_boundary(c: char) -> bool {
+        c.is_whitespace() || matches!(c, '(' | ')' | '[' | ']' | '{' | '}' | '"' | '\'' | '<' | '>' | ',' | '.' | ';' | ':' | '!' | '?' | '`' | '|' | '&' | '=' | '+' | '-' | '*' | '/' | '\\' | '@' | '#' | '$' | '%' | '^')
+    }
+
+    /// Get line content as a vector of characters for a specific screen line
+    fn get_line_chars(&self, line: usize, cols: usize) -> Vec<char> {
+        let term = self.term.lock();
+        let content = term.renderable_content();
+        let display_offset = content.display_offset;
+
+        let mut chars = vec![' '; cols];
+
+        for indexed in content.display_iter {
+            let screen_line = indexed.point.line.0 + display_offset as i32;
+            if screen_line < 0 {
+                continue;
+            }
+            let cell_line = screen_line as usize;
+            let col = indexed.point.column.0;
+
+            if cell_line == line && col < cols {
+                chars[col] = indexed.cell.c;
+            }
+        }
+
+        chars
+    }
+
+    /// Find word boundaries at a given position
+    /// Returns (start_col, end_col) of the word at the position
+    fn find_word_at(&self, col: usize, line: usize, cols: usize) -> (usize, usize) {
+        let chars = self.get_line_chars(line, cols);
+
+        if col >= chars.len() {
+            return (col, col);
+        }
+
+        // If clicking on a boundary character, select just that character
+        if Self::is_word_boundary(chars[col]) {
+            return (col, col);
+        }
+
+        // Scan left to find word start
+        let mut start = col;
+        while start > 0 && !Self::is_word_boundary(chars[start - 1]) {
+            start -= 1;
+        }
+
+        // Scan right to find word end
+        let mut end = col;
+        while end < chars.len() - 1 && !Self::is_word_boundary(chars[end + 1]) {
+            end += 1;
+        }
+
+        (start, end)
+    }
+
+    /// Get selected text from the terminal
+    fn get_selected_text(
+        &self,
+        start: (usize, usize),
+        end: (usize, usize),
+        cols: usize,
+    ) -> String {
+        // Normalize selection (ensure start comes before end)
+        let (start, end) = if start.1 < end.1 || (start.1 == end.1 && start.0 <= end.0) {
+            (start, end)
+        } else {
+            (end, start)
+        };
+
+        let term = self.term.lock();
+        let content = term.renderable_content();
+        let display_offset = content.display_offset;
+
+        // Build a grid of characters from the display
+        let rows = (end.1 - start.1 + 1).min(1000); // Limit to prevent huge allocations
+        let mut grid: Vec<Vec<char>> = vec![vec![' '; cols]; rows];
+
+        for indexed in content.display_iter {
+            let cell = &indexed.cell;
+
+            // Convert grid line to screen line
+            let screen_line = indexed.point.line.0 + display_offset as i32;
+            if screen_line < 0 {
+                continue;
+            }
+            let line = screen_line as usize;
+            let col = indexed.point.column.0;
+
+            // Check if within our selection range
+            if line >= start.1 && line <= end.1 && col < cols {
+                let grid_line = line - start.1;
+                if grid_line < grid.len() {
+                    grid[grid_line][col] = cell.c;
+                }
+            }
+        }
+
+        // Build result string from grid
+        let mut result = String::new();
+        for (i, line_idx) in (start.1..=end.1).enumerate() {
+            if i >= grid.len() {
+                break;
+            }
+
+            let start_col = if line_idx == start.1 { start.0 } else { 0 };
+            let end_col = if line_idx == end.1 {
+                end.0.min(cols.saturating_sub(1))
+            } else {
+                cols.saturating_sub(1)
+            };
+
+            // Extract characters for this line
+            let line_chars: String = grid[i][start_col..=end_col.min(grid[i].len() - 1)]
+                .iter()
+                .collect();
+
+            // Trim trailing whitespace from each line
+            result.push_str(line_chars.trim_end());
+
+            // Add newline between lines (but not after the last line)
+            if line_idx < end.1 {
+                result.push('\n');
+            }
+        }
+
+        result
+    }
 }
 
 /// Widget state stored in the tree
@@ -131,6 +272,24 @@ struct TerminalState {
     cursor_visible: bool,
     last_size: Option<(u16, u16)>,
     scroll_pixels: f32, // Accumulated scroll pixels for trackpad
+    // Selection state
+    selection_start: Option<(usize, usize)>, // (column, line) in screen coords
+    selection_end: Option<(usize, usize)>,
+    is_selecting: bool, // Mouse button held during drag
+    // Click tracking for double/triple click
+    last_click_time: Option<std::time::Instant>,
+    last_click_position: Option<(usize, usize)>,
+    click_count: u8, // 1 = single, 2 = double, 3 = triple
+    selection_mode: SelectionMode,
+}
+
+/// Selection granularity mode
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+enum SelectionMode {
+    #[default]
+    Character, // Normal character-by-character selection
+    Word,      // Double-click: select by word
+    Line,      // Triple-click: select by line
 }
 
 impl Default for TerminalState {
@@ -140,6 +299,13 @@ impl Default for TerminalState {
             cursor_visible: true,
             last_size: None,
             scroll_pixels: 0.0,
+            selection_start: None,
+            selection_end: None,
+            is_selecting: false,
+            last_click_time: None,
+            last_click_position: None,
+            click_count: 0,
+            selection_mode: SelectionMode::Character,
         }
     }
 }
@@ -175,6 +341,13 @@ where
             cursor_visible: true,
             last_size: None,
             scroll_pixels: 0.0,
+            selection_start: None,
+            selection_end: None,
+            is_selecting: false,
+            last_click_time: None,
+            last_click_position: None,
+            click_count: 0,
+            selection_mode: SelectionMode::Character,
         })
     }
 
@@ -267,6 +440,42 @@ where
                     iced::Point::new(x, y),
                     fg_color,
                     bounds,
+                );
+            }
+        }
+
+        // Draw selection highlight
+        if let (Some(start), Some(end)) = (state.selection_start, state.selection_end) {
+            // Normalize selection (ensure start comes before end)
+            let (start, end) = if start.1 < end.1 || (start.1 == end.1 && start.0 <= end.0) {
+                (start, end)
+            } else {
+                (end, start)
+            };
+
+            let cols = (bounds.width / cell_width) as usize;
+            let selection_color = Color::from_rgba(0.3, 0.5, 0.8, 0.4);
+
+            for line in start.1..=end.1 {
+                let start_col = if line == start.1 { start.0 } else { 0 };
+                let end_col = if line == end.1 { end.0 } else { cols.saturating_sub(1) };
+
+                let x = bounds.x + start_col as f32 * cell_width;
+                let y = bounds.y + line as f32 * cell_height;
+                let width = (end_col - start_col + 1) as f32 * cell_width;
+
+                renderer.fill_quad(
+                    Quad {
+                        bounds: Rectangle {
+                            x,
+                            y,
+                            width,
+                            height: cell_height,
+                        },
+                        border: Border::default(),
+                        shadow: Shadow::default(),
+                    },
+                    Background::Color(selection_color),
                 );
             }
         }
@@ -364,7 +573,7 @@ where
         layout: Layout<'_>,
         cursor: Cursor,
         _renderer: &Renderer,
-        _clipboard: &mut dyn Clipboard,
+        clipboard: &mut dyn Clipboard,
         shell: &mut Shell<'_, Message>,
         _viewport: &Rectangle,
     ) -> iced::event::Status {
@@ -393,13 +602,126 @@ where
             }
         }
 
+        // Double/triple click detection threshold (400ms)
+        const MULTI_CLICK_THRESHOLD: std::time::Duration =
+            std::time::Duration::from_millis(400);
+
         match event {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 if cursor.is_over(bounds) {
                     state.is_focused = true;
+
+                    if let Some(position) = cursor.position() {
+                        if let Some(cell) = self.pixel_to_cell(&bounds, position) {
+                            let now = std::time::Instant::now();
+                            let cols = (bounds.width / self.size.cell_width) as usize;
+
+                            // Check for multi-click (same position, within time threshold)
+                            let is_multi_click = state.last_click_time.map_or(false, |t| {
+                                now.duration_since(t) < MULTI_CLICK_THRESHOLD
+                            }) && state.last_click_position.map_or(false, |pos| {
+                                // Allow 1-cell tolerance for position
+                                let col_diff = (pos.0 as i32 - cell.0 as i32).abs();
+                                let row_diff = (pos.1 as i32 - cell.1 as i32).abs();
+                                col_diff <= 1 && row_diff == 0
+                            });
+
+                            if is_multi_click {
+                                state.click_count = (state.click_count % 3) + 1;
+                            } else {
+                                state.click_count = 1;
+                            }
+
+                            state.last_click_time = Some(now);
+                            state.last_click_position = Some(cell);
+
+                            match state.click_count {
+                                2 => {
+                                    // Double-click: select word
+                                    state.selection_mode = SelectionMode::Word;
+                                    let (word_start, word_end) =
+                                        self.find_word_at(cell.0, cell.1, cols);
+                                    state.selection_start = Some((word_start, cell.1));
+                                    state.selection_end = Some((word_end, cell.1));
+                                    state.is_selecting = true;
+                                }
+                                3 => {
+                                    // Triple-click: select line
+                                    state.selection_mode = SelectionMode::Line;
+                                    state.selection_start = Some((0, cell.1));
+                                    state.selection_end = Some((cols.saturating_sub(1), cell.1));
+                                    state.is_selecting = true;
+                                }
+                                _ => {
+                                    // Single click: character selection
+                                    state.selection_mode = SelectionMode::Character;
+                                    state.selection_start = Some(cell);
+                                    state.selection_end = Some(cell);
+                                    state.is_selecting = true;
+                                }
+                            }
+                        }
+                    }
+
                     return iced::event::Status::Captured;
                 } else {
                     state.is_focused = false;
+                    // Clear selection when clicking outside
+                    state.selection_start = None;
+                    state.selection_end = None;
+                    state.is_selecting = false;
+                    state.click_count = 0;
+                    state.selection_mode = SelectionMode::Character;
+                }
+            }
+            Event::Mouse(mouse::Event::CursorMoved { position }) => {
+                // Update selection while dragging
+                if state.is_selecting && cursor.is_over(bounds) {
+                    if let Some(cell) = self.pixel_to_cell(&bounds, position) {
+                        let cols = (bounds.width / self.size.cell_width) as usize;
+
+                        match state.selection_mode {
+                            SelectionMode::Word => {
+                                // Extend selection by word
+                                let (word_start, word_end) =
+                                    self.find_word_at(cell.0, cell.1, cols);
+                                if let Some(start) = state.selection_start {
+                                    // Determine direction and extend appropriately
+                                    if cell.1 < start.1
+                                        || (cell.1 == start.1 && word_start < start.0)
+                                    {
+                                        state.selection_end = Some((word_start, cell.1));
+                                    } else {
+                                        state.selection_end = Some((word_end, cell.1));
+                                    }
+                                }
+                            }
+                            SelectionMode::Line => {
+                                // Extend selection by line
+                                if let Some(start) = state.selection_start {
+                                    if cell.1 < start.1 {
+                                        state.selection_start = Some((0, cell.1));
+                                        state.selection_end =
+                                            Some((cols.saturating_sub(1), start.1));
+                                    } else {
+                                        state.selection_start = Some((0, start.1));
+                                        state.selection_end =
+                                            Some((cols.saturating_sub(1), cell.1));
+                                    }
+                                }
+                            }
+                            SelectionMode::Character => {
+                                state.selection_end = Some(cell);
+                            }
+                        }
+                    }
+                    return iced::event::Status::Captured;
+                }
+            }
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
+                if state.is_selecting {
+                    state.is_selecting = false;
+                    return iced::event::Status::Captured;
                 }
             }
             Event::Mouse(mouse::Event::WheelScrolled { delta }) => {
@@ -448,7 +770,108 @@ where
                 ..
             }) => {
                 if state.is_focused {
-                    if let Some(bytes) = key_to_escape_sequence(&key, modifiers, text.as_deref()) {
+                    // Handle copy/paste shortcuts:
+                    // - Ctrl+Insert (copy) / Shift+Insert (paste) - X11/Hyprland style
+                    // - Ctrl+Shift+C/V - Linux terminal style
+                    // - Super+C/V - macOS style (if not intercepted by WM)
+                    let is_copy_shortcut =
+                        // Ctrl+Insert (Hyprland sends this for Super+C)
+                        (modifiers.control()
+                            && !modifiers.shift()
+                            && matches!(&key, Key::Named(keyboard::key::Named::Insert)))
+                        // Ctrl+Shift+C
+                        || (modifiers.control()
+                            && modifiers.shift()
+                            && matches!(&key, Key::Character(c) if c.as_str().to_lowercase() == "c"))
+                        // Super+C (if WM doesn't intercept)
+                        || (modifiers.logo()
+                            && matches!(&key, Key::Character(c) if c.as_str() == "c"));
+
+                    let is_paste_shortcut =
+                        // Shift+Insert (Hyprland sends this for Super+V)
+                        (modifiers.shift()
+                            && !modifiers.control()
+                            && matches!(&key, Key::Named(keyboard::key::Named::Insert)))
+                        // Ctrl+Shift+V
+                        || (modifiers.control()
+                            && modifiers.shift()
+                            && matches!(&key, Key::Character(c) if c.as_str().to_lowercase() == "v"))
+                        // Super+V (if WM doesn't intercept)
+                        || (modifiers.logo()
+                            && matches!(&key, Key::Character(c) if c.as_str() == "v"));
+
+                    let is_select_all = modifiers.logo()
+                        && matches!(&key, Key::Character(c) if c.as_str() == "a")
+                        || (modifiers.control()
+                            && modifiers.shift()
+                            && matches!(&key, Key::Character(c) if c.as_str().to_lowercase() == "a"));
+
+                    if is_copy_shortcut {
+                        // Copy selected text to clipboard
+                        if let (Some(start), Some(end)) =
+                            (state.selection_start, state.selection_end)
+                        {
+                            let cols = (bounds.width / self.size.cell_width) as usize;
+                            let text = self.get_selected_text(start, end, cols);
+                            if !text.is_empty() {
+                                clipboard.write(
+                                    iced::advanced::clipboard::Kind::Standard,
+                                    text,
+                                );
+                            }
+                        }
+                        return iced::event::Status::Captured;
+                    }
+
+                    if is_paste_shortcut {
+                        // Paste from clipboard
+                        if let Some(text) =
+                            clipboard.read(iced::advanced::clipboard::Kind::Standard)
+                        {
+                            let bytes = text.into_bytes();
+                            if !bytes.is_empty() {
+                                shell.publish((self.on_input)(bytes));
+                            }
+                        }
+                        return iced::event::Status::Captured;
+                    }
+
+                    if is_select_all {
+                        // Select all visible content
+                        let cols = (bounds.width / self.size.cell_width) as usize;
+                        let rows = (bounds.height / self.size.cell_height) as usize;
+                        state.selection_start = Some((0, 0));
+                        state.selection_end =
+                            Some((cols.saturating_sub(1), rows.saturating_sub(1)));
+                        return iced::event::Status::Captured;
+                    }
+
+                    // Suppress all Super/Logo key combinations to prevent garbage being sent
+                    // Super key on Linux is often intercepted by window manager anyway
+                    if modifiers.logo() {
+                        return iced::event::Status::Captured;
+                    }
+
+                    // Clear selection on any other key press (typing)
+                    if !modifiers.control() && state.selection_start.is_some() {
+                        // Don't clear on modifier-only or navigation keys
+                        let is_nav_key = matches!(
+                            key,
+                            Key::Named(
+                                keyboard::key::Named::Shift
+                                    | keyboard::key::Named::Control
+                                    | keyboard::key::Named::Alt
+                                    | keyboard::key::Named::Super
+                            )
+                        );
+                        if !is_nav_key {
+                            state.selection_start = None;
+                            state.selection_end = None;
+                        }
+                    }
+
+                    if let Some(bytes) = key_to_escape_sequence(&key, modifiers, text.as_deref())
+                    {
                         shell.publish((self.on_input)(bytes));
                         return iced::event::Status::Captured;
                     }
