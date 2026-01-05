@@ -5,8 +5,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use iced::keyboard::{self, Key};
-use iced::widget::{column, container, row, text, stack};
-use iced::{event, time, window, Element, Fill, Subscription, Task, Theme as IcedTheme};
+use iced::widget::{column, container, row, text, stack, Space};
+use iced::{event, time, window, Element, Fill, Length, Subscription, Task, Theme as IcedTheme};
 use uuid::Uuid;
 
 use crate::config::{AuthMethod, HistoryConfig, Host, HostsConfig, Snippet, SnippetsConfig};
@@ -999,22 +999,20 @@ impl Portal {
             // Show tab bar with session tabs
             tab_bar_view(&self.tabs, self.active_tab)
         } else {
-            // Show simple title bar
-            container(
-                text("Portal").size(14).color(THEME.text_primary),
-            )
-            .padding([8, 16])
-            .width(Fill)
-            .style(|_theme| container::Style {
-                background: Some(THEME.surface.into()),
-                border: iced::Border {
-                    color: THEME.border,
-                    width: 1.0,
-                    radius: 0.0.into(),
-                },
-                ..Default::default()
-            })
-            .into()
+            // Show minimal header bar (no text - logo is shown in hosts view)
+            container(Space::with_height(0))
+                .height(Length::Fixed(32.0))
+                .width(Fill)
+                .style(|_theme| container::Style {
+                    background: Some(THEME.surface.into()),
+                    border: iced::Border {
+                        color: THEME.border,
+                        width: 1.0,
+                        radius: 0.0.into(),
+                    },
+                    ..Default::default()
+                })
+                .into()
         };
 
         // Main layout with content below header

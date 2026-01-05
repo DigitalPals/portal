@@ -1,5 +1,5 @@
 use iced::widget::{button, column, container, row, text, text_input, Column, Row, Space};
-use iced::{Alignment, Element, Fill, Length, Padding};
+use iced::{Alignment, Element, Fill, Font, Length, Padding};
 use uuid::Uuid;
 
 use crate::config::DetectedOs;
@@ -9,6 +9,16 @@ use crate::theme::{
     BORDER_RADIUS, CARD_BORDER_RADIUS, CARD_HEIGHT, GRID_PADDING, GRID_SPACING,
     MIN_CARD_WIDTH, SIDEBAR_WIDTH, SIDEBAR_WIDTH_COLLAPSED, THEME,
 };
+
+const PORTAL_LOGO: &str = r#"                                  .             oooo
+                                .o8             `888
+oo.ooooo.   .ooooo.  oooo d8b .o888oo  .oooo.    888
+ 888' `88b d88' `88b `888""8P   888   `P  )88b   888
+ 888   888 888   888  888       888    .oP"888   888
+ 888   888 888   888  888       888 . d8(  888   888
+ 888bod8P' `Y8bod8P' d888b      "888" `Y888""8o o888o
+ 888
+o888o"#;
 
 /// Group card data for the grid view
 #[derive(Debug, Clone)]
@@ -54,6 +64,23 @@ pub fn host_grid_view(
     hosts: Vec<HostCard>,
     column_count: usize,
 ) -> Element<'static, Message> {
+    // ASCII Logo with version - centered
+    let logo_section = container(
+        column![
+            text(PORTAL_LOGO)
+                .size(10)
+                .color(THEME.text_secondary)
+                .font(Font::MONOSPACE),
+            text(format!("v{}", env!("CARGO_PKG_VERSION")))
+                .size(11)
+                .color(THEME.text_secondary),
+        ]
+        .spacing(4)
+        .align_x(Alignment::Center)
+    )
+    .width(Length::Fill)
+    .align_x(Alignment::Center);
+
     // Row 1: Search bar with Connect button (pill-shaped)
     let search_input: iced::widget::TextInput<'static, Message> = text_input("Find a host or ssh user@hostname...", search_query)
         .on_input(Message::SearchChanged)
@@ -169,7 +196,7 @@ pub fn host_grid_view(
     ]
     .align_y(Alignment::Center);
 
-    let header = column![search_row, toolbar_row]
+    let header = column![logo_section, search_row, toolbar_row]
         .spacing(12)
         .padding(Padding::new(24.0).bottom(16.0));
 
