@@ -64,8 +64,8 @@ pub fn calculate_columns(window_width: f32, sidebar_collapsed: bool) -> usize {
     columns.clamp(1, 4)
 }
 
-/// Build the bottom action bar with search, connect, new host, and terminal buttons
-fn build_bottom_bar(search_query: &str) -> Element<'static, Message> {
+/// Build the action bar with search, connect, new host, and terminal buttons
+fn build_action_bar(search_query: &str) -> Element<'static, Message> {
     // Search input - pill-shaped, auto-focused
     let search_input: iced::widget::TextInput<'static, Message> =
         text_input("Find a host or ssh user@hostname...", search_query)
@@ -229,10 +229,10 @@ pub fn host_grid_view(
     .padding(Padding::new(16.0).top(48.0))
     .align_x(Alignment::Center);
 
-    // Main scrollable content (with bottom padding for bar clearance)
+    // Main scrollable content
     let mut content = Column::new()
         .spacing(24)
-        .padding(Padding::new(24.0).top(24.0).bottom(16.0));
+        .padding(Padding::new(24.0).top(16.0).bottom(24.0));
 
     // Check emptiness before moving
     let groups_empty = groups.is_empty();
@@ -259,11 +259,11 @@ pub fn host_grid_view(
         .height(Fill)
         .width(Fill);
 
-    // Bottom bar (fixed at bottom)
-    let bottom_bar = build_bottom_bar(search_query);
+    // Action bar (fixed at top, below tab bar)
+    let action_bar = build_action_bar(search_query);
 
-    // Main layout: scrollable content fills space, bottom bar fixed
-    let main_content = column![scrollable_content, bottom_bar];
+    // Main layout: action bar at top, scrollable content fills remaining space
+    let main_content = column![action_bar, scrollable_content];
 
     container(main_content)
         .width(Fill)
