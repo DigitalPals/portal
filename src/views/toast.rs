@@ -15,6 +15,7 @@ use crate::theme::{BORDER_RADIUS, THEME};
 pub enum ToastType {
     Error,
     Warning,
+    Success,
 }
 
 impl ToastType {
@@ -23,6 +24,7 @@ impl ToastType {
         match self {
             ToastType::Error => Color::from_rgb8(0xf4, 0x43, 0x36),   // #f44336 - red
             ToastType::Warning => Color::from_rgb8(0xff, 0x98, 0x00), // #ff9800 - orange
+            ToastType::Success => Color::from_rgb8(0x4c, 0xaf, 0x50), // #4caf50 - green
         }
     }
 
@@ -31,6 +33,7 @@ impl ToastType {
         match self {
             ToastType::Error => ui::X,
             ToastType::Warning => ui::ALERT_TRIANGLE,
+            ToastType::Success => ui::CHECK,
         }
     }
 }
@@ -65,6 +68,11 @@ impl Toast {
     /// Create a warning toast
     pub fn warning(message: impl Into<String>) -> Self {
         Self::new(message, ToastType::Warning)
+    }
+
+    /// Create a success toast
+    pub fn success(message: impl Into<String>) -> Self {
+        Self::new(message, ToastType::Success)
     }
 
     /// Check if this toast has expired

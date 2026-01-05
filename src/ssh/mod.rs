@@ -6,11 +6,13 @@ pub mod auth;
 pub mod client;
 pub mod handler;
 pub mod host_key_verification;
+pub mod key_install;
 pub mod known_hosts;
 pub mod os_detect;
 pub mod session;
 
 pub use client::SshClient;
+pub use key_install::install_ssh_key;
 pub use session::SshSession;
 
 use host_key_verification::HostKeyVerificationRequest;

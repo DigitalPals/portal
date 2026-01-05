@@ -1,6 +1,8 @@
+use std::sync::Arc;
+
 use russh::client::Handle;
 use russh::{Channel, ChannelMsg};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, Mutex};
 
 use crate::error::SshError;
 
@@ -16,12 +18,14 @@ enum ChannelCommand {
 /// Active SSH session handle
 pub struct SshSession {
     command_tx: mpsc::UnboundedSender<ChannelCommand>,
+    handle: Arc<Mutex<Handle<ClientHandler>>>,
 }
 
 impl std::fmt::Debug for SshSession {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SshSession")
             .field("command_tx", &"<channel>")
+            .field("handle", &"<handle>")
             .finish()
     }
 }
@@ -35,10 +39,14 @@ impl SshSession {
     ) -> Self {
         let (command_tx, mut command_rx) = mpsc::unbounded_channel::<ChannelCommand>();
 
-        // Spawn task that owns the channel and handle, keeping the connection alive
+        // Wrap handle in Arc<Mutex> so it can be shared
+        let handle = Arc::new(Mutex::new(handle));
+        let handle_for_task = handle.clone();
+
+        // Spawn task that owns the channel, keeping the connection alive
         tokio::spawn(async move {
-            // Keep handle alive for the duration of the session
-            let _handle = handle;
+            // Keep handle reference alive for the duration of the session
+            let _handle = handle_for_task;
 
             loop {
                 tokio::select! {
@@ -94,6 +102,7 @@ impl SshSession {
 
         Self {
             command_tx,
+            handle,
         }
     }
 
@@ -114,5 +123,48 @@ impl SshSession {
             })
             .map_err(|e| SshError::Channel(e.to_string()))?;
         Ok(())
+    }
+
+    /// Execute a command on the remote host and return its stdout output.
+    /// This opens a new exec channel separate from the interactive PTY.
+    pub async fn execute_command(&self, command: &str) -> Result<String, SshError> {
+        let handle = self.handle.lock().await;
+
+        let mut channel = handle
+            .channel_open_session()
+            .await
+            .map_err(|e| SshError::Channel(format!("Failed to open channel: {}", e)))?;
+
+        channel
+            .exec(true, command)
+            .await
+            .map_err(|e| SshError::Channel(format!("Failed to exec '{}': {}", command, e)))?;
+
+        let mut output = String::new();
+
+        loop {
+            match channel.wait().await {
+                Some(ChannelMsg::Data { data }) => {
+                    if let Ok(s) = std::str::from_utf8(&data) {
+                        output.push_str(s);
+                    }
+                }
+                Some(ChannelMsg::ExtendedData { data, .. }) => {
+                    // Log stderr but don't include in output
+                    tracing::debug!("{} stderr: {:?}", command, std::str::from_utf8(&data));
+                }
+                Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => {
+                    break;
+                }
+                Some(ChannelMsg::ExitStatus { exit_status }) => {
+                    if exit_status != 0 {
+                        tracing::debug!("{} exited with status {}", command, exit_status);
+                    }
+                }
+                Some(_) => {}
+            }
+        }
+
+        Ok(output)
     }
 }

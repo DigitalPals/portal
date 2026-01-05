@@ -62,6 +62,9 @@ pub enum SshError {
 
     #[error("russh error: {0}")]
     Russh(String),
+
+    #[error("SSH key installation failed: {0}")]
+    KeyInstall(String),
 }
 
 impl From<russh::Error> for SshError {

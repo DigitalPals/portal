@@ -3,7 +3,7 @@ mod view_model;
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use iced::keyboard::{self, Key};
 use iced::widget::{column, container, row, text, stack};
 use iced::{event, time, window, Element, Fill, Subscription, Task, Theme as IcedTheme};
@@ -28,7 +28,7 @@ use crate::views::sftp_view::{
 };
 use crate::views::sidebar::sidebar_view;
 use crate::views::tabs::{tab_bar_view, Tab};
-use crate::views::terminal_view::{terminal_view, TerminalSession};
+use crate::views::terminal_view::{terminal_view, terminal_view_with_status, TerminalSession};
 use crate::views::toast::{toast_overlay_view, Toast, ToastManager};
 
 use self::view_model::{filter_group_cards, filter_host_cards, group_cards, host_cards};
@@ -47,6 +47,11 @@ pub enum View {
 pub struct ActiveSession {
     pub ssh_session: Arc<SshSession>,
     pub terminal: TerminalSession,
+    pub session_start: Instant,
+    pub host_id: Uuid,
+    pub host_name: String,
+    /// Transient status message (message, shown_at) - auto-expires after 3 seconds
+    pub status_message: Option<(String, Instant)>,
 }
 
 /// Main application state
@@ -534,6 +539,10 @@ impl Portal {
                     ActiveSession {
                         ssh_session,
                         terminal,
+                        session_start: Instant::now(),
+                        host_id,
+                        host_name: host_name.clone(),
+                        status_message: None,
                     },
                 );
 
@@ -559,6 +568,40 @@ impl Portal {
             Message::SshError(error) => {
                 tracing::error!("SSH error: {}", error);
                 self.toast_manager.push(Toast::error(error));
+            }
+            Message::SessionDurationTick => {
+                // No-op: triggers a re-render to update duration display
+            }
+            Message::InstallSshKey(session_id) => {
+                if let Some(session) = self.sessions.get_mut(&session_id) {
+                    // Set status message to show we're installing
+                    session.status_message = Some(("Installing key...".to_string(), Instant::now()));
+
+                    let ssh_session = session.ssh_session.clone();
+                    return Task::perform(
+                        async move {
+                            crate::ssh::install_ssh_key(&ssh_session).await
+                        },
+                        move |result| Message::InstallSshKeyResult(session_id, result.map_err(|e| e.to_string())),
+                    );
+                }
+            }
+            Message::InstallSshKeyResult(session_id, result) => {
+                if let Some(session) = self.sessions.get_mut(&session_id) {
+                    // Clear the "Installing..." status message
+                    session.status_message = None;
+                }
+                match result {
+                    Ok(true) => {
+                        self.toast_manager.push(Toast::success("SSH key installed on remote server"));
+                    }
+                    Ok(false) => {
+                        self.toast_manager.push(Toast::success("SSH key already installed"));
+                    }
+                    Err(e) => {
+                        self.toast_manager.push(Toast::error(format!("Failed to install key: {}", e)));
+                    }
+                }
             }
             Message::TabSelect(tab_id) => {
                 tracing::info!("Tab selected: {}", tab_id);
@@ -736,6 +779,14 @@ impl Portal {
                     (Key::Named(keyboard::key::Named::Tab), true, true) => {
                         self.select_prev_tab();
                     }
+                    // Ctrl+Shift+K - Install SSH key on remote server
+                    (Key::Character(c), true, true) if c.as_str() == "k" || c.as_str() == "K" => {
+                        if let View::Terminal(session_id) = self.active_view {
+                            if self.sessions.contains_key(&session_id) {
+                                return self.update(Message::InstallSshKey(session_id));
+                            }
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -882,8 +933,17 @@ impl Portal {
             View::Terminal(session_id) => {
                 if let Some(session) = self.sessions.get(session_id) {
                     let session_id = *session_id;
-                    terminal_view(
+
+                    // Get transient status message if not expired (show for 3 seconds)
+                    let status_message = session.status_message.as_ref()
+                        .filter(|(_, shown_at)| shown_at.elapsed() < Duration::from_secs(3))
+                        .map(|(msg, _)| msg.as_str());
+
+                    terminal_view_with_status(
                         &session.terminal,
+                        session.session_start,
+                        &session.host_name,
+                        status_message,
                         move |_sid, bytes| Message::TerminalInput(session_id, bytes),
                         move |_sid, cols, rows| Message::TerminalResize(session_id, cols, rows),
                     )
@@ -1019,6 +1079,13 @@ impl Portal {
         if self.toast_manager.has_toasts() {
             subscriptions.push(
                 time::every(Duration::from_millis(100)).map(|_| Message::ToastTick)
+            );
+        }
+
+        // Session duration tick (only when viewing a terminal)
+        if matches!(self.active_view, View::Terminal(_)) && !self.sessions.is_empty() {
+            subscriptions.push(
+                time::every(Duration::from_secs(1)).map(|_| Message::SessionDurationTick)
             );
         }
 

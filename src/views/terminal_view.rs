@@ -3,8 +3,9 @@
 //! This wraps the terminal widget with session management.
 
 use std::sync::Arc;
+use std::time::Instant;
 
-use iced::widget::container;
+use iced::widget::{column, container};
 use iced::{Element, Fill};
 use parking_lot::Mutex;
 use uuid::Uuid;
@@ -15,6 +16,7 @@ use crate::terminal::TerminalBackend;
 use crate::terminal::widget::TerminalWidget;
 use crate::theme::THEME;
 
+use super::terminal_status_bar::terminal_status_bar;
 use alacritty_terminal::term::Term;
 
 /// Session ID type
@@ -78,4 +80,33 @@ pub fn terminal_view<'a>(
             ..Default::default()
         })
         .into()
+}
+
+/// Build a terminal view element with status bar
+pub fn terminal_view_with_status<'a>(
+    session: &'a TerminalSession,
+    session_start: Instant,
+    host_name: &'a str,
+    status_message: Option<&'a str>,
+    on_input: impl Fn(SessionId, Vec<u8>) -> Message + 'a,
+    on_resize: impl Fn(SessionId, u16, u16) -> Message + 'a,
+) -> Element<'a, Message> {
+    let session_id = session.id;
+    let term = session.term();
+    let size = session.size();
+
+    let terminal_widget = TerminalWidget::new(term, size, move |bytes| on_input(session_id, bytes))
+        .on_resize(move |cols, rows| on_resize(session_id, cols, rows));
+
+    let terminal_container = container(terminal_widget)
+        .width(Fill)
+        .height(Fill)
+        .style(|_theme| container::Style {
+            background: Some(THEME.background.into()),
+            ..Default::default()
+        });
+
+    let status_bar = terminal_status_bar(host_name, session_start, status_message);
+
+    column![terminal_container, status_bar].into()
 }

@@ -147,6 +147,11 @@ pub enum Message {
     ToastDismiss(Uuid),  // User clicked X to dismiss
     ToastTick,           // Timer tick for auto-dismiss cleanup
 
+    // Session duration and SSH key installation
+    SessionDurationTick,                                   // Timer tick for duration updates
+    InstallSshKey(SessionId),                              // User pressed Ctrl+Shift+K
+    InstallSshKeyResult(SessionId, Result<bool, String>),  // bool = was_newly_installed
+
     // Placeholder for future messages
     Noop,
 }

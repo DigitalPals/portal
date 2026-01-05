@@ -4,5 +4,6 @@ pub mod host_grid;
 pub mod sftp_view;
 pub mod sidebar;
 pub mod tabs;
+pub mod terminal_status_bar;
 pub mod terminal_view;
 pub mod toast;

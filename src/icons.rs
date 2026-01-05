@@ -22,6 +22,7 @@ pub mod ui {
     pub const REFRESH: &[u8] = include_bytes!("../assets/icons/ui/refresh-cw.svg");
     pub const X: &[u8] = include_bytes!("../assets/icons/ui/x.svg");
     pub const ALERT_TRIANGLE: &[u8] = include_bytes!("../assets/icons/ui/alert-triangle.svg");
+    pub const CHECK: &[u8] = include_bytes!("../assets/icons/ui/check.svg");
 }
 
 /// File type icons for SFTP browser
