@@ -67,7 +67,7 @@ pub fn tab_bar_view<'a>(
             container(text("")).width(Length::Fill),
         ]
         .align_y(Alignment::Center)
-        .padding(Padding::new(4.0).left(8.0).right(8.0)),
+        .padding(Padding::new(5.0).left(8.0).right(8.0)),
     )
     .width(Length::Fill)
     .style(|_theme| container::Style {
@@ -100,14 +100,14 @@ fn tab_button(tab: &Tab, is_active: bool) -> Element<'_, Message> {
     };
 
     let content = row![
-        text(icon).size(10),
-        text(title).size(12).color(if is_active {
+        text(icon).size(11),
+        text(title).size(13).color(if is_active {
             THEME.text_primary
         } else {
             THEME.text_secondary
         }),
         // Close button
-        button(text("×").size(14).color(THEME.text_muted))
+        button(text("×").size(15).color(THEME.text_muted))
             .style(|_theme, status| {
                 let text_color = match status {
                     iced::widget::button::Status::Hovered => THEME.text_primary,
@@ -131,7 +131,7 @@ fn tab_button(tab: &Tab, is_active: bool) -> Element<'_, Message> {
         THEME.surface
     };
 
-    button(container(content).padding(Padding::new(6.0).left(10.0).right(6.0)))
+    button(container(content).padding(Padding::new(7.0).left(11.0).right(6.0)))
         .style(move |_theme, status| {
             let background = match status {
                 iced::widget::button::Status::Hovered if !is_active => THEME.hover,
@@ -161,8 +161,8 @@ fn tab_button(tab: &Tab, is_active: bool) -> Element<'_, Message> {
 /// New tab "+" button
 fn new_tab_button() -> Element<'static, Message> {
     button(
-        container(text("+").size(16).color(THEME.text_secondary))
-            .padding(Padding::new(4.0).left(10.0).right(10.0)),
+        container(text("+").size(17).color(THEME.text_secondary))
+            .padding(Padding::new(5.0).left(10.0).right(10.0)),
     )
     .style(|_theme, status| {
         let background = match status {

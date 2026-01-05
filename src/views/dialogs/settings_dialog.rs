@@ -72,7 +72,7 @@ pub fn settings_dialog_view(state: &SettingsDialogState) -> Element<'static, Mes
     let about_section = column![
         text("About").size(12).color(THEME.text_muted),
         Space::with_height(8),
-        text("Portal SSH Client v0.1.0").size(14).color(THEME.text_secondary),
+        text(format!("Portal SSH Client v{}", env!("CARGO_PKG_VERSION"))).size(14).color(THEME.text_secondary),
         text("A modern SSH client built with Rust and iced").size(12).color(THEME.text_muted),
     ]
     .spacing(4);

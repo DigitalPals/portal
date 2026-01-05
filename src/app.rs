@@ -5,15 +5,15 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use iced::keyboard::{self, Key};
-use iced::widget::{column, container, row, text, stack, Space};
-use iced::{event, time, window, Element, Fill, Length, Subscription, Task, Theme as IcedTheme};
+use iced::widget::{column, row, text, stack, Space};
+use iced::{event, time, window, Element, Fill, Subscription, Task, Theme as IcedTheme};
 use uuid::Uuid;
 
 use crate::config::{AuthMethod, HistoryConfig, Host, HostsConfig, SettingsConfig, Snippet, SnippetsConfig};
 use crate::message::{HostDialogField, Message, SessionId, SidebarMenuItem, SnippetField};
 use crate::sftp::SharedSftpSession;
 use crate::ssh::SshSession;
-use crate::theme::{SIDEBAR_AUTO_COLLAPSE_THRESHOLD, THEME};
+use crate::theme::SIDEBAR_AUTO_COLLAPSE_THRESHOLD;
 use crate::ssh::host_key_verification::HostKeyVerificationResponse;
 use crate::views::dialogs::host_dialog::{
     host_dialog_view, AuthMethodChoice, HostDialogState,
@@ -1029,25 +1029,11 @@ impl Portal {
             }
         };
 
-        // Tab bar - show actual tabs if we have any sessions, otherwise show title bar
+        // Tab bar - only show when there are tabs
         let header: Element<'_, Message> = if !self.tabs.is_empty() {
-            // Show tab bar with session tabs
             tab_bar_view(&self.tabs, self.active_tab)
         } else {
-            // Show minimal header bar (no text - logo is shown in hosts view)
-            container(Space::with_height(0))
-                .height(Length::Fixed(32.0))
-                .width(Fill)
-                .style(|_theme| container::Style {
-                    background: Some(THEME.surface.into()),
-                    border: iced::Border {
-                        color: THEME.border,
-                        width: 1.0,
-                        radius: 0.0.into(),
-                    },
-                    ..Default::default()
-                })
-                .into()
+            Space::with_height(0).into()
         };
 
         // Main layout with content below header
