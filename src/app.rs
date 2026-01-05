@@ -4,7 +4,7 @@ mod view_model;
 use std::collections::HashMap;
 use std::sync::Arc;
 use iced::keyboard::{self, Key};
-use iced::widget::{button, column, container, row, text, stack};
+use iced::widget::{column, container, row, text, stack};
 use iced::{event, window, Element, Fill, Subscription, Task, Theme as IcedTheme};
 use uuid::Uuid;
 
@@ -1090,39 +1090,11 @@ impl Portal {
             // Show tab bar with session tabs
             tab_bar_view(&self.tabs, self.active_tab)
         } else {
-            // Show simple title bar with terminal demo button
-            let terminal_btn_text = match self.active_view {
-                View::TerminalDemo => "Hide Terminal",
-                _ => "Terminal Demo",
-            };
+            // Show simple title bar
             container(
-                row![
-                    text("Portal").size(14).color(THEME.text_primary),
-                    container(text("")).width(Fill),
-                    button(text(terminal_btn_text).size(12))
-                        .style(|_theme, status| {
-                            let bg = match status {
-                                button::Status::Hovered => Some(THEME.hover.into()),
-                                _ => Some(THEME.surface.into()),
-                            };
-                            button::Style {
-                                background: bg,
-                                text_color: THEME.text_primary,
-                                border: iced::Border {
-                                    color: THEME.border,
-                                    width: 1.0,
-                                    radius: 4.0.into(),
-                                },
-                                ..Default::default()
-                            }
-                        })
-                        .padding([4, 12])
-                        .on_press(Message::ToggleTerminalDemo),
-                ]
-                .spacing(8)
-                .padding([8, 16])
-                .align_y(iced::Alignment::Center),
+                text("Portal").size(14).color(THEME.text_primary),
             )
+            .padding([8, 16])
             .width(Fill)
             .style(|_theme| container::Style {
                 background: Some(THEME.surface.into()),
