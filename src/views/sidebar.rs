@@ -52,7 +52,7 @@ pub fn sidebar_view(
     };
 
     // Build menu items
-    let mut menu_items = Column::new().spacing(4).padding([16, 8]);
+    let mut menu_items = Column::new().spacing(4).padding([32, 8]);
 
     for menu_item in MENU_ITEMS {
         let is_selected = selected == menu_item.item;
@@ -62,9 +62,9 @@ pub fn sidebar_view(
 
     // Collapse/expand toggle button at bottom
     let toggle_icon = if collapsed {
-        icons::ui::CHEVRON_RIGHT
+        icons::ui::PANEL_LEFT_OPEN
     } else {
-        icons::ui::CHEVRON_LEFT
+        icons::ui::PANEL_LEFT_CLOSE
     };
 
     let toggle_btn = button(
@@ -142,7 +142,7 @@ fn menu_item_button(
         row![
             container(icon_widget).width(32).align_x(Alignment::Center),
             text(menu_item.label)
-                .size(14)
+                .size(16)
                 .color(if is_selected {
                     THEME.text_primary
                 } else {

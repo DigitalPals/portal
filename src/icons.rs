@@ -23,6 +23,8 @@ pub mod ui {
     pub const X: &[u8] = include_bytes!("../assets/icons/ui/x.svg");
     pub const ALERT_TRIANGLE: &[u8] = include_bytes!("../assets/icons/ui/alert-triangle.svg");
     pub const CHECK: &[u8] = include_bytes!("../assets/icons/ui/check.svg");
+    pub const PANEL_LEFT_CLOSE: &[u8] = include_bytes!("../assets/icons/ui/panel-left-close.svg");
+    pub const PANEL_LEFT_OPEN: &[u8] = include_bytes!("../assets/icons/ui/panel-left-open.svg");
 }
 
 /// File type icons for SFTP browser
