@@ -811,8 +811,9 @@ impl Portal {
             }
             View::Terminal(session_id) => {
                 if let Some(session) = self.sessions.get(session_id) {
-                    terminal_view(&session.terminal, |sid, bytes| {
-                        Message::TerminalInput(sid, bytes)
+                    let session_id = *session_id;
+                    terminal_view(&session.terminal, move |_sid, bytes| {
+                        Message::TerminalInput(session_id, bytes)
                     })
                 } else {
                     text("Session not found").into()
