@@ -1,146 +1,109 @@
-use iced::widget::{button, column, container, row, scrollable, text, text_input, Column, Space};
-use iced::{Alignment, Element, Fill, Length, Padding};
-use uuid::Uuid;
+use iced::widget::{button, column, container, row, text, tooltip, Column, Space};
+use iced::{Alignment, Element, Fill, Length};
 
-use crate::message::Message;
-use crate::theme::{BORDER_RADIUS, SIDEBAR_WIDTH, THEME};
+use crate::icons::{self, icon_with_color};
+use crate::message::{Message, SidebarMenuItem};
+use crate::theme::{BORDER_RADIUS, SIDEBAR_WIDTH, SIDEBAR_WIDTH_COLLAPSED, THEME};
 
-/// Placeholder host for the sidebar display
-#[derive(Debug, Clone)]
-pub struct SidebarHost {
-    pub id: Uuid,
-    pub name: String,
-    pub hostname: String,
-    pub folder: Option<String>,
+/// Menu item definition
+struct MenuItem {
+    item: SidebarMenuItem,
+    icon: &'static [u8],
+    label: &'static str,
 }
 
-/// Placeholder folder for the sidebar display
-#[derive(Debug, Clone)]
-pub struct SidebarFolder {
-    pub id: Uuid,
-    pub name: String,
-    pub expanded: bool,
-}
+const MENU_ITEMS: &[MenuItem] = &[
+    MenuItem {
+        item: SidebarMenuItem::Hosts,
+        icon: icons::ui::SERVER,
+        label: "Hosts",
+    },
+    MenuItem {
+        item: SidebarMenuItem::Sftp,
+        icon: icons::ui::HARD_DRIVE,
+        label: "SFTP",
+    },
+    MenuItem {
+        item: SidebarMenuItem::Snippets,
+        icon: icons::ui::CODE,
+        label: "Snippets",
+    },
+    MenuItem {
+        item: SidebarMenuItem::History,
+        icon: icons::ui::HISTORY,
+        label: "History",
+    },
+    MenuItem {
+        item: SidebarMenuItem::Settings,
+        icon: icons::ui::SETTINGS,
+        label: "Settings",
+    },
+];
 
 /// Build the sidebar view
 pub fn sidebar_view(
-    search_query: &str,
-    folders: Vec<SidebarFolder>,
-    hosts: Vec<SidebarHost>,
-    selected_host: Option<Uuid>,
+    collapsed: bool,
+    selected: SidebarMenuItem,
 ) -> Element<'static, Message> {
-    // Header with title and add button
-    let header = row![
-        text("HOSTS").size(12).color(THEME.text_muted),
-        Space::with_width(Length::Fill),
-        button(text("+").size(16).color(THEME.text_primary))
-            .style(|_theme, status| {
-                let bg = match status {
-                    button::Status::Hovered => Some(THEME.hover.into()),
-                    _ => None,
-                };
-                button::Style {
-                    background: bg,
-                    text_color: THEME.text_primary,
-                    border: iced::Border {
-                        radius: BORDER_RADIUS.into(),
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                }
-            })
-            .padding([2, 8])
-            .on_press(Message::HostAdd),
-    ]
-    .align_y(Alignment::Center)
-    .padding(Padding::new(12.0).top(16.0).bottom(8.0));
+    let sidebar_width = if collapsed {
+        SIDEBAR_WIDTH_COLLAPSED
+    } else {
+        SIDEBAR_WIDTH
+    };
 
-    let search_input = text_input("Search hosts...", search_query)
-        .on_input(Message::SearchChanged)
-        .padding(8)
-        .width(Length::Fill);
+    // Build menu items
+    let mut menu_items = Column::new().spacing(4).padding([16, 8]);
 
-    let search_container = container(search_input)
-        .padding(Padding::new(12.0).bottom(8.0))
-        .width(Length::Fill);
+    for menu_item in MENU_ITEMS {
+        let is_selected = selected == menu_item.item;
+        let item_element = menu_item_button(menu_item, is_selected, collapsed);
+        menu_items = menu_items.push(item_element);
+    }
 
-    // Build host list
-    let mut host_list = Column::new().spacing(2);
+    // Collapse/expand toggle button at bottom
+    let toggle_icon = if collapsed {
+        icons::ui::CHEVRON_RIGHT
+    } else {
+        icons::ui::CHEVRON_LEFT
+    };
 
-    // Group hosts by folder
-    for folder in folders {
-        // Folder header
-        let folder_icon = if folder.expanded { "▼" } else { "▶" };
-        let folder_row = row![
-            text(folder_icon).size(12),
-            text(folder.name.clone()).size(14),
-        ]
-        .spacing(8)
-        .align_y(Alignment::Center);
-
-        let folder_button = button(folder_row)
-            .style(|_theme, _status| button::Style {
-                background: None,
-                text_color: THEME.text_primary,
-                ..Default::default()
-            })
-            .padding([6, 12])
+    let toggle_btn = button(
+        container(icon_with_color(toggle_icon, 16, THEME.text_secondary))
             .width(Length::Fill)
-            .on_press(Message::FolderToggle(folder.id));
-
-        host_list = host_list.push(folder_button);
-
-        // Hosts in this folder (if expanded)
-        if folder.expanded {
-            for host in hosts.iter().filter(|h| h.folder.as_ref() == Some(&folder.name)) {
-                host_list = host_list.push(host_item(host.clone(), selected_host));
-            }
+            .align_x(Alignment::Center),
+    )
+    .style(|_theme, status| {
+        let bg = match status {
+            button::Status::Hovered => Some(THEME.hover.into()),
+            _ => None,
+        };
+        button::Style {
+            background: bg,
+            text_color: THEME.text_secondary,
+            border: iced::Border {
+                radius: BORDER_RADIUS.into(),
+                ..Default::default()
+            },
+            ..Default::default()
         }
-    }
+    })
+    .padding([8, 12])
+    .width(Length::Fill)
+    .on_press(Message::SidebarToggleCollapse);
 
-    // Ungrouped hosts (no folder)
-    for host in hosts.iter().filter(|h| h.folder.is_none()) {
-        host_list = host_list.push(host_item(host.clone(), selected_host));
-    }
-
-    let scrollable_hosts = scrollable(host_list.padding([0, 8]))
-        .height(Length::Fill)
+    let toggle_container = container(toggle_btn)
+        .padding(iced::Padding::new(8.0).bottom(16.0))
         .width(Length::Fill);
-
-    // Bottom section with Snippets and Settings
-    let bottom_section = column![
-        container(text("─".repeat(20)).size(12).color(THEME.border))
-            .padding([8, 12]),
-        button(text("Snippets").size(14))
-            .style(|_theme, _status| button::Style {
-                background: None,
-                text_color: THEME.text_secondary,
-                ..Default::default()
-            })
-            .padding([6, 12])
-            .width(Length::Fill)
-            .on_press(Message::SnippetsOpen),
-        button(text("Settings").size(14))
-            .style(|_theme, _status| button::Style {
-                background: None,
-                text_color: THEME.text_secondary,
-                ..Default::default()
-            })
-            .padding([6, 12])
-            .width(Length::Fill)
-            .on_press(Message::SettingsOpen),
-    ];
 
     let sidebar_content = column![
-        header,
-        search_container,
-        scrollable_hosts,
-        bottom_section,
+        menu_items,
+        Space::with_height(Length::Fill),
+        toggle_container,
     ]
     .height(Fill);
 
     container(sidebar_content)
-        .width(Length::Fixed(SIDEBAR_WIDTH))
+        .width(Length::Fixed(sidebar_width))
         .height(Fill)
         .style(|_theme| container::Style {
             background: Some(THEME.sidebar.into()),
@@ -154,35 +117,42 @@ pub fn sidebar_view(
         .into()
 }
 
-/// Single host item in the sidebar
-fn host_item(host: SidebarHost, selected: Option<Uuid>) -> Element<'static, Message> {
-    let is_selected = selected == Some(host.id);
-    let host_id = host.id;
+/// Single menu item button
+fn menu_item_button(
+    menu_item: &MenuItem,
+    is_selected: bool,
+    collapsed: bool,
+) -> Element<'static, Message> {
+    let icon_color = if is_selected {
+        THEME.accent
+    } else {
+        THEME.text_secondary
+    };
 
-    let host_content = row![
-        column![
-            text(host.name.clone()).size(14).color(THEME.text_primary),
-            text(host.hostname.clone()).size(11).color(THEME.text_muted),
+    let icon_widget = icon_with_color(menu_item.icon, 18, icon_color);
+
+    let content: Element<'static, Message> = if collapsed {
+        // Collapsed: just icon, centered
+        container(icon_widget)
+            .width(Length::Fill)
+            .align_x(Alignment::Center)
+            .into()
+    } else {
+        // Expanded: icon + label
+        row![
+            container(icon_widget).width(32).align_x(Alignment::Center),
+            text(menu_item.label)
+                .size(14)
+                .color(if is_selected {
+                    THEME.text_primary
+                } else {
+                    THEME.text_secondary
+                }),
         ]
-        .spacing(2)
-        .width(Length::Fill),
-        // Edit button (pencil icon)
-        button(text("✎").size(12).color(THEME.text_muted))
-            .style(|_theme, status| {
-                let color = match status {
-                    button::Status::Hovered => THEME.text_primary,
-                    _ => THEME.text_muted,
-                };
-                button::Style {
-                    background: None,
-                    text_color: color,
-                    ..Default::default()
-                }
-            })
-            .padding([4, 6])
-            .on_press(Message::HostEdit(host_id)),
-    ]
-    .align_y(Alignment::Center);
+        .spacing(8)
+        .align_y(Alignment::Center)
+        .into()
+    };
 
     let bg_color = if is_selected {
         Some(THEME.selected.into())
@@ -190,25 +160,45 @@ fn host_item(host: SidebarHost, selected: Option<Uuid>) -> Element<'static, Mess
         None
     };
 
-    button(
-        container(host_content)
-            .padding([6, 8])
-            .width(Length::Fill),
-    )
-    .style(move |_theme, status| {
-        let background = match status {
-            button::Status::Hovered if !is_selected => Some(THEME.hover.into()),
-            _ => bg_color,
-        };
-        button::Style {
-            background,
-            text_color: THEME.text_primary,
-            border: iced::Border::default(),
+    let btn = button(content)
+        .style(move |_theme, status| {
+            let background = match status {
+                button::Status::Hovered if !is_selected => Some(THEME.hover.into()),
+                _ => bg_color,
+            };
+            button::Style {
+                background,
+                text_color: THEME.text_primary,
+                border: iced::Border {
+                    radius: BORDER_RADIUS.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+        })
+        .padding([10, 12])
+        .width(Length::Fill)
+        .on_press(Message::SidebarItemSelect(menu_item.item));
+
+    if collapsed {
+        // Add tooltip when collapsed
+        tooltip(
+            btn,
+            text(menu_item.label).size(12),
+            tooltip::Position::Right,
+        )
+        .style(|_theme| container::Style {
+            background: Some(THEME.surface.into()),
+            border: iced::Border {
+                color: THEME.border,
+                width: 1.0,
+                radius: 4.0.into(),
+            },
             ..Default::default()
-        }
-    })
-    .padding(0)
-    .width(Length::Fill)
-    .on_press(Message::HostSelected(host_id))
-    .into()
+        })
+        .padding(8)
+        .into()
+    } else {
+        btn.into()
+    }
 }

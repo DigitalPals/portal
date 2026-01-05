@@ -9,7 +9,7 @@ rust-version = "1.85"
 
 [dependencies]
 # GUI
-iced = { version = "0.13", features = ["tokio", "advanced"] }
+iced = { version = "0.13", features = ["tokio", "advanced", "svg"] }
 
 # Terminal emulation
 alacritty_terminal = "0.24"

@@ -4,11 +4,24 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
+use crate::config::DetectedOs;
 use crate::sftp::{FileEntry, SharedSftpSession};
+use crate::ssh::host_key_verification::HostKeyVerificationRequest;
 use crate::ssh::{SshEvent, SshSession};
 
 /// Session ID type alias
 pub type SessionId = Uuid;
+
+/// Sidebar menu item selection
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SidebarMenuItem {
+    #[default]
+    Hosts,
+    Sftp,
+    Snippets,
+    History,
+    Settings,
+}
 
 #[derive(Debug, Clone)]
 pub enum HostDialogField {
@@ -32,6 +45,7 @@ pub enum SnippetField {
 
 /// Application messages for the Elm-style update loop
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum Message {
     // Host management
     HostSelected(Uuid),
@@ -53,6 +67,8 @@ pub enum Message {
         host_name: String,
         ssh_session: Arc<SshSession>,
         event_rx: EventReceiver,
+        host_id: uuid::Uuid,
+        detected_os: Option<DetectedOs>,
     },
     SshData(SessionId, Vec<u8>),
     SshDisconnected(SessionId),
@@ -94,6 +110,17 @@ pub enum Message {
     FolderToggle(Uuid),
     ToggleTerminalDemo,
 
+    // Sidebar navigation
+    SidebarItemSelect(SidebarMenuItem),
+    SidebarToggleCollapse,
+
+    // OS Detection
+    OsDetectionResult(Uuid, Result<DetectedOs, String>),
+
+    // History
+    HistoryClear,
+    HistoryReconnect(Uuid),
+
     // Keyboard shortcuts
     KeyboardEvent(iced::keyboard::Key, iced::keyboard::Modifiers),
 
@@ -112,6 +139,11 @@ pub enum Message {
     SnippetEditCancel,
     SnippetSave,
 
+    // Host key verification
+    HostKeyVerification(VerificationRequestWrapper),
+    HostKeyVerificationAccept,
+    HostKeyVerificationReject,
+
     // Placeholder for future messages
     Noop,
 }
@@ -125,5 +157,24 @@ impl Clone for EventReceiver {
     fn clone(&self) -> Self {
         // Cloning returns None - only the original message has the receiver
         EventReceiver(None)
+    }
+}
+
+/// Wrapper for host key verification request that implements Clone (by wrapping in Option)
+/// The oneshot::Sender inside is not Clone, so we use the same pattern as EventReceiver
+pub struct VerificationRequestWrapper(pub Option<Box<HostKeyVerificationRequest>>);
+
+impl Clone for VerificationRequestWrapper {
+    fn clone(&self) -> Self {
+        // Cloning returns None - only the original message has the request
+        VerificationRequestWrapper(None)
+    }
+}
+
+impl std::fmt::Debug for VerificationRequestWrapper {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("VerificationRequestWrapper")
+            .field("has_request", &self.0.is_some())
+            .finish()
     }
 }

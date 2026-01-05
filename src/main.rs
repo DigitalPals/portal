@@ -1,6 +1,7 @@
 mod app;
 mod config;
 mod error;
+mod icons;
 mod message;
 mod sftp;
 mod ssh;

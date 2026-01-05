@@ -10,9 +10,12 @@ use tokio::time::timeout;
 use crate::config::Host;
 use crate::error::SshError;
 
+use crate::config::DetectedOs;
+
 use super::auth::ResolvedAuth;
 use super::handler::ClientHandler;
 use super::known_hosts::KnownHostsManager;
+use super::os_detect;
 use super::session::SshSession;
 use super::SshEvent;
 
@@ -38,6 +41,7 @@ impl SshClient {
     }
 
     /// Connect to a host and establish an interactive PTY session
+    /// Returns the session and optionally the detected OS
     pub async fn connect(
         &self,
         host: &Host,
@@ -45,7 +49,8 @@ impl SshClient {
         event_tx: mpsc::UnboundedSender<SshEvent>,
         connection_timeout: Duration,
         password: Option<&str>,
-    ) -> Result<Arc<SshSession>, SshError> {
+        detect_os_on_connect: bool,
+    ) -> Result<(Arc<SshSession>, Option<DetectedOs>), SshError> {
         let addr = format!("{}:{}", host.hostname, host.port);
 
         // Connect with timeout
@@ -76,6 +81,19 @@ impl SshClient {
         // Authenticate
         let auth = ResolvedAuth::resolve(&host.auth, password).await?;
         self.authenticate(&mut handle, &host.username, auth).await?;
+
+        // Detect OS if requested (before opening the shell channel)
+        let detected_os = if detect_os_on_connect {
+            match os_detect::detect_os(&mut handle).await {
+                Ok(os) => Some(os),
+                Err(e) => {
+                    tracing::warn!("OS detection failed: {}", e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
 
         // Open channel and request PTY
         let channel = handle
@@ -108,7 +126,7 @@ impl SshClient {
         // Session spawns its own reader task in new()
         let session = Arc::new(SshSession::new(handle, channel, event_tx));
 
-        Ok(session)
+        Ok((session, detected_os))
     }
 
     async fn authenticate(

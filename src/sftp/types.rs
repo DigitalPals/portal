@@ -4,6 +4,23 @@ use std::path::PathBuf;
 
 use chrono::{DateTime, Utc};
 
+/// Icon type for file entries
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileIcon {
+    ParentDir,
+    Folder,
+    Symlink,
+    Code,
+    Text,
+    Image,
+    Audio,
+    Video,
+    Archive,
+    Config,
+    Executable,
+    File,
+}
+
 /// Unified file entry representation for both local and remote files
 #[derive(Debug, Clone, PartialEq)]
 pub struct FileEntry {
@@ -32,29 +49,30 @@ impl FileEntry {
         }
     }
 
-    /// Get icon for this file type
-    pub fn icon(&self) -> &'static str {
+    /// Get icon type for this file
+    pub fn icon_type(&self) -> FileIcon {
         if self.is_parent() {
-            "⬆"
+            FileIcon::ParentDir
         } else if self.is_dir {
-            "📁"
+            FileIcon::Folder
         } else if self.is_symlink {
-            "🔗"
+            FileIcon::Symlink
         } else {
             match self.extension() {
-                Some("rs" | "py" | "js" | "ts" | "c" | "cpp" | "h" | "go" | "java") => "📄",
-                Some("txt" | "md" | "json" | "toml" | "yaml" | "yml" | "xml") => "📝",
-                Some("jpg" | "jpeg" | "png" | "gif" | "bmp" | "svg" | "ico") => "🖼",
-                Some("mp3" | "wav" | "ogg" | "flac" | "m4a") => "🎵",
-                Some("mp4" | "mkv" | "avi" | "mov" | "webm") => "🎬",
-                Some("zip" | "tar" | "gz" | "xz" | "7z" | "rar") => "📦",
-                Some("pdf") => "📕",
-                Some("sh" | "bash" | "zsh") => "⚙",
-                Some("exe" | "bin" | "app") => "⚡",
-                _ => "📄",
+                Some("rs" | "py" | "js" | "ts" | "c" | "cpp" | "h" | "go" | "java" | "rb" | "php" | "swift" | "kt") => FileIcon::Code,
+                Some("txt" | "md" | "markdown" | "rst" | "doc" | "docx" | "rtf") => FileIcon::Text,
+                Some("json" | "toml" | "yaml" | "yml" | "xml" | "ini" | "conf" | "cfg") => FileIcon::Config,
+                Some("jpg" | "jpeg" | "png" | "gif" | "bmp" | "svg" | "ico" | "webp" | "tiff") => FileIcon::Image,
+                Some("mp3" | "wav" | "ogg" | "flac" | "m4a" | "aac" | "wma") => FileIcon::Audio,
+                Some("mp4" | "mkv" | "avi" | "mov" | "webm" | "wmv" | "flv") => FileIcon::Video,
+                Some("zip" | "tar" | "gz" | "xz" | "7z" | "rar" | "bz2" | "tgz") => FileIcon::Archive,
+                Some("sh" | "bash" | "zsh" | "fish" | "bat" | "cmd" | "ps1") => FileIcon::Executable,
+                Some("exe" | "bin" | "app" | "dmg" | "deb" | "rpm") => FileIcon::Executable,
+                _ => FileIcon::File,
             }
         }
     }
+
 }
 
 /// Sort order for file listings

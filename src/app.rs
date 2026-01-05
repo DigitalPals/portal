@@ -8,28 +8,30 @@ use iced::widget::{button, column, container, row, text, stack};
 use iced::{event, Element, Fill, Subscription, Task, Theme as IcedTheme};
 use uuid::Uuid;
 
-use crate::config::{Host, HostsConfig, Snippet, SnippetsConfig};
-use crate::message::{HostDialogField, Message, SessionId, SnippetField};
+use crate::config::{HistoryConfig, Host, HostsConfig, Snippet, SnippetsConfig};
+use crate::message::{HostDialogField, Message, SessionId, SidebarMenuItem, SnippetField};
 use crate::sftp::SharedSftpSession;
 use crate::ssh::SshSession;
 use crate::theme::THEME;
+use crate::ssh::host_key_verification::HostKeyVerificationResponse;
 use crate::views::dialogs::host_dialog::{
     host_dialog_view, AuthMethodChoice, HostDialogState,
 };
+use crate::views::dialogs::host_key_dialog::{host_key_dialog_view, HostKeyDialogState};
 use crate::views::dialogs::settings_dialog::{settings_dialog_view, SettingsDialogState};
 use crate::views::dialogs::sftp_dialogs::{
     delete_confirm_dialog_view, mkdir_dialog_view, DeleteConfirmDialogState, MkdirDialogState,
 };
 use crate::views::dialogs::snippets_dialog::{snippets_dialog_view, SnippetsDialogState};
+use crate::views::history_view::history_view;
 use crate::views::host_grid::host_grid_view;
+use crate::views::sftp_picker::{sftp_picker_view, SftpHostCard};
 use crate::views::sftp_view::{sftp_browser_view, SftpBrowserState};
 use crate::views::sidebar::sidebar_view;
 use crate::views::tabs::{tab_bar_view, Tab};
 use crate::views::terminal_view::{terminal_view, TerminalSession};
 
-use self::view_model::{
-    filter_host_cards, filter_sidebar_hosts, host_cards, sidebar_folders, sidebar_hosts,
-};
+use self::view_model::{filter_group_cards, filter_host_cards, group_cards, host_cards};
 
 /// The active view in the main content area
 #[derive(Debug, Clone, Default)]
@@ -60,6 +62,10 @@ pub struct Portal {
     search_query: String,
     selected_host: Option<Uuid>,
 
+    // Sidebar state
+    sidebar_collapsed: bool,
+    sidebar_selection: SidebarMenuItem,
+
     // Tab management
     tabs: Vec<Tab>,
     active_tab: Option<Uuid>,
@@ -70,6 +76,7 @@ pub struct Portal {
     delete_dialog: Option<DeleteConfirmDialogState>,
     settings_dialog: Option<SettingsDialogState>,
     snippets_dialog: Option<SnippetsDialogState>,
+    host_key_dialog: Option<HostKeyDialogState>,
 
     // Theme preference
     dark_mode: bool,
@@ -77,6 +84,7 @@ pub struct Portal {
     // Data from config
     hosts_config: HostsConfig,
     snippets_config: SnippetsConfig,
+    history_config: HistoryConfig,
 
     // Demo terminal session
     demo_terminal: Option<TerminalSession>,
@@ -118,6 +126,18 @@ impl Portal {
             }
         };
 
+        // Load history from config file
+        let history_config = match HistoryConfig::load() {
+            Ok(config) => {
+                tracing::info!("Loaded {} history entries from config", config.entries.len());
+                config
+            }
+            Err(e) => {
+                tracing::warn!("Failed to load history config: {}, using empty config", e);
+                HistoryConfig::default()
+            }
+        };
+
         // Create demo terminal session and add some test content
         let demo_terminal = TerminalSession::new("Demo Terminal");
         // Add some demo output to show the terminal is working
@@ -135,6 +155,8 @@ impl Portal {
             active_view: View::HostGrid,
             search_query: String::new(),
             selected_host: None,
+            sidebar_collapsed: false,
+            sidebar_selection: SidebarMenuItem::Hosts,
             tabs: Vec::new(),
             active_tab: None,
             dialog: None,
@@ -142,9 +164,11 @@ impl Portal {
             delete_dialog: None,
             settings_dialog: None,
             snippets_dialog: None,
+            host_key_dialog: None,
             dark_mode: true,
             hosts_config,
             snippets_config,
+            history_config,
             demo_terminal: Some(demo_terminal),
             sessions: HashMap::new(),
             sftp_sessions: HashMap::new(),
@@ -184,6 +208,64 @@ impl Portal {
                     _ => View::TerminalDemo,
                 };
                 tracing::info!("Switched to view: {:?}", self.active_view);
+            }
+            Message::SidebarItemSelect(item) => {
+                self.sidebar_selection = item;
+                tracing::info!("Sidebar item selected: {:?}", item);
+                // Handle view changes based on selection
+                match item {
+                    SidebarMenuItem::Hosts => {
+                        if self.active_tab.is_none() {
+                            self.active_view = View::HostGrid;
+                        }
+                    }
+                    SidebarMenuItem::Settings => {
+                        self.settings_dialog = Some(SettingsDialogState {
+                            dark_mode: self.dark_mode,
+                        });
+                    }
+                    SidebarMenuItem::Snippets => {
+                        self.snippets_dialog = Some(SnippetsDialogState::new(
+                            self.snippets_config.snippets.clone(),
+                        ));
+                    }
+                    _ => {}
+                }
+            }
+            Message::SidebarToggleCollapse => {
+                self.sidebar_collapsed = !self.sidebar_collapsed;
+                tracing::info!("Sidebar collapsed: {}", self.sidebar_collapsed);
+            }
+            Message::OsDetectionResult(host_id, result) => {
+                match result {
+                    Ok(detected_os) => {
+                        tracing::info!("OS detected for host {}: {:?}", host_id, detected_os);
+                        if let Some(host) = self.hosts_config.find_host_mut(host_id) {
+                            host.detected_os = Some(detected_os);
+                            host.updated_at = chrono::Utc::now();
+                            if let Err(e) = self.hosts_config.save() {
+                                tracing::error!("Failed to save hosts config: {}", e);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to detect OS for host {}: {}", host_id, e);
+                    }
+                }
+            }
+            Message::HistoryClear => {
+                self.history_config.clear();
+                if let Err(e) = self.history_config.save() {
+                    tracing::error!("Failed to save history: {}", e);
+                }
+            }
+            Message::HistoryReconnect(entry_id) => {
+                if let Some(entry) = self.history_config.find_entry(entry_id) {
+                    let host_id = entry.host_id;
+                    if let Some(host) = self.hosts_config.find_host(host_id).cloned() {
+                        return self.connect_to_host(&host);
+                    }
+                }
             }
             Message::HostAdd => {
                 self.dialog = Some(HostDialogState::new_host());
@@ -264,6 +346,31 @@ impl Portal {
                 }
             }
             Message::Noop => {}
+            // Host key verification
+            Message::HostKeyVerification(mut wrapper) => {
+                if let Some(request) = wrapper.0.take() {
+                    self.host_key_dialog = Some(HostKeyDialogState::from_request(*request));
+                    tracing::info!("Host key verification dialog opened");
+                }
+            }
+            Message::HostKeyVerificationAccept => {
+                if let Some(ref mut dialog) = self.host_key_dialog {
+                    dialog.respond(HostKeyVerificationResponse::Accept);
+                    tracing::info!("Host key accepted for {}:{}", dialog.host, dialog.port);
+                }
+                self.host_key_dialog = None;
+            }
+            Message::HostKeyVerificationReject => {
+                if let Some(ref mut dialog) = self.host_key_dialog {
+                    dialog.respond(HostKeyVerificationResponse::Reject);
+                    tracing::info!("Host key rejected for {}:{}", dialog.host, dialog.port);
+                    self.status_message = Some(format!(
+                        "Connection rejected: host key verification failed for {}",
+                        dialog.host
+                    ));
+                }
+                self.host_key_dialog = None;
+            }
             // Terminal messages
             Message::TerminalInput(session_id, bytes) => {
                 tracing::debug!("Terminal input for session {}: {:?}", session_id, bytes);
@@ -284,10 +391,31 @@ impl Portal {
                 session_id,
                 host_name,
                 ssh_session,
-                event_rx,
+                event_rx: _, // Event listener already running from connect_to_host
+                host_id,
+                detected_os,
             } => {
                 tracing::info!("SSH connected to {}", host_name);
                 self.status_message = Some(format!("Connected to {}", host_name));
+
+                // Update host with detected OS if available
+                if let Some(os) = detected_os {
+                    if let Some(host) = self.hosts_config.find_host_mut(host_id) {
+                        host.detected_os = Some(os);
+                        host.last_connected = Some(chrono::Utc::now());
+                        host.updated_at = chrono::Utc::now();
+                        if let Err(e) = self.hosts_config.save() {
+                            tracing::error!("Failed to save hosts config with detected OS: {}", e);
+                        }
+                    }
+                } else {
+                    // Just update last_connected
+                    if let Some(host) = self.hosts_config.find_host_mut(host_id) {
+                        host.last_connected = Some(chrono::Utc::now());
+                        host.updated_at = chrono::Utc::now();
+                        let _ = self.hosts_config.save();
+                    }
+                }
 
                 // Create terminal session for this connection
                 let terminal = TerminalSession::new(&host_name);
@@ -309,7 +437,7 @@ impl Portal {
                 // Switch to terminal view
                 self.active_view = View::Terminal(session_id);
 
-                return self.start_ssh_event_listener(session_id, event_rx);
+                // Event listener is already running from connect_to_host
             }
             Message::SshData(session_id, data) => {
                 if let Some(session) = self.sessions.get_mut(&session_id) {
@@ -627,7 +755,12 @@ impl Portal {
                 match (key, modifiers.control(), modifiers.shift()) {
                     // Escape - close dialogs
                     (Key::Named(keyboard::key::Named::Escape), _, _) => {
-                        if self.dialog.is_some() || self.mkdir_dialog.is_some()
+                        // Host key dialog - Escape means reject
+                        if let Some(ref mut dialog) = self.host_key_dialog {
+                            dialog.respond(HostKeyVerificationResponse::Reject);
+                            self.status_message = Some("Connection cancelled".to_string());
+                            self.host_key_dialog = None;
+                        } else if self.dialog.is_some() || self.mkdir_dialog.is_some()
                             || self.delete_dialog.is_some() || self.settings_dialog.is_some()
                             || self.snippets_dialog.is_some() {
                             self.dialog = None;
@@ -781,34 +914,21 @@ impl Portal {
 
     /// Build the view
     pub fn view(&self) -> Element<'_, Message> {
-        let all_hosts = sidebar_hosts(&self.hosts_config);
         let all_cards = host_cards(&self.hosts_config);
-        let folders = sidebar_folders(&self.hosts_config);
+        let all_groups = group_cards(&self.hosts_config);
 
-        // Filter hosts based on search
-        let filtered_hosts = filter_sidebar_hosts(&self.search_query, all_hosts);
+        // Filter based on search
         let filtered_cards = filter_host_cards(&self.search_query, all_cards);
+        let filtered_groups = filter_group_cards(&self.search_query, all_groups);
 
-        // Sidebar
+        // Sidebar (new collapsible icon menu)
         let sidebar = sidebar_view(
-            &self.search_query,
-            folders,
-            filtered_hosts,
-            self.selected_host,
+            self.sidebar_collapsed,
+            self.sidebar_selection,
         );
 
-        // Main content
+        // Main content - prioritize active sessions over sidebar selection
         let main_content: Element<'_, Message> = match &self.active_view {
-            View::HostGrid => host_grid_view(filtered_cards),
-            View::TerminalDemo => {
-                if let Some(ref session) = self.demo_terminal {
-                    terminal_view(session, |session_id, bytes| {
-                        Message::TerminalInput(session_id, bytes)
-                    })
-                } else {
-                    text("No terminal session").into()
-                }
-            }
             View::Terminal(session_id) => {
                 if let Some(session) = self.sessions.get(session_id) {
                     let session_id = *session_id;
@@ -824,6 +944,40 @@ impl Portal {
                     sftp_browser_view(&state.browser_state)
                 } else {
                     text("SFTP session not found").into()
+                }
+            }
+            View::TerminalDemo => {
+                if let Some(ref session) = self.demo_terminal {
+                    terminal_view(session, |session_id, bytes| {
+                        Message::TerminalInput(session_id, bytes)
+                    })
+                } else {
+                    text("No terminal session").into()
+                }
+            }
+            View::HostGrid => {
+                // Show content based on sidebar selection
+                match self.sidebar_selection {
+                    SidebarMenuItem::Hosts => {
+                        host_grid_view(&self.search_query, filtered_groups, filtered_cards)
+                    }
+                    SidebarMenuItem::Sftp => {
+                        // Show SFTP host picker
+                        let sftp_hosts: Vec<SftpHostCard> = self.hosts_config.hosts.iter()
+                            .map(|h| SftpHostCard {
+                                id: h.id,
+                                name: h.name.clone(),
+                            })
+                            .collect();
+                        sftp_picker_view(&self.search_query, sftp_hosts)
+                    }
+                    SidebarMenuItem::History => {
+                        history_view(&self.history_config)
+                    }
+                    SidebarMenuItem::Snippets | SidebarMenuItem::Settings => {
+                        // These open dialogs, show hosts grid as fallback
+                        host_grid_view(&self.search_query, filtered_groups, filtered_cards)
+                    }
                 }
             }
         };
@@ -888,8 +1042,11 @@ impl Portal {
             .height(Fill)
             .into();
 
-        // Overlay dialog if open
-        if let Some(ref dialog_state) = self.dialog {
+        // Overlay dialog if open - host key dialog takes priority as it's connection-critical
+        if let Some(ref host_key_state) = self.host_key_dialog {
+            let dialog = host_key_dialog_view(host_key_state);
+            stack![main_layout, dialog].into()
+        } else if let Some(ref dialog_state) = self.dialog {
             let dialog = host_dialog_view(dialog_state, &self.hosts_config.groups);
             stack![main_layout, dialog].into()
         } else if let Some(ref mkdir_state) = self.mkdir_dialog {

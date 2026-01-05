@@ -6,8 +6,8 @@ use iced::Task;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-use crate::config::Host;
-use crate::message::{EventReceiver, Message, SessionId};
+use crate::config::{DetectedOs, Host};
+use crate::message::{EventReceiver, Message, SessionId, VerificationRequestWrapper};
 use crate::sftp::SftpClient;
 use crate::ssh::{SshClient, SshEvent};
 
@@ -79,15 +79,44 @@ impl Portal {
     pub(super) fn connect_to_host(&mut self, host: &Host) -> Task<Message> {
         let host = host.clone();
         let session_id = Uuid::new_v4();
+        let host_id = host.id;
+
+        // Detect OS if not already detected, or if it's generic Linux (re-detect to get specific distro)
+        let should_detect_os = match &host.detected_os {
+            None => true,
+            Some(DetectedOs::Linux) => true, // Re-detect generic Linux to get specific distro
+            Some(_) => false,
+        };
 
         self.status_message = Some(format!("Connecting to {}...", host.name));
 
+        // Create two channels:
+        // 1. For sending events during connection (verification requests)
+        // 2. For ongoing session data after connection
         let (event_tx, event_rx) = mpsc::unbounded_channel::<SshEvent>();
+
+        // Start listening for events immediately - this allows us to receive
+        // HostKeyVerification events during the connection handshake
+        let event_listener = Task::run(
+            stream::unfold(event_rx, |mut rx| async move {
+                rx.recv().await.map(|event| (event, rx))
+            }),
+            move |event| match event {
+                SshEvent::Data(data) => Message::SshData(session_id, data),
+                SshEvent::Disconnected => Message::SshDisconnected(session_id),
+                SshEvent::Error(e) => Message::SshError(e),
+                SshEvent::HostKeyVerification(request) => {
+                    Message::HostKeyVerification(VerificationRequestWrapper(Some(request)))
+                }
+                SshEvent::Connected => Message::Noop,
+            },
+        );
 
         let ssh_client = SshClient::default();
         let host_clone = host.clone();
 
-        Task::perform(
+        // Connection task
+        let connect_task = Task::perform(
             async move {
                 let result = ssh_client
                     .connect(
@@ -96,21 +125,30 @@ impl Portal {
                         event_tx,
                         Duration::from_secs(30),
                         None,
+                        should_detect_os,
                     )
                     .await;
 
-                (session_id, host_clone.name.clone(), result, event_rx)
+                (session_id, host_id, host_clone.name.clone(), result)
             },
-            |(session_id, host_name, result, event_rx)| match result {
-                Ok(ssh_session) => Message::SshConnected {
-                    session_id,
-                    host_name,
-                    ssh_session,
-                    event_rx: EventReceiver(Some(event_rx)),
-                },
+            |(session_id, host_id, host_name, result)| match result {
+                Ok((ssh_session, detected_os)) => {
+                    Message::SshConnected {
+                        session_id,
+                        host_name,
+                        ssh_session,
+                        // No longer passing event_rx here - it's already being listened to
+                        event_rx: EventReceiver(None),
+                        host_id,
+                        detected_os,
+                    }
+                }
                 Err(e) => Message::SshError(format!("Connection failed: {}", e)),
             },
-        )
+        );
+
+        // Run both tasks: listener starts immediately, connection proceeds in parallel
+        Task::batch([event_listener, connect_task])
     }
 
     pub(super) fn connect_sftp(&self, host: &Host) -> Task<Message> {
@@ -171,7 +209,10 @@ impl Portal {
                     SshEvent::Data(data) => Message::SshData(session_id, data),
                     SshEvent::Disconnected => Message::SshDisconnected(session_id),
                     SshEvent::Error(e) => Message::SshError(e),
-                    _ => Message::Noop,
+                    SshEvent::HostKeyVerification(request) => {
+                        Message::HostKeyVerification(VerificationRequestWrapper(Some(request)))
+                    }
+                    SshEvent::Connected => Message::Noop,
                 },
             );
         }

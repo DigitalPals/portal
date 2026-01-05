@@ -154,6 +154,8 @@ impl HostDialogState {
             tags,
             created_at,
             updated_at: now,
+            detected_os: None,
+            last_connected: None,
         })
     }
 

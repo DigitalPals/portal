@@ -2,12 +2,13 @@
 
 use std::path::PathBuf;
 
-use iced::widget::{button, column, container, row, scrollable, text, Column};
+use iced::widget::{button, column, container, row, scrollable, text, Column, Space};
 use iced::{Alignment, Element, Fill, Length, Padding};
 use uuid::Uuid;
 
+use crate::icons::{self, icon_with_color};
 use crate::message::Message;
-use crate::sftp::{format_size, FileEntry, SortOrder};
+use crate::sftp::{format_size, FileEntry, FileIcon, SortOrder};
 use crate::theme::THEME;
 
 /// State for the SFTP browser
@@ -59,6 +60,24 @@ impl SftpBrowserState {
     }
 }
 
+/// Get SVG icon data for a file icon type
+fn file_icon_data(icon_type: FileIcon) -> &'static [u8] {
+    match icon_type {
+        FileIcon::ParentDir => icons::ui::CHEVRON_LEFT,
+        FileIcon::Folder => icons::files::FOLDER,
+        FileIcon::Symlink => icons::files::FILE,
+        FileIcon::Code => icons::files::FILE_CODE,
+        FileIcon::Text => icons::files::FILE_TEXT,
+        FileIcon::Image => icons::files::IMAGE,
+        FileIcon::Audio => icons::files::MUSIC,
+        FileIcon::Video => icons::files::VIDEO,
+        FileIcon::Archive => icons::files::ARCHIVE,
+        FileIcon::Config => icons::files::FILE_JSON,
+        FileIcon::Executable => icons::files::FILE_COG,
+        FileIcon::File => icons::files::FILE,
+    }
+}
+
 /// Build the SFTP browser view
 pub fn sftp_browser_view(state: &SftpBrowserState) -> Element<'_, Message> {
     let header = browser_header(state);
@@ -82,43 +101,47 @@ fn browser_header(state: &SftpBrowserState) -> Element<'_, Message> {
     let path_text = state.current_path.to_string_lossy().to_string();
 
     // Navigation buttons
-    let up_btn = button(text("⬆").size(14))
-        .style(|_theme, status| {
-            let bg = match status {
-                iced::widget::button::Status::Hovered => Some(THEME.hover.into()),
-                _ => Some(THEME.surface.into()),
-            };
-            iced::widget::button::Style {
-                background: bg,
-                text_color: THEME.text_primary,
-                border: iced::Border {
-                    radius: 4.0.into(),
-                    ..Default::default()
-                },
+    let up_btn = button(
+        icon_with_color(icons::ui::CHEVRON_LEFT, 14, THEME.text_primary)
+    )
+    .style(|_theme, status| {
+        let bg = match status {
+            iced::widget::button::Status::Hovered => Some(THEME.hover.into()),
+            _ => Some(THEME.surface.into()),
+        };
+        iced::widget::button::Style {
+            background: bg,
+            text_color: THEME.text_primary,
+            border: iced::Border {
+                radius: 4.0.into(),
                 ..Default::default()
-            }
-        })
-        .padding([4, 8])
-        .on_press(Message::SftpNavigateUp(state.session_id));
+            },
+            ..Default::default()
+        }
+    })
+    .padding([4, 8])
+    .on_press(Message::SftpNavigateUp(state.session_id));
 
-    let refresh_btn = button(text("⟳").size(14))
-        .style(|_theme, status| {
-            let bg = match status {
-                iced::widget::button::Status::Hovered => Some(THEME.hover.into()),
-                _ => Some(THEME.surface.into()),
-            };
-            iced::widget::button::Style {
-                background: bg,
-                text_color: THEME.text_primary,
-                border: iced::Border {
-                    radius: 4.0.into(),
-                    ..Default::default()
-                },
+    let refresh_btn = button(
+        icon_with_color(icons::ui::REFRESH, 14, THEME.text_primary)
+    )
+    .style(|_theme, status| {
+        let bg = match status {
+            iced::widget::button::Status::Hovered => Some(THEME.hover.into()),
+            _ => Some(THEME.surface.into()),
+        };
+        iced::widget::button::Style {
+            background: bg,
+            text_color: THEME.text_primary,
+            border: iced::Border {
+                radius: 4.0.into(),
                 ..Default::default()
-            }
-        })
-        .padding([4, 8])
-        .on_press(Message::SftpRefresh(state.session_id));
+            },
+            ..Default::default()
+        }
+    })
+    .padding([4, 8])
+    .on_press(Message::SftpRefresh(state.session_id));
 
     // Path bar
     let path_bar = container(
@@ -138,16 +161,21 @@ fn browser_header(state: &SftpBrowserState) -> Element<'_, Message> {
     });
 
     // Host name
-    let host_label = text(format!("📡 {}", state.host_name))
-        .size(12)
-        .color(THEME.accent);
+    let host_label = row![
+        icon_with_color(icons::ui::SERVER, 12, THEME.accent),
+        text(state.host_name.clone())
+            .size(12)
+            .color(THEME.accent),
+    ]
+    .spacing(4)
+    .align_y(Alignment::Center);
 
     container(
         row![
             up_btn,
             refresh_btn,
             path_bar,
-            container(text("")).width(Fill),
+            Space::with_width(Fill),
             host_label,
         ]
         .spacing(8)
@@ -200,9 +228,14 @@ fn file_list_view(state: &SftpBrowserState) -> Element<'_, Message> {
 
     if state.entries.is_empty() {
         return container(
-            text("Empty directory")
-                .size(14)
-                .color(THEME.text_muted),
+            column![
+                icon_with_color(icons::files::FOLDER, 32, THEME.text_muted),
+                text("Empty directory")
+                    .size(14)
+                    .color(THEME.text_muted),
+            ]
+            .spacing(8)
+            .align_x(Alignment::Center),
         )
         .width(Fill)
         .height(Fill)
@@ -256,7 +289,8 @@ fn file_entry_row(
     is_selected: bool,
     session_id: Uuid,
 ) -> Element<'static, Message> {
-    let icon = entry.icon();
+    let icon_type = entry.icon_type();
+    let icon_data = file_icon_data(icon_type);
     let name = entry.name.clone();
     let size = if entry.is_dir {
         "—".to_string()
@@ -280,14 +314,28 @@ fn file_entry_row(
         THEME.text_primary
     };
 
+    let icon_color = if is_selected {
+        THEME.background
+    } else if entry.is_dir {
+        THEME.accent
+    } else {
+        THEME.text_secondary
+    };
+
     let path = entry.path.clone();
     let is_dir = entry.is_dir;
 
-    let content = row![
-        text(format!("{} {}", icon, name))
+    let name_row = row![
+        icon_with_color(icon_data, 14, icon_color),
+        text(name)
             .size(13)
-            .color(text_color)
-            .width(Length::FillPortion(4)),
+            .color(text_color),
+    ]
+    .spacing(6)
+    .align_y(Alignment::Center);
+
+    let content = row![
+        container(name_row).width(Length::FillPortion(4)),
         text(size)
             .size(12)
             .color(if is_selected { text_color } else { THEME.text_secondary })
@@ -382,25 +430,32 @@ fn browser_footer(state: &SftpBrowserState) -> Element<'_, Message> {
         .padding([4, 12])
         .on_press(Message::SftpUpload(state.session_id));
 
-    let mkdir_btn = button(text("New Folder").size(12))
-        .style(|_theme, status| {
-            let bg = match status {
-                iced::widget::button::Status::Hovered => Some(THEME.hover.into()),
-                _ => Some(THEME.surface.into()),
-            };
-            iced::widget::button::Style {
-                background: bg,
-                text_color: THEME.text_primary,
-                border: iced::Border {
-                    color: THEME.border,
-                    width: 1.0,
-                    radius: 4.0.into(),
-                },
-                ..Default::default()
-            }
-        })
-        .padding([4, 12])
-        .on_press(Message::SftpMkdir(state.session_id));
+    let mkdir_btn = button(
+        row![
+            icon_with_color(icons::ui::PLUS, 10, THEME.text_primary),
+            text("New Folder").size(12),
+        ]
+        .spacing(4)
+        .align_y(Alignment::Center),
+    )
+    .style(|_theme, status| {
+        let bg = match status {
+            iced::widget::button::Status::Hovered => Some(THEME.hover.into()),
+            _ => Some(THEME.surface.into()),
+        };
+        iced::widget::button::Style {
+            background: bg,
+            text_color: THEME.text_primary,
+            border: iced::Border {
+                color: THEME.border,
+                width: 1.0,
+                radius: 4.0.into(),
+            },
+            ..Default::default()
+        }
+    })
+    .padding([4, 12])
+    .on_press(Message::SftpMkdir(state.session_id));
 
     let delete_btn = button(text("Delete").size(12))
         .style(|_theme, status| {
@@ -430,7 +485,7 @@ fn browser_footer(state: &SftpBrowserState) -> Element<'_, Message> {
     container(
         row![
             text(status).size(12).color(THEME.text_muted),
-            container(text("")).width(Fill),
+            Space::with_width(Fill),
             upload_btn,
             mkdir_btn,
             download_btn,
