@@ -3,7 +3,7 @@ use iced::{Alignment, Element, Length};
 use uuid::Uuid;
 
 use crate::config::{AuthMethod, Host, HostGroup};
-use crate::message::Message;
+use crate::message::{HostDialogField, Message};
 use crate::theme::{BORDER_RADIUS, THEME};
 
 /// State for the host dialog (add or edit)
@@ -219,7 +219,7 @@ pub fn host_dialog_view(
     let name_input = column![
         text("Name").size(12).color(THEME.text_secondary),
         text_input("my-server", &name_value)
-            .on_input(|s| Message::DialogFieldChanged("name".to_string(), s))
+            .on_input(|s| Message::DialogFieldChanged(HostDialogField::Name, s))
             .padding(8)
             .width(Length::Fill)
     ]
@@ -228,7 +228,7 @@ pub fn host_dialog_view(
     let hostname_input = column![
         text("Hostname / IP").size(12).color(THEME.text_secondary),
         text_input("192.168.1.100", &hostname_value)
-            .on_input(|s| Message::DialogFieldChanged("hostname".to_string(), s))
+            .on_input(|s| Message::DialogFieldChanged(HostDialogField::Hostname, s))
             .padding(8)
             .width(Length::Fill)
     ]
@@ -237,7 +237,7 @@ pub fn host_dialog_view(
     let port_input = column![
         text("Port").size(12).color(THEME.text_secondary),
         text_input("22", &port_value)
-            .on_input(|s| Message::DialogFieldChanged("port".to_string(), s))
+            .on_input(|s| Message::DialogFieldChanged(HostDialogField::Port, s))
             .padding(8)
             .width(Length::Fill)
     ]
@@ -246,7 +246,7 @@ pub fn host_dialog_view(
     let username_input = column![
         text("Username").size(12).color(THEME.text_secondary),
         text_input(&username_placeholder, &username_value)
-            .on_input(|s| Message::DialogFieldChanged("username".to_string(), s))
+            .on_input(|s| Message::DialogFieldChanged(HostDialogField::Username, s))
             .padding(8)
             .width(Length::Fill)
     ]
@@ -258,7 +258,7 @@ pub fn host_dialog_view(
         pick_list(
             AuthMethodChoice::ALL.as_slice(),
             Some(auth_method),
-            |choice| Message::DialogFieldChanged("auth_method".to_string(), format!("{:?}", choice))
+            |choice| Message::DialogFieldChanged(HostDialogField::AuthMethod, format!("{:?}", choice))
         )
         .width(Length::Fill)
         .padding(8)
@@ -270,7 +270,7 @@ pub fn host_dialog_view(
         column![
             text("Key Path").size(12).color(THEME.text_secondary),
             text_input("~/.ssh/id_ed25519", &key_path_value)
-                .on_input(|s| Message::DialogFieldChanged("key_path".to_string(), s))
+                .on_input(|s| Message::DialogFieldChanged(HostDialogField::KeyPath, s))
                 .padding(8)
                 .width(Length::Fill)
         ]
@@ -286,7 +286,7 @@ pub fn host_dialog_view(
         pick_list(
             group_choices.clone(),
             selected_group,
-            |choice| Message::DialogFieldChanged("group_id".to_string(),
+            |choice| Message::DialogFieldChanged(HostDialogField::GroupId,
                 choice.id.map(|id| id.to_string()).unwrap_or_default())
         )
         .width(Length::Fill)
@@ -297,7 +297,7 @@ pub fn host_dialog_view(
     let tags_input = column![
         text("Tags").size(12).color(THEME.text_secondary),
         text_input("web, production", &tags_value)
-            .on_input(|s| Message::DialogFieldChanged("tags".to_string(), s))
+            .on_input(|s| Message::DialogFieldChanged(HostDialogField::Tags, s))
             .padding(8)
             .width(Length::Fill)
     ]
@@ -306,7 +306,7 @@ pub fn host_dialog_view(
     let notes_input = column![
         text("Notes").size(12).color(THEME.text_secondary),
         text_input("Optional notes...", &notes_value)
-            .on_input(|s| Message::DialogFieldChanged("notes".to_string(), s))
+            .on_input(|s| Message::DialogFieldChanged(HostDialogField::Notes, s))
             .padding(8)
             .width(Length::Fill)
     ]

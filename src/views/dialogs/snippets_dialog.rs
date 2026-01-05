@@ -5,7 +5,7 @@ use iced::{Alignment, Element, Length};
 use uuid::Uuid;
 
 use crate::config::Snippet;
-use crate::message::Message;
+use crate::message::{Message, SnippetField};
 use crate::theme::{BORDER_RADIUS, THEME};
 
 /// State for the snippets dialog
@@ -261,7 +261,7 @@ fn snippet_edit_form(state: &SnippetsDialogState) -> Element<'static, Message> {
     let name_input = column![
         text("Name").size(12).color(THEME.text_secondary),
         text_input("e.g., List Files", &state.edit_name)
-            .on_input(|s| Message::SnippetFieldChanged("name".to_string(), s))
+            .on_input(|s| Message::SnippetFieldChanged(SnippetField::Name, s))
             .padding(8)
             .width(Length::Fill),
     ]
@@ -270,7 +270,7 @@ fn snippet_edit_form(state: &SnippetsDialogState) -> Element<'static, Message> {
     let command_input = column![
         text("Command").size(12).color(THEME.text_secondary),
         text_input("e.g., ls -la", &state.edit_command)
-            .on_input(|s| Message::SnippetFieldChanged("command".to_string(), s))
+            .on_input(|s| Message::SnippetFieldChanged(SnippetField::Command, s))
             .padding(8)
             .width(Length::Fill),
     ]
@@ -279,7 +279,7 @@ fn snippet_edit_form(state: &SnippetsDialogState) -> Element<'static, Message> {
     let description_input = column![
         text("Description (optional)").size(12).color(THEME.text_secondary),
         text_input("Optional description", &state.edit_description)
-            .on_input(|s| Message::SnippetFieldChanged("description".to_string(), s))
+            .on_input(|s| Message::SnippetFieldChanged(SnippetField::Description, s))
             .padding(8)
             .width(Length::Fill),
     ]

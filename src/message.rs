@@ -10,6 +10,26 @@ use crate::ssh::{SshEvent, SshSession};
 /// Session ID type alias
 pub type SessionId = Uuid;
 
+#[derive(Debug, Clone)]
+pub enum HostDialogField {
+    Name,
+    Hostname,
+    Port,
+    Username,
+    AuthMethod,
+    KeyPath,
+    GroupId,
+    Tags,
+    Notes,
+}
+
+#[derive(Debug, Clone)]
+pub enum SnippetField {
+    Name,
+    Command,
+    Description,
+}
+
 /// Application messages for the Elm-style update loop
 #[derive(Debug, Clone)]
 pub enum Message {
@@ -22,7 +42,7 @@ pub enum Message {
     // Dialog
     DialogClose,
     DialogSubmit,
-    DialogFieldChanged(String, String),
+    DialogFieldChanged(HostDialogField, String),
 
     // Terminal / Session
     TerminalInput(SessionId, Vec<u8>),
@@ -88,7 +108,7 @@ pub enum Message {
     SnippetEdit(Uuid),
     SnippetDelete(Uuid),
     SnippetInsert(Uuid),
-    SnippetFieldChanged(String, String),
+    SnippetFieldChanged(SnippetField, String),
     SnippetEditCancel,
     SnippetSave,
 

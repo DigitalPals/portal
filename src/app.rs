@@ -1,18 +1,17 @@
+mod actions;
+mod view_model;
+
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
-
-use futures::stream;
 use iced::keyboard::{self, Key};
 use iced::widget::{button, column, container, row, text, stack};
 use iced::{event, Element, Fill, Subscription, Task, Theme as IcedTheme};
-use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::config::{Host, HostsConfig, Snippet, SnippetsConfig};
-use crate::message::{EventReceiver, Message, SessionId};
-use crate::sftp::{SharedSftpSession, SftpClient};
-use crate::ssh::{SshClient, SshEvent, SshSession};
+use crate::message::{HostDialogField, Message, SessionId, SnippetField};
+use crate::sftp::SharedSftpSession;
+use crate::ssh::SshSession;
 use crate::theme::THEME;
 use crate::views::dialogs::host_dialog::{
     host_dialog_view, AuthMethodChoice, HostDialogState,
@@ -22,11 +21,15 @@ use crate::views::dialogs::sftp_dialogs::{
     delete_confirm_dialog_view, mkdir_dialog_view, DeleteConfirmDialogState, MkdirDialogState,
 };
 use crate::views::dialogs::snippets_dialog::{snippets_dialog_view, SnippetsDialogState};
-use crate::views::host_grid::{host_grid_view, HostCard};
+use crate::views::host_grid::host_grid_view;
 use crate::views::sftp_view::{sftp_browser_view, SftpBrowserState};
-use crate::views::sidebar::{sidebar_view, SidebarFolder, SidebarHost};
+use crate::views::sidebar::sidebar_view;
 use crate::views::tabs::{tab_bar_view, Tab};
 use crate::views::terminal_view::{terminal_view, TerminalSession};
+
+use self::view_model::{
+    filter_host_cards, filter_sidebar_hosts, host_cards, sidebar_folders, sidebar_hosts,
+};
 
 /// The active view in the main content area
 #[derive(Debug, Clone, Default)]
@@ -151,97 +154,6 @@ impl Portal {
         (app, Task::none())
     }
 
-    /// Start an SSH connection to a host
-    fn connect_to_host(&mut self, host: &Host) -> Task<Message> {
-        let host = host.clone();
-        let session_id = Uuid::new_v4();
-
-        self.status_message = Some(format!("Connecting to {}...", host.name));
-
-        // Create channel for SSH events
-        let (event_tx, event_rx) = mpsc::unbounded_channel::<SshEvent>();
-
-        // Clone what we need for the async task
-        let ssh_client = SshClient::default();
-        let host_clone = host.clone();
-
-        // Spawn the connection task
-        Task::perform(
-            async move {
-                let result = ssh_client
-                    .connect(
-                        &host_clone,
-                        (80, 24), // Default terminal size
-                        event_tx,
-                        Duration::from_secs(30),
-                        None, // No password for now (use agent/key)
-                    )
-                    .await;
-
-                (session_id, host_clone.name.clone(), result, event_rx)
-            },
-            |(session_id, host_name, result, event_rx)| match result {
-                Ok(ssh_session) => Message::SshConnected {
-                    session_id,
-                    host_name,
-                    ssh_session,
-                    event_rx: EventReceiver(Some(event_rx)),
-                },
-                Err(e) => Message::SshError(format!("Connection failed: {}", e)),
-            },
-        )
-    }
-
-    /// Convert config hosts to sidebar display format
-    fn get_sidebar_hosts(&self) -> Vec<SidebarHost> {
-        self.hosts_config
-            .hosts
-            .iter()
-            .map(|host| {
-                let folder_name = host.group_id.and_then(|gid| {
-                    self.hosts_config
-                        .find_group(gid)
-                        .map(|g| g.name.clone())
-                });
-                SidebarHost {
-                    id: host.id,
-                    name: host.name.clone(),
-                    hostname: host.hostname.clone(),
-                    folder: folder_name,
-                }
-            })
-            .collect()
-    }
-
-    /// Convert config groups to sidebar display format
-    fn get_sidebar_folders(&self) -> Vec<SidebarFolder> {
-        self.hosts_config
-            .groups
-            .iter()
-            .map(|group| SidebarFolder {
-                id: group.id,
-                name: group.name.clone(),
-                expanded: !group.collapsed,
-            })
-            .collect()
-    }
-
-    /// Convert config hosts to card display format
-    fn get_host_cards(&self) -> Vec<HostCard> {
-        self.hosts_config
-            .hosts
-            .iter()
-            .map(|host| HostCard {
-                id: host.id,
-                name: host.name.clone(),
-                hostname: host.hostname.clone(),
-                username: host.username.clone(),
-                tags: host.tags.clone(),
-                last_connected: None, // TODO: Load from history
-            })
-            .collect()
-    }
-
     /// Handle messages
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
@@ -325,15 +237,15 @@ impl Portal {
             }
             Message::DialogFieldChanged(field, value) => {
                 if let Some(ref mut dialog_state) = self.dialog {
-                    match field.as_str() {
-                        "name" => dialog_state.name = value,
-                        "hostname" => dialog_state.hostname = value,
-                        "port" => dialog_state.port = value,
-                        "username" => dialog_state.username = value,
-                        "key_path" => dialog_state.key_path = value,
-                        "tags" => dialog_state.tags = value,
-                        "notes" => dialog_state.notes = value,
-                        "auth_method" => {
+                    match field {
+                        HostDialogField::Name => dialog_state.name = value,
+                        HostDialogField::Hostname => dialog_state.hostname = value,
+                        HostDialogField::Port => dialog_state.port = value,
+                        HostDialogField::Username => dialog_state.username = value,
+                        HostDialogField::KeyPath => dialog_state.key_path = value,
+                        HostDialogField::Tags => dialog_state.tags = value,
+                        HostDialogField::Notes => dialog_state.notes = value,
+                        HostDialogField::AuthMethod => {
                             dialog_state.auth_method = match value.as_str() {
                                 "Agent" => AuthMethodChoice::Agent,
                                 "Password" => AuthMethodChoice::Password,
@@ -341,14 +253,13 @@ impl Portal {
                                 _ => dialog_state.auth_method,
                             };
                         }
-                        "group_id" => {
+                        HostDialogField::GroupId => {
                             dialog_state.group_id = if value.is_empty() {
                                 None
                             } else {
                                 Uuid::parse_str(&value).ok()
                             };
                         }
-                        _ => {}
                     }
                 }
             }
@@ -373,7 +284,7 @@ impl Portal {
                 session_id,
                 host_name,
                 ssh_session,
-                mut event_rx,
+                event_rx,
             } => {
                 tracing::info!("SSH connected to {}", host_name);
                 self.status_message = Some(format!("Connected to {}", host_name));
@@ -398,20 +309,7 @@ impl Portal {
                 // Switch to terminal view
                 self.active_view = View::Terminal(session_id);
 
-                // Start listening for SSH events
-                if let Some(rx) = event_rx.0.take() {
-                    return Task::run(
-                        stream::unfold(rx, |mut rx| async move {
-                            rx.recv().await.map(|event| (event, rx))
-                        }),
-                        move |event| match event {
-                            SshEvent::Data(data) => Message::SshData(session_id, data),
-                            SshEvent::Disconnected => Message::SshDisconnected(session_id),
-                            SshEvent::Error(e) => Message::SshError(e),
-                            _ => Message::Noop,
-                        },
-                    );
-                }
+                return self.start_ssh_event_listener(session_id, event_rx);
             }
             Message::SshData(session_id, data) => {
                 if let Some(session) = self.sessions.get_mut(&session_id) {
@@ -421,21 +319,7 @@ impl Portal {
             Message::SshDisconnected(session_id) => {
                 tracing::info!("SSH disconnected: {}", session_id);
                 self.status_message = Some("Disconnected".to_string());
-                self.sessions.remove(&session_id);
-                self.tabs.retain(|t| t.id != session_id);
-
-                // If this was the active tab, switch to another or go to host grid
-                if self.active_tab == Some(session_id) {
-                    if let Some(last_tab) = self.tabs.last() {
-                        self.active_tab = Some(last_tab.id);
-                        self.active_view = View::Terminal(last_tab.id);
-                    } else {
-                        self.active_tab = None;
-                        self.active_view = View::HostGrid;
-                    }
-                } else if matches!(self.active_view, View::Terminal(id) if id == session_id) {
-                    self.active_view = View::HostGrid;
-                }
+                self.close_tab(session_id);
             }
             Message::SshError(error) => {
                 tracing::error!("SSH error: {}", error);
@@ -443,37 +327,11 @@ impl Portal {
             }
             Message::TabSelect(tab_id) => {
                 tracing::info!("Tab selected: {}", tab_id);
-                self.active_tab = Some(tab_id);
-                // Switch view to show this tab's content
-                if self.sessions.contains_key(&tab_id) {
-                    self.active_view = View::Terminal(tab_id);
-                } else if self.sftp_sessions.contains_key(&tab_id) {
-                    self.active_view = View::Sftp(tab_id);
-                }
+                self.set_active_tab(tab_id);
             }
             Message::TabClose(tab_id) => {
                 tracing::info!("Tab closed: {}", tab_id);
-                // Remove the tab
-                self.tabs.retain(|t| t.id != tab_id);
-                // Remove sessions (both terminal and SFTP)
-                self.sessions.remove(&tab_id);
-                self.sftp_sessions.remove(&tab_id);
-
-                // If this was the active tab, switch to another or go to host grid
-                if self.active_tab == Some(tab_id) {
-                    if let Some(last_tab) = self.tabs.last() {
-                        self.active_tab = Some(last_tab.id);
-                        // Determine view type based on what sessions exist
-                        if self.sessions.contains_key(&last_tab.id) {
-                            self.active_view = View::Terminal(last_tab.id);
-                        } else if self.sftp_sessions.contains_key(&last_tab.id) {
-                            self.active_view = View::Sftp(last_tab.id);
-                        }
-                    } else {
-                        self.active_tab = None;
-                        self.active_view = View::HostGrid;
-                    }
-                }
+                self.close_tab(tab_id);
             }
             Message::TabNew => {
                 tracing::info!("New tab requested");
@@ -785,64 +643,15 @@ impl Portal {
                     }
                     // Ctrl+W - close current tab
                     (Key::Character(c), true, false) if c.as_str() == "w" => {
-                        if let Some(tab_id) = self.active_tab {
-                            // Close the active tab
-                            self.tabs.retain(|t| t.id != tab_id);
-                            self.sessions.remove(&tab_id);
-                            self.sftp_sessions.remove(&tab_id);
-
-                            // Select next available tab or go to host grid
-                            if let Some(next_tab) = self.tabs.first() {
-                                let next_id = next_tab.id;
-                                self.active_tab = Some(next_id);
-                                if self.sessions.contains_key(&next_id) {
-                                    self.active_view = View::Terminal(next_id);
-                                } else if self.sftp_sessions.contains_key(&next_id) {
-                                    self.active_view = View::Sftp(next_id);
-                                }
-                            } else {
-                                self.active_tab = None;
-                                self.active_view = View::HostGrid;
-                            }
-                        }
+                        self.close_active_tab();
                     }
                     // Ctrl+Tab - next tab
                     (Key::Named(keyboard::key::Named::Tab), true, false) => {
-                        if !self.tabs.is_empty() {
-                            let current_idx = self.active_tab
-                                .and_then(|id| self.tabs.iter().position(|t| t.id == id))
-                                .unwrap_or(0);
-                            let next_idx = (current_idx + 1) % self.tabs.len();
-                            let next_tab = &self.tabs[next_idx];
-                            let next_id = next_tab.id;
-                            self.active_tab = Some(next_id);
-                            if self.sessions.contains_key(&next_id) {
-                                self.active_view = View::Terminal(next_id);
-                            } else if self.sftp_sessions.contains_key(&next_id) {
-                                self.active_view = View::Sftp(next_id);
-                            }
-                        }
+                        self.select_next_tab();
                     }
                     // Ctrl+Shift+Tab - previous tab
                     (Key::Named(keyboard::key::Named::Tab), true, true) => {
-                        if !self.tabs.is_empty() {
-                            let current_idx = self.active_tab
-                                .and_then(|id| self.tabs.iter().position(|t| t.id == id))
-                                .unwrap_or(0);
-                            let prev_idx = if current_idx == 0 {
-                                self.tabs.len() - 1
-                            } else {
-                                current_idx - 1
-                            };
-                            let prev_tab = &self.tabs[prev_idx];
-                            let prev_id = prev_tab.id;
-                            self.active_tab = Some(prev_id);
-                            if self.sessions.contains_key(&prev_id) {
-                                self.active_view = View::Terminal(prev_id);
-                            } else if self.sftp_sessions.contains_key(&prev_id) {
-                                self.active_view = View::Sftp(prev_id);
-                            }
-                        }
+                        self.select_prev_tab();
                     }
                     _ => {}
                 }
@@ -910,11 +719,10 @@ impl Portal {
             }
             Message::SnippetFieldChanged(field, value) => {
                 if let Some(ref mut dialog) = self.snippets_dialog {
-                    match field.as_str() {
-                        "name" => dialog.edit_name = value,
-                        "command" => dialog.edit_command = value,
-                        "description" => dialog.edit_description = value,
-                        _ => {}
+                    match field {
+                        SnippetField::Name => dialog.edit_name = value,
+                        SnippetField::Command => dialog.edit_command = value,
+                        SnippetField::Description => dialog.edit_description = value,
                     }
                 }
             }
@@ -971,93 +779,15 @@ impl Portal {
         Task::none()
     }
 
-    /// Connect to a host via SFTP
-    fn connect_sftp(&self, host: &Host) -> Task<Message> {
-        let host = host.clone();
-        let session_id = Uuid::new_v4();
-
-        // Create dummy event channel (SFTP doesn't need it for data)
-        let (event_tx, _event_rx) = mpsc::unbounded_channel::<SshEvent>();
-
-        let sftp_client = SftpClient::default();
-        let host_clone = host.clone();
-
-        Task::perform(
-            async move {
-                let result = sftp_client
-                    .connect(
-                        &host_clone,
-                        event_tx,
-                        Duration::from_secs(30),
-                        None,
-                    )
-                    .await;
-
-                (session_id, host_clone.name.clone(), result)
-            },
-            |(session_id, host_name, result)| match result {
-                Ok(sftp_session) => Message::SftpConnected {
-                    session_id,
-                    host_name,
-                    sftp_session,
-                },
-                Err(e) => Message::SshError(format!("SFTP connection failed: {}", e)),
-            },
-        )
-    }
-
-    /// Load SFTP directory listing
-    fn load_sftp_directory(&self, session_id: SessionId, path: std::path::PathBuf) -> Task<Message> {
-        if let Some(state) = self.sftp_sessions.get(&session_id) {
-            let sftp = state.sftp_session.clone();
-            Task::perform(
-                async move {
-                    sftp.list_dir(&path).await
-                },
-                move |result| {
-                    Message::SftpListResult(
-                        session_id,
-                        result.map_err(|e| e.to_string()),
-                    )
-                },
-            )
-        } else {
-            Task::none()
-        }
-    }
-
     /// Build the view
     pub fn view(&self) -> Element<'_, Message> {
-        let all_hosts = self.get_sidebar_hosts();
-        let all_cards = self.get_host_cards();
-        let folders = self.get_sidebar_folders();
+        let all_hosts = sidebar_hosts(&self.hosts_config);
+        let all_cards = host_cards(&self.hosts_config);
+        let folders = sidebar_folders(&self.hosts_config);
 
         // Filter hosts based on search
-        let filtered_hosts: Vec<_> = if self.search_query.is_empty() {
-            all_hosts
-        } else {
-            let query = self.search_query.to_lowercase();
-            all_hosts
-                .into_iter()
-                .filter(|h| {
-                    h.name.to_lowercase().contains(&query)
-                        || h.hostname.to_lowercase().contains(&query)
-                })
-                .collect()
-        };
-
-        let filtered_cards: Vec<_> = if self.search_query.is_empty() {
-            all_cards
-        } else {
-            let query = self.search_query.to_lowercase();
-            all_cards
-                .into_iter()
-                .filter(|h| {
-                    h.name.to_lowercase().contains(&query)
-                        || h.hostname.to_lowercase().contains(&query)
-                })
-                .collect()
-        };
+        let filtered_hosts = filter_sidebar_hosts(&self.search_query, all_hosts);
+        let filtered_cards = filter_host_cards(&self.search_query, all_cards);
 
         // Sidebar
         let sidebar = sidebar_view(
