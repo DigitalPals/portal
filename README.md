@@ -188,6 +188,19 @@ cd portal
 ./run.sh check   # Run cargo check and clippy
 ```
 
+### NixOS (flake)
+
+```bash
+nix develop
+cargo build --release
+```
+
+Or build the package directly:
+
+```bash
+nix build
+```
+
 ## Quick Start
 
 1. **Launch Portal** — Run the application
