@@ -9,6 +9,7 @@ use crate::error::ConfigError;
 pub enum SessionType {
     Ssh,
     Sftp,
+    Local,
 }
 
 impl SessionType {
@@ -16,6 +17,7 @@ impl SessionType {
         match self {
             SessionType::Ssh => "SSH",
             SessionType::Sftp => "SFTP",
+            SessionType::Local => "Local",
         }
     }
 }
@@ -52,6 +54,27 @@ impl HistoryEntry {
             connected_at: chrono::Utc::now(),
             disconnected_at: None,
             session_type,
+        }
+    }
+
+    /// Create a new history entry for a local terminal session
+    pub fn new_local() -> Self {
+        let hostname = std::env::var("HOSTNAME")
+            .or_else(|_| std::env::var("HOST"))
+            .unwrap_or_else(|_| "localhost".to_string());
+        let username = std::env::var("USER")
+            .or_else(|_| std::env::var("USERNAME"))
+            .unwrap_or_default();
+
+        Self {
+            id: Uuid::new_v4(),
+            host_id: Uuid::nil(), // Nil UUID indicates local session
+            host_name: "Local Terminal".to_string(),
+            hostname,
+            username,
+            connected_at: chrono::Utc::now(),
+            disconnected_at: None,
+            session_type: SessionType::Local,
         }
     }
 

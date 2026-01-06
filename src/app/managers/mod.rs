@@ -8,7 +8,7 @@ mod sftp_manager;
 mod dialog_manager;
 mod file_viewer_manager;
 
-pub use session_manager::{ActiveSession, SessionManager};
+pub use session_manager::{ActiveSession, SessionBackend, SessionManager};
 pub use sftp_manager::SftpManager;
 pub use dialog_manager::{ActiveDialog, DialogManager};
 pub use file_viewer_manager::FileViewerManager;

@@ -1,16 +1,16 @@
-//! SSH session message handlers
+//! Terminal session message handlers
 
 use std::time::Instant;
 use iced::Task;
 use uuid::Uuid;
 
-use crate::app::managers::ActiveSession;
+use crate::app::managers::{ActiveSession, SessionBackend};
 use crate::app::{Portal, Tab, View};
 use crate::message::{Message, SessionMessage};
 use crate::views::toast::Toast;
 use crate::views::terminal_view::TerminalSession;
 
-/// Handle SSH session messages
+/// Handle terminal session messages
 pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message> {
     match msg {
         SessionMessage::Connected {
@@ -67,7 +67,7 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
             portal.sessions.insert(
                 session_id,
                 ActiveSession {
-                    ssh_session,
+                    backend: SessionBackend::Ssh(ssh_session),
                     terminal,
                     session_start: Instant::now(),
                     host_name: host_name.clone(),
@@ -86,6 +86,46 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
 
             Task::none()
         }
+        SessionMessage::LocalConnected {
+            session_id,
+            local_session,
+        } => {
+            tracing::info!("Local terminal session started");
+
+            // Create history entry for this local session
+            let entry = crate::config::HistoryEntry::new_local();
+            let history_entry_id = entry.id;
+            portal.history_config.add_entry(entry);
+            if let Err(e) = portal.history_config.save() {
+                tracing::error!("Failed to save history config: {}", e);
+            }
+
+            // Create terminal session
+            let terminal = TerminalSession::new("Local Terminal");
+
+            // Store the active session
+            portal.sessions.insert(
+                session_id,
+                ActiveSession {
+                    backend: SessionBackend::Local(local_session),
+                    terminal,
+                    session_start: Instant::now(),
+                    host_name: "Local Terminal".to_string(),
+                    history_entry_id,
+                    status_message: None,
+                },
+            );
+
+            // Create a new tab for this session
+            let tab = Tab::new_terminal(session_id, "Local Terminal".to_string());
+            portal.tabs.push(tab);
+            portal.active_tab = Some(session_id);
+
+            // Switch to terminal view
+            portal.active_view = View::Terminal(session_id);
+
+            Task::none()
+        }
         SessionMessage::Data(session_id, data) => {
             if let Some(session) = portal.sessions.get_mut(session_id) {
                 session.terminal.process_output(&data);
@@ -93,7 +133,7 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
             Task::none()
         }
         SessionMessage::Disconnected(session_id) => {
-            tracing::info!("SSH disconnected: {}", session_id);
+            tracing::info!("Terminal session disconnected: {}", session_id);
             if let Some(session) = portal.sessions.get(session_id) {
                 portal.history_config.mark_disconnected(session.history_entry_id);
                 if let Err(e) = portal.history_config.save() {
@@ -104,22 +144,38 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
             Task::none()
         }
         SessionMessage::Error(error) => {
-            tracing::error!("SSH error: {}", error);
+            tracing::error!("Session error: {}", error);
             portal.toast_manager.push(Toast::error(error));
             Task::none()
         }
         SessionMessage::Input(session_id, bytes) => {
             tracing::debug!("Terminal input for session {}: {:?}", session_id, bytes);
             if let Some(session) = portal.sessions.get(session_id) {
-                let ssh_session = session.ssh_session.clone();
-                return Task::perform(
-                    async move {
-                        if let Err(e) = ssh_session.send(&bytes).await {
-                            tracing::error!("Failed to send to SSH: {}", e);
-                        }
-                    },
-                    |_| Message::Noop,
-                );
+                match &session.backend {
+                    SessionBackend::Ssh(ssh_session) => {
+                        let ssh_session = ssh_session.clone();
+                        return Task::perform(
+                            async move {
+                                if let Err(e) = ssh_session.send(&bytes).await {
+                                    tracing::error!("Failed to send to SSH: {}", e);
+                                }
+                            },
+                            |_| Message::Noop,
+                        );
+                    }
+                    SessionBackend::Local(local_session) => {
+                        let local_session = local_session.clone();
+                        // Local session send is sync, but we run it in a task for consistency
+                        return Task::perform(
+                            async move {
+                                if let Err(e) = local_session.send(&bytes) {
+                                    tracing::error!("Failed to send to local PTY: {}", e);
+                                }
+                            },
+                            |_| Message::Noop,
+                        );
+                    }
+                }
             }
             Task::none()
         }
@@ -127,8 +183,17 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
             tracing::debug!("Terminal resize for session {}: {}x{}", session_id, cols, rows);
             if let Some(session) = portal.sessions.get_mut(session_id) {
                 session.terminal.resize(cols, rows);
-                if let Err(e) = session.ssh_session.window_change(cols, rows) {
-                    tracing::error!("Failed to send window change: {}", e);
+                match &session.backend {
+                    SessionBackend::Ssh(ssh_session) => {
+                        if let Err(e) = ssh_session.window_change(cols, rows) {
+                            tracing::error!("Failed to send window change: {}", e);
+                        }
+                    }
+                    SessionBackend::Local(local_session) => {
+                        if let Err(e) = local_session.resize(cols, rows) {
+                            tracing::error!("Failed to resize local PTY: {}", e);
+                        }
+                    }
                 }
             }
             Task::none()
@@ -139,17 +204,22 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
         }
         SessionMessage::InstallKey(session_id) => {
             if let Some(session) = portal.sessions.get_mut(session_id) {
-                session.status_message = Some(("Installing key...".to_string(), Instant::now()));
-                let ssh_session = session.ssh_session.clone();
-                return Task::perform(
-                    async move { crate::ssh::install_ssh_key(&ssh_session).await },
-                    move |result| {
-                        Message::Session(SessionMessage::InstallKeyResult(
-                            session_id,
-                            result.map_err(|e| e.to_string()),
-                        ))
-                    },
-                );
+                if let SessionBackend::Ssh(ssh_session) = &session.backend {
+                    session.status_message = Some(("Installing key...".to_string(), Instant::now()));
+                    let ssh_session = ssh_session.clone();
+                    return Task::perform(
+                        async move { crate::ssh::install_ssh_key(&ssh_session).await },
+                        move |result| {
+                            Message::Session(SessionMessage::InstallKeyResult(
+                                session_id,
+                                result.map_err(|e| e.to_string()),
+                            ))
+                        },
+                    );
+                } else {
+                    // Key installation only applies to SSH sessions
+                    portal.toast_manager.push(Toast::error("Key installation is only available for SSH sessions"));
+                }
             }
             Task::none()
         }

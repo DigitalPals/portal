@@ -8,6 +8,7 @@ use uuid::Uuid;
 
 use crate::config::{DetectedOs, Host};
 use crate::fs_utils::{copy_dir_recursive, count_items_in_dir};
+use crate::local::{LocalEvent, LocalSession};
 use crate::local_fs::list_local_dir;
 use crate::message::{
     DialogMessage, FileViewerMessage, Message, SessionId, SessionMessage, SftpMessage,
@@ -18,6 +19,7 @@ use crate::ssh::{SshClient, SshEvent};
 use crate::views::file_viewer::{FileSource, FileType, FileViewerState, ViewerContent};
 use crate::views::sftp::{ContextMenuAction, PaneId, PaneSource, PermissionBits, SftpDialogType};
 use crate::views::tabs::Tab;
+use crate::views::toast::Toast;
 
 use super::{Portal, View};
 
@@ -194,6 +196,44 @@ impl Portal {
 
         // Run both tasks: listener starts immediately, connection proceeds in parallel
         Task::batch([event_listener, connect_task])
+    }
+
+    /// Spawn a local terminal session
+    pub(super) fn spawn_local_terminal(&mut self) -> Task<Message> {
+        let session_id = Uuid::new_v4();
+
+        // Create event channel for local PTY events
+        let (event_tx, event_rx) = mpsc::unbounded_channel::<LocalEvent>();
+
+        // Start listening for events
+        let event_listener = Task::run(
+            stream::unfold(event_rx, |mut rx| async move {
+                rx.recv().await.map(|event| (event, rx))
+            }),
+            move |event| match event {
+                LocalEvent::Data(data) => Message::Session(SessionMessage::Data(session_id, data)),
+                LocalEvent::Disconnected => Message::Session(SessionMessage::Disconnected(session_id)),
+            },
+        );
+
+        // Spawn the local terminal
+        // Use default terminal size (80x24), will be resized on first render
+        match LocalSession::spawn(80, 24, event_tx) {
+            Ok(local_session) => {
+                let local_session = Arc::new(local_session);
+                let spawn_task = Task::done(Message::Session(SessionMessage::LocalConnected {
+                    session_id,
+                    local_session,
+                }));
+
+                Task::batch([event_listener, spawn_task])
+            }
+            Err(e) => {
+                tracing::error!("Failed to spawn local terminal: {}", e);
+                self.toast_manager.push(Toast::error(format!("Failed to spawn local terminal: {}", e)));
+                Task::none()
+            }
+        }
     }
 
     /// Load directory contents for a dual-pane SFTP browser pane

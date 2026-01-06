@@ -4,6 +4,7 @@ mod error;
 mod fonts;
 mod fs_utils;
 mod icons;
+mod local;
 mod local_fs;
 mod message;
 mod sftp;

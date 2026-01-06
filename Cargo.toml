@@ -41,6 +41,9 @@ parking_lot = "0.12"
 rfd = "0.15"  # Native file dialogs
 open = "5"    # Open files with default application
 
+# Local terminal
+portable-pty = "0.8"
+
 # File viewer
 iced-code-editor = "0.2"  # Code editor with syntax highlighting
 pdfium-render = "0.8"     # PDF rendering

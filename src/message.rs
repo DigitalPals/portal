@@ -5,6 +5,7 @@ use iced::widget::text_editor;
 use uuid::Uuid;
 
 use crate::config::DetectedOs;
+use crate::local::LocalSession;
 use crate::theme::ThemeId;
 use crate::sftp::{FileEntry, SharedSftpSession};
 use crate::ssh::host_key_verification::HostKeyVerificationRequest;
@@ -50,7 +51,7 @@ pub enum SnippetField {
 // Nested Message Enums
 // ============================================================================
 
-/// SSH session-related messages
+/// Terminal session-related messages
 #[derive(Debug, Clone)]
 pub enum SessionMessage {
     /// SSH connection established
@@ -61,11 +62,16 @@ pub enum SessionMessage {
         host_id: Uuid,
         detected_os: Option<DetectedOs>,
     },
-    /// Data received from SSH
+    /// Local terminal session established
+    LocalConnected {
+        session_id: SessionId,
+        local_session: Arc<LocalSession>,
+    },
+    /// Data received from terminal (SSH or local)
     Data(SessionId, Vec<u8>),
-    /// SSH session disconnected
+    /// Terminal session disconnected
     Disconnected(SessionId),
-    /// SSH error occurred
+    /// Session error occurred
     Error(String),
     /// Terminal input from user
     Input(SessionId, Vec<u8>),

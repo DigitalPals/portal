@@ -133,3 +133,16 @@ pub enum FsError {
     #[error("Path not found: {0}")]
     NotFound(PathBuf),
 }
+
+/// Local terminal errors
+#[derive(Error, Debug)]
+pub enum LocalError {
+    #[error("Failed to create PTY: {0}")]
+    PtyCreation(String),
+
+    #[error("Failed to spawn shell: {0}")]
+    SpawnFailed(String),
+
+    #[error("PTY I/O error: {0}")]
+    Io(String),
+}

@@ -1,20 +1,29 @@
-//! Session manager for SSH sessions
+//! Session manager for terminal sessions
 //!
-//! Manages the lifecycle of SSH terminal sessions, including
-//! tracking active sessions, their terminals, and status messages.
+//! Manages the lifecycle of terminal sessions (both SSH and local),
+//! including tracking active sessions, their terminals, and status messages.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 use uuid::Uuid;
 
+use crate::local::LocalSession;
 use crate::message::SessionId;
 use crate::ssh::SshSession;
 use crate::views::terminal_view::TerminalSession;
 
-/// Active SSH session with its terminal
+/// Backend type for a terminal session
+pub enum SessionBackend {
+    /// SSH connection to a remote host
+    Ssh(Arc<SshSession>),
+    /// Local PTY session
+    Local(Arc<LocalSession>),
+}
+
+/// Active terminal session with its backend
 pub struct ActiveSession {
-    pub ssh_session: Arc<SshSession>,
+    pub backend: SessionBackend,
     pub terminal: TerminalSession,
     pub session_start: Instant,
     pub host_name: String,

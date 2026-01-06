@@ -87,9 +87,8 @@ pub fn handle_host(portal: &mut Portal, msg: HostMessage) -> Task<Message> {
             portal.connect_to_host(&temp_host)
         }
         HostMessage::LocalTerminal => {
-            // Stub for now - local terminal support coming later
-            tracing::info!("Local terminal requested (not yet implemented)");
-            Task::none()
+            tracing::info!("Spawning local terminal");
+            portal.spawn_local_terminal()
         }
     }
 }

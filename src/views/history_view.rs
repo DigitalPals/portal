@@ -84,6 +84,7 @@ fn history_entry_row(entry: &crate::config::HistoryEntry, theme: Theme, is_focus
     let icon_data = match entry.session_type {
         SessionType::Ssh => icons::ui::TERMINAL,
         SessionType::Sftp => icons::ui::HARD_DRIVE,
+        SessionType::Local => icons::ui::TERMINAL,
     };
 
     let type_text = entry.session_type.display_name().to_string();

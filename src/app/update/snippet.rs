@@ -2,6 +2,7 @@
 
 use iced::Task;
 
+use crate::app::managers::SessionBackend;
 use crate::app::Portal;
 use crate::config::Snippet;
 use crate::message::{Message, SnippetField, SnippetMessage};
@@ -44,14 +45,27 @@ pub fn handle_snippet(portal: &mut Portal, msg: SnippetMessage) -> Task<Message>
                 if let Some(session_id) = portal.active_tab {
                     if let Some(session) = portal.sessions.get(session_id) {
                         let data = command.into_bytes();
-                        let ssh = session.ssh_session.clone();
                         portal.dialogs.close();
-                        return Task::perform(
-                            async move {
-                                let _ = ssh.send(&data).await;
-                            },
-                            move |_| Message::Noop,
-                        );
+                        match &session.backend {
+                            SessionBackend::Ssh(ssh_session) => {
+                                let ssh = ssh_session.clone();
+                                return Task::perform(
+                                    async move {
+                                        let _ = ssh.send(&data).await;
+                                    },
+                                    move |_| Message::Noop,
+                                );
+                            }
+                            SessionBackend::Local(local_session) => {
+                                let local = local_session.clone();
+                                return Task::perform(
+                                    async move {
+                                        let _ = local.send(&data);
+                                    },
+                                    move |_| Message::Noop,
+                                );
+                            }
+                        }
                     }
                 }
             }
