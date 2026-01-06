@@ -9,7 +9,7 @@ pub use state::{FileViewerState, ViewerContent};
 pub use types::{FileSource, FileType};
 
 use iced::widget::{
-    Space, Image, Svg, button, column, container, row, scrollable, text, text_editor,
+    Image, Space, Svg, button, column, container, row, scrollable, text, text_editor,
 };
 use iced::{Alignment, Color, Element, Fill, Length};
 
@@ -324,11 +324,11 @@ fn pdf_viewer_view<'a>(
     theme: Theme,
 ) -> Element<'a, Message> {
     let page_controls = row![
-        button(text("<").size(16)).padding([4, 12]).on_press_maybe(
-            (current_page > 0).then_some(Message::FileViewer(
+        button(text("<").size(16))
+            .padding([4, 12])
+            .on_press_maybe((current_page > 0).then_some(Message::FileViewer(
                 FileViewerMessage::PdfPageChange(viewer_id, current_page - 1)
-            ))
-        ),
+            ))),
         Space::new().width(16),
         button(text(">").size(16)).padding([4, 12]).on_press_maybe(
             (current_page + 1 < total_pages).then_some(Message::FileViewer(
@@ -342,13 +342,8 @@ fn pdf_viewer_view<'a>(
     ]
     .align_y(Alignment::Center);
 
-    let page_data = pages
-        .get(current_page)
-        .and_then(|slot| slot.as_ref());
-    let is_rendering = rendering_pages
-        .get(current_page)
-        .copied()
-        .unwrap_or(false);
+    let page_data = pages.get(current_page).and_then(|slot| slot.as_ref());
+    let is_rendering = rendering_pages.get(current_page).copied().unwrap_or(false);
 
     let body: Element<'_, Message> = if let Some(data) = page_data {
         let page_image = Image::new(iced::widget::image::Handle::from_bytes(data.clone()))
@@ -360,12 +355,16 @@ fn pdf_viewer_view<'a>(
             .height(Fill)
             .into()
     } else if is_rendering {
-        container(text("Rendering page...").size(14).color(theme.text_secondary))
-            .width(Fill)
-            .height(Fill)
-            .align_x(Alignment::Center)
-            .align_y(Alignment::Center)
-            .into()
+        container(
+            text("Rendering page...")
+                .size(14)
+                .color(theme.text_secondary),
+        )
+        .width(Fill)
+        .height(Fill)
+        .align_x(Alignment::Center)
+        .align_y(Alignment::Center)
+        .into()
     } else {
         let retry_button = button(text("Render page").size(12))
             .padding([6, 12])
@@ -381,11 +380,11 @@ fn pdf_viewer_view<'a>(
             ]
             .align_x(Alignment::Center),
         )
-            .width(Fill)
-            .height(Fill)
-            .align_x(Alignment::Center)
-            .align_y(Alignment::Center)
-            .into()
+        .width(Fill)
+        .height(Fill)
+        .align_x(Alignment::Center)
+        .align_y(Alignment::Center)
+        .into()
     };
 
     let layout = column![

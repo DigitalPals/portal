@@ -34,9 +34,7 @@ pub enum HostKeyStatus {
         key_type: String,
     },
     /// Key matches a revoked entry
-    Revoked {
-        fingerprint: String,
-    },
+    Revoked { fingerprint: String },
 }
 
 /// Manager for known_hosts file operations
@@ -100,9 +98,7 @@ impl KnownHostsManager {
         let revoked_keys = scan.revoked_keys;
         let fingerprint = Self::get_fingerprint(key);
         if revoked_keys.iter().any(|revoked| revoked == key) {
-            return HostKeyStatus::Revoked {
-                fingerprint,
-            };
+            return HostKeyStatus::Revoked { fingerprint };
         }
 
         if matches.is_empty() {
@@ -266,9 +262,15 @@ impl KnownHostsManager {
             };
 
             let mut parts = rest.split_whitespace();
-            let Some(hosts_field) = parts.next() else { continue };
-            let Some(_key_type) = parts.next() else { continue };
-            let Some(key_data) = parts.next() else { continue };
+            let Some(hosts_field) = parts.next() else {
+                continue;
+            };
+            let Some(_key_type) = parts.next() else {
+                continue;
+            };
+            let Some(key_data) = parts.next() else {
+                continue;
+            };
 
             if !self.host_matches(&host_port, host, hosts_field) {
                 continue;
@@ -351,8 +353,12 @@ impl KnownHostsManager {
 
     fn match_hashed_host(&self, host_port: &str, pattern: &str) -> bool {
         let mut parts = pattern.split('|').skip(2);
-        let Some(salt) = parts.next() else { return false };
-        let Some(hash) = parts.next() else { return false };
+        let Some(salt) = parts.next() else {
+            return false;
+        };
+        let Some(hash) = parts.next() else {
+            return false;
+        };
 
         let Ok(salt) = BASE64_MIME.decode(salt.as_bytes()) else {
             return false;
@@ -377,9 +383,7 @@ fn glob_match(pattern: &str, text: &str) -> bool {
     let t_bytes = text.as_bytes();
 
     while t_idx < t_bytes.len() {
-        if p_idx < p_bytes.len()
-            && (p_bytes[p_idx] == b'?' || p_bytes[p_idx] == t_bytes[t_idx])
-        {
+        if p_idx < p_bytes.len() && (p_bytes[p_idx] == b'?' || p_bytes[p_idx] == t_bytes[t_idx]) {
             p_idx += 1;
             t_idx += 1;
             continue;

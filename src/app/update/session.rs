@@ -1,7 +1,7 @@
 //! Terminal session message handlers
 
-use iced::Task;
 use futures::stream;
+use iced::Task;
 use iced::clipboard;
 use std::time::Instant;
 use uuid::Uuid;
@@ -9,8 +9,8 @@ use uuid::Uuid;
 use crate::app::managers::{ActiveSession, SessionBackend};
 use crate::app::{Portal, Tab, View};
 use crate::message::{Message, SessionMessage};
-use crate::views::terminal_view::TerminalSession;
 use crate::terminal::backend::TerminalEvent;
+use crate::views::terminal_view::TerminalSession;
 use crate::views::toast::Toast;
 
 /// Handle terminal session messages
@@ -199,7 +199,10 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
         },
         SessionMessage::ClipboardLoaded(session_id, contents) => {
             if let Some(text) = contents {
-                return handle_session(portal, SessionMessage::Input(session_id, text.into_bytes()));
+                return handle_session(
+                    portal,
+                    SessionMessage::Input(session_id, text.into_bytes()),
+                );
             }
             Task::none()
         }

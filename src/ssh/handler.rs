@@ -71,12 +71,7 @@ impl Handler for ClientHandler {
                     Ok(true)
                 }
                 HostKeyStatus::Revoked { fingerprint, .. } => {
-                    tracing::warn!(
-                        "HOST KEY REVOKED for {}:{} - {}",
-                        host,
-                        port,
-                        fingerprint
-                    );
+                    tracing::warn!("HOST KEY REVOKED for {}:{} - {}", host, port, fingerprint);
                     Err(SshError::HostKeyVerification(
                         "Host key has been revoked".to_string(),
                     ))

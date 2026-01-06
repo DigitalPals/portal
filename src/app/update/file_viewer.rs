@@ -3,11 +3,11 @@
 use iced::Task;
 
 use crate::app::Portal;
+use crate::app::services::file_viewer;
 use crate::message::{FileViewerMessage, Message, TabMessage};
 use crate::sftp::SharedSftpSession;
 use crate::views::file_viewer::FileSource;
 use crate::views::toast::{Toast, ToastType};
-use crate::app::services::file_viewer;
 
 /// Handle file viewer messages
 pub fn handle_file_viewer(app: &mut Portal, msg: FileViewerMessage) -> Task<Message> {
@@ -23,10 +23,7 @@ pub fn handle_file_viewer(app: &mut Portal, msg: FileViewerMessage) -> Task<Mess
                 } = &mut viewer.content
                 {
                     let page = *current_page;
-                    if pages
-                        .get(page)
-                        .and_then(|slot| slot.as_ref())
-                        .is_none()
+                    if pages.get(page).and_then(|slot| slot.as_ref()).is_none()
                         && rendering_pages.get(page).copied().unwrap_or(false) == false
                     {
                         viewer.set_pdf_rendering(page, true);
@@ -35,9 +32,7 @@ pub fn handle_file_viewer(app: &mut Portal, msg: FileViewerMessage) -> Task<Mess
                             async move { file_viewer::render_pdf_page(source, page).await },
                             move |result| {
                                 Message::FileViewer(FileViewerMessage::PdfPageRendered(
-                                    viewer_id,
-                                    page,
-                                    result,
+                                    viewer_id, page, result,
                                 ))
                             },
                         );
@@ -131,10 +126,7 @@ pub fn handle_file_viewer(app: &mut Portal, msg: FileViewerMessage) -> Task<Mess
                     ..
                 } = &mut viewer.content
                 {
-                    if pages
-                        .get(page)
-                        .and_then(|slot| slot.as_ref())
-                        .is_none()
+                    if pages.get(page).and_then(|slot| slot.as_ref()).is_none()
                         && rendering_pages.get(page).copied().unwrap_or(false) == false
                     {
                         viewer.set_pdf_rendering(page, true);
@@ -143,9 +135,7 @@ pub fn handle_file_viewer(app: &mut Portal, msg: FileViewerMessage) -> Task<Mess
                             async move { file_viewer::render_pdf_page(source, page).await },
                             move |result| {
                                 Message::FileViewer(FileViewerMessage::PdfPageRendered(
-                                    viewer_id,
-                                    page,
-                                    result,
+                                    viewer_id, page, result,
                                 ))
                             },
                         );
@@ -162,10 +152,7 @@ pub fn handle_file_viewer(app: &mut Portal, msg: FileViewerMessage) -> Task<Mess
                     ..
                 } = &mut viewer.content
                 {
-                    if pages
-                        .get(page)
-                        .and_then(|slot| slot.as_ref())
-                        .is_none()
+                    if pages.get(page).and_then(|slot| slot.as_ref()).is_none()
                         && rendering_pages.get(page).copied().unwrap_or(false) == false
                     {
                         viewer.set_pdf_rendering(page, true);
@@ -174,9 +161,7 @@ pub fn handle_file_viewer(app: &mut Portal, msg: FileViewerMessage) -> Task<Mess
                             async move { file_viewer::render_pdf_page(source, page).await },
                             move |result| {
                                 Message::FileViewer(FileViewerMessage::PdfPageRendered(
-                                    viewer_id,
-                                    page,
-                                    result,
+                                    viewer_id, page, result,
                                 ))
                             },
                         );
@@ -193,8 +178,10 @@ pub fn handle_file_viewer(app: &mut Portal, msg: FileViewerMessage) -> Task<Mess
                         viewer.set_pdf_page_data(page, data);
                     }
                     Err(e) => {
-                        app.toast_manager
-                            .push(Toast::new(format!("PDF render failed: {}", e), ToastType::Error));
+                        app.toast_manager.push(Toast::new(
+                            format!("PDF render failed: {}", e),
+                            ToastType::Error,
+                        ));
                     }
                 }
             }

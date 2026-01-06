@@ -14,9 +14,9 @@ use crate::fonts::TerminalFont;
 use crate::message::{Message, SessionId};
 use crate::terminal::TerminalBackend;
 use crate::terminal::backend::{EventProxy, TerminalEvent, TerminalSize};
-use tokio::sync::mpsc;
 use crate::terminal::widget::TerminalWidget;
 use crate::theme::Theme;
+use tokio::sync::mpsc;
 
 use super::terminal_status_bar::terminal_status_bar;
 use alacritty_terminal::term::Term;

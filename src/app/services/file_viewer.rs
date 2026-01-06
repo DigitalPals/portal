@@ -70,13 +70,8 @@ fn parse_image_dimensions(path: &Path, data: &[u8]) -> Result<(u32, u32, bool), 
         return Ok((0, 0, true));
     }
 
-    let image = image::load_from_memory(data).map_err(|e| {
-        format!(
-            "Failed to decode image {}: {}",
-            path.display(),
-            e
-        )
-    })?;
+    let image = image::load_from_memory(data)
+        .map_err(|e| format!("Failed to decode image {}: {}", path.display(), e))?;
     let (width, height) = image.dimensions();
     Ok((width, height, false))
 }
@@ -147,12 +142,7 @@ fn render_pdf_page_sync(path: &Path, page_index: usize) -> Result<Vec<u8>, Strin
 
     let mut png = Vec::new();
     image::codecs::png::PngEncoder::new(&mut png)
-        .write_image(
-            &image,
-            width,
-            height,
-            image::ColorType::Rgba8.into(),
-        )
+        .write_image(&image, width, height, image::ColorType::Rgba8.into())
         .map_err(|e| format!("Failed to encode PDF page {}: {}", page_index + 1, e))?;
 
     Ok(png)
