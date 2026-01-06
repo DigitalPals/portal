@@ -94,7 +94,7 @@ impl KnownHostsManager {
         None
     }
 
-    fn ensure_parent_dir(path: &PathBuf) -> std::io::Result<()> {
+    fn ensure_parent_dir(path: &std::path::Path) -> std::io::Result<()> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
