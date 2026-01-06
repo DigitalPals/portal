@@ -8,6 +8,8 @@ use crate::config::Snippet;
 use crate::message::{Message, SnippetField};
 use crate::theme::{Theme, BORDER_RADIUS};
 
+use super::common::{dialog_backdrop, primary_button_style, secondary_button_style};
+
 /// State for the snippets dialog
 #[derive(Debug, Clone)]
 pub struct SnippetsDialogState {
@@ -147,43 +149,12 @@ fn snippet_list_view(state: &SnippetsDialogState, theme: Theme) -> Element<'stat
 
     // Action buttons
     let new_btn = button(text("New").size(12).color(theme.text_primary))
-        .style(move |_theme, status| {
-            let bg = match status {
-                button::Status::Hovered => theme.accent,
-                _ => theme.surface,
-            };
-            button::Style {
-                background: Some(bg.into()),
-                text_color: theme.text_primary,
-                border: iced::Border {
-                    color: theme.border,
-                    width: 1.0,
-                    radius: BORDER_RADIUS.into(),
-                },
-                ..Default::default()
-            }
-        })
+        .style(secondary_button_style(theme))
         .padding([6, 14])
         .on_press(Message::SnippetNew);
 
     let edit_btn = button(text("Edit").size(12).color(theme.text_primary))
-        .style(move |_theme, status| {
-            let bg = match status {
-                button::Status::Hovered => theme.hover,
-                button::Status::Disabled => theme.surface,
-                _ => theme.surface,
-            };
-            button::Style {
-                background: Some(bg.into()),
-                text_color: theme.text_primary,
-                border: iced::Border {
-                    color: theme.border,
-                    width: 1.0,
-                    radius: BORDER_RADIUS.into(),
-                },
-                ..Default::default()
-            }
-        })
+        .style(secondary_button_style(theme))
         .padding([6, 14])
         .on_press_maybe(state.selected_id.map(Message::SnippetEdit));
 
@@ -209,36 +180,12 @@ fn snippet_list_view(state: &SnippetsDialogState, theme: Theme) -> Element<'stat
         .on_press_maybe(state.selected_id.map(Message::SnippetDelete));
 
     let insert_btn = button(text("Insert").size(12).color(theme.text_primary))
-        .style(move |_theme, status| {
-            let bg = match status {
-                button::Status::Hovered => theme.accent,
-                button::Status::Disabled => theme.surface,
-                _ => theme.accent,
-            };
-            button::Style {
-                background: Some(bg.into()),
-                text_color: theme.text_primary,
-                border: iced::Border {
-                    radius: BORDER_RADIUS.into(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            }
-        })
+        .style(primary_button_style(theme))
         .padding([6, 14])
         .on_press_maybe(state.selected_id.map(Message::SnippetInsert));
 
     let close_btn = button(text("Close").size(12).color(theme.text_primary))
-        .style(move |_theme, _status| button::Style {
-            background: Some(theme.surface.into()),
-            text_color: theme.text_primary,
-            border: iced::Border {
-                color: theme.border,
-                width: 1.0,
-                radius: BORDER_RADIUS.into(),
-            },
-            ..Default::default()
-        })
+        .style(secondary_button_style(theme))
         .padding([6, 14])
         .on_press(Message::DialogClose);
 
@@ -288,35 +235,12 @@ fn snippet_edit_form(state: &SnippetsDialogState, theme: Theme) -> Element<'stat
     let is_valid = state.is_form_valid();
 
     let cancel_btn = button(text("Cancel").size(12).color(theme.text_primary))
-        .style(move |_theme, _status| button::Style {
-            background: Some(theme.surface.into()),
-            text_color: theme.text_primary,
-            border: iced::Border {
-                color: theme.border,
-                width: 1.0,
-                radius: BORDER_RADIUS.into(),
-            },
-            ..Default::default()
-        })
+        .style(secondary_button_style(theme))
         .padding([6, 14])
         .on_press(Message::SnippetEditCancel);
 
     let save_btn = button(text("Save").size(12).color(theme.text_primary))
-        .style(move |_theme, status| {
-            let bg = match status {
-                button::Status::Disabled => theme.surface,
-                _ => theme.accent,
-            };
-            button::Style {
-                background: Some(bg.into()),
-                text_color: theme.text_primary,
-                border: iced::Border {
-                    radius: BORDER_RADIUS.into(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            }
-        })
+        .style(primary_button_style(theme))
         .padding([6, 14])
         .on_press_maybe(if is_valid {
             Some(Message::SnippetSave)
@@ -336,42 +260,5 @@ fn snippet_edit_form(state: &SnippetsDialogState, theme: Theme) -> Element<'stat
         button_row,
     ]
     .spacing(12)
-    .into()
-}
-
-/// Helper to wrap dialog content in a backdrop
-fn dialog_backdrop(
-    content: impl Into<Element<'static, Message>>,
-    theme: Theme,
-) -> Element<'static, Message> {
-    let dialog_box = container(content)
-        .style(move |_theme| container::Style {
-            background: Some(theme.surface.into()),
-            border: iced::Border {
-                color: theme.border,
-                width: 1.0,
-                radius: (BORDER_RADIUS * 2.0).into(),
-            },
-            shadow: iced::Shadow {
-                color: iced::Color::from_rgba8(0, 0, 0, 0.5),
-                offset: iced::Vector::new(0.0, 4.0),
-                blur_radius: 16.0,
-            },
-            ..Default::default()
-        });
-
-    container(
-        container(dialog_box)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .align_x(Alignment::Center)
-            .align_y(Alignment::Center),
-    )
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .style(move |_theme| container::Style {
-        background: Some(iced::Color::from_rgba8(0, 0, 0, 0.7).into()),
-        ..Default::default()
-    })
     .into()
 }

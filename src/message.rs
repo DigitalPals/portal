@@ -7,7 +7,7 @@ use crate::config::DetectedOs;
 use crate::sftp::{FileEntry, SharedSftpSession};
 use crate::ssh::host_key_verification::HostKeyVerificationRequest;
 use crate::ssh::SshSession;
-use crate::views::sftp_view::{ContextMenuAction, PaneId, PaneSource, PermissionBit};
+use crate::views::sftp::{ContextMenuAction, PaneId, PaneSource, PermissionBit};
 
 /// Session ID type alias
 pub type SessionId = Uuid;

@@ -10,7 +10,7 @@ use iced::{Element, Fill};
 use parking_lot::Mutex;
 use uuid::Uuid;
 
-use crate::message::Message;
+use crate::message::{Message, SessionId};
 use crate::terminal::backend::{EventProxy, TerminalSize};
 use crate::terminal::TerminalBackend;
 use crate::terminal::widget::TerminalWidget;
@@ -18,9 +18,6 @@ use crate::theme::Theme;
 
 use super::terminal_status_bar::terminal_status_bar;
 use alacritty_terminal::term::Term;
-
-/// Session ID type
-pub type SessionId = Uuid;
 
 /// Terminal session state
 pub struct TerminalSession {

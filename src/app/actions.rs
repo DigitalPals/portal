@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 use futures::stream;
@@ -6,11 +7,12 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::config::{DetectedOs, Host};
+use crate::fs_utils::{copy_dir_recursive, count_items_in_dir};
 use crate::local_fs::list_local_dir;
 use crate::message::{Message, SessionId, VerificationRequestWrapper};
 use crate::sftp::SftpClient;
 use crate::ssh::{SshClient, SshEvent};
-use crate::views::sftp_view::{ContextMenuAction, PaneId, PaneSource, PermissionBits, SftpDialogType};
+use crate::views::sftp::{ContextMenuAction, PaneId, PaneSource, PermissionBits, SftpDialogType};
 
 use super::{Portal, View};
 
@@ -116,7 +118,8 @@ impl Portal {
     }
 
     pub(super) fn connect_to_host(&mut self, host: &Host) -> Task<Message> {
-        let host = host.clone();
+        // Use Arc to avoid multiple deep clones of Host data
+        let host = Arc::new(host.clone());
         let session_id = Uuid::new_v4();
         let host_id = host.id;
 
@@ -149,14 +152,14 @@ impl Portal {
         );
 
         let ssh_client = SshClient::default();
-        let host_clone = host.clone();
+        let host_for_task = Arc::clone(&host);
 
         // Connection task
         let connect_task = Task::perform(
             async move {
                 let result = ssh_client
                     .connect(
-                        &host_clone,
+                        &host_for_task,
                         (80, 24),
                         event_tx,
                         Duration::from_secs(30),
@@ -165,7 +168,7 @@ impl Portal {
                     )
                     .await;
 
-                (session_id, host_id, host_clone.name.clone(), result)
+                (session_id, host_id, host_for_task.name.clone(), result)
             },
             |(session_id, host_id, host_name, result)| match result {
                 Ok((ssh_session, detected_os)) => {
@@ -234,7 +237,8 @@ impl Portal {
         pane_id: PaneId,
         host: &Host,
     ) -> Task<Message> {
-        let host = host.clone();
+        // Use Arc to avoid multiple deep clones of Host data
+        let host = Arc::new(host.clone());
         let sftp_session_id = Uuid::new_v4();
         let host_id = host.id;
 
@@ -245,7 +249,6 @@ impl Portal {
         let (event_tx, event_rx) = mpsc::unbounded_channel::<SshEvent>();
 
         let sftp_client = SftpClient::default();
-        let host_name = host.name.clone();
 
         // Start listening for SSH events (host key verification)
         let event_listener = Task::run(
@@ -261,13 +264,14 @@ impl Portal {
         );
 
         // Connection task
+        let host_for_task = Arc::clone(&host);
         let connect_task = Task::perform(
             async move {
                 let result = sftp_client
-                    .connect(&host, event_tx, Duration::from_secs(30), None)
+                    .connect(&host_for_task, event_tx, Duration::from_secs(30), None)
                     .await;
 
-                (tab_id, pane_id, sftp_session_id, host_name, result)
+                (tab_id, pane_id, sftp_session_id, host_for_task.name.clone(), result)
             },
             move |(tab_id, pane_id, sftp_session_id, host_name, result)| match result {
                 Ok(sftp_session) => Message::DualSftpConnected {
@@ -890,53 +894,4 @@ impl Portal {
             }
         }
     }
-}
-
-/// Recursively copy a directory (local to local)
-fn copy_dir_recursive(source: &std::path::Path, target: &std::path::Path) -> Result<(), String> {
-    std::fs::create_dir_all(target)
-        .map_err(|e| format!("Failed to create directory {}: {}", target.display(), e))?;
-
-    for entry in std::fs::read_dir(source)
-        .map_err(|e| format!("Failed to read directory {}: {}", source.display(), e))?
-    {
-        let entry = entry.map_err(|e| format!("Failed to read entry: {}", e))?;
-        let file_type = entry
-            .file_type()
-            .map_err(|e| format!("Failed to get file type: {}", e))?;
-
-        let source_path = entry.path();
-        let target_path = target.join(entry.file_name());
-
-        if file_type.is_dir() {
-            copy_dir_recursive(&source_path, &target_path)?;
-        } else if file_type.is_file() {
-            std::fs::copy(&source_path, &target_path)
-                .map_err(|e| format!("Failed to copy {}: {}", source_path.display(), e))?;
-        }
-    }
-
-    Ok(())
-}
-
-/// Count items in a directory recursively
-fn count_items_in_dir(dir: &std::path::Path) -> Result<usize, String> {
-    let mut count = 0;
-
-    for entry in std::fs::read_dir(dir)
-        .map_err(|e| format!("Failed to read directory {}: {}", dir.display(), e))?
-    {
-        let entry = entry.map_err(|e| format!("Failed to read entry: {}", e))?;
-        let file_type = entry
-            .file_type()
-            .map_err(|e| format!("Failed to get file type: {}", e))?;
-
-        if file_type.is_dir() {
-            count += count_items_in_dir(&entry.path())?;
-        } else if file_type.is_file() {
-            count += 1;
-        }
-    }
-
-    Ok(count)
 }

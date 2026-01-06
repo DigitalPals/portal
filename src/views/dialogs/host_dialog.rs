@@ -1,10 +1,12 @@
-use iced::widget::{button, column, container, pick_list, row, text, text_input, Space};
+use iced::widget::{button, column, pick_list, row, text, text_input, Space};
 use iced::{Alignment, Element, Length};
 use uuid::Uuid;
 
 use crate::config::{AuthMethod, Host, HostGroup};
 use crate::message::{HostDialogField, Message};
-use crate::theme::{Theme, BORDER_RADIUS};
+use crate::theme::Theme;
+
+use super::common::{dialog_backdrop, primary_button_style, secondary_button_style};
 
 /// State for the host dialog (add or edit)
 #[derive(Debug, Clone)]
@@ -287,46 +289,19 @@ pub fn host_dialog_view(
     .spacing(4);
 
     // Buttons
-    let cancel_button = button(
-        text("Cancel").size(14).color(theme.text_primary)
-    )
-    .padding([8, 16])
-    .style(move |_theme, _status| button::Style {
-        background: Some(theme.surface.into()),
-        text_color: theme.text_primary,
-        border: iced::Border {
-            color: theme.border,
-            width: 1.0,
-            radius: BORDER_RADIUS.into(),
-        },
-        ..Default::default()
-    })
-    .on_press(Message::DialogClose);
+    let cancel_button = button(text("Cancel").size(14).color(theme.text_primary))
+        .padding([8, 16])
+        .style(secondary_button_style(theme))
+        .on_press(Message::DialogClose);
 
-    let save_button = button(
-        text("Save").size(14).color(theme.text_primary)
-    )
-    .padding([8, 16])
-    .style(move |_theme, status| {
-        let bg = match status {
-            button::Status::Hovered => theme.accent,
-            _ => theme.accent,
-        };
-        button::Style {
-            background: Some(bg.into()),
-            text_color: theme.text_primary,
-            border: iced::Border {
-                radius: BORDER_RADIUS.into(),
-                ..Default::default()
-            },
-            ..Default::default()
-        }
-    })
-    .on_press_maybe(if is_valid {
-        Some(Message::DialogSubmit)
-    } else {
-        None
-    });
+    let save_button = button(text("Save").size(14).color(theme.text_primary))
+        .padding([8, 16])
+        .style(primary_button_style(theme))
+        .on_press_maybe(if is_valid {
+            Some(Message::DialogSubmit)
+        } else {
+            None
+        });
 
     let button_row = row![
         Space::with_width(Length::Fill),
@@ -344,7 +319,8 @@ pub fn host_dialog_view(
         row![
             column![hostname_input].width(Length::FillPortion(3)),
             column![port_input].width(Length::FillPortion(1)),
-        ].spacing(12),
+        ]
+        .spacing(12),
         username_input,
         auth_picker,
         key_path_section,
@@ -358,37 +334,5 @@ pub fn host_dialog_view(
     .padding(24)
     .width(Length::Fixed(450.0));
 
-    // Dialog container
-    let dialog_box = container(form)
-        .style(move |_theme| container::Style {
-            background: Some(theme.surface.into()),
-            border: iced::Border {
-                color: theme.border,
-                width: 1.0,
-                radius: (BORDER_RADIUS * 2.0).into(),
-            },
-            shadow: iced::Shadow {
-                color: iced::Color::from_rgba8(0, 0, 0, 0.5),
-                offset: iced::Vector::new(0.0, 4.0),
-                blur_radius: 16.0,
-            },
-            ..Default::default()
-        });
-
-    // Backdrop
-    let backdrop = container(
-        container(dialog_box)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .align_x(Alignment::Center)
-            .align_y(Alignment::Center),
-    )
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .style(move |_theme| container::Style {
-        background: Some(iced::Color::from_rgba8(0, 0, 0, 0.7).into()),
-        ..Default::default()
-    });
-
-    backdrop.into()
+    dialog_backdrop(form, theme)
 }

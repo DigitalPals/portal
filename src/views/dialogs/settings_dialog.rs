@@ -1,10 +1,12 @@
 //! Settings dialog
 
-use iced::widget::{button, column, container, row, slider, text, toggler, Space};
+use iced::widget::{button, column, row, slider, text, toggler, Space};
 use iced::{Alignment, Element, Length};
 
 use crate::message::Message;
-use crate::theme::{Theme, BORDER_RADIUS};
+use crate::theme::Theme;
+
+use super::common::{dialog_backdrop, secondary_button_style};
 
 /// State for the settings dialog
 #[derive(Debug, Clone)]
@@ -77,25 +79,10 @@ pub fn settings_dialog_view(state: &SettingsDialogState, theme: Theme) -> Elemen
     ]
     .spacing(4);
 
-    // Close button
+    // Close button using common style
     let close_button = button(text("Close").size(14).color(theme.text_primary))
         .padding([8, 16])
-        .style(move |_theme, status| {
-            let bg = match status {
-                button::Status::Hovered => theme.accent,
-                _ => theme.surface,
-            };
-            button::Style {
-                background: Some(bg.into()),
-                text_color: theme.text_primary,
-                border: iced::Border {
-                    color: theme.border,
-                    width: 1.0,
-                    radius: BORDER_RADIUS.into(),
-                },
-                ..Default::default()
-            }
-        })
+        .style(secondary_button_style(theme))
         .on_press(Message::DialogClose);
 
     let button_row = row![Space::with_width(Length::Fill), close_button];
@@ -116,41 +103,4 @@ pub fn settings_dialog_view(state: &SettingsDialogState, theme: Theme) -> Elemen
     .width(Length::Fixed(400.0));
 
     dialog_backdrop(form, theme)
-}
-
-/// Helper to wrap dialog content in a backdrop
-fn dialog_backdrop(
-    content: impl Into<Element<'static, Message>>,
-    theme: Theme,
-) -> Element<'static, Message> {
-    let dialog_box = container(content)
-        .style(move |_theme| container::Style {
-            background: Some(theme.surface.into()),
-            border: iced::Border {
-                color: theme.border,
-                width: 1.0,
-                radius: (BORDER_RADIUS * 2.0).into(),
-            },
-            shadow: iced::Shadow {
-                color: iced::Color::from_rgba8(0, 0, 0, 0.5),
-                offset: iced::Vector::new(0.0, 4.0),
-                blur_radius: 16.0,
-            },
-            ..Default::default()
-        });
-
-    container(
-        container(dialog_box)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .align_x(Alignment::Center)
-            .align_y(Alignment::Center),
-    )
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .style(move |_theme| container::Style {
-        background: Some(iced::Color::from_rgba8(0, 0, 0, 0.7).into()),
-        ..Default::default()
-    })
-    .into()
 }

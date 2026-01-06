@@ -1,4 +1,5 @@
 mod actions;
+pub mod managers;
 mod view_model;
 
 use std::collections::HashMap;
@@ -24,7 +25,7 @@ use crate::views::dialogs::snippets_dialog::{snippets_dialog_view, SnippetsDialo
 use crate::views::history_view::history_view;
 use crate::views::host_grid::{calculate_columns, host_grid_view, search_input_id};
 use iced::widget::text_input;
-use crate::views::sftp_view::{
+use crate::views::sftp::{
     dual_pane_sftp_view, sftp_context_menu_overlay, DualPaneSftpState, PaneId, PaneSource,
 };
 use crate::views::sidebar::sidebar_view;
@@ -85,7 +86,6 @@ pub struct Portal {
     snippets_config: SnippetsConfig,
     history_config: HistoryConfig,
 
-    // Demo terminal session
     // Active sessions
     sessions: HashMap<SessionId, ActiveSession>,
 
@@ -97,7 +97,6 @@ pub struct Portal {
     sftp_history_entries: HashMap<SessionId, Uuid>,
 
     // Pending dual-pane SFTP connection (tab_id, pane_id, host_id)
-    // Used to track which pane is waiting for connection after host key verification
     pending_dual_sftp_connection: Option<(SessionId, PaneId, Uuid)>,
 
     // Toast notifications

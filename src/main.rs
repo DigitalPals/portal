@@ -2,6 +2,7 @@ mod app;
 mod config;
 mod error;
 mod fonts;
+mod fs_utils;
 mod icons;
 mod local_fs;
 mod message;

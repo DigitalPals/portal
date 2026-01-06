@@ -10,6 +10,8 @@ use crate::ssh::host_key_verification::{
 };
 use crate::theme::{Theme, BORDER_RADIUS};
 
+use super::common::{dialog_backdrop, primary_button_style, secondary_button_style};
+
 /// State for the host key verification dialog
 pub struct HostKeyDialogState {
     /// The host being connected to
@@ -134,35 +136,12 @@ fn new_host_dialog_view(state: &HostKeyDialogState, theme: Theme) -> Element<'st
 
     let reject_button = button(text("Reject").size(14).color(theme.text_primary))
         .padding([8, 16])
-        .style(move |_theme, _status| button::Style {
-            background: Some(theme.surface.into()),
-            text_color: theme.text_primary,
-            border: iced::Border {
-                color: theme.border,
-                width: 1.0,
-                radius: BORDER_RADIUS.into(),
-            },
-            ..Default::default()
-        })
+        .style(secondary_button_style(theme))
         .on_press(Message::HostKeyVerificationReject);
 
     let accept_button = button(text("Accept").size(14).color(theme.text_primary))
         .padding([8, 16])
-        .style(move |_theme, status| {
-            let bg = match status {
-                button::Status::Hovered => theme.accent,
-                _ => theme.accent,
-            };
-            button::Style {
-                background: Some(bg.into()),
-                text_color: theme.text_primary,
-                border: iced::Border {
-                    radius: BORDER_RADIUS.into(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            }
-        })
+        .style(primary_button_style(theme))
         .on_press(Message::HostKeyVerificationAccept);
 
     let button_row = row![
@@ -248,7 +227,7 @@ fn changed_host_dialog_view(state: &HostKeyDialogState, theme: Theme) -> Element
         ..Default::default()
     });
 
-    // For changed host, make Reject the primary action
+    // For changed host: "Accept Anyway" is dangerous (red), "Reject" is safe (primary)
     let accept_button = button(text("Accept Anyway").size(14).color(theme.text_primary))
         .padding([8, 16])
         .style(move |_theme, status| {
@@ -270,21 +249,7 @@ fn changed_host_dialog_view(state: &HostKeyDialogState, theme: Theme) -> Element
 
     let reject_button = button(text("Reject").size(14).color(theme.text_primary))
         .padding([8, 16])
-        .style(move |_theme, status| {
-            let bg = match status {
-                button::Status::Hovered => theme.accent,
-                _ => theme.accent,
-            };
-            button::Style {
-                background: Some(bg.into()),
-                text_color: theme.text_primary,
-                border: iced::Border {
-                    radius: BORDER_RADIUS.into(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            }
-        })
+        .style(primary_button_style(theme))
         .on_press(Message::HostKeyVerificationReject);
 
     let button_row = row![
@@ -310,40 +275,4 @@ fn changed_host_dialog_view(state: &HostKeyDialogState, theme: Theme) -> Element
     .width(Length::Fixed(520.0));
 
     dialog_backdrop(content, theme)
-}
-
-/// Helper to wrap dialog content in a backdrop
-fn dialog_backdrop(
-    content: impl Into<Element<'static, Message>>,
-    theme: Theme,
-) -> Element<'static, Message> {
-    let dialog_box = container(content).style(move |_theme| container::Style {
-        background: Some(theme.surface.into()),
-        border: iced::Border {
-            color: theme.border,
-            width: 1.0,
-            radius: (BORDER_RADIUS * 2.0).into(),
-        },
-        shadow: iced::Shadow {
-            color: iced::Color::from_rgba8(0, 0, 0, 0.5),
-            offset: iced::Vector::new(0.0, 4.0),
-            blur_radius: 16.0,
-        },
-        ..Default::default()
-    });
-
-    container(
-        container(dialog_box)
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .align_x(Alignment::Center)
-            .align_y(Alignment::Center),
-    )
-    .width(Length::Fill)
-    .height(Length::Fill)
-    .style(move |_theme| container::Style {
-        background: Some(iced::Color::from_rgba8(0, 0, 0, 0.7).into()),
-        ..Default::default()
-    })
-    .into()
 }
