@@ -120,21 +120,53 @@ Save frequently used commands and insert them into any session with a click. Nev
 
 ### Download
 
-<!--
-Download the latest release for your platform:
+Download from the Releases page:
+https://github.com/DigitalPals/portal/releases
 
-| Platform | Download |
-|----------|----------|
-| macOS (Intel) | [portal-macos-x64.dmg]() |
-| macOS (Apple Silicon) | [portal-macos-arm64.dmg]() |
-| Linux (AppImage) | [portal-linux-x64.AppImage]() |
-| Linux (deb) | [portal-linux-x64.deb]() |
-| Linux (rpm) | [portal-linux-x64.rpm]() |
+Pick the file that matches your OS and CPU:
 
-**Linux users:** Portal fully supports Wayland. No X11 compatibility layer needed.
--->
+| Platform | Asset name |
+|----------|------------|
+| macOS (Apple Silicon) | `portal-v0.5.0-macos-arm64.tar.gz` |
+| macOS (Intel) | `portal-v0.5.0-macos-x86_64.tar.gz` |
+| Linux (arm64) | `portal-v0.5.0-linux-arm64.tar.gz` |
+| Linux (x86_64) | `portal-v0.5.0-linux-x86_64.tar.gz` |
 
-*Binary releases coming soon. For now, build from source.*
+### Install on macOS
+
+1. Download the matching `portal-v0.5.0-macos-*.tar.gz` from Releases.
+2. Extract it:
+   ```bash
+   tar -xzf portal-v0.5.0-macos-*.tar.gz
+   ```
+3. Move the `portal` binary to your PATH (example):
+   ```bash
+   sudo mv portal /usr/local/bin/
+   ```
+4. Run it:
+   ```bash
+   portal
+   ```
+
+If macOS blocks the app, open **System Settings > Privacy & Security** and click **Open Anyway** for Portal, then run it again.
+
+### Install on Linux
+
+1. Download the matching `portal-v0.5.0-linux-*.tar.gz` from Releases.
+2. Extract it:
+   ```bash
+   tar -xzf portal-v0.5.0-linux-*.tar.gz
+   ```
+3. Move the `portal` binary to your PATH (example):
+   ```bash
+   sudo mv portal /usr/local/bin/
+   ```
+4. Run it:
+   ```bash
+   portal
+   ```
+
+Portal is built for Wayland. If it does not start, install your distro's Wayland/XKB/Vulkan runtime packages and try again.
 
 ### Build from Source
 
