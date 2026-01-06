@@ -5,6 +5,7 @@ use iced::{Alignment, Element, Length, Padding};
 use uuid::Uuid;
 
 use crate::app::FocusSection;
+use crate::icons::{self, icon_with_color};
 use crate::message::{Message, TabMessage};
 use crate::theme::Theme;
 
@@ -91,11 +92,17 @@ pub fn tab_bar_view<'a>(
 fn tab_button(tab: &Tab, is_active: bool, is_focused: bool, theme: Theme) -> Element<'_, Message> {
     let tab_id = tab.id;
 
-    // Tab icon based on type
-    let icon = match tab.tab_type {
-        TabType::Terminal => "●",
-        TabType::Sftp => "📁",
+    // Tab icon based on type (SVG icons)
+    let icon_data = match tab.tab_type {
+        TabType::Terminal => icons::ui::TERMINAL,
+        TabType::Sftp => icons::ui::FOLDER_CLOSED,
     };
+    let icon_color = if is_active || is_focused {
+        theme.text_primary
+    } else {
+        theme.text_secondary
+    };
+    let icon = icon_with_color(icon_data, 12, icon_color);
 
     // Truncate title if too long
     let title = if tab.title.len() > 20 {
@@ -105,7 +112,7 @@ fn tab_button(tab: &Tab, is_active: bool, is_focused: bool, theme: Theme) -> Ele
     };
 
     let content = row![
-        text(icon).size(11),
+        icon,
         text(title).size(13).color(if is_active || is_focused {
             theme.text_primary
         } else {

@@ -442,12 +442,17 @@ fn permission_checkbox(
     bit: PermissionBit,
     theme: Theme,
 ) -> iced::widget::Button<'static, Message> {
-    let icon = if checked { "✓" } else { "" };
     let bg_color = if checked { theme.accent } else { theme.background };
-    let text_color = if checked { theme.background } else { theme.text_muted };
+    let icon_color = if checked { theme.background } else { theme.text_muted };
+
+    let icon_content: Element<'static, Message> = if checked {
+        icon_with_color(icons::ui::CHECK, 14, icon_color).into()
+    } else {
+        Space::new(14, 14).into()
+    };
 
     button(
-        container(text(icon).size(12).color(text_color))
+        container(icon_content)
             .width(Length::Fixed(20.0))
             .height(Length::Fixed(20.0))
             .align_x(Alignment::Center)
@@ -468,7 +473,7 @@ fn permission_checkbox(
         };
         iced::widget::button::Style {
             background: Some(bg.into()),
-            text_color,
+            text_color: icon_color,
             border: iced::Border {
                 color: theme.border,
                 width: 1.0,

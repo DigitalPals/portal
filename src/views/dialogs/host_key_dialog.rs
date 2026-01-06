@@ -4,6 +4,7 @@ use iced::widget::{button, column, container, row, text, Space};
 use iced::{Alignment, Element, Length};
 use tokio::sync::oneshot;
 
+use crate::icons::{self, icon_with_color};
 use crate::message::{DialogMessage, Message};
 use crate::ssh::host_key_verification::{
     HostKeyInfo, HostKeyVerificationRequest, HostKeyVerificationResponse,
@@ -97,7 +98,7 @@ pub fn host_key_dialog_view(state: &HostKeyDialogState, theme: Theme) -> Element
 
 /// Dialog for new unknown hosts
 fn new_host_dialog_view(state: &HostKeyDialogState, theme: Theme) -> Element<'static, Message> {
-    let key_icon = text("@").size(32).color(theme.accent);
+    let key_icon = icon_with_color(icons::ui::SERVER, 28, theme.accent);
 
     let title = text("Unknown Host").size(20).color(theme.text_primary);
 
@@ -176,7 +177,7 @@ fn new_host_dialog_view(state: &HostKeyDialogState, theme: Theme) -> Element<'st
 fn changed_host_dialog_view(state: &HostKeyDialogState, theme: Theme) -> Element<'static, Message> {
     let warning_color = iced::Color::from_rgb8(220, 50, 50);
 
-    let warning_icon = text("!").size(48).color(warning_color);
+    let warning_icon = icon_with_color(icons::ui::ALERT_TRIANGLE, 32, warning_color);
 
     let title = text("WARNING: HOST KEY CHANGED!")
         .size(20)
