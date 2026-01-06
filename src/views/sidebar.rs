@@ -102,7 +102,7 @@ pub fn sidebar_view(
 
     let sidebar_content = column![
         menu_items,
-        Space::with_height(Length::Fill),
+        Space::new().height(Length::Fill),
         toggle_container,
     ]
     .height(Fill);

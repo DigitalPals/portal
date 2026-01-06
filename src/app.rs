@@ -6,7 +6,6 @@ mod view_model;
 use std::time::Duration;
 use iced::widget::{column, row, text, stack, Space};
 use iced::{event, time, window, Element, Fill, Subscription, Task, Theme as IcedTheme};
-use iced::widget::text_input;
 use uuid::Uuid;
 
 use iced::keyboard;
@@ -20,13 +19,14 @@ use crate::views::dialogs::snippets_dialog::snippets_dialog_view;
 use crate::views::settings_page::settings_page_view;
 use crate::views::history_view::history_view;
 use crate::views::host_grid::{calculate_columns, host_grid_view, search_input_id};
+use crate::views::file_viewer::file_viewer_view;
 use crate::views::sftp::{dual_pane_sftp_view, sftp_context_menu_overlay};
 use crate::views::sidebar::sidebar_view;
 use crate::views::tabs::{tab_bar_view, Tab};
 use crate::views::terminal_view::terminal_view_with_status;
 use crate::views::toast::{toast_overlay_view, ToastManager};
 
-use self::managers::{ActiveDialog, DialogManager, SessionManager, SftpManager};
+use self::managers::{ActiveDialog, DialogManager, FileViewerManager, SessionManager, SftpManager};
 #[allow(unused_imports)]
 pub use self::managers::ActiveSession;
 use self::view_model::{filter_group_cards, filter_host_cards, group_cards, host_cards};
@@ -40,7 +40,8 @@ pub enum View {
     #[default]
     HostGrid,
     Terminal(SessionId),
-    DualSftp(SessionId),  // Dual-pane SFTP browser
+    DualSftp(SessionId),   // Dual-pane SFTP browser
+    FileViewer(SessionId), // In-app file viewer
     Settings,              // Full-page settings view
 }
 
@@ -70,6 +71,7 @@ pub struct Portal {
     // Domain managers
     sessions: SessionManager,
     sftp: SftpManager,
+    file_viewers: FileViewerManager,
     dialogs: DialogManager,
 
     // Theme preference
@@ -159,6 +161,7 @@ impl Portal {
             active_tab: None,
             sessions: SessionManager::new(),
             sftp: SftpManager::new(),
+            file_viewers: FileViewerManager::new(),
             dialogs: DialogManager::new(),
             theme_id: settings_config.theme,
             terminal_font_size: settings_config.terminal_font_size,
@@ -178,7 +181,7 @@ impl Portal {
         };
 
         // Focus the search input on startup
-        let focus_task = text_input::focus(search_input_id());
+        let focus_task = iced::widget::operation::focus(search_input_id());
         (app, focus_task)
     }
 
@@ -187,6 +190,7 @@ impl Portal {
         match message {
             Message::Session(msg) => update::handle_session(self, msg),
             Message::Sftp(msg) => update::handle_sftp(self, msg),
+            Message::FileViewer(msg) => update::handle_file_viewer(self, msg),
             Message::Dialog(msg) => update::handle_dialog(self, msg),
             Message::Tab(msg) => update::handle_tab(self, msg),
             Message::Host(msg) => update::handle_host(self, msg),
@@ -256,6 +260,13 @@ impl Portal {
                     text("File browser not found").into()
                 }
             }
+            View::FileViewer(viewer_id) => {
+                if let Some(state) = self.file_viewers.get(*viewer_id) {
+                    file_viewer_view(state, theme)
+                } else {
+                    text("File viewer not found").into()
+                }
+            }
             View::HostGrid => {
                 // Calculate responsive column count
                 let column_count = calculate_columns(self.window_size.width, self.sidebar_collapsed);
@@ -281,7 +292,7 @@ impl Portal {
         let header: Element<'_, Message> = if !self.tabs.is_empty() {
             tab_bar_view(&self.tabs, self.active_tab, theme, self.focus_section, self.tab_focus_index)
         } else {
-            Space::with_height(0).into()
+            Space::new().height(0).into()
         };
 
         // Main layout with content below header

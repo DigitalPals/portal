@@ -67,7 +67,7 @@ fn context_menu_item<'a>(
 
 /// Build a divider for context menu
 fn context_menu_divider<'a>(theme: Theme) -> Element<'a, Message> {
-    container(Space::with_height(1))
+    container(Space::new().height(1))
         .width(Fill)
         .style(move |_| container::Style {
             background: Some(theme.border.into()),
@@ -80,7 +80,7 @@ fn context_menu_divider<'a>(theme: Theme) -> Element<'a, Message> {
 /// Build the context menu overlay
 pub fn context_menu_view(state: &DualPaneSftpState, theme: Theme) -> Element<'_, Message> {
     if !state.context_menu.visible {
-        return Space::new(0, 0).into();
+        return Space::new().into();
     }
 
     let pane = state.pane(state.context_menu.target_pane);
@@ -215,7 +215,7 @@ pub fn context_menu_view(state: &DualPaneSftpState, theme: Theme) -> Element<'_,
     let pos = state.context_menu.position;
 
     // Wrap in a clickable background to dismiss when clicking outside
-    let background = mouse_area(container(Space::new(Fill, Fill)).width(Fill).height(Fill))
+    let background = mouse_area(container(Space::new().width(Fill).height(Fill)).width(Fill).height(Fill))
         .on_press(Message::Sftp(SftpMessage::HideContextMenu(tab_id)));
 
     // Position the menu using margins

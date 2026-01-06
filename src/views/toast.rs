@@ -126,7 +126,7 @@ impl ToastManager {
 /// Render the toast overlay (positioned at bottom-right)
 pub fn toast_overlay_view(manager: &ToastManager, theme: Theme) -> Element<'static, Message> {
     if !manager.has_toasts() {
-        return Space::new(0, 0).into();
+        return Space::new().into();
     }
 
     let toast_list: Element<'_, Message> = Column::with_children(
@@ -184,7 +184,7 @@ fn toast_item_view(toast: &Toast, theme: Theme) -> Element<'static, Message> {
     let content = row![
         container(type_icon).padding(Padding::from([0, 8])),
         text(message).size(13).color(theme.text_primary),
-        Space::with_width(Length::Fill),
+        Space::new().width(Length::Fill),
         dismiss_btn,
     ]
     .align_y(Alignment::Center);

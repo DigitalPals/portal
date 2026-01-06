@@ -146,7 +146,7 @@ fn new_host_dialog_view(state: &HostKeyDialogState, theme: Theme) -> Element<'st
         .on_press(Message::Dialog(DialogMessage::HostKeyAccept));
 
     let button_row = row![
-        Space::with_width(Length::Fill),
+        Space::new().width(Length::Fill),
         reject_button,
         accept_button,
     ]
@@ -154,16 +154,16 @@ fn new_host_dialog_view(state: &HostKeyDialogState, theme: Theme) -> Element<'st
 
     let content = column![
         row![key_icon, title].spacing(12).align_y(Alignment::Center),
-        Space::with_height(8),
+        Space::new().height(8),
         host_info,
-        Space::with_height(16),
+        Space::new().height(16),
         message,
-        Space::with_height(12),
+        Space::new().height(12),
         key_type_label,
         fingerprint_box,
-        Space::with_height(16),
+        Space::new().height(16),
         question,
-        Space::with_height(24),
+        Space::new().height(24),
         button_row,
     ]
     .spacing(4)
@@ -213,7 +213,7 @@ fn changed_host_dialog_view(state: &HostKeyDialogState, theme: Theme) -> Element
         .color(theme.text_primary);
 
     let fingerprint_box = container(
-        column![old_fp_label, old_fp_text, Space::with_height(8), new_fp_label, new_fp_text,]
+        column![old_fp_label, old_fp_text, Space::new().height(8), new_fp_label, new_fp_text,]
             .spacing(4),
     )
     .padding(12)
@@ -254,7 +254,7 @@ fn changed_host_dialog_view(state: &HostKeyDialogState, theme: Theme) -> Element
         .on_press(Message::Dialog(DialogMessage::HostKeyReject));
 
     let button_row = row![
-        Space::with_width(Length::Fill),
+        Space::new().width(Length::Fill),
         accept_button,
         reject_button,
     ]
@@ -262,13 +262,13 @@ fn changed_host_dialog_view(state: &HostKeyDialogState, theme: Theme) -> Element
 
     let content = column![
         row![warning_icon, title].spacing(12).align_y(Alignment::Center),
-        Space::with_height(8),
+        Space::new().height(8),
         host_info,
-        Space::with_height(16),
+        Space::new().height(16),
         mitm_warning,
-        Space::with_height(16),
+        Space::new().height(16),
         fingerprint_box,
-        Space::with_height(24),
+        Space::new().height(24),
         button_row,
     ]
     .spacing(4)

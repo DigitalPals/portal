@@ -339,7 +339,7 @@ where
     }
 
     fn layout(
-        &self,
+        &mut self,
         _tree: &mut Tree,
         _renderer: &Renderer,
         limits: &layout::Limits,
@@ -396,6 +396,7 @@ where
                 bounds,
                 border: Border::default(),
                 shadow: Shadow::default(),
+                snap: true,
             },
             Background::Color(colors.background),
         );
@@ -422,6 +423,7 @@ where
                         },
                         border: Border::default(),
                         shadow: Shadow::default(),
+                        snap: true,
                     },
                     Background::Color(bg_color),
                 );
@@ -455,8 +457,8 @@ where
                         cell_height,
                     )),
                     font: JETBRAINS_MONO_NERD,
-                    horizontal_alignment: iced::alignment::Horizontal::Left,
-                    vertical_alignment: iced::alignment::Vertical::Top,
+                    align_x: iced::alignment::Horizontal::Left.into(),
+                    align_y: iced::alignment::Vertical::Top.into(),
                     shaping: iced::advanced::text::Shaping::Basic,
                     wrapping: iced::advanced::text::Wrapping::None,
                 };
@@ -500,6 +502,7 @@ where
                         },
                         border: Border::default(),
                         shadow: Shadow::default(),
+                        snap: true,
                     },
                     Background::Color(selection_color),
                 );
@@ -527,6 +530,7 @@ where
                                     },
                                     border: Border::default(),
                                     shadow: Shadow::default(),
+                                    snap: true,
                                 },
                                 Background::Color(Color::from_rgba(
                                     cursor_color.r,
@@ -547,6 +551,7 @@ where
                                     },
                                     border: Border::default(),
                                     shadow: Shadow::default(),
+                                    snap: true,
                                 },
                                 Background::Color(cursor_color),
                             );
@@ -562,6 +567,7 @@ where
                                     },
                                     border: Border::default(),
                                     shadow: Shadow::default(),
+                                    snap: true,
                                 },
                                 Background::Color(cursor_color),
                             );
@@ -582,6 +588,7 @@ where
                                         radius: 0.0.into(),
                                     },
                                     shadow: Shadow::default(),
+                                    snap: true,
                                 },
                                 Background::Color(Color::TRANSPARENT),
                             );
@@ -592,17 +599,17 @@ where
         }
     }
 
-    fn on_event(
+    fn update(
         &mut self,
         tree: &mut Tree,
-        event: Event,
+        event: &Event,
         layout: Layout<'_>,
         cursor: Cursor,
         _renderer: &Renderer,
         clipboard: &mut dyn Clipboard,
         shell: &mut Shell<'_, Message>,
         _viewport: &Rectangle,
-    ) -> iced::event::Status {
+    ) {
         let state = tree.state.downcast_mut::<TerminalState>();
         let bounds = layout.bounds();
 
@@ -633,77 +640,74 @@ where
             std::time::Duration::from_millis(400);
 
         match event {
-            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
-                if cursor.is_over(bounds) {
-                    state.is_focused = true;
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) if cursor.is_over(bounds) => {
+                state.is_focused = true;
 
-                    if let Some(position) = cursor.position() {
-                        if let Some(cell) = self.pixel_to_cell(&bounds, position) {
-                            let now = std::time::Instant::now();
-                            let cols = (bounds.width / self.cell_width()) as usize;
+                if let Some(position) = cursor.position() {
+                    if let Some(cell) = self.pixel_to_cell(&bounds, position) {
+                        let now = std::time::Instant::now();
+                        let cols = (bounds.width / self.cell_width()) as usize;
 
-                            // Check for multi-click (same position, within time threshold)
-                            let is_multi_click = state.last_click_time.map_or(false, |t| {
-                                now.duration_since(t) < MULTI_CLICK_THRESHOLD
-                            }) && state.last_click_position.map_or(false, |pos| {
-                                // Allow 1-cell tolerance for position
-                                let col_diff = (pos.0 as i32 - cell.0 as i32).abs();
-                                let row_diff = (pos.1 as i32 - cell.1 as i32).abs();
-                                col_diff <= 1 && row_diff == 0
-                            });
+                        // Check for multi-click (same position, within time threshold)
+                        let is_multi_click = state.last_click_time.map_or(false, |t| {
+                            now.duration_since(t) < MULTI_CLICK_THRESHOLD
+                        }) && state.last_click_position.map_or(false, |pos| {
+                            // Allow 1-cell tolerance for position
+                            let col_diff = (pos.0 as i32 - cell.0 as i32).abs();
+                            let row_diff = (pos.1 as i32 - cell.1 as i32).abs();
+                            col_diff <= 1 && row_diff == 0
+                        });
 
-                            if is_multi_click {
-                                state.click_count = (state.click_count % 3) + 1;
-                            } else {
-                                state.click_count = 1;
+                        if is_multi_click {
+                            state.click_count = (state.click_count % 3) + 1;
+                        } else {
+                            state.click_count = 1;
+                        }
+
+                        state.last_click_time = Some(now);
+                        state.last_click_position = Some(cell);
+
+                        match state.click_count {
+                            2 => {
+                                // Double-click: select word
+                                state.selection_mode = SelectionMode::Word;
+                                let (word_start, word_end) =
+                                    self.find_word_at(cell.0, cell.1, cols);
+                                state.selection_start = Some((word_start, cell.1));
+                                state.selection_end = Some((word_end, cell.1));
+                                state.is_selecting = true;
                             }
-
-                            state.last_click_time = Some(now);
-                            state.last_click_position = Some(cell);
-
-                            match state.click_count {
-                                2 => {
-                                    // Double-click: select word
-                                    state.selection_mode = SelectionMode::Word;
-                                    let (word_start, word_end) =
-                                        self.find_word_at(cell.0, cell.1, cols);
-                                    state.selection_start = Some((word_start, cell.1));
-                                    state.selection_end = Some((word_end, cell.1));
-                                    state.is_selecting = true;
-                                }
-                                3 => {
-                                    // Triple-click: select line
-                                    state.selection_mode = SelectionMode::Line;
-                                    state.selection_start = Some((0, cell.1));
-                                    state.selection_end = Some((cols.saturating_sub(1), cell.1));
-                                    state.is_selecting = true;
-                                }
-                                _ => {
-                                    // Single click: character selection
-                                    state.selection_mode = SelectionMode::Character;
-                                    state.selection_start = Some(cell);
-                                    state.selection_end = Some(cell);
-                                    state.is_selecting = true;
-                                }
+                            3 => {
+                                // Triple-click: select line
+                                state.selection_mode = SelectionMode::Line;
+                                state.selection_start = Some((0, cell.1));
+                                state.selection_end = Some((cols.saturating_sub(1), cell.1));
+                                state.is_selecting = true;
+                            }
+                            _ => {
+                                // Single click: character selection
+                                state.selection_mode = SelectionMode::Character;
+                                state.selection_start = Some(cell);
+                                state.selection_end = Some(cell);
+                                state.is_selecting = true;
                             }
                         }
                     }
-
-                    return iced::event::Status::Captured;
-                } else {
-                    state.is_focused = false;
-                    // Clear selection when clicking outside
-                    state.selection_start = None;
-                    state.selection_end = None;
-                    state.is_selecting = false;
-                    state.click_count = 0;
-                    state.selection_mode = SelectionMode::Character;
                 }
+            }
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
+                state.is_focused = false;
+                // Clear selection when clicking outside
+                state.selection_start = None;
+                state.selection_end = None;
+                state.is_selecting = false;
+                state.click_count = 0;
+                state.selection_mode = SelectionMode::Character;
             }
             Event::Mouse(mouse::Event::CursorMoved { position }) => {
                 // Update selection while dragging
                 if state.is_selecting && cursor.is_over(bounds) {
-                    if let Some(cell) = self.pixel_to_cell(&bounds, position) {
+                    if let Some(cell) = self.pixel_to_cell(&bounds, *position) {
                         let cols = (bounds.width / self.cell_width()) as usize;
 
                         match state.selection_mode {
@@ -741,52 +745,44 @@ where
                             }
                         }
                     }
-                    return iced::event::Status::Captured;
                 }
             }
-            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
-                if state.is_selecting {
-                    state.is_selecting = false;
-                    return iced::event::Status::Captured;
-                }
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) if state.is_selecting => {
+                state.is_selecting = false;
             }
-            Event::Mouse(mouse::Event::WheelScrolled { delta }) => {
-                if cursor.is_over(bounds) {
-                    // Focus the terminal on scroll
-                    state.is_focused = true;
+            Event::Mouse(mouse::Event::WheelScrolled { delta }) if cursor.is_over(bounds) => {
+                // Focus the terminal on scroll
+                state.is_focused = true;
 
-                    // Check if in alternate screen mode (vim, htop, etc.) - no scrollback there
-                    let in_alt_screen = {
-                        let term = self.term.lock();
-                        term.mode().contains(TermMode::ALT_SCREEN)
+                // Check if in alternate screen mode (vim, htop, etc.) - no scrollback there
+                let in_alt_screen = {
+                    let term = self.term.lock();
+                    term.mode().contains(TermMode::ALT_SCREEN)
+                };
+
+                if !in_alt_screen {
+                    // Calculate scroll lines from delta
+                    let lines = match delta {
+                        mouse::ScrollDelta::Lines { y, .. } => {
+                            // Reset pixel accumulator on line-based scroll
+                            state.scroll_pixels = 0.0;
+                            -*y as i32 * 3 // 3 lines per scroll step
+                        }
+                        mouse::ScrollDelta::Pixels { y, .. } => {
+                            // Accumulate pixels for smooth trackpad scrolling
+                            state.scroll_pixels -= y;
+                            let line_height = self.cell_height();
+                            let lines = (state.scroll_pixels / line_height) as i32;
+                            // Keep remainder for next scroll event
+                            state.scroll_pixels -= lines as f32 * line_height;
+                            lines
+                        }
                     };
 
-                    if !in_alt_screen {
-                        // Calculate scroll lines from delta
-                        let lines = match delta {
-                            mouse::ScrollDelta::Lines { y, .. } => {
-                                // Reset pixel accumulator on line-based scroll
-                                state.scroll_pixels = 0.0;
-                                -y as i32 * 3 // 3 lines per scroll step
-                            }
-                            mouse::ScrollDelta::Pixels { y, .. } => {
-                                // Accumulate pixels for smooth trackpad scrolling
-                                state.scroll_pixels -= y;
-                                let line_height = self.cell_height();
-                                let lines = (state.scroll_pixels / line_height) as i32;
-                                // Keep remainder for next scroll event
-                                state.scroll_pixels -= lines as f32 * line_height;
-                                lines
-                            }
-                        };
-
-                        if lines != 0 {
-                            let mut term = self.term.lock();
-                            term.scroll_display(Scroll::Delta(lines));
-                        }
+                    if lines != 0 {
+                        let mut term = self.term.lock();
+                        term.scroll_display(Scroll::Delta(lines));
                     }
-
-                    return iced::event::Status::Captured;
                 }
             }
             Event::Keyboard(keyboard::Event::KeyPressed {
@@ -838,28 +834,28 @@ where
                             (state.selection_start, state.selection_end)
                         {
                             let cols = (bounds.width / self.cell_width()) as usize;
-                            let text = self.get_selected_text(start, end, cols);
-                            if !text.is_empty() {
+                            let text_content = self.get_selected_text(start, end, cols);
+                            if !text_content.is_empty() {
                                 clipboard.write(
                                     iced::advanced::clipboard::Kind::Standard,
-                                    text,
+                                    text_content,
                                 );
                             }
                         }
-                        return iced::event::Status::Captured;
+                        return;
                     }
 
                     if is_paste_shortcut {
                         // Paste from clipboard
-                        if let Some(text) =
+                        if let Some(text_content) =
                             clipboard.read(iced::advanced::clipboard::Kind::Standard)
                         {
-                            let bytes = text.into_bytes();
+                            let bytes = text_content.into_bytes();
                             if !bytes.is_empty() {
                                 shell.publish((self.on_input)(bytes));
                             }
                         }
-                        return iced::event::Status::Captured;
+                        return;
                     }
 
                     if is_select_all {
@@ -869,13 +865,13 @@ where
                         state.selection_start = Some((0, 0));
                         state.selection_end =
                             Some((cols.saturating_sub(1), rows.saturating_sub(1)));
-                        return iced::event::Status::Captured;
+                        return;
                     }
 
                     // Suppress all Super/Logo key combinations to prevent garbage being sent
                     // Super key on Linux is often intercepted by window manager anyway
                     if modifiers.logo() {
-                        return iced::event::Status::Captured;
+                        return;
                     }
 
                     // Clear selection on any other key press (typing)
@@ -896,22 +892,18 @@ where
                         }
                     }
 
-                    if let Some(bytes) = key_to_escape_sequence(&key, modifiers, text.as_deref())
+                    if let Some(bytes) = key_to_escape_sequence(key, *modifiers, text.as_deref())
                     {
                         shell.publish((self.on_input)(bytes));
 
                         // Scroll back to bottom when user types (after scrolling up in history)
                         let mut term = self.term.lock();
                         term.scroll_display(Scroll::Bottom);
-
-                        return iced::event::Status::Captured;
                     }
                 }
             }
             _ => {}
         }
-
-        iced::event::Status::Ignored
     }
 
     fn mouse_interaction(

@@ -5,7 +5,7 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-use iced::widget::scrollable;
+use iced::widget::Id;
 
 use crate::message::SessionId;
 use crate::sftp::{FileEntry, SortOrder};
@@ -27,7 +27,7 @@ pub struct FilePaneState {
     pub error: Option<String>,
     pub show_hidden: bool,
     pub filter_text: String,
-    pub scrollable_id: scrollable::Id,
+    pub scrollable_id: Id,
     pub actions_menu_open: bool,
 }
 
@@ -47,7 +47,7 @@ impl FilePaneState {
             error: None,
             show_hidden: false,
             filter_text: String::new(),
-            scrollable_id: scrollable::Id::unique(),
+            scrollable_id: Id::unique(),
             actions_menu_open: false,
         }
     }

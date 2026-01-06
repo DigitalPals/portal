@@ -304,7 +304,7 @@ pub fn host_dialog_view(
         });
 
     let button_row = row![
-        Space::with_width(Length::Fill),
+        Space::new().width(Length::Fill),
         cancel_button,
         save_button,
     ]
@@ -314,7 +314,7 @@ pub fn host_dialog_view(
     // Form layout
     let form = column![
         text(title).size(20).color(theme.text_primary),
-        Space::with_height(16),
+        Space::new().height(16),
         name_input,
         row![
             column![hostname_input].width(Length::FillPortion(3)),
@@ -327,7 +327,7 @@ pub fn host_dialog_view(
         group_picker,
         tags_input,
         notes_input,
-        Space::with_height(16),
+        Space::new().height(16),
         button_row,
     ]
     .spacing(12)

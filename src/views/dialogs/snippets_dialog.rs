@@ -72,7 +72,7 @@ pub fn snippets_dialog_view(state: &SnippetsDialogState, theme: Theme) -> Elemen
         snippet_list_view(state, theme)
     };
 
-    let form = column![title, Space::with_height(16), content,]
+    let form = column![title, Space::new().height(16), content,]
         .spacing(0)
         .padding(24)
         .width(Length::Fixed(500.0));
@@ -189,11 +189,11 @@ fn snippet_list_view(state: &SnippetsDialogState, theme: Theme) -> Element<'stat
         .padding([6, 14])
         .on_press(Message::Dialog(DialogMessage::Close));
 
-    let action_row = row![new_btn, edit_btn, delete_btn, Space::with_width(Length::Fill), insert_btn, close_btn,]
+    let action_row = row![new_btn, edit_btn, delete_btn, Space::new().width(Length::Fill), insert_btn, close_btn,]
         .spacing(8)
         .align_y(Alignment::Center);
 
-    column![list, Space::with_height(16), action_row,].spacing(0).into()
+    column![list, Space::new().height(16), action_row,].spacing(0).into()
 }
 
 fn snippet_edit_form(state: &SnippetsDialogState, theme: Theme) -> Element<'static, Message> {
@@ -248,15 +248,15 @@ fn snippet_edit_form(state: &SnippetsDialogState, theme: Theme) -> Element<'stat
             None
         });
 
-    let button_row = row![Space::with_width(Length::Fill), cancel_btn, save_btn,].spacing(8);
+    let button_row = row![Space::new().width(Length::Fill), cancel_btn, save_btn,].spacing(8);
 
     column![
         title_text,
-        Space::with_height(16),
+        Space::new().height(16),
         name_input,
         command_input,
         description_input,
-        Space::with_height(16),
+        Space::new().height(16),
         button_row,
     ]
     .spacing(12)

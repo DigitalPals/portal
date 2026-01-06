@@ -1,4 +1,5 @@
 pub mod dialogs;
+pub mod file_viewer;
 pub mod history_view;
 pub mod host_grid;
 pub mod settings_page;

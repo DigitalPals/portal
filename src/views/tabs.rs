@@ -22,6 +22,7 @@ pub struct Tab {
 pub enum TabType {
     Terminal,
     Sftp,
+    FileViewer,
 }
 
 impl Tab {
@@ -38,6 +39,14 @@ impl Tab {
             id,
             title,
             tab_type: TabType::Sftp,
+        }
+    }
+
+    pub fn new_file_viewer(id: Uuid, title: String) -> Self {
+        Self {
+            id,
+            title,
+            tab_type: TabType::FileViewer,
         }
     }
 }
@@ -96,6 +105,7 @@ fn tab_button(tab: &Tab, is_active: bool, is_focused: bool, theme: Theme) -> Ele
     let icon_data = match tab.tab_type {
         TabType::Terminal => icons::ui::TERMINAL,
         TabType::Sftp => icons::ui::FOLDER_CLOSED,
+        TabType::FileViewer => icons::files::FILE_TEXT,
     };
     let icon_color = if is_active || is_focused {
         theme.text_primary

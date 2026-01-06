@@ -9,7 +9,7 @@ rust-version = "1.85"
 
 [dependencies]
 # GUI
-iced = { version = "0.13", features = ["tokio", "advanced", "svg"] }
+iced = { version = "0.14", features = ["tokio", "advanced", "svg", "markdown", "highlighter", "image"] }
 
 # Terminal emulation
 alacritty_terminal = "0.24"
@@ -40,6 +40,11 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 parking_lot = "0.12"
 rfd = "0.15"  # Native file dialogs
 open = "5"    # Open files with default application
+
+# File viewer
+iced-code-editor = "0.2"  # Code editor with syntax highlighting
+pdfium-render = "0.8"     # PDF rendering
+image = "0.25"            # Image format support
 
 [profile.release]
 lto = true

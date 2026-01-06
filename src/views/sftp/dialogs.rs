@@ -18,7 +18,7 @@ use super::types::{PermissionBit, PermissionBits, SftpDialogType};
 /// Build the SFTP dialog overlay (New Folder, Rename, or Delete)
 pub fn sftp_dialog_view(state: &DualPaneSftpState, theme: Theme) -> Element<'_, Message> {
     let Some(ref dialog) = state.dialog else {
-        return Space::new(0, 0).into();
+        return Space::new().into();
     };
 
     let tab_id = state.tab_id;
@@ -117,7 +117,7 @@ fn build_input_dialog(
             .color(iced::Color::from_rgb8(220, 80, 80))
             .into()
     } else {
-        Space::new(0, 0).into()
+        Space::new().into()
     };
 
     let cancel_btn = dialog_cancel_button(tab_id, theme);
@@ -125,7 +125,7 @@ fn build_input_dialog(
     let is_valid = dialog.is_valid();
     let submit_btn = dialog_submit_button(tab_id, submit_label, is_valid, false, theme);
 
-    let button_row = row![Space::with_width(Fill), cancel_btn, submit_btn].spacing(8);
+    let button_row = row![Space::new().width(Fill), cancel_btn, submit_btn].spacing(8);
 
     // Build subtitle element if present
     let subtitle_element: Element<'_, Message> = if let Some(subtitle) = subtitle {
@@ -134,16 +134,16 @@ fn build_input_dialog(
             .color(theme.text_muted)
             .into()
     } else {
-        Space::new(0, 0).into()
+        Space::new().into()
     };
 
     column![
         title_text,
         subtitle_element,
-        Space::with_height(12),
+        Space::new().height(12),
         input,
         error_text,
-        Space::with_height(16),
+        Space::new().height(16),
         button_row,
     ]
     .spacing(4)
@@ -266,24 +266,24 @@ fn build_delete_dialog<'a>(
             .color(iced::Color::from_rgb8(220, 80, 80))
             .into()
     } else {
-        Space::new(0, 0).into()
+        Space::new().into()
     };
 
     let cancel_btn = dialog_cancel_button(tab_id, theme);
     let delete_btn = dialog_submit_button(tab_id, "Delete", true, true, theme);
 
-    let button_row = row![Space::with_width(Fill), cancel_btn, delete_btn].spacing(8);
+    let button_row = row![Space::new().width(Fill), cancel_btn, delete_btn].spacing(8);
 
     column![
         title_text,
-        Space::with_height(12),
+        Space::new().height(12),
         warning_text,
-        Space::with_height(12),
+        Space::new().height(12),
         items_container,
-        Space::with_height(12),
+        Space::new().height(12),
         permanent_warning,
         error_text,
-        Space::with_height(16),
+        Space::new().height(16),
         button_row,
     ]
     .spacing(4)
@@ -317,7 +317,7 @@ fn build_permissions_dialog<'a>(
 
     // Permission grid headers
     let header_row = row![
-        Space::with_width(Length::Fixed(80.0)),
+        Space::new().width(Length::Fixed(80.0)),
         text("Read").size(12).color(theme.text_muted).width(Length::Fixed(60.0)),
         text("Write").size(12).color(theme.text_muted).width(Length::Fixed(60.0)),
         text("Execute").size(12).color(theme.text_muted).width(Length::Fixed(60.0)),
@@ -387,23 +387,23 @@ fn build_permissions_dialog<'a>(
             .color(iced::Color::from_rgb8(220, 80, 80))
             .into()
     } else {
-        Space::new(0, 0).into()
+        Space::new().into()
     };
 
     let cancel_btn = dialog_cancel_button(tab_id, theme);
     let apply_btn = dialog_submit_button(tab_id, "Apply", true, false, theme);
 
-    let button_row = row![Space::with_width(Fill), cancel_btn, apply_btn].spacing(8);
+    let button_row = row![Space::new().width(Fill), cancel_btn, apply_btn].spacing(8);
 
     column![
         title_text,
-        Space::with_height(12),
+        Space::new().height(12),
         file_info,
         mode_text,
-        Space::with_height(12),
+        Space::new().height(12),
         permission_grid,
         error_text,
-        Space::with_height(16),
+        Space::new().height(16),
         button_row,
     ]
     .spacing(4)
@@ -448,7 +448,7 @@ fn permission_checkbox(
     let icon_content: Element<'static, Message> = if checked {
         icon_with_color(icons::ui::CHECK, 14, icon_color).into()
     } else {
-        Space::new(14, 14).into()
+        Space::new().width(14).height(14).into()
     };
 
     button(

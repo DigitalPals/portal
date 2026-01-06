@@ -10,11 +10,14 @@ use crate::config::{DetectedOs, Host};
 use crate::fs_utils::{copy_dir_recursive, count_items_in_dir};
 use crate::local_fs::list_local_dir;
 use crate::message::{
-    DialogMessage, Message, SessionId, SessionMessage, SftpMessage, VerificationRequestWrapper,
+    DialogMessage, FileViewerMessage, Message, SessionId, SessionMessage, SftpMessage,
+    VerificationRequestWrapper,
 };
 use crate::sftp::SftpClient;
 use crate::ssh::{SshClient, SshEvent};
+use crate::views::file_viewer::{FileSource, FileType, FileViewerState, ViewerContent};
 use crate::views::sftp::{ContextMenuAction, PaneId, PaneSource, PermissionBits, SftpDialogType};
+use crate::views::tabs::Tab;
 
 use super::{Portal, View};
 
@@ -25,6 +28,8 @@ impl Portal {
             self.active_view = View::Terminal(tab_id);
         } else if self.sftp.contains_tab(tab_id) {
             self.active_view = View::DualSftp(tab_id);
+        } else if self.file_viewers.contains(tab_id) {
+            self.active_view = View::FileViewer(tab_id);
         }
     }
 
@@ -48,6 +53,7 @@ impl Portal {
         self.tabs.retain(|t| t.id != tab_id);
         self.sessions.remove(tab_id);
         self.sftp.remove_tab(tab_id);
+        self.file_viewers.remove(tab_id);
 
         let mut history_changed = false;
         for session_id in sftp_sessions_to_close {
@@ -307,52 +313,132 @@ impl Portal {
 
         match action {
             ContextMenuAction::Open => {
-                // Open file with default application
+                // Open file in the in-app file viewer
                 if let Some(entry) = selected_entries.first() {
                     if !entry.is_dir && !entry.is_parent() {
                         let file_name = entry.name.clone();
-                        let remote_path = entry.path.clone();
+                        let file_path = entry.path.clone();
+                        let file_type = FileType::from_path(&file_path);
 
-                        match &pane.source {
-                            PaneSource::Local => {
-                                // For local files, open directly
-                                return Task::perform(
-                                    async move {
-                                        open::that(&remote_path)
-                                            .map_err(|e| format!("Failed to open file: {}", e))
-                                    },
-                                    |result| Message::Sftp(SftpMessage::OpenWithResult(result)),
-                                );
-                            }
-                            PaneSource::Remote { session_id, .. } => {
-                                // For remote files, download to temp and open
-                                if let Some(sftp) = self.sftp.get_connection(*session_id) {
-                                    let sftp = sftp.clone();
+                        // Check if file type is viewable
+                        if !file_type.is_viewable() {
+                            // Fall back to external opening for binary files
+                            let path_for_open = file_path.clone();
+                            match &pane.source {
+                                PaneSource::Local => {
                                     return Task::perform(
                                         async move {
-                                            // Create temp directory for this file
-                                            let temp_dir = std::env::temp_dir()
-                                                .join("portal_open")
-                                                .join(format!("{}", uuid::Uuid::new_v4()));
-
-                                            tokio::fs::create_dir_all(&temp_dir).await
-                                                .map_err(|e| format!("Failed to create temp directory: {}", e))?;
-
-                                            let local_path = temp_dir.join(&file_name);
-
-                                            // Download the file
-                                            sftp.download(&remote_path, &local_path).await
-                                                .map_err(|e| format!("Failed to download file: {}", e))?;
-
-                                            // Open with default application
-                                            open::that(&local_path)
+                                            open::that(&path_for_open)
                                                 .map_err(|e| format!("Failed to open file: {}", e))
                                         },
                                         |result| Message::Sftp(SftpMessage::OpenWithResult(result)),
                                     );
                                 }
+                                PaneSource::Remote { session_id, .. } => {
+                                    if let Some(sftp) = self.sftp.get_connection(*session_id) {
+                                        let sftp = sftp.clone();
+                                        let fname = file_name.clone();
+                                        return Task::perform(
+                                            async move {
+                                                let temp_dir = std::env::temp_dir()
+                                                    .join("portal_open")
+                                                    .join(format!("{}", uuid::Uuid::new_v4()));
+                                                tokio::fs::create_dir_all(&temp_dir).await
+                                                    .map_err(|e| format!("Failed to create temp directory: {}", e))?;
+                                                let local_path = temp_dir.join(&fname);
+                                                sftp.download(&path_for_open, &local_path).await
+                                                    .map_err(|e| format!("Failed to download file: {}", e))?;
+                                                open::that(&local_path)
+                                                    .map_err(|e| format!("Failed to open file: {}", e))
+                                            },
+                                            |result| Message::Sftp(SftpMessage::OpenWithResult(result)),
+                                        );
+                                    }
+                                }
                             }
+                            return Task::none();
                         }
+
+                        // Create a new file viewer
+                        let viewer_id = Uuid::new_v4();
+
+                        let (file_source, load_task): (FileSource, Task<Message>) = match &pane.source {
+                            PaneSource::Local => {
+                                let source = FileSource::Local { path: file_path.clone() };
+                                let path = file_path.clone();
+                                let ftype = file_type.clone();
+                                let task = Task::perform(
+                                    async move { load_local_file(path, ftype).await },
+                                    move |result| match result {
+                                        Ok(content) => Message::FileViewer(
+                                            FileViewerMessage::ContentLoaded { viewer_id, content },
+                                        ),
+                                        Err(e) => Message::FileViewer(
+                                            FileViewerMessage::LoadError(viewer_id, e),
+                                        ),
+                                    },
+                                );
+                                (source, task)
+                            }
+                            PaneSource::Remote { session_id, .. } => {
+                                let temp_dir = std::env::temp_dir()
+                                    .join("portal_viewer")
+                                    .join(format!("{}", viewer_id));
+                                let temp_path = temp_dir.join(&file_name);
+
+                                let source = FileSource::Remote {
+                                    temp_path: temp_path.clone(),
+                                };
+
+                                if let Some(sftp) = self.sftp.get_connection(*session_id) {
+                                    let sftp = sftp.clone();
+                                    let remote = file_path.clone();
+                                    let ftype = file_type.clone();
+                                    let task = Task::perform(
+                                        async move {
+                                            // Create temp directory
+                                            tokio::fs::create_dir_all(temp_dir).await
+                                                .map_err(|e| format!("Failed to create temp directory: {}", e))?;
+                                            // Download file
+                                            sftp.download(&remote, &temp_path).await
+                                                .map_err(|e| format!("Failed to download file: {}", e))?;
+                                            // Load content
+                                            load_local_file(temp_path, ftype).await
+                                        },
+                                        move |result| match result {
+                                            Ok(content) => Message::FileViewer(
+                                                FileViewerMessage::ContentLoaded { viewer_id, content },
+                                            ),
+                                            Err(e) => Message::FileViewer(
+                                                FileViewerMessage::LoadError(viewer_id, e),
+                                            ),
+                                        },
+                                    );
+                                    (source, task)
+                                } else {
+                                    return Task::none();
+                                }
+                            }
+                        };
+
+                        // Create the viewer state
+                        let viewer_state = FileViewerState::new(
+                            viewer_id,
+                            file_name.clone(),
+                            file_source,
+                            file_type,
+                        );
+
+                        // Add viewer to manager
+                        self.file_viewers.insert(viewer_state);
+
+                        // Create tab
+                        let tab = Tab::new_file_viewer(viewer_id, file_name);
+                        self.tabs.push(tab);
+                        self.active_tab = Some(viewer_id);
+                        self.active_view = View::FileViewer(viewer_id);
+
+                        return load_task;
                     }
                 }
             }
@@ -894,6 +980,50 @@ impl Portal {
                     Task::none()
                 }
             }
+        }
+    }
+}
+
+/// Load file content from local path based on file type
+async fn load_local_file(
+    path: std::path::PathBuf,
+    file_type: FileType,
+) -> Result<ViewerContent, String> {
+    match file_type {
+        FileType::Text { .. } => {
+            let text = tokio::fs::read_to_string(&path)
+                .await
+                .map_err(|e| format!("Failed to read file: {}", e))?;
+            Ok(ViewerContent::Text {
+                content: iced::widget::text_editor::Content::with_text(&text),
+            })
+        }
+        FileType::Markdown => {
+            let text = tokio::fs::read_to_string(&path)
+                .await
+                .map_err(|e| format!("Failed to read file: {}", e))?;
+            Ok(ViewerContent::Markdown {
+                content: iced::widget::text_editor::Content::with_text(&text),
+                raw_text: text,
+                preview_mode: false,
+            })
+        }
+        FileType::Image => {
+            let data = tokio::fs::read(&path)
+                .await
+                .map_err(|e| format!("Failed to read image: {}", e))?;
+            Ok(ViewerContent::Image { data, zoom: 1.0 })
+        }
+        FileType::Pdf => {
+            // For now, just load as placeholder - PDF rendering would need pdfium
+            Ok(ViewerContent::Pdf {
+                pages: vec![],
+                current_page: 0,
+                total_pages: 1,
+            })
+        }
+        FileType::Binary => {
+            Err("Binary files cannot be viewed".to_string())
         }
     }
 }

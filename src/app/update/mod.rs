@@ -5,6 +5,7 @@
 
 mod session;
 mod sftp;
+mod file_viewer;
 mod dialog;
 mod tab;
 mod host;
@@ -14,6 +15,7 @@ mod ui;
 
 pub use session::handle_session;
 pub use sftp::handle_sftp;
+pub use file_viewer::handle_file_viewer;
 pub use dialog::handle_dialog;
 pub use tab::handle_tab;
 pub use host::handle_host;

@@ -3,8 +3,8 @@ use iced::{Alignment, Element, Fill, Font, Length, Padding};
 use uuid::Uuid;
 
 /// Search input ID for auto-focus
-pub fn search_input_id() -> text_input::Id {
-    text_input::Id::new("hosts_search")
+pub fn search_input_id() -> iced::widget::Id {
+    iced::widget::Id::new("hosts_search")
 }
 
 use crate::app::FocusSection;
@@ -78,7 +78,7 @@ fn build_action_bar(search_query: &str, theme: Theme) -> Element<'static, Messag
             .style(move |_theme, status| {
                 use iced::widget::text_input::{Status, Style};
                 let border_color = match status {
-                    Status::Focused => theme.accent,
+                    Status::Focused { .. } => theme.accent,
                     _ => theme.border,
                 };
                 Style {
@@ -174,11 +174,11 @@ fn build_action_bar(search_query: &str, theme: Theme) -> Element<'static, Messag
     // Build the bar row
     let bar_content = row![
         search_input,
-        Space::with_width(12),
+        Space::new().width(12),
         connect_btn,
-        Space::with_width(12),
+        Space::new().width(12),
         new_host_btn,
-        Space::with_width(8),
+        Space::new().width(8),
         terminal_btn,
     ]
     .align_y(Alignment::Center);
@@ -309,7 +309,7 @@ fn build_groups_section(
         if current_row.len() >= column_count {
             rows.push(
                 Row::with_children(std::mem::take(&mut current_row))
-                    .spacing(GRID_SPACING as u16)
+                    .spacing(GRID_SPACING)
                     .into(),
             );
         }
@@ -324,10 +324,10 @@ fn build_groups_section(
                     .into(),
             );
         }
-        rows.push(Row::with_children(current_row).spacing(GRID_SPACING as u16).into());
+        rows.push(Row::with_children(current_row).spacing(GRID_SPACING as f32).into());
     }
 
-    let grid = Column::with_children(rows).spacing(GRID_SPACING as u16);
+    let grid = Column::with_children(rows).spacing(GRID_SPACING as f32);
 
     column![section_header, grid]
         .spacing(12)
@@ -357,7 +357,7 @@ fn build_hosts_section(
         if current_row.len() >= column_count {
             rows.push(
                 Row::with_children(std::mem::take(&mut current_row))
-                    .spacing(GRID_SPACING as u16)
+                    .spacing(GRID_SPACING)
                     .into(),
             );
         }
@@ -372,10 +372,10 @@ fn build_hosts_section(
                     .into(),
             );
         }
-        rows.push(Row::with_children(current_row).spacing(GRID_SPACING as u16).into());
+        rows.push(Row::with_children(current_row).spacing(GRID_SPACING as f32).into());
     }
 
-    let grid = Column::with_children(rows).spacing(GRID_SPACING as u16);
+    let grid = Column::with_children(rows).spacing(GRID_SPACING as f32);
 
     column![section_header, grid]
         .spacing(12)
@@ -603,7 +603,7 @@ fn empty_state(theme: Theme) -> Element<'static, Message> {
         text("Click NEW HOST to add your first server")
             .size(14)
             .color(theme.text_muted),
-        Space::with_height(16),
+        Space::new().height(16),
         button(
             row![
                 icon_with_color(icons::ui::PLUS, 14, iced::Color::WHITE),

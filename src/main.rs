@@ -26,10 +26,11 @@ fn main() -> iced::Result {
 
     tracing::info!("Starting Portal SSH Client");
 
-    iced::application("Portal", Portal::update, Portal::view)
+    iced::application(Portal::new, Portal::update, Portal::view)
+        .title("Portal")
         .theme(Portal::theme)
         .subscription(Portal::subscription)
         .window_size(Size::new(1200.0, 800.0))
         .font(fonts::JETBRAINS_MONO_NERD_BYTES)
-        .run_with(Portal::new)
+        .run()
 }

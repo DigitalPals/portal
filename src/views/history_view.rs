@@ -19,7 +19,7 @@ pub fn history_view(
         text("Connection History")
             .size(18)
             .color(theme.text_primary),
-        Space::with_width(Length::Fill),
+        Space::new().width(Length::Fill),
         button(
             text("Clear History")
                 .size(12)
@@ -104,7 +104,7 @@ fn history_entry_row(entry: &crate::config::HistoryEntry, theme: Theme, is_focus
             text(host_name)
                 .size(14)
                 .color(theme.text_primary),
-            Space::with_width(8),
+            Space::new().width(8),
             container(
                 text(type_text)
                     .size(10)
@@ -177,7 +177,7 @@ fn history_entry_row(entry: &crate::config::HistoryEntry, theme: Theme, is_focus
     let card_content = row![
         icon_widget,
         info,
-        Space::with_width(Length::Fill),
+        Space::new().width(Length::Fill),
         reconnect_btn,
     ]
     .spacing(12)

@@ -162,7 +162,7 @@ pub fn pane_header(
     container(
         row![
             source_picker,
-            Space::with_width(Fill),
+            Space::new().width(Fill),
             filter_input,
             actions_btn
         ]
@@ -438,7 +438,7 @@ pub fn pane_file_list<'a>(
         ))
         .style(move |_theme, status| {
             let scroller_color = match status {
-                scrollable::Status::Active => Color::TRANSPARENT,
+                scrollable::Status::Active { .. } => Color::TRANSPARENT,
                 scrollable::Status::Hovered { .. }
                 | scrollable::Status::Dragged { .. } => scrollbar_color,
             };
@@ -448,7 +448,7 @@ pub fn pane_file_list<'a>(
                     background: None,
                     border: iced::Border::default(),
                     scroller: scrollable::Scroller {
-                        color: scroller_color,
+                        background: scroller_color.into(),
                         border: iced::Border {
                             radius: 3.0.into(),
                             ..Default::default()
@@ -459,11 +459,17 @@ pub fn pane_file_list<'a>(
                     background: None,
                     border: iced::Border::default(),
                     scroller: scrollable::Scroller {
-                        color: Color::TRANSPARENT,
+                        background: Color::TRANSPARENT.into(),
                         border: iced::Border::default(),
                     },
                 },
                 gap: None,
+                auto_scroll: scrollable::AutoScroll {
+                    background: Color::TRANSPARENT.into(),
+                    border: iced::Border::default(),
+                    shadow: iced::Shadow::default(),
+                    icon: Color::TRANSPARENT,
+                },
             }
         });
 
@@ -638,7 +644,7 @@ pub fn actions_menu_overlay(
     theme: Theme,
 ) -> Element<'_, Message> {
     if !state.actions_menu_open {
-        return Space::new(0, 0).into();
+        return Space::new().into();
     }
 
     let show_hidden_label = if state.show_hidden {
@@ -687,7 +693,7 @@ pub fn actions_menu_overlay(
 
     // Background to dismiss menu when clicking outside
     let background = crate::widgets::mouse_area(
-        container(Space::new(Fill, Fill))
+        container(Space::new().width(Fill).height(Fill))
             .width(Fill)
             .height(Fill),
     )

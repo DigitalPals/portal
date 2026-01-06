@@ -35,11 +35,11 @@ pub fn settings_page_view(
 
     let content = column![
         header,
-        Space::with_height(24),
+        Space::new().height(24),
         appearance_section,
-        Space::with_height(16),
+        Space::new().height(16),
         terminal_section,
-        Space::with_height(16),
+        Space::new().height(16),
         about_section,
     ]
     .padding(32)
@@ -142,7 +142,7 @@ fn theme_tile(tile_theme_id: ThemeId, is_selected: bool, current_theme: Theme) -
         current_theme.border
     };
 
-    let tile_content = column![preview, Space::with_height(6), name,]
+    let tile_content = column![preview, Space::new().height(6), name,]
         .align_x(Alignment::Center)
         .spacing(0);
 
@@ -166,14 +166,14 @@ fn theme_tile(tile_theme_id: ThemeId, is_selected: bool, current_theme: Theme) -
 /// Mini app preview showing sidebar, main area, and accent elements
 fn mini_app_preview(preview_theme: Theme) -> Element<'static, Message> {
     // Sidebar strip
-    let sidebar = container(Space::new(14, 48)).style(move |_| container::Style {
+    let sidebar = container(Space::new().width(14).height(48)).style(move |_| container::Style {
         background: Some(preview_theme.sidebar.into()),
         ..Default::default()
     });
 
     // Terminal-like lines in main area
-    let line = |width: u16| {
-        container(Space::new(width, 3)).style(move |_| container::Style {
+    let line = |width: u32| {
+        container(Space::new().width(width).height(3u32)).style(move |_| container::Style {
             background: Some(preview_theme.text_muted.into()),
             border: iced::Border {
                 radius: 1.5.into(),
@@ -184,7 +184,7 @@ fn mini_app_preview(preview_theme: Theme) -> Element<'static, Message> {
     };
 
     // Accent button element
-    let accent_button = container(Space::new(20, 5)).style(move |_| container::Style {
+    let accent_button = container(Space::new().width(20).height(5)).style(move |_| container::Style {
         background: Some(preview_theme.accent.into()),
         border: iced::Border {
             radius: 2.0.into(),
@@ -194,13 +194,13 @@ fn mini_app_preview(preview_theme: Theme) -> Element<'static, Message> {
     });
 
     let main_content = column![
-        Space::with_height(5),
+        Space::new().height(5),
         line(40),
-        Space::with_height(3),
+        Space::new().height(3),
         line(28),
-        Space::with_height(3),
+        Space::new().height(3),
         line(34),
-        Space::with_height(6),
+        Space::new().height(6),
         accent_button,
     ]
     .padding([4, 6]);
@@ -250,13 +250,13 @@ fn font_size_setting(current_size: f32, theme: Theme) -> Element<'static, Messag
     column![
         row![
             label,
-            Space::with_width(Length::Fill),
+            Space::new().width(Length::Fill),
             slider_widget,
-            Space::with_width(12),
+            Space::new().width(12),
             value_text,
         ]
         .align_y(Alignment::Center),
-        Space::with_height(4),
+        Space::new().height(4),
         description,
     ]
     .spacing(0)
@@ -272,7 +272,7 @@ fn about_content(theme: Theme) -> Element<'static, Message> {
         ))
         .size(14)
         .color(theme.text_primary),
-        Space::with_height(4),
+        Space::new().height(4),
         text("A modern SSH client built with Rust and Iced")
             .size(12)
             .color(theme.text_muted),

@@ -4,7 +4,6 @@ use iced::advanced::layout::{self, Layout};
 use iced::advanced::renderer;
 use iced::advanced::widget::{self, Widget};
 use iced::advanced::{mouse, Clipboard, Shell};
-use iced::event::Status;
 use iced::{Element, Event, Length, Rectangle, Size};
 
 /// A wrapper widget that detects mouse clicks and modifier keys
@@ -113,13 +112,13 @@ where
     }
 
     fn layout(
-        &self,
+        &mut self,
         tree: &mut widget::Tree,
         renderer: &Renderer,
         limits: &layout::Limits,
     ) -> layout::Node {
         let limits = limits.width(self.width).height(self.height);
-        self.content.as_widget().layout(tree, renderer, &limits)
+        self.content.as_widget_mut().layout(tree, renderer, &limits)
     }
 
     fn draw(
@@ -137,17 +136,17 @@ where
             .draw(tree, renderer, theme, style, layout, cursor, viewport);
     }
 
-    fn on_event(
+    fn update(
         &mut self,
         tree: &mut widget::Tree,
-        event: Event,
+        event: &Event,
         layout: Layout<'_>,
         cursor: mouse::Cursor,
         renderer: &Renderer,
         clipboard: &mut dyn Clipboard,
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
-    ) -> Status {
+    ) {
         // Handle right-click BEFORE passing to content, since buttons capture all clicks
         if let Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Right)) = event {
             if cursor.is_over(layout.bounds()) {
@@ -155,27 +154,22 @@ where
                     // Use cursor position in window coordinates
                     if let Some(pos) = cursor.position() {
                         shell.publish(on_right_press(pos.x, pos.y));
-                        return Status::Captured;
+                        return;
                     }
                 }
             }
         }
 
         // Let the content handle other events
-        let content_status = self.content.as_widget_mut().on_event(
-            tree, event.clone(), layout, cursor, renderer, clipboard, shell, viewport,
+        self.content.as_widget_mut().update(
+            tree, event, layout, cursor, renderer, clipboard, shell, viewport,
         );
-
-        // If content handled it, we're done
-        if content_status == Status::Captured {
-            return Status::Captured;
-        }
 
         // Prevent event propagation if requested and cursor is over this area.
         if self.capture_all_events {
             if cursor.is_over(layout.bounds()) {
                 if matches!(event, Event::Mouse(_)) {
-                    return Status::Captured;
+                    return;
                 }
             }
         }
@@ -185,12 +179,9 @@ where
             if let Some(_position) = cursor.position_over(layout.bounds()) {
                 if let Some(ref message) = self.on_press {
                     shell.publish(message.clone());
-                    return Status::Captured;
                 }
             }
         }
-
-        content_status
     }
 
     fn mouse_interaction(
@@ -207,14 +198,14 @@ where
     }
 
     fn operate(
-        &self,
+        &mut self,
         tree: &mut widget::Tree,
         layout: Layout<'_>,
         renderer: &Renderer,
         operation: &mut dyn widget::Operation,
     ) {
         self.content
-            .as_widget()
+            .as_widget_mut()
             .operate(tree, layout, renderer, operation);
     }
 }

@@ -59,7 +59,7 @@ pub fn dual_pane_sftp_view(
     );
 
     // Vertical divider between panes
-    let divider = container(Space::with_width(0))
+    let divider = container(Space::new().width(0))
         .width(Length::Fixed(1.0))
         .height(Fill)
         .style(move |_| container::Style {

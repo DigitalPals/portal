@@ -1,14 +1,15 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use iced::widget::text_editor;
 use uuid::Uuid;
 
-use crate::app::FocusSection;
 use crate::config::DetectedOs;
 use crate::theme::ThemeId;
 use crate::sftp::{FileEntry, SharedSftpSession};
 use crate::ssh::host_key_verification::HostKeyVerificationRequest;
 use crate::ssh::SshSession;
+use crate::views::file_viewer::ViewerContent;
 use crate::views::sftp::{ContextMenuAction, PaneId, PaneSource, PermissionBit};
 
 /// Session ID type alias
@@ -215,6 +216,27 @@ pub enum SnippetMessage {
     Save,
 }
 
+/// File viewer messages
+#[derive(Debug, Clone)]
+pub enum FileViewerMessage {
+    /// File content loaded successfully
+    ContentLoaded { viewer_id: SessionId, content: ViewerContent },
+    /// Error loading file content
+    LoadError(SessionId, String),
+    /// Text content changed via editor
+    TextChanged(SessionId, text_editor::Action),
+    /// Save current content
+    Save(SessionId),
+    /// Save operation completed
+    SaveResult(SessionId, Result<(), String>),
+    /// PDF page navigation
+    PdfPageChange(SessionId, usize),
+    /// Toggle markdown preview mode
+    MarkdownTogglePreview(SessionId),
+    /// Image zoom level changed
+    ImageZoom(SessionId, f32),
+}
+
 /// UI state messages
 #[derive(Debug, Clone)]
 pub enum UiMessage {
@@ -238,10 +260,6 @@ pub enum UiMessage {
     ToastTick,
     /// Keyboard event
     KeyboardEvent(iced::keyboard::Key, iced::keyboard::Modifiers),
-    /// Focus section changed (F1/F2/F3)
-    FocusSectionChange(FocusSection),
-    /// Terminal keyboard capture state changed
-    TerminalCaptureChange(bool),
 }
 
 // ============================================================================
@@ -255,6 +273,8 @@ pub enum Message {
     Session(SessionMessage),
     /// SFTP browser messages
     Sftp(SftpMessage),
+    /// File viewer messages
+    FileViewer(FileViewerMessage),
     /// Dialog messages
     Dialog(DialogMessage),
     /// Tab management messages
@@ -320,6 +340,12 @@ impl From<SnippetMessage> for Message {
 impl From<UiMessage> for Message {
     fn from(msg: UiMessage) -> Self {
         Message::Ui(msg)
+    }
+}
+
+impl From<FileViewerMessage> for Message {
+    fn from(msg: FileViewerMessage) -> Self {
+        Message::FileViewer(msg)
     }
 }
 

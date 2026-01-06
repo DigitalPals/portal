@@ -46,17 +46,6 @@ impl ThemeId {
         }
     }
 
-    /// Description for UI
-    pub const fn description(&self) -> &'static str {
-        match self {
-            ThemeId::PortalDefault => "Classic dark navy blue theme",
-            ThemeId::CatppuccinLatte => "Light, warm pastel theme",
-            ThemeId::CatppuccinFrappe => "Mid-tone muted dark theme",
-            ThemeId::CatppuccinMacchiato => "Slightly lighter dark theme",
-            ThemeId::CatppuccinMocha => "Deep, rich dark theme",
-        }
-    }
-
     /// Whether this is a dark theme (for Iced theme selection)
     pub const fn is_dark(&self) -> bool {
         !matches!(self, ThemeId::CatppuccinLatte)
@@ -309,17 +298,6 @@ impl Theme {
         }
     }
 
-    /// Legacy dark theme (alias for portal_default)
-    #[deprecated(note = "Use portal_default() instead")]
-    pub fn dark() -> Self {
-        Self::portal_default()
-    }
-
-    /// Legacy light theme (alias for catppuccin_latte)
-    #[deprecated(note = "Use catppuccin_latte() instead")]
-    pub fn light() -> Self {
-        Self::catppuccin_latte()
-    }
 }
 
 /// Get theme by ID
@@ -330,16 +308,6 @@ pub fn get_theme(id: ThemeId) -> Theme {
         ThemeId::CatppuccinFrappe => Theme::catppuccin_frappe(),
         ThemeId::CatppuccinMacchiato => Theme::catppuccin_macchiato(),
         ThemeId::CatppuccinMocha => Theme::catppuccin_mocha(),
-    }
-}
-
-/// Select theme based on preference (legacy compatibility)
-#[deprecated(note = "Use get_theme(ThemeId) instead")]
-pub fn theme_for(dark_mode: bool) -> Theme {
-    if dark_mode {
-        Theme::portal_default()
-    } else {
-        Theme::catppuccin_latte()
     }
 }
 

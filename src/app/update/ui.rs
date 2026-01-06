@@ -32,7 +32,7 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
             match item {
                 SidebarMenuItem::Hosts => {
                     portal.active_view = View::HostGrid;
-                    return iced::widget::text_input::focus(crate::app::search_input_id());
+                    return iced::widget::operation::focus(crate::app::search_input_id());
                 }
                 SidebarMenuItem::History => {
                     portal.active_view = View::HostGrid;
@@ -89,22 +89,6 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
         }
         UiMessage::KeyboardEvent(key, modifiers) => {
             handle_keyboard_event(portal, key, modifiers)
-        }
-        UiMessage::FocusSectionChange(section) => {
-            portal.focus_section = section;
-            // Reset content focus when switching sections
-            if section == FocusSection::Content {
-                portal.host_grid_focus_index = None;
-                portal.history_focus_index = None;
-            }
-            Task::none()
-        }
-        UiMessage::TerminalCaptureChange(captured) => {
-            portal.terminal_captured = captured;
-            if !captured {
-                portal.focus_section = FocusSection::Content;
-            }
-            Task::none()
         }
     }
 }
@@ -337,6 +321,13 @@ fn handle_content_keyboard(
         View::DualSftp(tab_id) => {
             handle_sftp_keyboard(portal, *tab_id, key, modifiers)
         }
+        View::FileViewer(_) => {
+            // File viewer keyboard - arrow left goes back to sidebar
+            if let Key::Named(keyboard::key::Named::ArrowLeft) = key {
+                portal.focus_section = FocusSection::Sidebar;
+            }
+            Task::none()
+        }
     }
 }
 
@@ -356,7 +347,7 @@ fn handle_host_grid_keyboard(
         if let Key::Character(c) = key {
             if c.as_str() == "/" {
                 portal.host_grid_focus_index = None; // Clear grid focus when focusing search
-                return iced::widget::text_input::focus(crate::views::host_grid::search_input_id());
+                return iced::widget::operation::focus(crate::views::host_grid::search_input_id());
             }
         }
         return Task::none();
@@ -378,7 +369,7 @@ fn handle_host_grid_keyboard(
                 portal.host_grid_focus_index = Some(0);
             }
             // Unfocus search input when navigating with arrows
-            return iced::widget::text_input::focus(iced::widget::text_input::Id::unique());
+            return iced::widget::operation::focus(iced::widget::Id::unique());
         }
         Key::Named(keyboard::key::Named::ArrowDown) => {
             if let Some(idx) = portal.host_grid_focus_index {
@@ -390,7 +381,7 @@ fn handle_host_grid_keyboard(
                 portal.host_grid_focus_index = Some(0);
             }
             // Unfocus search input when navigating with arrows
-            return iced::widget::text_input::focus(iced::widget::text_input::Id::unique());
+            return iced::widget::operation::focus(iced::widget::Id::unique());
         }
         Key::Named(keyboard::key::Named::ArrowLeft) => {
             if let Some(idx) = portal.host_grid_focus_index {
@@ -403,7 +394,7 @@ fn handle_host_grid_keyboard(
                 portal.focus_section = FocusSection::Sidebar;
             }
             // Unfocus search input when navigating with arrows
-            return iced::widget::text_input::focus(iced::widget::text_input::Id::unique());
+            return iced::widget::operation::focus(iced::widget::Id::unique());
         }
         Key::Named(keyboard::key::Named::ArrowRight) => {
             if let Some(idx) = portal.host_grid_focus_index {
@@ -414,15 +405,15 @@ fn handle_host_grid_keyboard(
                 portal.host_grid_focus_index = Some(0);
             }
             // Unfocus search input when navigating with arrows
-            return iced::widget::text_input::focus(iced::widget::text_input::Id::unique());
+            return iced::widget::operation::focus(iced::widget::Id::unique());
         }
         Key::Named(keyboard::key::Named::Home) => {
             portal.host_grid_focus_index = Some(0);
-            return iced::widget::text_input::focus(iced::widget::text_input::Id::unique());
+            return iced::widget::operation::focus(iced::widget::Id::unique());
         }
         Key::Named(keyboard::key::Named::End) => {
             portal.host_grid_focus_index = Some(total_items.saturating_sub(1));
-            return iced::widget::text_input::focus(iced::widget::text_input::Id::unique());
+            return iced::widget::operation::focus(iced::widget::Id::unique());
         }
         Key::Named(keyboard::key::Named::Enter | keyboard::key::Named::Space) => {
             // Only activate if we have a focused card (not the search input)
@@ -447,7 +438,7 @@ fn handle_host_grid_keyboard(
         }
         Key::Character(c) if c.as_str() == "/" => {
             portal.host_grid_focus_index = None; // Clear grid focus when focusing search
-            return iced::widget::text_input::focus(crate::views::host_grid::search_input_id());
+            return iced::widget::operation::focus(crate::views::host_grid::search_input_id());
         }
         _ => {}
     }
@@ -552,7 +543,7 @@ fn handle_sftp_keyboard(
 
                 // Scroll to keep selection visible
                 let scroll_offset = new_visible_pos as f32 * ROW_HEIGHT;
-                return scrollable::scroll_to(
+                return iced::widget::operation::scroll_to(
                     pane_state.scrollable_id.clone(),
                     scrollable::AbsoluteOffset {
                         x: 0.0,
@@ -577,7 +568,7 @@ fn handle_sftp_keyboard(
 
                 // Scroll to keep selection visible
                 let scroll_offset = new_visible_pos as f32 * ROW_HEIGHT;
-                return scrollable::scroll_to(
+                return iced::widget::operation::scroll_to(
                     pane_state.scrollable_id.clone(),
                     scrollable::AbsoluteOffset {
                         x: 0.0,
@@ -594,7 +585,7 @@ fn handle_sftp_keyboard(
                 pane_state.last_selected_index = Some(new_idx);
 
                 // Scroll to top
-                return scrollable::scroll_to(
+                return iced::widget::operation::scroll_to(
                     pane_state.scrollable_id.clone(),
                     scrollable::AbsoluteOffset { x: 0.0, y: 0.0 },
                 );
@@ -609,7 +600,7 @@ fn handle_sftp_keyboard(
 
                 // Scroll to bottom
                 let scroll_offset = (visible_count - 1) as f32 * ROW_HEIGHT;
-                return scrollable::scroll_to(
+                return iced::widget::operation::scroll_to(
                     pane_state.scrollable_id.clone(),
                     scrollable::AbsoluteOffset {
                         x: 0.0,

@@ -47,7 +47,7 @@ pub fn terminal_status_bar<'a>(
     let center: Element<'_, Message> = if let Some(msg) = status_message {
         text(msg).size(12).color(theme.accent).into()
     } else {
-        Space::new(0, 0).into()
+        Space::new().into()
     };
 
     // Right side: shortcut hint
@@ -59,9 +59,9 @@ pub fn terminal_status_bar<'a>(
 
     let content = row![
         left,
-        Space::with_width(Length::Fill),
+        Space::new().width(Length::Fill),
         center,
-        Space::with_width(Length::Fill),
+        Space::new().width(Length::Fill),
         right,
     ]
     .padding([6, 12])
