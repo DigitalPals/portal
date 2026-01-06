@@ -116,8 +116,8 @@ impl Handler for ClientHandler {
                     match tokio::time::timeout(Duration::from_secs(60), rx).await {
                         Ok(Ok(HostKeyVerificationResponse::Accept)) => {
                             tracing::debug!("User accepted host key for {}:{}", host, port);
-                            // Save key to known_hosts
-                            match tokio::task::spawn_blocking({
+                            // Save key to known_hosts (fail closed if we cannot persist)
+                            let store_result = tokio::task::spawn_blocking({
                                 let known_hosts = known_hosts.clone();
                                 let host = host.clone();
                                 let key = key.clone();
@@ -127,16 +127,20 @@ impl Handler for ClientHandler {
                                 }
                             })
                             .await
-                            {
-                                Ok(Ok(())) => {}
-                                Ok(Err(e)) => {
-                                    tracing::warn!("Failed to store host key: {}", e);
-                                }
-                                Err(e) => {
-                                    tracing::warn!("Failed to store host key: {}", e);
-                                }
+                            .map_err(|e| {
+                                SshError::HostKeyVerification(format!(
+                                    "Host key store task failed: {}",
+                                    e
+                                ))
+                            })?;
+
+                            match store_result {
+                                Ok(()) => Ok(true),
+                                Err(e) => Err(SshError::HostKeyVerification(format!(
+                                    "Failed to store host key: {}",
+                                    e
+                                ))),
                             }
-                            Ok(true)
                         }
                         Ok(Ok(HostKeyVerificationResponse::Reject)) | Ok(Err(_)) => {
                             tracing::debug!("User rejected host key for {}:{}", host, port);
@@ -194,8 +198,8 @@ impl Handler for ClientHandler {
                     match tokio::time::timeout(Duration::from_secs(60), rx).await {
                         Ok(Ok(HostKeyVerificationResponse::Accept)) => {
                             tracing::debug!("User accepted changed host key for {}:{}", host, port);
-                            // Update key in known_hosts
-                            match tokio::task::spawn_blocking({
+                            // Update key in known_hosts (fail closed if we cannot persist)
+                            let update_result = tokio::task::spawn_blocking({
                                 let known_hosts = known_hosts.clone();
                                 let host = host.clone();
                                 let key = key.clone();
@@ -205,16 +209,20 @@ impl Handler for ClientHandler {
                                 }
                             })
                             .await
-                            {
-                                Ok(Ok(())) => {}
-                                Ok(Err(e)) => {
-                                    tracing::warn!("Failed to update host key: {}", e);
-                                }
-                                Err(e) => {
-                                    tracing::warn!("Failed to update host key: {}", e);
-                                }
+                            .map_err(|e| {
+                                SshError::HostKeyVerification(format!(
+                                    "Host key update task failed: {}",
+                                    e
+                                ))
+                            })?;
+
+                            match update_result {
+                                Ok(()) => Ok(true),
+                                Err(e) => Err(SshError::HostKeyVerification(format!(
+                                    "Failed to update host key: {}",
+                                    e
+                                ))),
                             }
-                            Ok(true)
                         }
                         Ok(Ok(HostKeyVerificationResponse::Reject)) | Ok(Err(_)) => {
                             tracing::debug!("User rejected changed host key for {}:{}", host, port);

@@ -40,6 +40,23 @@ impl SshClient {
         }
     }
 
+    pub fn with_known_hosts(
+        keepalive_interval: u64,
+        known_hosts: Arc<Mutex<KnownHostsManager>>,
+    ) -> Self {
+        let config = Config {
+            inactivity_timeout: Some(Duration::from_secs(3600)),
+            keepalive_interval: Some(Duration::from_secs(keepalive_interval)),
+            keepalive_max: 3,
+            ..Default::default()
+        };
+
+        Self {
+            config: Arc::new(config),
+            known_hosts,
+        }
+    }
+
     /// Connect to a host and establish an interactive PTY session
     /// Returns the session and optionally the detected OS
     pub async fn connect(

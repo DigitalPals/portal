@@ -35,17 +35,12 @@ pub fn settings_page_view(
         ],
     );
 
-    // === About Section ===
-    let about_section = settings_section("About", theme, vec![about_content(theme)]);
-
     let content = column![
         header,
         Space::new().height(24),
         appearance_section,
         Space::new().height(16),
         terminal_section,
-        Space::new().height(16),
-        about_section,
     ]
     .padding(32)
     .max_width(700);
@@ -332,21 +327,6 @@ fn font_size_setting(current_size: f32, theme: Theme) -> Element<'static, Messag
         .align_y(Alignment::Center),
         Space::new().height(4),
         description,
-    ]
-    .spacing(0)
-    .into()
-}
-
-/// About section content
-fn about_content(theme: Theme) -> Element<'static, Message> {
-    column![
-        text(format!("Portal SSH Client v{}", env!("CARGO_PKG_VERSION")))
-            .size(14)
-            .color(theme.text_primary),
-        Space::new().height(4),
-        text("A modern SSH client built with Rust and Iced")
-            .size(12)
-            .color(theme.text_muted),
     ]
     .spacing(0)
     .into()

@@ -172,10 +172,15 @@ impl KnownHostsManager {
         port: u16,
         key: &PublicKey,
     ) -> Result<(), SshError> {
-        if let Some(path) = self.primary_write_path() {
+        self.remove_host_key_entries_all(host, port)?;
+        self.add_host_key(host, port, key)
+    }
+
+    fn remove_host_key_entries_all(&self, host: &str, port: u16) -> Result<(), SshError> {
+        for path in self.known_hosts_paths() {
             self.remove_host_key_entries(host, port, &path)?;
         }
-        self.add_host_key(host, port, key)
+        Ok(())
     }
 
     fn remove_host_key_entries(
