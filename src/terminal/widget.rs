@@ -19,7 +19,7 @@ use parking_lot::Mutex;
 
 use super::backend::{CursorInfo, EventProxy, RenderCell};
 use super::colors::{ansi_to_iced_themed, DEFAULT_BG, DEFAULT_FG};
-use crate::fonts::JETBRAINS_MONO_NERD;
+use crate::fonts::{TerminalFont, JETBRAINS_MONO_NERD};
 use crate::theme::TerminalColors;
 
 /// Terminal widget for iced
@@ -28,6 +28,7 @@ pub struct TerminalWidget<'a, Message> {
     on_input: Box<dyn Fn(Vec<u8>) -> Message + 'a>,
     on_resize: Option<Box<dyn Fn(u16, u16) -> Message + 'a>>,
     font_size: f32,
+    font: iced::Font,
     terminal_colors: Option<TerminalColors>,
 }
 
@@ -42,6 +43,7 @@ impl<'a, Message> TerminalWidget<'a, Message> {
             on_input: Box::new(on_input),
             on_resize: None,
             font_size: 9.0,
+            font: JETBRAINS_MONO_NERD,
             terminal_colors: None,
         }
     }
@@ -49,6 +51,12 @@ impl<'a, Message> TerminalWidget<'a, Message> {
     /// Set font size
     pub fn font_size(mut self, size: f32) -> Self {
         self.font_size = size;
+        self
+    }
+
+    /// Set terminal font
+    pub fn font(mut self, font: TerminalFont) -> Self {
+        self.font = font.to_iced_font();
         self
     }
 
@@ -468,7 +476,7 @@ where
                     line_height: iced::advanced::text::LineHeight::Absolute(iced::Pixels(
                         cell_height,
                     )),
-                    font: JETBRAINS_MONO_NERD,
+                    font: self.font,
                     align_x: iced::alignment::Horizontal::Left.into(),
                     align_y: iced::alignment::Vertical::Top.into(),
                     shaping: iced::advanced::text::Shaping::Advanced,

@@ -84,6 +84,9 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
             // Switch to terminal view
             portal.active_view = View::Terminal(session_id);
 
+            // Auto-hide sidebar for immersive terminal experience
+            portal.sidebar_state = crate::app::SidebarState::Hidden;
+
             Task::none()
         }
         SessionMessage::LocalConnected {
@@ -123,6 +126,9 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
 
             // Switch to terminal view
             portal.active_view = View::Terminal(session_id);
+
+            // Auto-hide sidebar for immersive terminal experience
+            portal.sidebar_state = crate::app::SidebarState::Hidden;
 
             Task::none()
         }

@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::error::ConfigError;
+use crate::fonts::TerminalFont;
 use crate::theme::ThemeId;
 
 /// Application settings
@@ -9,6 +10,10 @@ pub struct SettingsConfig {
     /// Terminal font size
     #[serde(default = "default_terminal_font_size")]
     pub terminal_font_size: f32,
+
+    /// Terminal font family
+    #[serde(default)]
+    pub terminal_font: TerminalFont,
 
     /// Selected theme
     #[serde(default)]
@@ -27,6 +32,7 @@ impl Default for SettingsConfig {
     fn default() -> Self {
         Self {
             terminal_font_size: default_terminal_font_size(),
+            terminal_font: TerminalFont::default(),
             theme: ThemeId::default(),
             dark_mode: None,
         }

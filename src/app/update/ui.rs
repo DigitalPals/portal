@@ -77,13 +77,18 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
             Task::none()
         }
         UiMessage::SidebarToggleCollapse => {
-            portal.sidebar_collapsed = !portal.sidebar_collapsed;
-            portal.sidebar_manually_collapsed = portal.sidebar_collapsed;
-            tracing::info!("Sidebar collapsed: {} (manual)", portal.sidebar_collapsed);
+            portal.sidebar_state = portal.sidebar_state.next();
+            portal.sidebar_manually_set = true;
+            tracing::info!("Sidebar state: {:?} (manual)", portal.sidebar_state);
             Task::none()
         }
         UiMessage::ThemeChange(theme_id) => {
             portal.theme_id = theme_id;
+            portal.save_settings();
+            Task::none()
+        }
+        UiMessage::FontChange(font) => {
+            portal.terminal_font = font;
             portal.save_settings();
             Task::none()
         }
@@ -94,8 +99,13 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
         }
         UiMessage::WindowResized(size) => {
             portal.window_size = size;
-            if !portal.sidebar_manually_collapsed {
-                portal.sidebar_collapsed = size.width < SIDEBAR_AUTO_COLLAPSE_THRESHOLD;
+            if !portal.sidebar_manually_set {
+                use crate::app::SidebarState;
+                portal.sidebar_state = if size.width < SIDEBAR_AUTO_COLLAPSE_THRESHOLD {
+                    SidebarState::IconsOnly
+                } else {
+                    SidebarState::Expanded
+                };
             }
             Task::none()
         }
@@ -374,7 +384,7 @@ fn handle_host_grid_keyboard(
     }
 
     // Calculate column count for 2D navigation
-    let columns = crate::views::host_grid::calculate_columns(portal.window_size.width, portal.sidebar_collapsed);
+    let columns = crate::views::host_grid::calculate_columns(portal.window_size.width, portal.sidebar_state);
 
     match key {
         Key::Named(keyboard::key::Named::ArrowUp) => {

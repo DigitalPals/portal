@@ -75,6 +75,7 @@ pub struct Theme {
     pub background: Color,
     pub surface: Color,
     pub sidebar: Color,
+    pub tab_bar: Color,
     pub accent: Color,
     pub text_primary: Color,
     pub text_secondary: Color,
@@ -94,6 +95,7 @@ impl Theme {
             background: Color::from_rgb8(0x1e, 0x22, 0x33),
             surface: Color::from_rgb8(0x2a, 0x31, 0x42),
             sidebar: Color::from_rgb8(0x1a, 0x1d, 0x2b),
+            tab_bar: Color::from_rgb8(0x1a, 0x1c, 0x25),
             accent: Color::from_rgb8(0x00, 0x78, 0xd4),
             text_primary: Color::from_rgb8(0xe8, 0xe8, 0xe8),
             text_secondary: Color::from_rgb8(0x9a, 0xa0, 0xb0),
@@ -104,7 +106,7 @@ impl Theme {
             focus_ring: Color::from_rgb8(0x58, 0x9c, 0xff),
             terminal: TerminalColors {
                 foreground: Color::from_rgb8(0xe6, 0xe6, 0xe6),
-                background: Color::from_rgb8(0x1a, 0x1a, 0x1a),
+                background: Color::from_rgb8(0x1e, 0x1e, 0x2e), // Catppuccin Mocha base
                 cursor: Color::from_rgb8(0xe6, 0xe6, 0xe6),
                 ansi: [
                     // Normal colors (0-7)
@@ -136,6 +138,7 @@ impl Theme {
             background: Color::from_rgb8(0xef, 0xf1, 0xf5), // Base
             surface: Color::from_rgb8(0xe6, 0xe9, 0xef),    // Mantle
             sidebar: Color::from_rgb8(0xdc, 0xe0, 0xe8),    // Crust
+            tab_bar: Color::from_rgb8(0xdc, 0xe0, 0xe8),    // Crust
             accent: Color::from_rgb8(0x1e, 0x66, 0xf5),     // Blue
             text_primary: Color::from_rgb8(0x4c, 0x4f, 0x69), // Text
             text_secondary: Color::from_rgb8(0x5c, 0x5f, 0x77), // Subtext1
@@ -178,6 +181,7 @@ impl Theme {
             background: Color::from_rgb8(0x30, 0x34, 0x46), // Base
             surface: Color::from_rgb8(0x29, 0x2c, 0x3c),    // Mantle
             sidebar: Color::from_rgb8(0x23, 0x26, 0x34),    // Crust
+            tab_bar: Color::from_rgb8(0x23, 0x26, 0x34),    // Crust
             accent: Color::from_rgb8(0xba, 0xbb, 0xf1),     // Lavender
             text_primary: Color::from_rgb8(0xc6, 0xd0, 0xf5), // Text
             text_secondary: Color::from_rgb8(0xb5, 0xbf, 0xe2), // Subtext1
@@ -220,6 +224,7 @@ impl Theme {
             background: Color::from_rgb8(0x24, 0x27, 0x3a), // Base
             surface: Color::from_rgb8(0x1e, 0x20, 0x30),    // Mantle
             sidebar: Color::from_rgb8(0x18, 0x19, 0x26),    // Crust
+            tab_bar: Color::from_rgb8(0x18, 0x19, 0x26),    // Crust
             accent: Color::from_rgb8(0xc6, 0xa0, 0xf6),     // Mauve
             text_primary: Color::from_rgb8(0xca, 0xd3, 0xf5), // Text
             text_secondary: Color::from_rgb8(0xb8, 0xc0, 0xe0), // Subtext1
@@ -262,6 +267,7 @@ impl Theme {
             background: Color::from_rgb8(0x1e, 0x1e, 0x2e), // Base
             surface: Color::from_rgb8(0x18, 0x18, 0x25),    // Mantle
             sidebar: Color::from_rgb8(0x11, 0x11, 0x1b),    // Crust
+            tab_bar: Color::from_rgb8(0x11, 0x11, 0x1b),    // Crust
             accent: Color::from_rgb8(0xfa, 0xb3, 0x87),     // Peach
             text_primary: Color::from_rgb8(0xcd, 0xd6, 0xf4), // Text
             text_secondary: Color::from_rgb8(0xba, 0xc2, 0xde), // Subtext1

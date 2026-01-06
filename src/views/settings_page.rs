@@ -5,6 +5,7 @@ use iced::widget::{
 };
 use iced::{Alignment, Element, Fill, Length};
 
+use crate::fonts::TerminalFont;
 use crate::message::{Message, UiMessage};
 use crate::theme::{get_theme, Theme, ThemeId, BORDER_RADIUS, CARD_BORDER_RADIUS};
 
@@ -12,6 +13,7 @@ use crate::theme::{get_theme, Theme, ThemeId, BORDER_RADIUS, CARD_BORDER_RADIUS}
 pub fn settings_page_view(
     current_theme: ThemeId,
     terminal_font_size: f32,
+    terminal_font: TerminalFont,
     theme: Theme,
 ) -> Element<'static, Message> {
     let header = text("Settings").size(28).color(theme.text_primary);
@@ -27,7 +29,10 @@ pub fn settings_page_view(
     let terminal_section = settings_section(
         "Terminal",
         theme,
-        vec![font_size_setting(terminal_font_size, theme)],
+        vec![
+            font_selector_setting(terminal_font, theme),
+            font_size_setting(terminal_font_size, theme),
+        ],
     );
 
     // === About Section ===
@@ -226,6 +231,79 @@ fn mini_app_preview(preview_theme: Theme) -> Element<'static, Message> {
             },
             ..Default::default()
         })
+        .into()
+}
+
+/// Font selector with tile previews
+fn font_selector_setting(current_font: TerminalFont, theme: Theme) -> Element<'static, Message> {
+    let label = text("Font").size(14).color(theme.text_primary);
+
+    let description = text("Terminal font family")
+        .size(12)
+        .color(theme.text_muted);
+
+    // Create font tiles
+    let tiles: Vec<Element<'static, Message>> = TerminalFont::all()
+        .iter()
+        .map(|&font| font_tile(font, font == current_font, theme))
+        .collect();
+
+    let tiles_row = Row::from_vec(tiles).spacing(12);
+
+    column![
+        label,
+        Space::new().height(4),
+        description,
+        Space::new().height(12),
+        tiles_row,
+    ]
+    .spacing(0)
+    .into()
+}
+
+/// Individual font tile showing font preview
+fn font_tile(font: TerminalFont, is_selected: bool, theme: Theme) -> Element<'static, Message> {
+    let iced_font = font.to_iced_font();
+
+    // Preview text showing the font
+    let preview = text("Aa")
+        .size(20)
+        .font(iced_font)
+        .color(theme.text_primary);
+
+    let name = text(font.display_name())
+        .size(11)
+        .color(if is_selected {
+            theme.accent
+        } else {
+            theme.text_secondary
+        });
+
+    let border_width = if is_selected { 2.0 } else { 1.0 };
+    let border_color = if is_selected {
+        theme.accent
+    } else {
+        theme.border
+    };
+
+    let tile_content = column![preview, Space::new().height(6), name,]
+        .align_x(Alignment::Center)
+        .spacing(0);
+
+    let tile_container = container(tile_content)
+        .padding([12, 20])
+        .style(move |_| container::Style {
+            background: Some(theme.background.into()),
+            border: iced::Border {
+                radius: BORDER_RADIUS.into(),
+                width: border_width,
+                color: border_color,
+            },
+            ..Default::default()
+        });
+
+    mouse_area(tile_container)
+        .on_press(Message::Ui(UiMessage::FontChange(font)))
         .into()
 }
 

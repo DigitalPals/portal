@@ -10,6 +10,7 @@ use iced::{Element, Fill};
 use parking_lot::Mutex;
 use uuid::Uuid;
 
+use crate::fonts::TerminalFont;
 use crate::message::{Message, SessionId};
 use crate::terminal::backend::{EventProxy, TerminalSize};
 use crate::terminal::TerminalBackend;
@@ -60,6 +61,7 @@ pub fn terminal_view_with_status<'a>(
     host_name: &'a str,
     status_message: Option<&'a str>,
     font_size: f32,
+    terminal_font: TerminalFont,
     on_input: impl Fn(SessionId, Vec<u8>) -> Message + 'a,
     on_resize: impl Fn(SessionId, u16, u16) -> Message + 'a,
 ) -> Element<'a, Message> {
@@ -68,6 +70,7 @@ pub fn terminal_view_with_status<'a>(
     let terminal_widget = TerminalWidget::new(term, move |bytes| on_input(session_id, bytes))
         .on_resize(move |cols, rows| on_resize(session_id, cols, rows))
         .font_size(font_size)
+        .font(terminal_font)
         .terminal_colors(theme.terminal);
 
     let terminal_container = container(terminal_widget)

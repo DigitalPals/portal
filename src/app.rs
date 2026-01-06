@@ -5,7 +5,7 @@ mod update;
 mod view_model;
 
 use std::time::Duration;
-use iced::widget::{column, row, text, stack, Space};
+use iced::widget::{column, row, text, stack};
 use iced::{event, time, window, Element, Fill, Subscription, Task, Theme as IcedTheme};
 use uuid::Uuid;
 
@@ -55,6 +55,26 @@ pub enum FocusSection {
     TabBar,    // Tab navigation bar
 }
 
+/// Sidebar visibility state
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SidebarState {
+    Hidden,     // Completely hidden (0 width)
+    IconsOnly,  // Collapsed to icons only
+    #[default]
+    Expanded,   // Full width with labels
+}
+
+impl SidebarState {
+    /// Cycle to the next state (for toggle button)
+    pub fn next(self) -> Self {
+        match self {
+            SidebarState::Hidden => SidebarState::IconsOnly,
+            SidebarState::IconsOnly => SidebarState::Expanded,
+            SidebarState::Expanded => SidebarState::Hidden,
+        }
+    }
+}
+
 /// Main application state
 pub struct Portal {
     // UI state
@@ -62,7 +82,7 @@ pub struct Portal {
     search_query: String,
 
     // Sidebar state
-    sidebar_collapsed: bool,
+    sidebar_state: SidebarState,
     sidebar_selection: SidebarMenuItem,
 
     // Tab management
@@ -80,6 +100,7 @@ pub struct Portal {
 
     // Terminal settings
     terminal_font_size: f32,
+    terminal_font: crate::fonts::TerminalFont,
 
     // Data from config
     hosts_config: HostsConfig,
@@ -91,7 +112,7 @@ pub struct Portal {
 
     // Responsive layout
     window_size: iced::Size,
-    sidebar_manually_collapsed: bool,
+    sidebar_manually_set: bool,  // True if user manually changed sidebar state
 
     // Keyboard navigation focus state
     focus_section: FocusSection,
@@ -156,7 +177,7 @@ impl Portal {
         let app = Self {
             active_view: View::HostGrid,
             search_query: String::new(),
-            sidebar_collapsed: false,
+            sidebar_state: SidebarState::Expanded,
             sidebar_selection: SidebarMenuItem::Hosts,
             tabs: Vec::new(),
             active_tab: None,
@@ -166,12 +187,13 @@ impl Portal {
             dialogs: DialogManager::new(),
             theme_id: settings_config.theme,
             terminal_font_size: settings_config.terminal_font_size,
+            terminal_font: settings_config.terminal_font,
             hosts_config,
             snippets_config,
             history_config,
             toast_manager: ToastManager::new(),
             window_size: iced::Size::new(1200.0, 800.0),
-            sidebar_manually_collapsed: false,
+            sidebar_manually_set: false,
             // Focus navigation state
             focus_section: FocusSection::Content,
             sidebar_focus_index: 0,
@@ -216,7 +238,7 @@ impl Portal {
         // Sidebar (new collapsible icon menu)
         let sidebar = sidebar_view(
             theme,
-            self.sidebar_collapsed,
+            self.sidebar_state,
             self.sidebar_selection,
             self.focus_section,
             self.sidebar_focus_index,
@@ -225,7 +247,7 @@ impl Portal {
         // Main content - prioritize active sessions over sidebar selection
         let main_content: Element<'_, Message> = match &self.active_view {
             View::Settings => {
-                settings_page_view(self.theme_id, self.terminal_font_size, theme)
+                settings_page_view(self.theme_id, self.terminal_font_size, self.terminal_font, theme)
             }
             View::Terminal(session_id) => {
                 if let Some(session) = self.sessions.get(*session_id) {
@@ -243,6 +265,7 @@ impl Portal {
                         &session.host_name,
                         status_message,
                         self.terminal_font_size,
+                        self.terminal_font,
                         move |_sid, bytes| Message::Session(SessionMessage::Input(session_id, bytes)),
                         move |_sid, cols, rows| Message::Session(SessionMessage::Resize(session_id, cols, rows)),
                     )
@@ -270,7 +293,7 @@ impl Portal {
             }
             View::HostGrid => {
                 // Calculate responsive column count
-                let column_count = calculate_columns(self.window_size.width, self.sidebar_collapsed);
+                let column_count = calculate_columns(self.window_size.width, self.sidebar_state);
 
                 // Show content based on sidebar selection
                 match self.sidebar_selection {
@@ -289,18 +312,25 @@ impl Portal {
             }
         };
 
-        // Tab bar - only show when there are tabs
-        let header: Element<'_, Message> = if !self.tabs.is_empty() {
-            tab_bar_view(&self.tabs, self.active_tab, theme, self.focus_section, self.tab_focus_index)
-        } else {
-            Space::new().height(0).into()
-        };
+        // Tab bar - always visible at full width (Termius-style)
+        // Uses terminal background color when in terminal/sftp/file viewer for seamless look
+        let header: Element<'_, Message> = tab_bar_view(
+            &self.tabs,
+            self.active_tab,
+            self.sidebar_state,
+            theme,
+            self.focus_section,
+            self.tab_focus_index,
+            &self.active_view,
+        );
 
-        // Main layout with content below header
-        let content_area = column![header, main_content];
+        // Content row: sidebar | main content
+        let content_row = row![sidebar, main_content]
+            .width(Fill)
+            .height(Fill);
 
-        // Full layout: sidebar | content
-        let main_layout: Element<'_, Message> = row![sidebar, content_area]
+        // Full layout: tab bar on top, then sidebar+content below (Termius-style)
+        let main_layout: Element<'_, Message> = column![header, content_row]
             .width(Fill)
             .height(Fill)
             .into();
@@ -358,6 +388,7 @@ impl Portal {
     pub(crate) fn save_settings(&self) {
         let mut settings = SettingsConfig::default();
         settings.terminal_font_size = self.terminal_font_size;
+        settings.terminal_font = self.terminal_font;
         settings.theme = self.theme_id;
         if let Err(e) = settings.save() {
             tracing::error!("Failed to save settings: {}", e);

@@ -1,7 +1,7 @@
-use iced::widget::{button, column, container, row, text, tooltip, Column, Space};
+use iced::widget::{button, column, container, row, text, tooltip, Column};
 use iced::{Alignment, Element, Fill, Length};
 
-use crate::app::FocusSection;
+use crate::app::{FocusSection, SidebarState};
 use crate::icons::{self, icon_with_color};
 use crate::message::{Message, SidebarMenuItem, UiMessage};
 use crate::theme::{Theme, BORDER_RADIUS, SIDEBAR_WIDTH, SIDEBAR_WIDTH_COLLAPSED};
@@ -44,12 +44,21 @@ const MENU_ITEMS: &[MenuItem] = &[
 /// Build the sidebar view
 pub fn sidebar_view(
     theme: Theme,
-    collapsed: bool,
+    state: SidebarState,
     selected: SidebarMenuItem,
     focus_section: FocusSection,
     focus_index: usize,
 ) -> Element<'static, Message> {
-    let sidebar_width = if collapsed {
+    // Completely hide sidebar when hidden
+    if state == SidebarState::Hidden {
+        return container(column![])
+            .width(Length::Fixed(0.0))
+            .height(Fill)
+            .into();
+    }
+
+    let icons_only = state == SidebarState::IconsOnly;
+    let sidebar_width = if icons_only {
         SIDEBAR_WIDTH_COLLAPSED
     } else {
         SIDEBAR_WIDTH
@@ -61,49 +70,12 @@ pub fn sidebar_view(
     for (idx, menu_item) in MENU_ITEMS.iter().enumerate() {
         let is_selected = selected == menu_item.item;
         let is_focused = focus_section == FocusSection::Sidebar && idx == focus_index;
-        let item_element = menu_item_button(menu_item, is_selected, is_focused, collapsed, theme);
+        let item_element = menu_item_button(menu_item, is_selected, is_focused, icons_only, theme);
         menu_items = menu_items.push(item_element);
     }
 
-    // Collapse/expand toggle button at bottom
-    let toggle_icon = if collapsed {
-        icons::ui::PANEL_LEFT_OPEN
-    } else {
-        icons::ui::PANEL_LEFT_CLOSE
-    };
-
-    let toggle_btn = button(
-        container(icon_with_color(toggle_icon, 16, theme.text_secondary))
-            .width(Length::Fill)
-            .align_x(Alignment::Center),
-    )
-    .style(move |_theme, status| {
-        let bg = match status {
-            button::Status::Hovered => Some(theme.hover.into()),
-            _ => None,
-        };
-        button::Style {
-            background: bg,
-            text_color: theme.text_secondary,
-            border: iced::Border {
-                radius: BORDER_RADIUS.into(),
-                ..Default::default()
-            },
-            ..Default::default()
-        }
-    })
-    .padding([8, 12])
-    .width(Length::Fill)
-    .on_press(Message::Ui(UiMessage::SidebarToggleCollapse));
-
-    let toggle_container = container(toggle_btn)
-        .padding(iced::Padding::new(8.0).bottom(16.0))
-        .width(Length::Fill);
-
     let sidebar_content = column![
         menu_items,
-        Space::new().height(Length::Fill),
-        toggle_container,
     ]
     .height(Fill);
 

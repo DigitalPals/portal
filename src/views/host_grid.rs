@@ -7,7 +7,7 @@ pub fn search_input_id() -> iced::widget::Id {
     iced::widget::Id::new("hosts_search")
 }
 
-use crate::app::FocusSection;
+use crate::app::{FocusSection, SidebarState};
 use crate::config::DetectedOs;
 use crate::icons::{self, icon_with_color};
 use crate::message::{HostMessage, Message, UiMessage};
@@ -46,11 +46,11 @@ pub struct HostCard {
 }
 
 /// Calculate the number of columns based on available width
-pub fn calculate_columns(window_width: f32, sidebar_collapsed: bool) -> usize {
-    let sidebar_width = if sidebar_collapsed {
-        SIDEBAR_WIDTH_COLLAPSED
-    } else {
-        SIDEBAR_WIDTH
+pub fn calculate_columns(window_width: f32, sidebar_state: SidebarState) -> usize {
+    let sidebar_width = match sidebar_state {
+        SidebarState::Hidden => 0.0,
+        SidebarState::IconsOnly => SIDEBAR_WIDTH_COLLAPSED,
+        SidebarState::Expanded => SIDEBAR_WIDTH,
     };
 
     // Available width for the grid

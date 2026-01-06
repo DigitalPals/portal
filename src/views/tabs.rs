@@ -4,9 +4,9 @@ use iced::widget::{button, container, row, text, Row};
 use iced::{Alignment, Element, Length, Padding};
 use uuid::Uuid;
 
-use crate::app::FocusSection;
+use crate::app::{FocusSection, SidebarState, View};
 use crate::icons::{self, icon_with_color};
-use crate::message::{Message, TabMessage};
+use crate::message::{Message, TabMessage, UiMessage};
 use crate::theme::Theme;
 
 /// Represents a single tab
@@ -55,10 +55,43 @@ impl Tab {
 pub fn tab_bar_view<'a>(
     tabs: &'a [Tab],
     active_tab: Option<Uuid>,
+    sidebar_state: SidebarState,
     theme: Theme,
     focus_section: FocusSection,
     focus_index: usize,
+    active_view: &View,
 ) -> Element<'a, Message> {
+    // Determine if we should use terminal background (seamless look)
+    let use_terminal_bg = matches!(active_view, View::Terminal(_) | View::DualSftp(_) | View::FileViewer(_));
+    // Hamburger menu button for sidebar toggle - show expand icon when not fully expanded
+    let menu_icon = if sidebar_state != SidebarState::Expanded {
+        icons::ui::PANEL_LEFT_OPEN
+    } else {
+        icons::ui::MENU
+    };
+
+    let hamburger_btn = button(
+        container(icon_with_color(menu_icon, 20, theme.text_secondary))
+            .padding(Padding::new(10.0)),
+    )
+    .style(move |_theme, status| {
+        let background = match status {
+            iced::widget::button::Status::Hovered => Some(theme.hover.into()),
+            _ => None,
+        };
+        iced::widget::button::Style {
+            background,
+            text_color: theme.text_secondary,
+            border: iced::Border {
+                radius: 4.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    })
+    .padding(0)
+    .on_press(Message::Ui(UiMessage::SidebarToggleCollapse));
+
     let mut tab_elements: Vec<Element<'a, Message>> = Vec::new();
 
     for (idx, tab) in tabs.iter().enumerate() {
@@ -71,28 +104,43 @@ pub fn tab_bar_view<'a>(
     tab_elements.push(new_tab_button(theme));
 
     let tabs_row = Row::with_children(tab_elements)
-        .spacing(2)
+        .spacing(4)
         .align_y(Alignment::Center);
 
     container(
         row![
-            // Left side: tabs
-            tabs_row,
+            // Left side: hamburger menu
+            hamburger_btn,
+            // Center: tabs
+            container(tabs_row).padding(Padding::new(0.0).left(8.0)),
             // Right side: spacer
             container(text("")).width(Length::Fill),
         ]
+        .spacing(4)
         .align_y(Alignment::Center)
-        .padding(Padding::new(5.0).left(8.0).right(8.0)),
+        .padding(Padding::new(8.0).left(10.0).right(10.0)),
     )
     .width(Length::Fill)
-    .style(move |_theme| container::Style {
-        background: Some(theme.surface.into()),
-        border: iced::Border {
-            color: theme.border,
-            width: 1.0,
-            radius: 0.0.into(),
-        },
-        ..Default::default()
+    .style(move |_theme| {
+        let bg_color = if use_terminal_bg {
+            theme.terminal.background
+        } else {
+            theme.tab_bar
+        };
+        let border_color = if use_terminal_bg {
+            theme.terminal.background
+        } else {
+            theme.border
+        };
+        container::Style {
+            background: Some(bg_color.into()),
+            border: iced::Border {
+                color: border_color,
+                width: 1.0,
+                radius: 0.0.into(),
+            },
+            ..Default::default()
+        }
     })
     .into()
 }
@@ -112,7 +160,7 @@ fn tab_button(tab: &Tab, is_active: bool, is_focused: bool, theme: Theme) -> Ele
     } else {
         theme.text_secondary
     };
-    let icon = icon_with_color(icon_data, 12, icon_color);
+    let icon = icon_with_color(icon_data, 14, icon_color);
 
     // Truncate title if too long
     let title = if tab.title.len() > 20 {
@@ -123,13 +171,13 @@ fn tab_button(tab: &Tab, is_active: bool, is_focused: bool, theme: Theme) -> Ele
 
     let content = row![
         icon,
-        text(title).size(13).color(if is_active || is_focused {
+        text(title).size(14).color(if is_active || is_focused {
             theme.text_primary
         } else {
             theme.text_secondary
         }),
         // Close button
-        button(text("×").size(15).color(theme.text_muted))
+        button(text("×").size(16).color(theme.text_muted))
             .style(move |_theme, status| {
                 let text_color = match status {
                     iced::widget::button::Status::Hovered => theme.text_primary,
@@ -155,7 +203,7 @@ fn tab_button(tab: &Tab, is_active: bool, is_focused: bool, theme: Theme) -> Ele
         theme.surface
     };
 
-    button(container(content).padding(Padding::new(7.0).left(11.0).right(6.0)))
+    button(container(content).padding(Padding::new(9.0).left(14.0).right(8.0)))
         .style(move |_theme, status| {
             let background = match status {
                 iced::widget::button::Status::Hovered if !is_active => theme.hover,
@@ -176,12 +224,7 @@ fn tab_button(tab: &Tab, is_active: bool, is_focused: bool, theme: Theme) -> Ele
                 border: iced::Border {
                     color: border_color,
                     width: border_width,
-                    radius: iced::border::Radius {
-                        top_left: 4.0,
-                        top_right: 4.0,
-                        bottom_left: 0.0,
-                        bottom_right: 0.0,
-                    },
+                    radius: 12.0.into(),
                 },
                 ..Default::default()
             }
@@ -194,8 +237,8 @@ fn tab_button(tab: &Tab, is_active: bool, is_focused: bool, theme: Theme) -> Ele
 /// New tab "+" button
 fn new_tab_button(theme: Theme) -> Element<'static, Message> {
     button(
-        container(text("+").size(17).color(theme.text_secondary))
-            .padding(Padding::new(5.0).left(10.0).right(10.0)),
+        container(text("+").size(18).color(theme.text_secondary))
+            .padding(Padding::new(7.0).left(12.0).right(12.0)),
     )
     .style(move |_theme, status| {
         let background = match status {

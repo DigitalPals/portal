@@ -256,6 +256,8 @@ pub enum UiMessage {
     SidebarToggleCollapse,
     /// Theme changed
     ThemeChange(ThemeId),
+    /// Terminal font changed
+    FontChange(crate::fonts::TerminalFont),
     /// Terminal font size changed
     FontSizeChange(f32),
     /// Window resized

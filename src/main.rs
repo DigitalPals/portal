@@ -33,5 +33,6 @@ fn main() -> iced::Result {
         .subscription(Portal::subscription)
         .window_size(Size::new(1200.0, 800.0))
         .font(fonts::JETBRAINS_MONO_NERD_BYTES)
+        .font(fonts::HACK_NERD_BYTES)
         .run()
 }
