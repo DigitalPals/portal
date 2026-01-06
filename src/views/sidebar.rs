@@ -79,19 +79,28 @@ pub fn sidebar_view(
     ]
     .height(Fill);
 
-    container(sidebar_content)
-        .width(Length::Fixed(sidebar_width))
+    // Right border (1px vertical line)
+    let right_border = container(column![])
+        .width(Length::Fixed(1.0))
         .height(Fill)
         .style(move |_theme| container::Style {
-            background: Some(theme.sidebar.into()),
-            border: iced::Border {
-                color: theme.border,
-                width: 0.0,
-                radius: 0.0.into(),
-            },
+            background: Some(theme.border.into()),
             ..Default::default()
-        })
-        .into()
+        });
+
+    row![
+        container(sidebar_content)
+            .width(Length::Fixed(sidebar_width - 1.0))
+            .height(Fill)
+            .style(move |_theme| container::Style {
+                background: Some(theme.surface.into()),
+                ..Default::default()
+            }),
+        right_border,
+    ]
+    .width(Length::Fixed(sidebar_width))
+    .height(Fill)
+    .into()
 }
 
 /// Single menu item button

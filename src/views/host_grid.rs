@@ -387,10 +387,10 @@ fn group_card(group: GroupCard, theme: Theme, is_focused: bool) -> Element<'stat
 
     // Folder icon with vibrant accent background
     let icon_widget = container(
-        icon_with_color(icons::ui::FOLDER_CLOSED, 22, iced::Color::WHITE)
+        icon_with_color(icons::ui::FOLDER_CLOSED, 18, iced::Color::WHITE)
     )
-    .width(48)
-    .height(48)
+    .width(40)
+    .height(40)
     .align_x(Alignment::Center)
     .align_y(Alignment::Center)
     .style(move |_theme| container::Style {
@@ -421,16 +421,17 @@ fn group_card(group: GroupCard, theme: Theme, is_focused: bool) -> Element<'stat
 
     button(
         container(card_content)
-            .padding(16)
+            .padding(10)
             .width(Length::Fill)
             .height(Length::Fixed(CARD_HEIGHT))
             .align_y(Alignment::Center),
     )
     .style(move |_theme, status| {
+        let card_bg = iced::Color::from_rgb8(0x28, 0x2B, 0x3D);
         let bg = match (status, is_focused) {
             (_, true) => theme.hover,
             (button::Status::Hovered, _) => theme.hover,
-            _ => theme.surface,
+            _ => card_bg,
         };
         let border = if is_focused {
             iced::Border {
@@ -519,10 +520,10 @@ fn host_card(host: HostCard, theme: Theme, is_focused: bool, is_hovered: bool) -
 
     // OS icon with vibrant solid background and white icon
     let icon_widget = container(
-        icon_with_color(os_icon_bytes, 24, iced::Color::WHITE)
+        icon_with_color(os_icon_bytes, 20, iced::Color::WHITE)
     )
-    .width(48)
-    .height(48)
+    .width(40)
+    .height(40)
     .align_x(Alignment::Center)
     .align_y(Alignment::Center)
     .style(move |_theme| container::Style {
@@ -584,17 +585,18 @@ fn host_card(host: HostCard, theme: Theme, is_focused: bool, is_hovered: bool) -
 
     let card_button = button(
         container(card_content)
-            .padding(16)
+            .padding(10)
             .width(Length::Fill)
             .height(Length::Fixed(CARD_HEIGHT))
             .align_y(Alignment::Center),
     )
     .style(move |_theme, status| {
+        let card_bg = iced::Color::from_rgb8(0x28, 0x2B, 0x3D);
         let (bg, shadow_alpha) = match (status, is_focused, is_hovered) {
             (_, true, _) => (theme.hover, 0.25),
             (_, _, true) => (theme.hover, 0.25),
             (button::Status::Hovered, _, _) => (theme.hover, 0.25),
-            _ => (theme.surface, 0.15),
+            _ => (card_bg, 0.15),
         };
         let border = if is_focused {
             iced::Border {
