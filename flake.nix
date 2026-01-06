@@ -25,6 +25,13 @@
             pkgs.libxkbcommon
             pkgs.vulkan-loader
           ];
+          postInstall = ''
+            install -Dm644 assets/app-icons/portal.desktop $out/share/applications/portal.desktop
+            install -Dm644 assets/app-icons/portal.svg $out/share/icons/hicolor/scalable/apps/portal.svg
+            install -Dm644 assets/app-icons/png/portal-128.png $out/share/icons/hicolor/128x128/apps/portal.png
+            install -Dm644 assets/app-icons/png/portal-256.png $out/share/icons/hicolor/256x256/apps/portal.png
+            install -Dm644 assets/app-icons/png/portal-512.png $out/share/icons/hicolor/512x512/apps/portal.png
+          '';
         };
 
         devShells.default = pkgs.mkShell {

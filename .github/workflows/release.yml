@@ -60,6 +60,58 @@ jobs:
         if: "!matrix.cross"
         run: cargo build --release --target ${{ matrix.target }}
 
+      - name: Install macOS packaging tools
+        if: runner.os == 'macOS'
+        run: cargo install cargo-bundle
+
+      - name: Bundle macOS app
+        if: runner.os == 'macOS'
+        run: cargo bundle --release --target ${{ matrix.target }}
+
+      - name: Package macOS app
+        if: runner.os == 'macOS'
+        run: |
+          cd target/${{ matrix.target }}/release/bundle/osx
+          ditto -c -k --sequesterRsrc --keepParent Portal.app ../../../portal-${{ github.ref_name }}-${{ matrix.name }}.app.zip
+          cd ../../../../..
+
+      - name: Install Linux packaging tools
+        if: runner.os == 'Linux' && matrix.target == 'x86_64-unknown-linux-gnu'
+        run: |
+          cargo install cargo-deb cargo-generate-rpm
+          curl -L -o linuxdeploy-x86_64.AppImage https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          curl -L -o linuxdeploy-plugin-appimage-x86_64.AppImage https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/continuous/linuxdeploy-plugin-appimage-x86_64.AppImage
+          chmod +x linuxdeploy-x86_64.AppImage linuxdeploy-plugin-appimage-x86_64.AppImage
+
+      - name: Package DEB
+        if: runner.os == 'Linux' && matrix.target == 'x86_64-unknown-linux-gnu'
+        run: |
+          cargo deb --target ${{ matrix.target }} --no-build
+          deb_path=$(ls target/debian/*.deb | head -n 1)
+          mv "$deb_path" portal-${{ github.ref_name }}-${{ matrix.name }}.deb
+
+      - name: Package RPM
+        if: runner.os == 'Linux' && matrix.target == 'x86_64-unknown-linux-gnu'
+        run: |
+          cargo generate-rpm --target ${{ matrix.target }}
+          rpm_path=$(ls target/generate-rpm/*.rpm | head -n 1)
+          mv "$rpm_path" portal-${{ github.ref_name }}-${{ matrix.name }}.rpm
+
+      - name: Package AppImage
+        if: runner.os == 'Linux' && matrix.target == 'x86_64-unknown-linux-gnu'
+        run: |
+          mkdir -p AppDir/usr/bin
+          cp target/${{ matrix.target }}/release/portal AppDir/usr/bin/portal
+          APPIMAGE_EXTRACT_AND_RUN=1 \
+            LINUXDEPLOY_PLUGIN_APPIMAGE=linuxdeploy-plugin-appimage-x86_64.AppImage \
+            ./linuxdeploy-x86_64.AppImage \
+            --appdir AppDir \
+            --desktop-file assets/app-icons/portal.desktop \
+            --icon-file assets/app-icons/png/portal-256.png \
+            --output appimage
+          appimage_path=$(ls Portal-*.AppImage | head -n 1)
+          mv "$appimage_path" portal-${{ github.ref_name }}-${{ matrix.name }}.AppImage
+
       - name: Package
         shell: bash
         run: |
@@ -71,7 +123,13 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: portal-${{ matrix.name }}
-          path: portal-${{ github.ref_name }}-${{ matrix.name }}.tar.gz
+          if-no-files-found: ignore
+          path: |
+            portal-${{ github.ref_name }}-${{ matrix.name }}.tar.gz
+            portal-${{ github.ref_name }}-${{ matrix.name }}.app.zip
+            portal-${{ github.ref_name }}-${{ matrix.name }}.deb
+            portal-${{ github.ref_name }}-${{ matrix.name }}.rpm
+            portal-${{ github.ref_name }}-${{ matrix.name }}.AppImage
 
   release:
     name: Create Release
@@ -94,4 +152,4 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
-          files: artifacts/*.tar.gz
+          files: artifacts/*

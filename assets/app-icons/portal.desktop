@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Portal
+Comment=Modern SSH client
+Exec=portal
+Icon=portal
+Terminal=false
+Categories=Network;FileTransfer;
+Keywords=ssh;sftp;terminal;

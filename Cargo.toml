@@ -56,5 +56,32 @@ image = "0.25"            # Image format support
 lto = true
 codegen-units = 1
 
+[package.metadata.bundle]
+name = "Portal"
+identifier = "com.digitalpals.portal"
+icon = ["assets/app-icons/portal.icns"]
+category = "public.app-category.utilities"
+short_description = "A modern SSH client with GUI"
+
+[package.metadata.deb]
+assets = [
+  ["assets/app-icons/portal.desktop", "usr/share/applications/portal.desktop", "644"],
+  ["assets/app-icons/portal.svg", "usr/share/icons/hicolor/scalable/apps/portal.svg", "644"],
+  ["assets/app-icons/png/portal-128.png", "usr/share/icons/hicolor/128x128/apps/portal.png", "644"],
+  ["assets/app-icons/png/portal-256.png", "usr/share/icons/hicolor/256x256/apps/portal.png", "644"],
+  ["assets/app-icons/png/portal-512.png", "usr/share/icons/hicolor/512x512/apps/portal.png", "644"],
+]
+depends = ["libwayland-client0", "libxkbcommon0", "libvulkan1"]
+
+[package.metadata.generate-rpm]
+assets = [
+  { source = "assets/app-icons/portal.desktop", dest = "/usr/share/applications/portal.desktop", mode = "644" },
+  { source = "assets/app-icons/portal.svg", dest = "/usr/share/icons/hicolor/scalable/apps/portal.svg", mode = "644" },
+  { source = "assets/app-icons/png/portal-128.png", dest = "/usr/share/icons/hicolor/128x128/apps/portal.png", mode = "644" },
+  { source = "assets/app-icons/png/portal-256.png", dest = "/usr/share/icons/hicolor/256x256/apps/portal.png", mode = "644" },
+  { source = "assets/app-icons/png/portal-512.png", dest = "/usr/share/icons/hicolor/512x512/apps/portal.png", mode = "644" },
+]
+requires = ["wayland", "libxkbcommon", "vulkan-loader"]
+
 [dev-dependencies]
 tempfile = "3.24.0"
