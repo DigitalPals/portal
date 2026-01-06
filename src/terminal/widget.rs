@@ -97,6 +97,11 @@ impl<'a, Message> TerminalWidget<'a, Message> {
             }
             let line = screen_line as usize;
 
+            // Skip wide character spacer cells (placeholder for 2nd column of wide chars)
+            if cell.flags.contains(CellFlags::WIDE_CHAR_SPACER) {
+                continue;
+            }
+
             // Include cells with content or non-default background
             if cell.c != ' '
                 || cell.bg
@@ -448,10 +453,17 @@ where
                     fg_color = ansi_to_iced_themed(cell.bg, colors);
                 }
 
+                // Wide characters (e.g. CJK, emoji) occupy 2 cells
+                let char_width = if cell.flags.contains(CellFlags::WIDE_CHAR) {
+                    cell_width * 2.0
+                } else {
+                    cell_width
+                };
+
                 // Draw the character using text renderer
                 let text = iced::advanced::Text {
                     content: cell.character.to_string(),
-                    bounds: Size::new(cell_width, cell_height),
+                    bounds: Size::new(char_width, cell_height),
                     size: iced::Pixels(self.font_size),
                     line_height: iced::advanced::text::LineHeight::Absolute(iced::Pixels(
                         cell_height,
@@ -459,7 +471,7 @@ where
                     font: JETBRAINS_MONO_NERD,
                     align_x: iced::alignment::Horizontal::Left.into(),
                     align_y: iced::alignment::Vertical::Top.into(),
-                    shaping: iced::advanced::text::Shaping::Basic,
+                    shaping: iced::advanced::text::Shaping::Advanced,
                     wrapping: iced::advanced::text::Wrapping::None,
                 };
 
