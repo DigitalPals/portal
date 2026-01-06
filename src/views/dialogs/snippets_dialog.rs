@@ -5,7 +5,7 @@ use iced::{Alignment, Element, Length};
 use uuid::Uuid;
 
 use crate::config::Snippet;
-use crate::message::{Message, SnippetField};
+use crate::message::{DialogMessage, Message, SnippetField, SnippetMessage};
 use crate::theme::{Theme, BORDER_RADIUS};
 
 use super::common::{dialog_backdrop, primary_button_style, secondary_button_style};
@@ -122,7 +122,7 @@ fn snippet_list_view(state: &SnippetsDialogState, theme: Theme) -> Element<'stat
             })
             .padding(0)
             .width(Length::Fill)
-            .on_press(Message::SnippetSelect(snippet_id))
+            .on_press(Message::Snippet(SnippetMessage::Select(snippet_id)))
             .into()
         })
         .collect();
@@ -151,12 +151,12 @@ fn snippet_list_view(state: &SnippetsDialogState, theme: Theme) -> Element<'stat
     let new_btn = button(text("New").size(12).color(theme.text_primary))
         .style(secondary_button_style(theme))
         .padding([6, 14])
-        .on_press(Message::SnippetNew);
+        .on_press(Message::Snippet(SnippetMessage::New));
 
     let edit_btn = button(text("Edit").size(12).color(theme.text_primary))
         .style(secondary_button_style(theme))
         .padding([6, 14])
-        .on_press_maybe(state.selected_id.map(Message::SnippetEdit));
+        .on_press_maybe(state.selected_id.map(|id| Message::Snippet(SnippetMessage::Edit(id))));
 
     let delete_btn = button(text("Delete").size(12).color(theme.text_primary))
         .style(move |_theme, status| {
@@ -177,17 +177,17 @@ fn snippet_list_view(state: &SnippetsDialogState, theme: Theme) -> Element<'stat
             }
         })
         .padding([6, 14])
-        .on_press_maybe(state.selected_id.map(Message::SnippetDelete));
+        .on_press_maybe(state.selected_id.map(|id| Message::Snippet(SnippetMessage::Delete(id))));
 
     let insert_btn = button(text("Insert").size(12).color(theme.text_primary))
         .style(primary_button_style(theme))
         .padding([6, 14])
-        .on_press_maybe(state.selected_id.map(Message::SnippetInsert));
+        .on_press_maybe(state.selected_id.map(|id| Message::Snippet(SnippetMessage::Insert(id))));
 
     let close_btn = button(text("Close").size(12).color(theme.text_primary))
         .style(secondary_button_style(theme))
         .padding([6, 14])
-        .on_press(Message::DialogClose);
+        .on_press(Message::Dialog(DialogMessage::Close));
 
     let action_row = row![new_btn, edit_btn, delete_btn, Space::with_width(Length::Fill), insert_btn, close_btn,]
         .spacing(8)
@@ -208,7 +208,7 @@ fn snippet_edit_form(state: &SnippetsDialogState, theme: Theme) -> Element<'stat
     let name_input = column![
         text("Name").size(12).color(theme.text_secondary),
         text_input("e.g., List Files", &state.edit_name)
-            .on_input(|s| Message::SnippetFieldChanged(SnippetField::Name, s))
+            .on_input(|s| Message::Snippet(SnippetMessage::FieldChanged(SnippetField::Name, s)))
             .padding(8)
             .width(Length::Fill),
     ]
@@ -217,7 +217,7 @@ fn snippet_edit_form(state: &SnippetsDialogState, theme: Theme) -> Element<'stat
     let command_input = column![
         text("Command").size(12).color(theme.text_secondary),
         text_input("e.g., ls -la", &state.edit_command)
-            .on_input(|s| Message::SnippetFieldChanged(SnippetField::Command, s))
+            .on_input(|s| Message::Snippet(SnippetMessage::FieldChanged(SnippetField::Command, s)))
             .padding(8)
             .width(Length::Fill),
     ]
@@ -226,7 +226,7 @@ fn snippet_edit_form(state: &SnippetsDialogState, theme: Theme) -> Element<'stat
     let description_input = column![
         text("Description (optional)").size(12).color(theme.text_secondary),
         text_input("Optional description", &state.edit_description)
-            .on_input(|s| Message::SnippetFieldChanged(SnippetField::Description, s))
+            .on_input(|s| Message::Snippet(SnippetMessage::FieldChanged(SnippetField::Description, s)))
             .padding(8)
             .width(Length::Fill),
     ]
@@ -237,13 +237,13 @@ fn snippet_edit_form(state: &SnippetsDialogState, theme: Theme) -> Element<'stat
     let cancel_btn = button(text("Cancel").size(12).color(theme.text_primary))
         .style(secondary_button_style(theme))
         .padding([6, 14])
-        .on_press(Message::SnippetEditCancel);
+        .on_press(Message::Snippet(SnippetMessage::EditCancel));
 
     let save_btn = button(text("Save").size(12).color(theme.text_primary))
         .style(primary_button_style(theme))
         .padding([6, 14])
         .on_press_maybe(if is_valid {
-            Some(Message::SnippetSave)
+            Some(Message::Snippet(SnippetMessage::Save))
         } else {
             None
         });

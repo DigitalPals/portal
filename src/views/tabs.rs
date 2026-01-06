@@ -4,7 +4,7 @@ use iced::widget::{button, container, row, text, Row};
 use iced::{Alignment, Element, Length, Padding};
 use uuid::Uuid;
 
-use crate::message::Message;
+use crate::message::{Message, TabMessage};
 use crate::theme::Theme;
 
 /// Represents a single tab
@@ -121,7 +121,7 @@ fn tab_button(tab: &Tab, is_active: bool, theme: Theme) -> Element<'_, Message> 
                 }
             })
             .padding(0)
-            .on_press(Message::TabClose(tab_id)),
+            .on_press(Message::Tab(TabMessage::Close(tab_id))),
     ]
     .spacing(6)
     .align_y(Alignment::Center);
@@ -155,7 +155,7 @@ fn tab_button(tab: &Tab, is_active: bool, theme: Theme) -> Element<'_, Message> 
             }
         })
         .padding(0)
-        .on_press(Message::TabSelect(tab_id))
+        .on_press(Message::Tab(TabMessage::Select(tab_id)))
         .into()
 }
 
@@ -181,6 +181,6 @@ fn new_tab_button(theme: Theme) -> Element<'static, Message> {
         }
     })
     .padding(0)
-    .on_press(Message::TabNew)
+    .on_press(Message::Tab(TabMessage::New))
     .into()
 }

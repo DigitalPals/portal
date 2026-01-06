@@ -3,7 +3,7 @@ use iced::{Alignment, Element, Fill, Length};
 
 use crate::config::{HistoryConfig, SessionType};
 use crate::icons::{self, icon_with_color};
-use crate::message::Message;
+use crate::message::{HistoryMessage, Message};
 use crate::theme::{Theme, BORDER_RADIUS, CARD_BORDER_RADIUS};
 
 /// Build the history view showing recent connections
@@ -36,7 +36,7 @@ pub fn history_view(history: &HistoryConfig, theme: Theme) -> Element<'static, M
             }
         })
         .padding([6, 12])
-        .on_press(Message::HistoryClear),
+        .on_press(Message::History(HistoryMessage::Clear)),
     ]
     .align_y(Alignment::Center)
     .padding(iced::Padding::new(24.0).bottom(16.0));
@@ -165,7 +165,7 @@ fn history_entry_row(entry: &crate::config::HistoryEntry, theme: Theme) -> Eleme
         }
     })
     .padding([6, 12])
-    .on_press(Message::HistoryReconnect(entry_id));
+    .on_press(Message::History(HistoryMessage::Reconnect(entry_id)));
 
     let card_content = row![
         icon_widget,

@@ -4,7 +4,7 @@ use iced::widget::{button, column, container, row, text, Space};
 use iced::{Alignment, Element, Length};
 use tokio::sync::oneshot;
 
-use crate::message::Message;
+use crate::message::{DialogMessage, Message};
 use crate::ssh::host_key_verification::{
     HostKeyInfo, HostKeyVerificationRequest, HostKeyVerificationResponse,
 };
@@ -137,12 +137,12 @@ fn new_host_dialog_view(state: &HostKeyDialogState, theme: Theme) -> Element<'st
     let reject_button = button(text("Reject").size(14).color(theme.text_primary))
         .padding([8, 16])
         .style(secondary_button_style(theme))
-        .on_press(Message::HostKeyVerificationReject);
+        .on_press(Message::Dialog(DialogMessage::HostKeyReject));
 
     let accept_button = button(text("Accept").size(14).color(theme.text_primary))
         .padding([8, 16])
         .style(primary_button_style(theme))
-        .on_press(Message::HostKeyVerificationAccept);
+        .on_press(Message::Dialog(DialogMessage::HostKeyAccept));
 
     let button_row = row![
         Space::with_width(Length::Fill),
@@ -245,12 +245,12 @@ fn changed_host_dialog_view(state: &HostKeyDialogState, theme: Theme) -> Element
                 ..Default::default()
             }
         })
-        .on_press(Message::HostKeyVerificationAccept);
+        .on_press(Message::Dialog(DialogMessage::HostKeyAccept));
 
     let reject_button = button(text("Reject").size(14).color(theme.text_primary))
         .padding([8, 16])
         .style(primary_button_style(theme))
-        .on_press(Message::HostKeyVerificationReject);
+        .on_press(Message::Dialog(DialogMessage::HostKeyReject));
 
     let button_row = row![
         Space::with_width(Length::Fill),

@@ -81,6 +81,3 @@ pub const GRID_SPACING: f32 = 16.0;
 
 /// Grid horizontal padding (left + right)
 pub const GRID_PADDING: f32 = 48.0;
-
-/// Threshold for auto-collapsing sidebar
-pub const SIDEBAR_AUTO_COLLAPSE_THRESHOLD: f32 = 900.0;

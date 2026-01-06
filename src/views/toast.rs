@@ -7,7 +7,7 @@ use iced::{Alignment, Color, Element, Length, Padding};
 use uuid::Uuid;
 
 use crate::icons::{icon_with_color, ui};
-use crate::message::Message;
+use crate::message::{Message, UiMessage};
 use crate::theme::{Theme, BORDER_RADIUS};
 
 /// Type of toast notification (determines color and icon)
@@ -179,7 +179,7 @@ fn toast_item_view(toast: &Toast, theme: Theme) -> Element<'static, Message> {
                 ..Default::default()
             }
         })
-        .on_press(Message::ToastDismiss(toast_id));
+        .on_press(Message::Ui(UiMessage::ToastDismiss(toast_id)));
 
     let content = row![
         container(type_icon).padding(Padding::from([0, 8])),

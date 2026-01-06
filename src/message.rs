@@ -43,51 +43,60 @@ pub enum SnippetField {
     Description,
 }
 
-/// Application messages for the Elm-style update loop
+// ============================================================================
+// Nested Message Enums
+// ============================================================================
+
+/// SSH session-related messages
 #[derive(Debug, Clone)]
-pub enum Message {
-    // Host management
-    HostConnect(Uuid),
-    HostAdd,
-    QuickConnect,   // Parse search query as user@host:port and connect
-    LocalTerminal,  // Open local terminal (stubbed for now)
-
-    // Dialog
-    DialogClose,
-    DialogSubmit,
-    DialogFieldChanged(HostDialogField, String),
-
-    // Terminal / Session
-    TerminalInput(SessionId, Vec<u8>),
-    TerminalResize(SessionId, u16, u16),
-
-    // SSH connection
-    SshConnected {
+pub enum SessionMessage {
+    /// SSH connection established
+    Connected {
         session_id: SessionId,
         host_name: String,
         ssh_session: Arc<SshSession>,
-        host_id: uuid::Uuid,
+        host_id: Uuid,
         detected_os: Option<DetectedOs>,
     },
-    SshData(SessionId, Vec<u8>),
-    SshDisconnected(SessionId),
-    SshError(String),
+    /// Data received from SSH
+    Data(SessionId, Vec<u8>),
+    /// SSH session disconnected
+    Disconnected(SessionId),
+    /// SSH error occurred
+    Error(String),
+    /// Terminal input from user
+    Input(SessionId, Vec<u8>),
+    /// Terminal resize event
+    Resize(SessionId, u16, u16),
+    /// Timer tick for session duration updates
+    DurationTick,
+    /// User pressed Ctrl+Shift+K to install SSH key
+    InstallKey(SessionId),
+    /// Result of SSH key installation (bool = was_newly_installed)
+    InstallKeyResult(SessionId, Result<bool, String>),
+}
 
-    // Tab management
-    TabSelect(Uuid),
-    TabClose(Uuid),
-    TabNew,
-
-    // Dual-pane SFTP browser
-    DualSftpOpen,                                                    // Open dual-pane SFTP tab
-    DualSftpPaneSourceChanged(SessionId, PaneId, PaneSource),        // Dropdown changed
-    DualSftpPaneNavigate(SessionId, PaneId, PathBuf),               // Navigate to path
-    DualSftpPaneNavigateUp(SessionId, PaneId),                      // Go to parent directory
-    DualSftpPaneRefresh(SessionId, PaneId),                         // Refresh current directory
-    DualSftpPaneSelect(SessionId, PaneId, usize),                   // Select file by index
-    DualSftpPaneListResult(SessionId, PaneId, Result<Vec<FileEntry>, String>), // Directory listing result
-    DualSftpConnectHost(SessionId, PaneId, Uuid),                   // Connect pane to remote host
-    DualSftpConnected {                                              // Connection succeeded for pane
+/// SFTP browser messages
+#[derive(Debug, Clone)]
+pub enum SftpMessage {
+    /// Open dual-pane SFTP browser tab
+    Open,
+    /// Pane source dropdown changed
+    PaneSourceChanged(SessionId, PaneId, PaneSource),
+    /// Navigate to path in pane
+    PaneNavigate(SessionId, PaneId, PathBuf),
+    /// Navigate to parent directory
+    PaneNavigateUp(SessionId, PaneId),
+    /// Refresh current directory
+    PaneRefresh(SessionId, PaneId),
+    /// Select file by index
+    PaneSelect(SessionId, PaneId, usize),
+    /// Directory listing result
+    PaneListResult(SessionId, PaneId, Result<Vec<FileEntry>, String>),
+    /// Connect pane to remote host
+    ConnectHost(SessionId, PaneId, Uuid),
+    /// SFTP connection succeeded for pane
+    Connected {
         tab_id: SessionId,
         pane_id: PaneId,
         sftp_session_id: SessionId,
@@ -95,77 +104,214 @@ pub enum Message {
         host_name: String,
         sftp_session: SharedSftpSession,
     },
+    /// Show context menu at position
+    ShowContextMenu(SessionId, PaneId, f32, f32, Option<usize>),
+    /// Hide context menu
+    HideContextMenu(SessionId),
+    /// Execute context menu action
+    ContextMenuAction(SessionId, ContextMenuAction),
+    /// Dialog input text changed
+    DialogInputChanged(SessionId, String),
+    /// Cancel/close SFTP dialog
+    DialogCancel(SessionId),
+    /// Submit SFTP dialog action
+    DialogSubmit(SessionId),
+    /// Result of folder creation
+    NewFolderResult(SessionId, PaneId, Result<(), String>),
+    /// Result of rename operation
+    RenameResult(SessionId, PaneId, Result<(), String>),
+    /// Result of delete operation (count deleted)
+    DeleteResult(SessionId, PaneId, Result<usize, String>),
+    /// Toggle a permission checkbox
+    PermissionToggle(SessionId, PermissionBit, bool),
+    /// Result of chmod operation
+    PermissionsResult(SessionId, PaneId, Result<(), String>),
+    /// Start copying selected files to target pane
+    CopyToTarget(SessionId),
+    /// Result of copy operation (count copied, target pane)
+    CopyResult(SessionId, PaneId, Result<usize, String>),
+    /// Result of open with command
+    OpenWithResult(Result<(), String>),
+}
 
-    // Context menu
-    DualSftpShowContextMenu(SessionId, PaneId, f32, f32, Option<usize>), // Show context menu at position, optionally selecting item
-    DualSftpHideContextMenu(SessionId),                              // Hide context menu
-    DualSftpContextMenuAction(SessionId, ContextMenuAction),         // Execute context menu action
-
-    // SFTP dialogs (New Folder, Rename, Delete, Permissions)
-    DualSftpDialogInputChanged(SessionId, String),                   // Dialog input text changed
-    DualSftpDialogCancel(SessionId),                                 // Cancel/close dialog
-    DualSftpDialogSubmit(SessionId),                                 // Submit dialog action
-    DualSftpNewFolderResult(SessionId, PaneId, Result<(), String>),  // Result of folder creation
-    DualSftpRenameResult(SessionId, PaneId, Result<(), String>),     // Result of rename operation
-    DualSftpDeleteResult(SessionId, PaneId, Result<usize, String>),  // Result of delete (count deleted)
-    DualSftpPermissionToggle(SessionId, PermissionBit, bool),        // Toggle a permission checkbox
-    DualSftpPermissionsResult(SessionId, PaneId, Result<(), String>), // Result of chmod operation
-
-    // SFTP file transfer (Copy to Target)
-    DualSftpCopyToTarget(SessionId),                                 // Start copying selected files to target pane
-    DualSftpCopyResult(SessionId, PaneId, Result<usize, String>),    // Result of copy (count copied, target pane)
-
-    // Open With result
-    DualSftpOpenWithResult(Result<(), String>),                      // Result of open with command
-
-    // UI navigation
-    SearchChanged(String),
-    FolderToggle(Uuid),
-
-    // Sidebar navigation
-    SidebarItemSelect(SidebarMenuItem),
-    SidebarToggleCollapse,
-
-    // History
-    HistoryClear,
-    HistoryReconnect(Uuid),
-
-    // Keyboard shortcuts
-    KeyboardEvent(iced::keyboard::Key, iced::keyboard::Modifiers),
-
-    SettingsThemeToggle(bool),
-    SettingsFontSizeChange(f32),
-
-    // Snippets
-    SnippetSelect(Uuid),
-    SnippetNew,
-    SnippetEdit(Uuid),
-    SnippetDelete(Uuid),
-    SnippetInsert(Uuid),
-    SnippetFieldChanged(SnippetField, String),
-    SnippetEditCancel,
-    SnippetSave,
-
-    // Host key verification
+/// Dialog-related messages
+#[derive(Debug, Clone)]
+pub enum DialogMessage {
+    /// Close any open dialog
+    Close,
+    /// Submit host dialog
+    Submit,
+    /// Host dialog field changed
+    FieldChanged(HostDialogField, String),
+    /// Host key verification request received
     HostKeyVerification(VerificationRequestWrapper),
-    HostKeyVerificationAccept,
-    HostKeyVerificationReject,
+    /// User accepted host key
+    HostKeyAccept,
+    /// User rejected host key
+    HostKeyReject,
+}
 
-    // Window resize
+/// Tab management messages
+#[derive(Debug, Clone)]
+pub enum TabMessage {
+    /// Select a tab
+    Select(Uuid),
+    /// Close a tab
+    Close(Uuid),
+    /// Open new tab (go to host grid)
+    New,
+}
+
+/// Host management messages
+#[derive(Debug, Clone)]
+pub enum HostMessage {
+    /// Connect to a host by ID
+    Connect(Uuid),
+    /// Open add host dialog
+    Add,
+    /// Quick connect using search query
+    QuickConnect,
+    /// Open local terminal (stubbed)
+    LocalTerminal,
+}
+
+/// History management messages
+#[derive(Debug, Clone)]
+pub enum HistoryMessage {
+    /// Clear all history
+    Clear,
+    /// Reconnect to a history entry
+    Reconnect(Uuid),
+}
+
+/// Snippet management messages
+#[derive(Debug, Clone)]
+pub enum SnippetMessage {
+    /// Select a snippet
+    Select(Uuid),
+    /// Create new snippet
+    New,
+    /// Edit existing snippet
+    Edit(Uuid),
+    /// Delete a snippet
+    Delete(Uuid),
+    /// Insert snippet into terminal
+    Insert(Uuid),
+    /// Snippet field changed
+    FieldChanged(SnippetField, String),
+    /// Cancel snippet edit
+    EditCancel,
+    /// Save snippet changes
+    Save,
+}
+
+/// UI state messages
+#[derive(Debug, Clone)]
+pub enum UiMessage {
+    /// Search query changed
+    SearchChanged(String),
+    /// Toggle folder collapsed state
+    FolderToggle(Uuid),
+    /// Sidebar item selected
+    SidebarItemSelect(SidebarMenuItem),
+    /// Toggle sidebar collapsed state
+    SidebarToggleCollapse,
+    /// Toggle dark/light theme
+    ThemeToggle(bool),
+    /// Terminal font size changed
+    FontSizeChange(f32),
+    /// Window resized
     WindowResized(iced::Size),
+    /// Dismiss toast notification
+    ToastDismiss(Uuid),
+    /// Toast timer tick
+    ToastTick,
+    /// Keyboard event
+    KeyboardEvent(iced::keyboard::Key, iced::keyboard::Modifiers),
+}
 
-    // Toast notifications
-    ToastDismiss(Uuid),  // User clicked X to dismiss
-    ToastTick,           // Timer tick for auto-dismiss cleanup
+// ============================================================================
+// Main Message Enum
+// ============================================================================
 
-    // Session duration and SSH key installation
-    SessionDurationTick,                                   // Timer tick for duration updates
-    InstallSshKey(SessionId),                              // User pressed Ctrl+Shift+K
-    InstallSshKeyResult(SessionId, Result<bool, String>),  // bool = was_newly_installed
-
-    // Placeholder for future messages
+/// Application messages for the Elm-style update loop
+#[derive(Debug, Clone)]
+pub enum Message {
+    /// SSH session messages
+    Session(SessionMessage),
+    /// SFTP browser messages
+    Sftp(SftpMessage),
+    /// Dialog messages
+    Dialog(DialogMessage),
+    /// Tab management messages
+    Tab(TabMessage),
+    /// Host management messages
+    Host(HostMessage),
+    /// History messages
+    History(HistoryMessage),
+    /// Snippet messages
+    Snippet(SnippetMessage),
+    /// UI state messages
+    Ui(UiMessage),
+    /// No-op placeholder
     Noop,
 }
+
+// ============================================================================
+// Convenience From implementations
+// ============================================================================
+
+impl From<SessionMessage> for Message {
+    fn from(msg: SessionMessage) -> Self {
+        Message::Session(msg)
+    }
+}
+
+impl From<SftpMessage> for Message {
+    fn from(msg: SftpMessage) -> Self {
+        Message::Sftp(msg)
+    }
+}
+
+impl From<DialogMessage> for Message {
+    fn from(msg: DialogMessage) -> Self {
+        Message::Dialog(msg)
+    }
+}
+
+impl From<TabMessage> for Message {
+    fn from(msg: TabMessage) -> Self {
+        Message::Tab(msg)
+    }
+}
+
+impl From<HostMessage> for Message {
+    fn from(msg: HostMessage) -> Self {
+        Message::Host(msg)
+    }
+}
+
+impl From<HistoryMessage> for Message {
+    fn from(msg: HistoryMessage) -> Self {
+        Message::History(msg)
+    }
+}
+
+impl From<SnippetMessage> for Message {
+    fn from(msg: SnippetMessage) -> Self {
+        Message::Snippet(msg)
+    }
+}
+
+impl From<UiMessage> for Message {
+    fn from(msg: UiMessage) -> Self {
+        Message::Ui(msg)
+    }
+}
+
+// ============================================================================
+// Wrapper Types
+// ============================================================================
 
 /// Wrapper for host key verification request that implements Clone (by wrapping in Option)
 /// The oneshot::Sender inside is not Clone, so we use a wrapper to allow cloning.

@@ -9,7 +9,7 @@ pub fn search_input_id() -> text_input::Id {
 
 use crate::config::DetectedOs;
 use crate::icons::{self, icon_with_color};
-use crate::message::Message;
+use crate::message::{HostMessage, Message, UiMessage};
 use crate::theme::{
     Theme, BORDER_RADIUS, CARD_BORDER_RADIUS, CARD_HEIGHT, GRID_PADDING, GRID_SPACING,
     MIN_CARD_WIDTH, SIDEBAR_WIDTH, SIDEBAR_WIDTH_COLLAPSED,
@@ -70,8 +70,8 @@ fn build_action_bar(search_query: &str, theme: Theme) -> Element<'static, Messag
     let search_input: iced::widget::TextInput<'static, Message> =
         text_input("Find a host or ssh user@hostname...", search_query)
             .id(search_input_id())
-            .on_input(Message::SearchChanged)
-            .on_submit(Message::QuickConnect)
+            .on_input(|s| Message::Ui(UiMessage::SearchChanged(s)))
+            .on_submit(Message::Host(HostMessage::QuickConnect))
             .padding([12, 20])
             .width(Length::Fill)
             .style(move |_theme, status| {
@@ -112,7 +112,7 @@ fn build_action_bar(search_query: &str, theme: Theme) -> Element<'static, Messag
             }
         })
         .padding([12, 24])
-        .on_press(Message::QuickConnect);
+        .on_press(Message::Host(HostMessage::QuickConnect));
 
     // New Host button - pill-shaped with border
     let new_host_btn = button(
@@ -140,7 +140,7 @@ fn build_action_bar(search_query: &str, theme: Theme) -> Element<'static, Messag
         }
     })
     .padding([12, 20])
-    .on_press(Message::HostAdd);
+    .on_press(Message::Host(HostMessage::Add));
 
     // Terminal button - pill-shaped with border
     let terminal_btn = button(
@@ -168,7 +168,7 @@ fn build_action_bar(search_query: &str, theme: Theme) -> Element<'static, Messag
         }
     })
     .padding([12, 20])
-    .on_press(Message::LocalTerminal);
+    .on_press(Message::Host(HostMessage::LocalTerminal));
 
     // Build the bar row
     let bar_content = row![
@@ -434,7 +434,7 @@ fn group_card(group: GroupCard, theme: Theme) -> Element<'static, Message> {
     .padding(0)
     .width(Length::FillPortion(1))
     .height(Length::Fixed(CARD_HEIGHT))
-    .on_press(Message::FolderToggle(group_id))
+    .on_press(Message::Ui(UiMessage::FolderToggle(group_id)))
     .into()
 }
 
@@ -555,7 +555,7 @@ fn host_card(host: HostCard, theme: Theme) -> Element<'static, Message> {
     .padding(0)
     .width(Length::FillPortion(1))
     .height(Length::Fixed(CARD_HEIGHT))
-    .on_press(Message::HostConnect(host_id))
+    .on_press(Message::Host(HostMessage::Connect(host_id)))
     .into()
 }
 
@@ -592,7 +592,7 @@ fn empty_state(theme: Theme) -> Element<'static, Message> {
             }
         })
         .padding([10, 20])
-        .on_press(Message::HostAdd),
+        .on_press(Message::Host(HostMessage::Add)),
     ]
     .spacing(8)
     .align_x(Alignment::Center);

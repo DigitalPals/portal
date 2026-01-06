@@ -8,7 +8,7 @@ use iced::{Alignment, Element, Fill, Length, Padding};
 use uuid::Uuid;
 
 use crate::icons::{self, icon_with_color};
-use crate::message::{Message, SessionId};
+use crate::message::{Message, SessionId, SftpMessage};
 use crate::sftp::{format_size, FileEntry, FileIcon};
 use crate::theme::Theme;
 use crate::widgets::mouse_area;
@@ -84,11 +84,11 @@ pub fn pane_header(
         Some(current_source.clone()),
         move |selected| {
             if selected == "Local" {
-                Message::DualSftpPaneSourceChanged(tab_id, pane_id, PaneSource::Local)
+                Message::Sftp(SftpMessage::PaneSourceChanged(tab_id, pane_id, PaneSource::Local))
             } else {
                 // Find the host ID by name and trigger connection
                 if let Some((host_id, _)) = hosts_for_closure.iter().find(|(_, name)| name == &selected) {
-                    Message::DualSftpConnectHost(tab_id, pane_id, *host_id)
+                    Message::Sftp(SftpMessage::ConnectHost(tab_id, pane_id, *host_id))
                 } else {
                     Message::Noop
                 }
@@ -117,7 +117,7 @@ pub fn pane_header(
             }
         })
         .padding([4, 8])
-        .on_press(Message::DualSftpPaneNavigateUp(tab_id, pane_id));
+        .on_press(Message::Sftp(SftpMessage::PaneNavigateUp(tab_id, pane_id)));
 
     let refresh_btn = button(icon_with_color(icons::ui::REFRESH, 14, theme.text_primary))
         .style(move |_theme, status| {
@@ -136,7 +136,7 @@ pub fn pane_header(
             }
         })
         .padding([4, 8])
-        .on_press(Message::DualSftpPaneRefresh(tab_id, pane_id));
+        .on_press(Message::Sftp(SftpMessage::PaneRefresh(tab_id, pane_id)));
 
     // Path bar
     let path_bar = container(text(path_text).size(12).color(theme.text_primary))
@@ -367,15 +367,15 @@ pub fn pane_file_entry_row(
     .padding(0)
     .width(Fill)
     .on_press(if is_dir {
-        Message::DualSftpPaneNavigate(tab_id, pane_id, path)
+        Message::Sftp(SftpMessage::PaneNavigate(tab_id, pane_id, path))
     } else {
-        Message::DualSftpPaneSelect(tab_id, pane_id, index)
+        Message::Sftp(SftpMessage::PaneSelect(tab_id, pane_id, index))
     });
 
     // Wrap in mouse_area to handle right-click
     mouse_area(btn)
         .on_right_press(move |x, y| {
-            Message::DualSftpShowContextMenu(tab_id, pane_id, x, y, Some(index))
+            Message::Sftp(SftpMessage::ShowContextMenu(tab_id, pane_id, x, y, Some(index)))
         })
         .into()
 }

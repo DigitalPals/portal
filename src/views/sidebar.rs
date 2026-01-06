@@ -2,7 +2,7 @@ use iced::widget::{button, column, container, row, text, tooltip, Column, Space}
 use iced::{Alignment, Element, Fill, Length};
 
 use crate::icons::{self, icon_with_color};
-use crate::message::{Message, SidebarMenuItem};
+use crate::message::{Message, SidebarMenuItem, UiMessage};
 use crate::theme::{Theme, BORDER_RADIUS, SIDEBAR_WIDTH, SIDEBAR_WIDTH_COLLAPSED};
 
 /// Menu item definition
@@ -90,7 +90,7 @@ pub fn sidebar_view(
     })
     .padding([8, 12])
     .width(Length::Fill)
-    .on_press(Message::SidebarToggleCollapse);
+    .on_press(Message::Ui(UiMessage::SidebarToggleCollapse));
 
     let toggle_container = container(toggle_btn)
         .padding(iced::Padding::new(8.0).bottom(16.0))
@@ -180,7 +180,7 @@ fn menu_item_button(
         })
         .padding([10, 12])
         .width(Length::Fill)
-        .on_press(Message::SidebarItemSelect(menu_item.item));
+        .on_press(Message::Ui(UiMessage::SidebarItemSelect(menu_item.item)));
 
     if collapsed {
         // Add tooltip when collapsed

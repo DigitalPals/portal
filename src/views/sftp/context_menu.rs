@@ -6,7 +6,7 @@
 use iced::widget::{button, container, text, Column, Space};
 use iced::{Element, Fill, Length, Padding};
 
-use crate::message::{Message, SessionId};
+use crate::message::{Message, SessionId, SftpMessage};
 use crate::theme::Theme;
 use crate::widgets::mouse_area;
 
@@ -50,7 +50,7 @@ fn context_menu_item<'a>(
     });
 
     if enabled {
-        btn.on_press(Message::DualSftpContextMenuAction(tab_id, action)).into()
+        btn.on_press(Message::Sftp(SftpMessage::ContextMenuAction(tab_id, action))).into()
     } else {
         btn.into()
     }
@@ -155,7 +155,7 @@ pub fn context_menu_view(
             .width(Fill)
             .height(Fill)
     )
-    .on_press(Message::DualSftpHideContextMenu(tab_id));
+    .on_press(Message::Sftp(SftpMessage::HideContextMenu(tab_id)));
 
     // Position the menu using margins
     let positioned_menu = container(menu)

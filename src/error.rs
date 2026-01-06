@@ -88,3 +88,48 @@ pub enum SftpError {
     #[error("Local I/O error: {0}")]
     LocalIo(String),
 }
+
+/// Filesystem operation errors
+#[derive(Error, Debug)]
+#[allow(dead_code)]  // Reserved for future use in fs_utils.rs error handling
+pub enum FsError {
+    #[error("Failed to create directory '{path}': {source}")]
+    CreateDir {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+
+    #[error("Failed to read directory '{path}': {source}")]
+    ReadDir {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+
+    #[error("Failed to copy '{source_path}' to '{target}': {error}")]
+    Copy {
+        source_path: PathBuf,
+        target: PathBuf,
+        error: std::io::Error,
+    },
+
+    #[error("Failed to read file '{path}': {source}")]
+    ReadFile {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+
+    #[error("Failed to write file '{path}': {source}")]
+    WriteFile {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+
+    #[error("Failed to delete '{path}': {source}")]
+    Delete {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+
+    #[error("Path not found: {0}")]
+    NotFound(PathBuf),
+}

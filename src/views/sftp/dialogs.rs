@@ -9,7 +9,7 @@ use iced::widget::{button, column, container, row, text, text_input, Column, Spa
 use iced::{Alignment, Element, Fill, Length, Padding};
 
 use crate::icons::{self, icon_with_color};
-use crate::message::{Message, SessionId};
+use crate::message::{Message, SessionId, SftpMessage};
 use crate::theme::Theme;
 
 use super::state::{DualPaneSftpState, SftpDialogState};
@@ -93,8 +93,8 @@ fn build_input_dialog(
 
     let input_value = dialog.input_value.clone();
     let input = text_input(placeholder, &input_value)
-        .on_input(move |value| Message::DualSftpDialogInputChanged(tab_id, value))
-        .on_submit(Message::DualSftpDialogSubmit(tab_id))
+        .on_input(move |value| Message::Sftp(SftpMessage::DialogInputChanged(tab_id, value)))
+        .on_submit(Message::Sftp(SftpMessage::DialogSubmit(tab_id)))
         .padding([10, 12])
         .size(14)
         .style(move |_theme, _status| text_input::Style {
@@ -477,7 +477,7 @@ fn permission_checkbox(
             ..Default::default()
         }
     })
-    .on_press(Message::DualSftpPermissionToggle(tab_id, bit, !checked))
+    .on_press(Message::Sftp(SftpMessage::PermissionToggle(tab_id, bit, !checked)))
 }
 
 /// Create a cancel button for dialogs
@@ -500,7 +500,7 @@ fn dialog_cancel_button(tab_id: SessionId, theme: Theme) -> iced::widget::Button
                 ..Default::default()
             }
         })
-        .on_press(Message::DualSftpDialogCancel(tab_id))
+        .on_press(Message::Sftp(SftpMessage::DialogCancel(tab_id)))
 }
 
 /// Create a submit button for dialogs
@@ -543,7 +543,7 @@ fn dialog_submit_button(
         });
 
     if is_valid {
-        btn.on_press(Message::DualSftpDialogSubmit(tab_id))
+        btn.on_press(Message::Sftp(SftpMessage::DialogSubmit(tab_id)))
     } else {
         btn
     }

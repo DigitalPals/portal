@@ -9,7 +9,9 @@ use uuid::Uuid;
 use crate::config::{DetectedOs, Host};
 use crate::fs_utils::{copy_dir_recursive, count_items_in_dir};
 use crate::local_fs::list_local_dir;
-use crate::message::{Message, SessionId, VerificationRequestWrapper};
+use crate::message::{
+    DialogMessage, Message, SessionId, SessionMessage, SftpMessage, VerificationRequestWrapper,
+};
 use crate::sftp::SftpClient;
 use crate::ssh::{SshClient, SshEvent};
 use crate::views::sftp::{ContextMenuAction, PaneId, PaneSource, PermissionBits, SftpDialogType};
@@ -139,10 +141,10 @@ impl Portal {
                 rx.recv().await.map(|event| (event, rx))
             }),
             move |event| match event {
-                SshEvent::Data(data) => Message::SshData(session_id, data),
-                SshEvent::Disconnected => Message::SshDisconnected(session_id),
+                SshEvent::Data(data) => Message::Session(SessionMessage::Data(session_id, data)),
+                SshEvent::Disconnected => Message::Session(SessionMessage::Disconnected(session_id)),
                 SshEvent::HostKeyVerification(request) => {
-                    Message::HostKeyVerification(VerificationRequestWrapper(Some(request)))
+                    Message::Dialog(DialogMessage::HostKeyVerification(VerificationRequestWrapper(Some(request))))
                 }
                 SshEvent::Connected => Message::Noop,
             },
@@ -169,15 +171,15 @@ impl Portal {
             },
             |(session_id, host_id, host_name, result)| match result {
                 Ok((ssh_session, detected_os)) => {
-                    Message::SshConnected {
+                    Message::Session(SessionMessage::Connected {
                         session_id,
                         host_name,
                         ssh_session,
                         host_id,
                         detected_os,
-                    }
+                    })
                 }
-                Err(e) => Message::SshError(format!("Connection failed: {}", e)),
+                Err(e) => Message::Session(SessionMessage::Error(format!("Connection failed: {}", e))),
             },
         );
 
@@ -200,7 +202,7 @@ impl Portal {
                     // Load local directory
                     Task::perform(
                         async move { list_local_dir(&path).await },
-                        move |result| Message::DualSftpPaneListResult(tab_id, pane_id, result),
+                        move |result| Message::Sftp(SftpMessage::PaneListResult(tab_id, pane_id, result)),
                     )
                 }
                 PaneSource::Remote { session_id, .. } => {
@@ -210,11 +212,11 @@ impl Portal {
                         Task::perform(
                             async move { sftp.list_dir(&path).await },
                             move |result| {
-                                Message::DualSftpPaneListResult(
+                                Message::Sftp(SftpMessage::PaneListResult(
                                     tab_id,
                                     pane_id,
                                     result.map_err(|e| e.to_string()),
-                                )
+                                ))
                             },
                         )
                     } else {
@@ -254,7 +256,7 @@ impl Portal {
             }),
             move |event| match event {
                 SshEvent::HostKeyVerification(request) => {
-                    Message::HostKeyVerification(VerificationRequestWrapper(Some(request)))
+                    Message::Dialog(DialogMessage::HostKeyVerification(VerificationRequestWrapper(Some(request))))
                 }
                 _ => Message::Noop,
             },
@@ -271,15 +273,15 @@ impl Portal {
                 (tab_id, pane_id, sftp_session_id, host_for_task.name.clone(), result)
             },
             move |(tab_id, pane_id, sftp_session_id, host_name, result)| match result {
-                Ok(sftp_session) => Message::DualSftpConnected {
+                Ok(sftp_session) => Message::Sftp(SftpMessage::Connected {
                     tab_id,
                     pane_id,
                     sftp_session_id,
                     host_id,
                     host_name,
                     sftp_session,
-                },
-                Err(e) => Message::SshError(format!("SFTP connection failed: {}", e)),
+                }),
+                Err(e) => Message::Session(SessionMessage::Error(format!("SFTP connection failed: {}", e))),
             },
         );
 
@@ -316,7 +318,7 @@ impl Portal {
                                         open::that(&remote_path)
                                             .map_err(|e| format!("Failed to open file: {}", e))
                                     },
-                                    Message::DualSftpOpenWithResult,
+                                    |result| Message::Sftp(SftpMessage::OpenWithResult(result)),
                                 );
                             }
                             PaneSource::Remote { session_id, .. } => {
@@ -343,7 +345,7 @@ impl Portal {
                                             open::that(&local_path)
                                                 .map_err(|e| format!("Failed to open file: {}", e))
                                         },
-                                        Message::DualSftpOpenWithResult,
+                                        |result| Message::Sftp(SftpMessage::OpenWithResult(result)),
                                     );
                                 }
                             }
@@ -367,7 +369,7 @@ impl Portal {
             }
             ContextMenuAction::CopyToTarget => {
                 // Copy selected files to the target (other) pane
-                return Task::done(Message::DualSftpCopyToTarget(tab_id));
+                return Task::done(Message::Sftp(SftpMessage::CopyToTarget(tab_id)));
             }
             ContextMenuAction::Rename => {
                 // Show the Rename dialog for single selection
@@ -481,7 +483,7 @@ impl Portal {
                                     Err(e) => Err(e.to_string()),
                                 }
                             },
-                            move |result| Message::DualSftpNewFolderResult(tab_id, pane_id, result),
+                            move |result| Message::Sftp(SftpMessage::NewFolderResult(tab_id, pane_id, result)),
                         )
                     }
                     PaneSource::Remote { session_id, .. } => {
@@ -494,7 +496,7 @@ impl Portal {
                                         .await
                                         .map_err(|e| e.to_string())
                                 },
-                                move |result| Message::DualSftpNewFolderResult(tab_id, pane_id, result),
+                                move |result| Message::Sftp(SftpMessage::NewFolderResult(tab_id, pane_id, result)),
                             )
                         } else {
                             Task::none()
@@ -513,7 +515,7 @@ impl Portal {
                             async move {
                                 std::fs::rename(&old_path, &new_path).map_err(|e| e.to_string())
                             },
-                            move |result| Message::DualSftpRenameResult(tab_id, pane_id, result),
+                            move |result| Message::Sftp(SftpMessage::RenameResult(tab_id, pane_id, result)),
                         )
                     }
                     PaneSource::Remote { session_id, .. } => {
@@ -526,7 +528,7 @@ impl Portal {
                                         .await
                                         .map_err(|e| e.to_string())
                                 },
-                                move |result| Message::DualSftpRenameResult(tab_id, pane_id, result),
+                                move |result| Message::Sftp(SftpMessage::RenameResult(tab_id, pane_id, result)),
                             )
                         } else {
                             Task::none()
@@ -562,7 +564,7 @@ impl Portal {
                                 }
                                 Ok(deleted_count)
                             },
-                            move |result| Message::DualSftpDeleteResult(tab_id, pane_id, result),
+                            move |result| Message::Sftp(SftpMessage::DeleteResult(tab_id, pane_id, result)),
                         )
                     }
                     PaneSource::Remote { session_id, .. } => {
@@ -591,7 +593,7 @@ impl Portal {
                                     }
                                     Ok(deleted_count)
                                 },
-                                move |result| Message::DualSftpDeleteResult(tab_id, pane_id, result),
+                                move |result| Message::Sftp(SftpMessage::DeleteResult(tab_id, pane_id, result)),
                             )
                         } else {
                             Task::none()
@@ -621,7 +623,7 @@ impl Portal {
                                     Err("Permissions are only supported on Unix systems".to_string())
                                 }
                             },
-                            move |result| Message::DualSftpPermissionsResult(tab_id, pane_id, result),
+                            move |result| Message::Sftp(SftpMessage::PermissionsResult(tab_id, pane_id, result)),
                         )
                     }
                     PaneSource::Remote { session_id, .. } => {
@@ -634,7 +636,7 @@ impl Portal {
                                         .await
                                         .map_err(|e| e.to_string())
                                 },
-                                move |result| Message::DualSftpPermissionsResult(tab_id, pane_id, result),
+                                move |result| Message::Sftp(SftpMessage::PermissionsResult(tab_id, pane_id, result)),
                             )
                         } else {
                             Task::none()
@@ -687,7 +689,7 @@ impl Portal {
                                         Err(e) => Err(format!("Failed to run '{}': {}", command, e)),
                                     }
                                 },
-                                Message::DualSftpOpenWithResult,
+                                |result| Message::Sftp(SftpMessage::OpenWithResult(result)),
                             );
                         }
                     }
@@ -705,7 +707,7 @@ impl Portal {
                                 Err(e) => Err(format!("Failed to run '{}': {}", command, e)),
                             }
                         },
-                        Message::DualSftpOpenWithResult,
+                        |result| Message::Sftp(SftpMessage::OpenWithResult(result)),
                     )
                 }
             }
@@ -763,7 +765,7 @@ impl Portal {
                         }
                         Ok(count)
                     },
-                    move |result| Message::DualSftpCopyResult(tab_id, target_pane_id, result),
+                    move |result| Message::Sftp(SftpMessage::CopyResult(tab_id, target_pane_id, result)),
                 )
             }
             (PaneSource::Local, PaneSource::Remote { session_id, .. }) => {
@@ -790,7 +792,7 @@ impl Portal {
                             }
                             Ok(count)
                         },
-                        move |result| Message::DualSftpCopyResult(tab_id, target_pane_id, result),
+                        move |result| Message::Sftp(SftpMessage::CopyResult(tab_id, target_pane_id, result)),
                     )
                 } else {
                     Task::none()
@@ -820,7 +822,7 @@ impl Portal {
                             }
                             Ok(count)
                         },
-                        move |result| Message::DualSftpCopyResult(tab_id, target_pane_id, result),
+                        move |result| Message::Sftp(SftpMessage::CopyResult(tab_id, target_pane_id, result)),
                     )
                 } else {
                     Task::none()
@@ -883,7 +885,7 @@ impl Portal {
 
                             Ok(count)
                         },
-                        move |result| Message::DualSftpCopyResult(tab_id, target_pane_id, result),
+                        move |result| Message::Sftp(SftpMessage::CopyResult(tab_id, target_pane_id, result)),
                     )
                 } else {
                     Task::none()

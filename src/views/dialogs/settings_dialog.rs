@@ -3,7 +3,7 @@
 use iced::widget::{button, column, row, slider, text, toggler, Space};
 use iced::{Alignment, Element, Length};
 
-use crate::message::Message;
+use crate::message::{DialogMessage, Message, UiMessage};
 use crate::theme::Theme;
 
 use super::common::{dialog_backdrop, secondary_button_style};
@@ -33,7 +33,7 @@ pub fn settings_dialog_view(state: &SettingsDialogState, theme: Theme) -> Elemen
         text("Dark Mode").size(14).color(theme.text_primary),
         Space::with_width(Length::Fill),
         toggler(state.dark_mode)
-            .on_toggle(Message::SettingsThemeToggle)
+            .on_toggle(|v| Message::Ui(UiMessage::ThemeToggle(v)))
             .size(20),
     ]
     .align_y(Alignment::Center)
@@ -51,7 +51,7 @@ pub fn settings_dialog_view(state: &SettingsDialogState, theme: Theme) -> Elemen
     let font_size_row = row![
         text("Font Size").size(14).color(theme.text_primary),
         Space::with_width(Length::Fill),
-        slider(6.0..=20.0, font_size, Message::SettingsFontSizeChange)
+        slider(6.0..=20.0, font_size, |v| Message::Ui(UiMessage::FontSizeChange(v)))
             .step(1.0)
             .width(120),
         Space::with_width(8),
@@ -83,7 +83,7 @@ pub fn settings_dialog_view(state: &SettingsDialogState, theme: Theme) -> Elemen
     let close_button = button(text("Close").size(14).color(theme.text_primary))
         .padding([8, 16])
         .style(secondary_button_style(theme))
-        .on_press(Message::DialogClose);
+        .on_press(Message::Dialog(DialogMessage::Close));
 
     let button_row = row![Space::with_width(Length::Fill), close_button];
 
