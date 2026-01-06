@@ -48,6 +48,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libxkbcommon-dev libwayland-dev libvulkan-dev
 
+      - name: Install Linux packaging tools
+        if: runner.os == 'Linux'
+        run: cargo install cargo-deb cargo-generate-rpm
+
       - name: Install cross
         if: matrix.cross
         run: cargo install cross --git https://github.com/cross-rs/cross
@@ -75,23 +79,22 @@ jobs:
           ditto -c -k --sequesterRsrc --keepParent Portal.app ../../../portal-${{ github.ref_name }}-${{ matrix.name }}.app.zip
           cd ../../../../..
 
-      - name: Install Linux packaging tools
+      - name: Install AppImage tools
         if: runner.os == 'Linux' && matrix.target == 'x86_64-unknown-linux-gnu'
         run: |
-          cargo install cargo-deb cargo-generate-rpm
           curl -L -o linuxdeploy-x86_64.AppImage https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
           curl -L -o linuxdeploy-plugin-appimage-x86_64.AppImage https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/continuous/linuxdeploy-plugin-appimage-x86_64.AppImage
           chmod +x linuxdeploy-x86_64.AppImage linuxdeploy-plugin-appimage-x86_64.AppImage
 
       - name: Package DEB
-        if: runner.os == 'Linux' && matrix.target == 'x86_64-unknown-linux-gnu'
+        if: runner.os == 'Linux'
         run: |
           cargo deb --target ${{ matrix.target }} --no-build
           deb_path=$(ls target/debian/*.deb | head -n 1)
           mv "$deb_path" portal-${{ github.ref_name }}-${{ matrix.name }}.deb
 
       - name: Package RPM
-        if: runner.os == 'Linux' && matrix.target == 'x86_64-unknown-linux-gnu'
+        if: runner.os == 'Linux'
         run: |
           cargo generate-rpm --target ${{ matrix.target }}
           rpm_path=$(ls target/generate-rpm/*.rpm | head -n 1)
@@ -131,9 +134,32 @@ jobs:
             portal-${{ github.ref_name }}-${{ matrix.name }}.rpm
             portal-${{ github.ref_name }}-${{ matrix.name }}.AppImage
 
+  validate-appimage:
+    name: Validate AppImage
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download AppImage artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: portal-linux-x86_64
+
+      - name: Validate AppImage contents
+        shell: bash
+        run: |
+          appimage=$(ls *.AppImage | head -n 1)
+          if [ -z "$appimage" ]; then
+            echo "No AppImage found to validate."
+            exit 1
+          fi
+          chmod +x "$appimage"
+          "./$appimage" --appimage-extract
+          test -f squashfs-root/portal.desktop
+          test -f squashfs-root/usr/share/icons/hicolor/256x256/apps/portal.png
+
   release:
     name: Create Release
-    needs: build
+    needs: [build, validate-appimage]
     runs-on: ubuntu-latest
     permissions:
       contents: write
