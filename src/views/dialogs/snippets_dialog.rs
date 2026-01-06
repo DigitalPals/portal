@@ -20,10 +20,12 @@ pub struct SnippetsDialogState {
     pub edit_name: String,
     pub edit_command: String,
     pub edit_description: String,
+    /// Whether there's an active terminal session to insert snippets into
+    pub has_terminal_session: bool,
 }
 
 impl SnippetsDialogState {
-    pub fn new(snippets: Vec<Snippet>) -> Self {
+    pub fn new(snippets: Vec<Snippet>, has_terminal_session: bool) -> Self {
         Self {
             snippets,
             selected_id: None,
@@ -31,6 +33,7 @@ impl SnippetsDialogState {
             edit_name: String::new(),
             edit_command: String::new(),
             edit_description: String::new(),
+            has_terminal_session,
         }
     }
 
@@ -182,7 +185,12 @@ fn snippet_list_view(state: &SnippetsDialogState, theme: Theme) -> Element<'stat
     let insert_btn = button(text("Insert").size(12).color(theme.text_primary))
         .style(primary_button_style(theme))
         .padding([6, 14])
-        .on_press_maybe(state.selected_id.map(|id| Message::Snippet(SnippetMessage::Insert(id))));
+        .on_press_maybe(
+            state
+                .selected_id
+                .filter(|_| state.has_terminal_session)
+                .map(|id| Message::Snippet(SnippetMessage::Insert(id))),
+        );
 
     let close_btn = button(text("Close").size(12).color(theme.text_primary))
         .style(secondary_button_style(theme))

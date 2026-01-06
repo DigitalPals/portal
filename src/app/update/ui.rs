@@ -60,8 +60,17 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
                     portal.active_view = View::Settings;
                 }
                 SidebarMenuItem::Snippets => {
+                    let has_terminal = portal
+                        .active_tab
+                        .is_some_and(|id| portal.sessions.contains(id));
+                    tracing::debug!(
+                        "Opening snippets dialog: active_tab={:?}, has_terminal={}",
+                        portal.active_tab,
+                        has_terminal
+                    );
                     portal.dialogs.open_snippets(SnippetsDialogState::new(
                         portal.snippets_config.snippets.clone(),
+                        has_terminal,
                     ));
                 }
             }

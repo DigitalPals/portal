@@ -40,10 +40,14 @@ pub fn handle_snippet(portal: &mut Portal, msg: SnippetMessage) -> Task<Message>
             Task::none()
         }
         SnippetMessage::Insert(id) => {
+            tracing::debug!("Snippet insert requested for id: {}", id);
             if let Some(snippet) = portal.snippets_config.find_snippet(id) {
                 let command = snippet.command.clone();
+                tracing::debug!("Found snippet '{}', command: {}", snippet.name, command);
                 if let Some(session_id) = portal.active_tab {
+                    tracing::debug!("Active tab: {}", session_id);
                     if let Some(session) = portal.sessions.get(session_id) {
+                        tracing::info!("Inserting snippet '{}' into terminal", snippet.name);
                         let data = command.into_bytes();
                         portal.dialogs.close();
                         match &session.backend {
@@ -66,8 +70,14 @@ pub fn handle_snippet(portal: &mut Portal, msg: SnippetMessage) -> Task<Message>
                                 );
                             }
                         }
+                    } else {
+                        tracing::warn!("No session found for active tab {}", session_id);
                     }
+                } else {
+                    tracing::warn!("No active tab when inserting snippet");
                 }
+            } else {
+                tracing::warn!("Snippet not found: {}", id);
             }
             portal.dialogs.close();
             Task::none()

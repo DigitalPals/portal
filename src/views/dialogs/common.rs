@@ -56,14 +56,20 @@ pub fn dialog_backdrop(
 pub fn primary_button_style(
     theme: Theme,
 ) -> impl Fn(&iced::Theme, button::Status) -> button::Style {
-    move |_iced_theme, _status| button::Style {
-        background: Some(theme.accent.into()),
-        text_color: theme.text_primary,
-        border: iced::Border {
-            radius: BORDER_RADIUS.into(),
+    move |_iced_theme, status| {
+        let (background, text_color) = match status {
+            button::Status::Disabled => (theme.surface, theme.text_muted),
+            _ => (theme.accent, theme.text_primary),
+        };
+        button::Style {
+            background: Some(background.into()),
+            text_color,
+            border: iced::Border {
+                radius: BORDER_RADIUS.into(),
+                ..Default::default()
+            },
             ..Default::default()
-        },
-        ..Default::default()
+        }
     }
 }
 
