@@ -413,13 +413,13 @@ fn glob_match(pattern: &str, text: &str) -> bool {
     p_idx == p_bytes.len()
 }
 
-#[cfg(test)]
 impl Default for KnownHostsManager {
     fn default() -> Self {
         Self::new()
     }
 }
 
+#[cfg(test)]
 mod tests {
     use super::{HostKeyStatus, KnownHostsManager};
     use russh::keys;
