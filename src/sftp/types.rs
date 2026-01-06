@@ -59,14 +59,25 @@ impl FileEntry {
             FileIcon::Symlink
         } else {
             match self.extension() {
-                Some("rs" | "py" | "js" | "ts" | "c" | "cpp" | "h" | "go" | "java" | "rb" | "php" | "swift" | "kt") => FileIcon::Code,
+                Some(
+                    "rs" | "py" | "js" | "ts" | "c" | "cpp" | "h" | "go" | "java" | "rb" | "php"
+                    | "swift" | "kt",
+                ) => FileIcon::Code,
                 Some("txt" | "md" | "markdown" | "rst" | "doc" | "docx" | "rtf") => FileIcon::Text,
-                Some("json" | "toml" | "yaml" | "yml" | "xml" | "ini" | "conf" | "cfg") => FileIcon::Config,
-                Some("jpg" | "jpeg" | "png" | "gif" | "bmp" | "svg" | "ico" | "webp" | "tiff") => FileIcon::Image,
+                Some("json" | "toml" | "yaml" | "yml" | "xml" | "ini" | "conf" | "cfg") => {
+                    FileIcon::Config
+                }
+                Some("jpg" | "jpeg" | "png" | "gif" | "bmp" | "svg" | "ico" | "webp" | "tiff") => {
+                    FileIcon::Image
+                }
                 Some("mp3" | "wav" | "ogg" | "flac" | "m4a" | "aac" | "wma") => FileIcon::Audio,
                 Some("mp4" | "mkv" | "avi" | "mov" | "webm" | "wmv" | "flv") => FileIcon::Video,
-                Some("zip" | "tar" | "gz" | "xz" | "7z" | "rar" | "bz2" | "tgz") => FileIcon::Archive,
-                Some("sh" | "bash" | "zsh" | "fish" | "bat" | "cmd" | "ps1") => FileIcon::Executable,
+                Some("zip" | "tar" | "gz" | "xz" | "7z" | "rar" | "bz2" | "tgz") => {
+                    FileIcon::Archive
+                }
+                Some("sh" | "bash" | "zsh" | "fish" | "bat" | "cmd" | "ps1") => {
+                    FileIcon::Executable
+                }
                 Some("exe" | "bin" | "app" | "dmg" | "deb" | "rpm") => FileIcon::Executable,
                 _ => FileIcon::File,
             }

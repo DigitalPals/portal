@@ -1,6 +1,6 @@
 //! Host key verification dialog for unknown or changed SSH host keys
 
-use iced::widget::{button, column, container, row, text, Space};
+use iced::widget::{Space, button, column, container, row, text};
 use iced::{Alignment, Element, Length};
 use tokio::sync::oneshot;
 
@@ -9,7 +9,7 @@ use crate::message::{DialogMessage, Message};
 use crate::ssh::host_key_verification::{
     HostKeyInfo, HostKeyVerificationRequest, HostKeyVerificationResponse,
 };
-use crate::theme::{Theme, BORDER_RADIUS};
+use crate::theme::{BORDER_RADIUS, Theme};
 
 use super::common::{dialog_backdrop, primary_button_style, secondary_button_style};
 
@@ -213,8 +213,14 @@ fn changed_host_dialog_view(state: &HostKeyDialogState, theme: Theme) -> Element
         .color(theme.text_primary);
 
     let fingerprint_box = container(
-        column![old_fp_label, old_fp_text, Space::new().height(8), new_fp_label, new_fp_text,]
-            .spacing(4),
+        column![
+            old_fp_label,
+            old_fp_text,
+            Space::new().height(8),
+            new_fp_label,
+            new_fp_text,
+        ]
+        .spacing(4),
     )
     .padding(12)
     .width(Length::Fill)
@@ -261,7 +267,9 @@ fn changed_host_dialog_view(state: &HostKeyDialogState, theme: Theme) -> Element
     .spacing(8);
 
     let content = column![
-        row![warning_icon, title].spacing(12).align_y(Alignment::Center),
+        row![warning_icon, title]
+            .spacing(12)
+            .align_y(Alignment::Center),
         Space::new().height(8),
         host_info,
         Space::new().height(16),

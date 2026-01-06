@@ -34,16 +34,17 @@ impl std::fmt::Debug for HostKeyVerificationRequest {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             HostKeyVerificationRequest::NewHost { info, .. } => {
-                f.debug_struct("NewHost")
-                    .field("info", info)
-                    .finish()
+                f.debug_struct("NewHost").field("info", info).finish()
             }
-            HostKeyVerificationRequest::ChangedHost { info, old_fingerprint, .. } => {
-                f.debug_struct("ChangedHost")
-                    .field("info", info)
-                    .field("old_fingerprint", old_fingerprint)
-                    .finish()
-            }
+            HostKeyVerificationRequest::ChangedHost {
+                info,
+                old_fingerprint,
+                ..
+            } => f
+                .debug_struct("ChangedHost")
+                .field("info", info)
+                .field("old_fingerprint", old_fingerprint)
+                .finish(),
         }
     }
 }

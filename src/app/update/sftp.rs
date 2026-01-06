@@ -5,8 +5,8 @@ use uuid::Uuid;
 
 use crate::app::{Portal, Tab, View};
 use crate::message::{Message, SftpMessage};
-use crate::views::toast::Toast;
 use crate::views::sftp::{DualPaneSftpState, PaneId, PaneSource};
+use crate::views::toast::Toast;
 
 /// Handle SFTP browser messages
 pub fn handle_sftp(portal: &mut Portal, msg: SftpMessage) -> Task<Message> {
@@ -27,11 +27,9 @@ pub fn handle_sftp(portal: &mut Portal, msg: SftpMessage) -> Task<Message> {
         }
         SftpMessage::PaneSourceChanged(tab_id, pane_id, new_source) => {
             let new_path = match &new_source {
-                PaneSource::Local => {
-                    directories::BaseDirs::new()
-                        .map(|d| d.home_dir().to_path_buf())
-                        .unwrap_or_else(|| std::path::PathBuf::from("/"))
-                }
+                PaneSource::Local => directories::BaseDirs::new()
+                    .map(|d| d.home_dir().to_path_buf())
+                    .unwrap_or_else(|| std::path::PathBuf::from("/")),
                 PaneSource::Remote { session_id, .. } => {
                     if let Some(sftp) = portal.sftp.get_connection(*session_id) {
                         sftp.home_dir().to_path_buf()
@@ -221,7 +219,9 @@ pub fn handle_sftp(portal: &mut Portal, msg: SftpMessage) -> Task<Message> {
             if let Some(tab_state) = portal.sftp.get_tab_mut(tab_id) {
                 match result {
                     Ok(()) => {
-                        portal.toast_manager.push(Toast::success("Renamed successfully"));
+                        portal
+                            .toast_manager
+                            .push(Toast::success("Renamed successfully"));
                         tab_state.close_dialog();
                         tab_state.pane_mut(pane_id).loading = true;
                         return portal.load_dual_pane_directory(tab_id, pane_id);
@@ -272,7 +272,9 @@ pub fn handle_sftp(portal: &mut Portal, msg: SftpMessage) -> Task<Message> {
                 match result {
                     Ok(()) => {
                         tracing::info!("Permissions updated successfully");
-                        portal.toast_manager.push(Toast::success("Permissions updated"));
+                        portal
+                            .toast_manager
+                            .push(Toast::success("Permissions updated"));
                         tab_state.close_dialog();
                         tab_state.pane_mut(pane_id).loading = true;
                         return portal.load_dual_pane_directory(tab_id, pane_id);
@@ -286,9 +288,7 @@ pub fn handle_sftp(portal: &mut Portal, msg: SftpMessage) -> Task<Message> {
             }
             Task::none()
         }
-        SftpMessage::CopyToTarget(tab_id) => {
-            portal.handle_copy_to_target(tab_id)
-        }
+        SftpMessage::CopyToTarget(tab_id) => portal.handle_copy_to_target(tab_id),
         SftpMessage::CopyResult(tab_id, target_pane_id, result) => {
             if let Some(tab_state) = portal.sftp.get_tab_mut(tab_id) {
                 match result {
@@ -305,7 +305,9 @@ pub fn handle_sftp(portal: &mut Portal, msg: SftpMessage) -> Task<Message> {
                     }
                     Err(error) => {
                         tracing::error!("Copy failed: {}", error);
-                        portal.toast_manager.push(Toast::error(format!("Copy failed: {}", error)));
+                        portal
+                            .toast_manager
+                            .push(Toast::error(format!("Copy failed: {}", error)));
                     }
                 }
             }

@@ -3,9 +3,9 @@
 //! This module contains the rendering functions for SFTP-related dialogs
 //! (New Folder, Rename, Delete, Permissions).
 
-use std::path::PathBuf;
-use iced::widget::{button, column, container, row, text, text_input, Column, Space};
+use iced::widget::{Column, Space, button, column, container, row, text, text_input};
 use iced::{Alignment, Element, Fill, Length, Padding};
+use std::path::PathBuf;
 
 use crate::icons::{self, icon_with_color};
 use crate::message::{Message, SessionId, SftpMessage};
@@ -27,30 +27,27 @@ pub fn sftp_dialog_view(state: &DualPaneSftpState, theme: Theme) -> Element<'_, 
         SftpDialogType::Delete { entries } => {
             build_delete_dialog(tab_id, entries, dialog.error.as_deref(), theme)
         }
-        SftpDialogType::EditPermissions { name, permissions, .. } => {
-            build_permissions_dialog(tab_id, name, permissions, dialog.error.as_deref(), theme)
-        }
-        _ => {
-            build_input_dialog(tab_id, dialog, theme)
-        }
+        SftpDialogType::EditPermissions {
+            name, permissions, ..
+        } => build_permissions_dialog(tab_id, name, permissions, dialog.error.as_deref(), theme),
+        _ => build_input_dialog(tab_id, dialog, theme),
     };
 
     // Dialog box with styling
-    let dialog_box = container(dialog_content)
-        .style(move |_| container::Style {
-            background: Some(theme.surface.into()),
-            border: iced::Border {
-                color: theme.border,
-                width: 1.0,
-                radius: 8.0.into(),
-            },
-            shadow: iced::Shadow {
-                color: iced::Color::from_rgba8(0, 0, 0, 0.5),
-                offset: iced::Vector::new(0.0, 4.0),
-                blur_radius: 16.0,
-            },
-            ..Default::default()
-        });
+    let dialog_box = container(dialog_content).style(move |_| container::Style {
+        background: Some(theme.surface.into()),
+        border: iced::Border {
+            color: theme.border,
+            width: 1.0,
+            radius: 8.0.into(),
+        },
+        shadow: iced::Shadow {
+            color: iced::Color::from_rgba8(0, 0, 0, 0.5),
+            offset: iced::Vector::new(0.0, 4.0),
+            blur_radius: 16.0,
+        },
+        ..Default::default()
+    });
 
     // Backdrop
     let backdrop = container(
@@ -76,10 +73,14 @@ fn build_input_dialog(
     dialog: &SftpDialogState,
     theme: Theme,
 ) -> Element<'_, Message> {
-    let (title, placeholder, submit_label, subtitle): (&'static str, &'static str, &'static str, Option<String>) =
-        match &dialog.dialog_type {
-            SftpDialogType::NewFolder => ("New Folder", "Folder name", "Create", None),
-            SftpDialogType::Rename { .. } => ("Rename", "New name", "Rename", None),
+    let (title, placeholder, submit_label, subtitle): (
+        &'static str,
+        &'static str,
+        &'static str,
+        Option<String>,
+    ) = match &dialog.dialog_type {
+        SftpDialogType::NewFolder => ("New Folder", "Folder name", "Create", None),
+        SftpDialogType::Rename { .. } => ("Rename", "New name", "Rename", None),
         SftpDialogType::Delete { .. } | SftpDialogType::EditPermissions { .. } => unreachable!(),
     };
 
@@ -123,10 +124,7 @@ fn build_input_dialog(
 
     // Build subtitle element if present
     let subtitle_element: Element<'_, Message> = if let Some(subtitle) = subtitle {
-        text(subtitle)
-            .size(13)
-            .color(theme.text_muted)
-            .into()
+        text(subtitle).size(13).color(theme.text_muted).into()
     } else {
         Space::new().into()
     };
@@ -167,14 +165,15 @@ fn build_delete_dialog<'a>(
             format!("Delete \"{}\"?", name)
         }
     } else if has_folders {
-        format!("Delete {} items? Folders will be deleted with all their contents.", count)
+        format!(
+            "Delete {} items? Folders will be deleted with all their contents.",
+            count
+        )
     } else {
         format!("Delete {} items?", count)
     };
 
-    let warning_text = text(warning_msg)
-        .size(14)
-        .color(theme.text_secondary);
+    let warning_text = text(warning_msg).size(14).color(theme.text_secondary);
 
     // List the items to be deleted (show up to 5)
     let items_list: Element<'_, Message> = if count <= 5 {
@@ -221,7 +220,7 @@ fn build_delete_dialog<'a>(
             text(format!("... and {} more", count - 3))
                 .size(13)
                 .color(theme.text_muted)
-                .into()
+                .into(),
         );
 
         Column::with_children(items)
@@ -245,7 +244,11 @@ fn build_delete_dialog<'a>(
 
     // Warning about permanent deletion
     let permanent_warning = row![
-        icon_with_color(icons::ui::ALERT_TRIANGLE, 16, iced::Color::from_rgb8(220, 160, 60)),
+        icon_with_color(
+            icons::ui::ALERT_TRIANGLE,
+            16,
+            iced::Color::from_rgb8(220, 160, 60)
+        ),
         text("This action cannot be undone.")
             .size(12)
             .color(iced::Color::from_rgb8(220, 160, 60))
@@ -312,9 +315,18 @@ fn build_permissions_dialog<'a>(
     // Permission grid headers
     let header_row = row![
         Space::new().width(Length::Fixed(80.0)),
-        text("Read").size(12).color(theme.text_muted).width(Length::Fixed(60.0)),
-        text("Write").size(12).color(theme.text_muted).width(Length::Fixed(60.0)),
-        text("Execute").size(12).color(theme.text_muted).width(Length::Fixed(60.0)),
+        text("Read")
+            .size(12)
+            .color(theme.text_muted)
+            .width(Length::Fixed(60.0)),
+        text("Write")
+            .size(12)
+            .color(theme.text_muted)
+            .width(Length::Fixed(60.0)),
+        text("Execute")
+            .size(12)
+            .color(theme.text_muted)
+            .width(Length::Fixed(60.0)),
     ]
     .spacing(8)
     .align_y(Alignment::Center);
@@ -359,20 +371,19 @@ fn build_permissions_dialog<'a>(
     );
 
     // Permission grid
-    let permission_grid = container(
-        column![header_row, owner_row, group_row, other_row].spacing(8)
-    )
-    .padding(12)
-    .width(Fill)
-    .style(move |_| container::Style {
-        background: Some(theme.background.into()),
-        border: iced::Border {
-            color: theme.border,
-            width: 1.0,
-            radius: 4.0.into(),
-        },
-        ..Default::default()
-    });
+    let permission_grid =
+        container(column![header_row, owner_row, group_row, other_row].spacing(8))
+            .padding(12)
+            .width(Fill)
+            .style(move |_| container::Style {
+                background: Some(theme.background.into()),
+                border: iced::Border {
+                    color: theme.border,
+                    width: 1.0,
+                    radius: 4.0.into(),
+                },
+                ..Default::default()
+            });
 
     // Error message if any
     let error_text: Element<'_, Message> = if let Some(error) = error {
@@ -420,7 +431,10 @@ fn permission_row<'a>(
     theme: Theme,
 ) -> Element<'a, Message> {
     row![
-        text(label).size(13).color(theme.text_primary).width(Length::Fixed(80.0)),
+        text(label)
+            .size(13)
+            .color(theme.text_primary)
+            .width(Length::Fixed(80.0)),
         permission_checkbox(tab_id, read, read_bit, theme),
         permission_checkbox(tab_id, write, write_bit, theme),
         permission_checkbox(tab_id, execute, execute_bit, theme),
@@ -437,8 +451,16 @@ fn permission_checkbox(
     bit: PermissionBit,
     theme: Theme,
 ) -> iced::widget::Button<'static, Message> {
-    let bg_color = if checked { theme.accent } else { theme.background };
-    let icon_color = if checked { theme.background } else { theme.text_muted };
+    let bg_color = if checked {
+        theme.accent
+    } else {
+        theme.background
+    };
+    let icon_color = if checked {
+        theme.background
+    } else {
+        theme.text_muted
+    };
 
     let icon_content: Element<'static, Message> = if checked {
         icon_with_color(icons::ui::CHECK, 14, icon_color).into()
@@ -451,7 +473,7 @@ fn permission_checkbox(
             .width(Length::Fixed(20.0))
             .height(Length::Fixed(20.0))
             .align_x(Alignment::Center)
-            .align_y(Alignment::Center)
+            .align_y(Alignment::Center),
     )
     .padding(0)
     .width(Length::Fixed(60.0))
@@ -477,7 +499,9 @@ fn permission_checkbox(
             ..Default::default()
         }
     })
-    .on_press(Message::Sftp(SftpMessage::PermissionToggle(tab_id, bit, !checked)))
+    .on_press(Message::Sftp(SftpMessage::PermissionToggle(
+        tab_id, bit, !checked,
+    )))
 }
 
 /// Create a cancel button for dialogs
@@ -520,27 +544,35 @@ fn dialog_submit_button(
         (theme.accent, iced::Color::from_rgb8(0, 100, 180))
     };
 
-    let btn = button(text(label.to_string()).size(13).color(if is_valid { theme.background } else { theme.text_muted }))
-        .padding([8, 16])
-        .style(move |_theme, status| {
-            let bg = if is_valid {
-                match status {
-                    iced::widget::button::Status::Hovered => hover_color,
-                    _ => normal_color,
-                }
-            } else {
-                theme.surface
-            };
-            iced::widget::button::Style {
-                background: Some(bg.into()),
-                text_color: if is_valid { theme.background } else { theme.text_muted },
-                border: iced::Border {
-                    radius: 4.0.into(),
-                    ..Default::default()
-                },
-                ..Default::default()
+    let btn = button(text(label.to_string()).size(13).color(if is_valid {
+        theme.background
+    } else {
+        theme.text_muted
+    }))
+    .padding([8, 16])
+    .style(move |_theme, status| {
+        let bg = if is_valid {
+            match status {
+                iced::widget::button::Status::Hovered => hover_color,
+                _ => normal_color,
             }
-        });
+        } else {
+            theme.surface
+        };
+        iced::widget::button::Style {
+            background: Some(bg.into()),
+            text_color: if is_valid {
+                theme.background
+            } else {
+                theme.text_muted
+            },
+            border: iced::Border {
+                radius: 4.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    });
 
     if is_valid {
         btn.on_press(Message::Sftp(SftpMessage::DialogSubmit(tab_id)))

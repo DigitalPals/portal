@@ -1,4 +1,4 @@
-use iced::widget::{button, column, pick_list, row, text, text_input, Space};
+use iced::widget::{Space, button, column, pick_list, row, text, text_input};
 use iced::{Alignment, Element, Length};
 use uuid::Uuid;
 
@@ -162,10 +162,7 @@ impl HostDialogState {
 }
 
 /// Build the host dialog view
-pub fn host_dialog_view(
-    state: &HostDialogState,
-    theme: Theme,
-) -> Element<'static, Message> {
+pub fn host_dialog_view(state: &HostDialogState, theme: Theme) -> Element<'static, Message> {
     let title = if state.editing_id.is_some() {
         "Edit Host"
     } else {
@@ -197,7 +194,10 @@ pub fn host_dialog_view(
     let hostname_input = column![
         text("Hostname / IP").size(12).color(theme.text_secondary),
         text_input("192.168.1.100", &hostname_value)
-            .on_input(|s| Message::Dialog(DialogMessage::FieldChanged(HostDialogField::Hostname, s)))
+            .on_input(|s| Message::Dialog(DialogMessage::FieldChanged(
+                HostDialogField::Hostname,
+                s
+            )))
             .padding(8)
             .width(Length::Fill)
     ]
@@ -215,7 +215,10 @@ pub fn host_dialog_view(
     let username_input = column![
         text("Username").size(12).color(theme.text_secondary),
         text_input(&username_placeholder, &username_value)
-            .on_input(|s| Message::Dialog(DialogMessage::FieldChanged(HostDialogField::Username, s)))
+            .on_input(|s| Message::Dialog(DialogMessage::FieldChanged(
+                HostDialogField::Username,
+                s
+            )))
             .padding(8)
             .width(Length::Fill)
     ]
@@ -227,7 +230,10 @@ pub fn host_dialog_view(
         pick_list(
             AuthMethodChoice::ALL.as_slice(),
             Some(auth_method),
-            |choice| Message::Dialog(DialogMessage::FieldChanged(HostDialogField::AuthMethod, format!("{:?}", choice)))
+            |choice| Message::Dialog(DialogMessage::FieldChanged(
+                HostDialogField::AuthMethod,
+                format!("{:?}", choice)
+            ))
         )
         .width(Length::Fill)
         .padding(8)
@@ -235,11 +241,15 @@ pub fn host_dialog_view(
     .spacing(4);
 
     // Key path (only shown for PublicKey auth)
-    let key_path_section: Element<'static, Message> = if auth_method == AuthMethodChoice::PublicKey {
+    let key_path_section: Element<'static, Message> = if auth_method == AuthMethodChoice::PublicKey
+    {
         column![
             text("Key Path").size(12).color(theme.text_secondary),
             text_input("~/.ssh/id_ed25519", &key_path_value)
-                .on_input(|s| Message::Dialog(DialogMessage::FieldChanged(HostDialogField::KeyPath, s)))
+                .on_input(|s| Message::Dialog(DialogMessage::FieldChanged(
+                    HostDialogField::KeyPath,
+                    s
+                )))
                 .padding(8)
                 .width(Length::Fill)
         ]
@@ -282,13 +292,9 @@ pub fn host_dialog_view(
             None
         });
 
-    let button_row = row![
-        Space::new().width(Length::Fill),
-        cancel_button,
-        save_button,
-    ]
-    .spacing(8)
-    .align_y(Alignment::Center);
+    let button_row = row![Space::new().width(Length::Fill), cancel_button, save_button,]
+        .spacing(8)
+        .align_y(Alignment::Center);
 
     // Form layout
     let form = column![

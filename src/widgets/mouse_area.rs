@@ -3,7 +3,7 @@
 use iced::advanced::layout::{self, Layout};
 use iced::advanced::renderer;
 use iced::advanced::widget::{self, Widget};
-use iced::advanced::{mouse, Clipboard, Shell};
+use iced::advanced::{Clipboard, Shell, mouse};
 use iced::{Element, Event, Length, Rectangle, Size, Vector};
 
 /// Local state of the [`MouseArea`].
@@ -189,7 +189,10 @@ where
         }
 
         // Capture all events if requested
-        if self.capture_all_events && cursor.is_over(layout.bounds()) && matches!(event, Event::Mouse(_)) {
+        if self.capture_all_events
+            && cursor.is_over(layout.bounds())
+            && matches!(event, Event::Mouse(_))
+        {
             shell.capture_event();
             return;
         }

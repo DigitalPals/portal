@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use russh::keys::{HashAlg, PrivateKeyWithHashAlg};
 
-use crate::config::{paths, AuthMethod};
+use crate::config::{AuthMethod, paths};
 use crate::error::SshError;
 
 /// Resolved authentication for an SSH connection

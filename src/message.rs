@@ -6,10 +6,11 @@ use uuid::Uuid;
 
 use crate::config::DetectedOs;
 use crate::local::LocalSession;
-use crate::theme::ThemeId;
 use crate::sftp::{FileEntry, SharedSftpSession};
-use crate::ssh::host_key_verification::HostKeyVerificationRequest;
 use crate::ssh::SshSession;
+use crate::ssh::host_key_verification::HostKeyVerificationRequest;
+use crate::terminal::backend::TerminalEvent;
+use crate::theme::ThemeId;
 use crate::views::file_viewer::ViewerContent;
 use crate::views::sftp::{ContextMenuAction, PaneId, PaneSource, PermissionBit};
 
@@ -77,6 +78,10 @@ pub enum SessionMessage {
     Input(SessionId, Vec<u8>),
     /// Terminal resize event
     Resize(SessionId, u16, u16),
+    /// Terminal backend event (title/bell/clipboard/exit)
+    TerminalEvent(SessionId, TerminalEvent),
+    /// Clipboard content read for terminal
+    ClipboardLoaded(SessionId, Option<String>),
     /// Timer tick for session duration updates
     DurationTick,
     /// User pressed Ctrl+Shift+K to install SSH key
@@ -230,7 +235,10 @@ pub enum SnippetMessage {
 #[derive(Debug, Clone)]
 pub enum FileViewerMessage {
     /// File content loaded successfully
-    ContentLoaded { viewer_id: SessionId, content: ViewerContent },
+    ContentLoaded {
+        viewer_id: SessionId,
+        content: ViewerContent,
+    },
     /// Error loading file content
     LoadError(SessionId, String),
     /// Text content changed via editor
@@ -241,6 +249,10 @@ pub enum FileViewerMessage {
     SaveResult(SessionId, Result<(), String>),
     /// PDF page navigation
     PdfPageChange(SessionId, usize),
+    /// Render a PDF page on demand
+    PdfRenderPage(SessionId, usize),
+    /// PDF page rendered
+    PdfPageRendered(SessionId, usize, Result<Vec<u8>, String>),
     /// Toggle markdown preview mode
     MarkdownTogglePreview(SessionId),
     /// Image zoom level changed

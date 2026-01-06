@@ -2,8 +2,8 @@
 
 use iced::Task;
 
-use crate::app::managers::SessionBackend;
 use crate::app::Portal;
+use crate::app::managers::SessionBackend;
 use crate::config::Snippet;
 use crate::message::{Message, SnippetField, SnippetMessage};
 

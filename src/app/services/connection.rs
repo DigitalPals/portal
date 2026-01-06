@@ -107,7 +107,13 @@ pub fn sftp_connect_tasks(
                 .connect(&host_for_task, event_tx, Duration::from_secs(30), None)
                 .await;
 
-            (tab_id, pane_id, sftp_session_id, host_for_task.name.clone(), result)
+            (
+                tab_id,
+                pane_id,
+                sftp_session_id,
+                host_for_task.name.clone(),
+                result,
+            )
         },
         move |(tab_id, pane_id, sftp_session_id, host_name, result)| match result {
             Ok(sftp_session) => Message::Sftp(SftpMessage::Connected {

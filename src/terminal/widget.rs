@@ -18,8 +18,8 @@ use iced::{Background, Border, Color, Element, Event, Length, Rectangle, Shadow,
 use parking_lot::Mutex;
 
 use super::backend::{CursorInfo, EventProxy, RenderCell};
-use super::colors::{ansi_to_iced_themed, DEFAULT_BG, DEFAULT_FG};
-use crate::fonts::{TerminalFont, JETBRAINS_MONO_NERD};
+use super::colors::{DEFAULT_BG, DEFAULT_FG, ansi_to_iced_themed};
+use crate::fonts::{JETBRAINS_MONO_NERD, TerminalFont};
 use crate::theme::TerminalColors;
 
 /// Left padding for terminal content (matches Termius style)
@@ -115,8 +115,7 @@ impl<'a, Message> TerminalWidget<'a, Message> {
 
             // Include cells with content or non-default background
             if cell.c != ' '
-                || cell.bg
-                    != alacritty_terminal::vte::ansi::Color::Named(NamedColor::Background)
+                || cell.bg != alacritty_terminal::vte::ansi::Color::Named(NamedColor::Background)
                 || !cell.flags.is_empty()
             {
                 cells.push(RenderCell {
@@ -129,7 +128,6 @@ impl<'a, Message> TerminalWidget<'a, Message> {
                 });
             }
         }
-
 
         cells
     }
@@ -162,14 +160,47 @@ impl<'a, Message> TerminalWidget<'a, Message> {
             return None;
         }
         // Account for left padding when converting to cell coordinates
-        let col = ((position.x - bounds.x - TERMINAL_PADDING_LEFT).max(0.0) / self.cell_width()) as usize;
+        let col =
+            ((position.x - bounds.x - TERMINAL_PADDING_LEFT).max(0.0) / self.cell_width()) as usize;
         let row = ((position.y - bounds.y) / self.cell_height()) as usize;
         Some((col, row))
     }
 
     /// Check if a character is a word boundary
     fn is_word_boundary(c: char) -> bool {
-        c.is_whitespace() || matches!(c, '(' | ')' | '[' | ']' | '{' | '}' | '"' | '\'' | '<' | '>' | ',' | '.' | ';' | ':' | '!' | '?' | '`' | '|' | '&' | '=' | '+' | '-' | '*' | '/' | '\\' | '@' | '#' | '$' | '%' | '^')
+        c.is_whitespace()
+            || matches!(
+                c,
+                '(' | ')'
+                    | '['
+                    | ']'
+                    | '{'
+                    | '}'
+                    | '"'
+                    | '\''
+                    | '<'
+                    | '>'
+                    | ','
+                    | '.'
+                    | ';'
+                    | ':'
+                    | '!'
+                    | '?'
+                    | '`'
+                    | '|'
+                    | '&'
+                    | '='
+                    | '+'
+                    | '-'
+                    | '*'
+                    | '/'
+                    | '\\'
+                    | '@'
+                    | '#'
+                    | '$'
+                    | '%'
+                    | '^'
+            )
     }
 
     /// Get line content as a vector of characters for a specific screen line
@@ -226,12 +257,7 @@ impl<'a, Message> TerminalWidget<'a, Message> {
     }
 
     /// Get selected text from the terminal
-    fn get_selected_text(
-        &self,
-        start: (usize, usize),
-        end: (usize, usize),
-        cols: usize,
-    ) -> String {
+    fn get_selected_text(&self, start: (usize, usize), end: (usize, usize), cols: usize) -> String {
         // Normalize selection (ensure start comes before end)
         let (start, end) = if start.1 < end.1 || (start.1 == end.1 && start.0 <= end.0) {
             (start, end)
@@ -322,8 +348,8 @@ struct TerminalState {
 enum SelectionMode {
     #[default]
     Character, // Normal character-by-character selection
-    Word,      // Double-click: select by word
-    Line,      // Triple-click: select by line
+    Word, // Double-click: select by word
+    Line, // Triple-click: select by line
 }
 
 impl Default for TerminalState {
@@ -487,12 +513,7 @@ where
                     wrapping: iced::advanced::text::Wrapping::None,
                 };
 
-                renderer.fill_text(
-                    text,
-                    iced::Point::new(x, y),
-                    fg_color,
-                    bounds,
-                );
+                renderer.fill_text(text, iced::Point::new(x, y), fg_color, bounds);
             }
         }
 
@@ -510,7 +531,11 @@ where
 
             for line in start.1..=end.1 {
                 let start_col = if line == start.1 { start.0 } else { 0 };
-                let end_col = if line == end.1 { end.0 } else { cols.saturating_sub(1) };
+                let end_col = if line == end.1 {
+                    end.0
+                } else {
+                    cols.saturating_sub(1)
+                };
 
                 let x = bounds.x + TERMINAL_PADDING_LEFT + start_col as f32 * cell_width;
                 let y = bounds.y + line as f32 * cell_height;
@@ -537,7 +562,8 @@ where
         if state.is_focused && state.cursor_visible {
             if let Some(cursor_info) = self.get_cursor() {
                 if cursor_info.visible {
-                    let cursor_x = bounds.x + TERMINAL_PADDING_LEFT + cursor_info.column as f32 * cell_width;
+                    let cursor_x =
+                        bounds.x + TERMINAL_PADDING_LEFT + cursor_info.column as f32 * cell_width;
                     let cursor_y = bounds.y + cursor_info.line as f32 * cell_height;
 
                     let cursor_color = colors.cursor;
@@ -660,11 +686,12 @@ where
         }
 
         // Double/triple click detection threshold (400ms)
-        const MULTI_CLICK_THRESHOLD: std::time::Duration =
-            std::time::Duration::from_millis(400);
+        const MULTI_CLICK_THRESHOLD: std::time::Duration = std::time::Duration::from_millis(400);
 
         match event {
-            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) if cursor.is_over(bounds) => {
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
+                if cursor.is_over(bounds) =>
+            {
                 state.is_focused = true;
 
                 if let Some(position) = cursor.position() {
@@ -673,14 +700,15 @@ where
                         let cols = (bounds.width / self.cell_width()) as usize;
 
                         // Check for multi-click (same position, within time threshold)
-                        let is_multi_click = state.last_click_time.is_some_and(|t| {
-                            now.duration_since(t) < MULTI_CLICK_THRESHOLD
-                        }) && state.last_click_position.is_some_and(|pos| {
-                            // Allow 1-cell tolerance for position
-                            let col_diff = (pos.0 as i32 - cell.0 as i32).abs();
-                            let row_diff = (pos.1 as i32 - cell.1 as i32).abs();
-                            col_diff <= 1 && row_diff == 0
-                        });
+                        let is_multi_click = state
+                            .last_click_time
+                            .is_some_and(|t| now.duration_since(t) < MULTI_CLICK_THRESHOLD)
+                            && state.last_click_position.is_some_and(|pos| {
+                                // Allow 1-cell tolerance for position
+                                let col_diff = (pos.0 as i32 - cell.0 as i32).abs();
+                                let row_diff = (pos.1 as i32 - cell.1 as i32).abs();
+                                col_diff <= 1 && row_diff == 0
+                            });
 
                         if is_multi_click {
                             state.click_count = (state.click_count % 3) + 1;
@@ -771,7 +799,9 @@ where
                     }
                 }
             }
-            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) if state.is_selecting => {
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
+                if state.is_selecting =>
+            {
                 state.is_selecting = false;
             }
             Event::Mouse(mouse::Event::WheelScrolled { delta }) if cursor.is_over(bounds) => {
@@ -860,10 +890,8 @@ where
                             let cols = (bounds.width / self.cell_width()) as usize;
                             let text_content = self.get_selected_text(start, end, cols);
                             if !text_content.is_empty() {
-                                clipboard.write(
-                                    iced::advanced::clipboard::Kind::Standard,
-                                    text_content,
-                                );
+                                clipboard
+                                    .write(iced::advanced::clipboard::Kind::Standard, text_content);
                             }
                         }
                         return;
@@ -916,8 +944,7 @@ where
                         }
                     }
 
-                    if let Some(bytes) = key_to_escape_sequence(key, *modifiers, text.as_deref())
-                    {
+                    if let Some(bytes) = key_to_escape_sequence(key, *modifiers, text.as_deref()) {
                         shell.publish((self.on_input)(bytes));
 
                         // Scroll back to bottom when user types (after scrolling up in history)
@@ -947,11 +974,7 @@ where
 }
 
 /// Convert a keyboard key to terminal escape sequence
-fn key_to_escape_sequence(
-    key: &Key,
-    modifiers: Modifiers,
-    text: Option<&str>,
-) -> Option<Vec<u8>> {
+fn key_to_escape_sequence(key: &Key, modifiers: Modifiers, text: Option<&str>) -> Option<Vec<u8>> {
     // Handle Ctrl+key combinations
     if modifiers.control() {
         if let Key::Character(c) = key {

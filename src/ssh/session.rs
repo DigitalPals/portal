@@ -1,13 +1,15 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use russh::client::Handle;
 use russh::{Channel, ChannelMsg};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{Mutex, mpsc};
+use tokio::time::timeout;
 
 use crate::error::SshError;
 
-use super::handler::ClientHandler;
 use super::SshEvent;
+use super::handler::ClientHandler;
 
 /// Commands that can be sent to the channel task
 enum ChannelCommand {
@@ -54,10 +56,14 @@ impl SshSession {
                     msg = channel.wait() => {
                         match msg {
                             Some(ChannelMsg::Data { data }) => {
-                                let _ = event_tx.send(SshEvent::Data(data.to_vec())).await;
+                                if event_tx.send(SshEvent::Data(data.to_vec())).await.is_err() {
+                                    break;
+                                }
                             }
                             Some(ChannelMsg::ExtendedData { data, .. }) => {
-                                let _ = event_tx.send(SshEvent::Data(data.to_vec())).await;
+                                if event_tx.send(SshEvent::Data(data.to_vec())).await.is_err() {
+                                    break;
+                                }
                             }
                             Some(ChannelMsg::Eof) => {
                                 let _ = event_tx.send(SshEvent::Disconnected).await;
@@ -100,32 +106,31 @@ impl SshSession {
             }
         });
 
-        Self {
-            command_tx,
-            handle,
-        }
+        Self { command_tx, handle }
     }
 
     /// Send data to the remote shell
     pub async fn send(&self, data: &[u8]) -> Result<(), SshError> {
         self.command_tx
-            .try_send(ChannelCommand::Data(data.to_vec()))
+            .send(ChannelCommand::Data(data.to_vec()))
+            .await
             .map_err(|e| {
-                tracing::debug!("SSH send dropped: {}", e);
+                tracing::debug!("SSH send failed: {}", e);
                 SshError::Channel(e.to_string())
             })?;
         Ok(())
     }
 
     /// Notify the remote shell of a window size change
-    pub fn window_change(&self, cols: u16, rows: u16) -> Result<(), SshError> {
+    pub async fn window_change(&self, cols: u16, rows: u16) -> Result<(), SshError> {
         self.command_tx
-            .try_send(ChannelCommand::WindowChange {
+            .send(ChannelCommand::WindowChange {
                 cols: cols as u32,
                 rows: rows as u32,
             })
+            .await
             .map_err(|e| {
-                tracing::debug!("SSH window change dropped: {}", e);
+                tracing::debug!("SSH window change failed: {}", e);
                 SshError::Channel(e.to_string())
             })?;
         Ok(())
@@ -134,43 +139,54 @@ impl SshSession {
     /// Execute a command on the remote host and return its stdout output.
     /// This opens a new exec channel separate from the interactive PTY.
     pub async fn execute_command(&self, command: &str) -> Result<String, SshError> {
-        let handle = self.handle.lock().await;
+        let timeout_result = timeout(Duration::from_secs(10), async {
+            let handle = self.handle.lock().await;
+            let mut channel = handle
+                .channel_open_session()
+                .await
+                .map_err(|e| SshError::Channel(format!("Failed to open channel: {}", e)))?;
+            drop(handle);
 
-        let mut channel = handle
-            .channel_open_session()
-            .await
-            .map_err(|e| SshError::Channel(format!("Failed to open channel: {}", e)))?;
+            channel
+                .exec(true, command)
+                .await
+                .map_err(|e| SshError::Channel(format!("Failed to exec '{}': {}", command, e)))?;
 
-        channel
-            .exec(true, command)
-            .await
-            .map_err(|e| SshError::Channel(format!("Failed to exec '{}': {}", command, e)))?;
+            let mut output = String::new();
 
-        let mut output = String::new();
-
-        loop {
-            match channel.wait().await {
-                Some(ChannelMsg::Data { data }) => {
-                    if let Ok(s) = std::str::from_utf8(&data) {
-                        output.push_str(s);
+            loop {
+                match channel.wait().await {
+                    Some(ChannelMsg::Data { data }) => {
+                        if let Ok(s) = std::str::from_utf8(&data) {
+                            output.push_str(s);
+                        }
                     }
-                }
-                Some(ChannelMsg::ExtendedData { data, .. }) => {
-                    // Log stderr but don't include in output
-                    tracing::debug!("{} stderr: {:?}", command, std::str::from_utf8(&data));
-                }
-                Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => {
-                    break;
-                }
-                Some(ChannelMsg::ExitStatus { exit_status }) => {
-                    if exit_status != 0 {
-                        tracing::debug!("{} exited with status {}", command, exit_status);
+                    Some(ChannelMsg::ExtendedData { data, .. }) => {
+                        // Log stderr but don't include in output
+                        tracing::debug!("{} stderr: {:?}", command, std::str::from_utf8(&data));
                     }
+                    Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => {
+                        break;
+                    }
+                    Some(ChannelMsg::ExitStatus { exit_status }) => {
+                        if exit_status != 0 {
+                            tracing::debug!("{} exited with status {}", command, exit_status);
+                        }
+                    }
+                    Some(_) => {}
                 }
-                Some(_) => {}
             }
-        }
 
-        Ok(output)
+            Ok(output)
+        })
+        .await;
+
+        match timeout_result {
+            Ok(result) => result,
+            Err(_) => Err(SshError::Channel(format!(
+                "Command '{}' timed out",
+                command
+            ))),
+        }
     }
 }

@@ -2,13 +2,13 @@
 
 use std::time::{Duration, Instant};
 
-use iced::widget::{button, container, row, text, Column, Space};
+use iced::widget::{Column, Space, button, container, row, text};
 use iced::{Alignment, Color, Element, Length, Padding};
 use uuid::Uuid;
 
 use crate::icons::{icon_with_color, ui};
 use crate::message::{Message, UiMessage};
-use crate::theme::{Theme, BORDER_RADIUS};
+use crate::theme::{BORDER_RADIUS, Theme};
 
 /// Type of toast notification (determines color and icon)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -22,7 +22,7 @@ impl ToastType {
     /// Get the color for this toast type
     pub fn color(&self) -> Color {
         match self {
-            ToastType::Error => Color::from_rgb8(0xf4, 0x43, 0x36),   // #f44336 - red
+            ToastType::Error => Color::from_rgb8(0xf4, 0x43, 0x36), // #f44336 - red
             ToastType::Warning => Color::from_rgb8(0xff, 0x98, 0x00), // #ff9800 - orange
             ToastType::Success => Color::from_rgb8(0x4c, 0xaf, 0x50), // #4caf50 - green
         }

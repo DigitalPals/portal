@@ -4,7 +4,7 @@ use std::time::Duration;
 use russh::client::{self, Config};
 use russh::keys::HashAlg;
 use tokio::net::TcpStream;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{Mutex, mpsc};
 use tokio::time::timeout;
 
 use crate::config::Host;
@@ -12,12 +12,12 @@ use crate::error::SshError;
 
 use crate::config::DetectedOs;
 
+use super::SshEvent;
 use super::auth::ResolvedAuth;
 use super::handler::ClientHandler;
 use super::known_hosts::KnownHostsManager;
 use super::os_detect;
 use super::session::SshSession;
-use super::SshEvent;
 
 /// SSH client for establishing connections
 pub struct SshClient {
@@ -63,6 +63,33 @@ impl SshClient {
                 reason: e.to_string(),
             })?;
 
+        match timeout(
+            connection_timeout,
+            self.establish_session(
+                host,
+                terminal_size,
+                event_tx,
+                stream,
+                password,
+                detect_os_on_connect,
+            ),
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(_) => Err(SshError::Timeout(addr)),
+        }
+    }
+
+    async fn establish_session(
+        &self,
+        host: &Host,
+        terminal_size: (u16, u16),
+        event_tx: mpsc::Sender<SshEvent>,
+        stream: TcpStream,
+        password: Option<&str>,
+        detect_os_on_connect: bool,
+    ) -> Result<(Arc<SshSession>, Option<DetectedOs>), SshError> {
         let handler = ClientHandler::new(
             host.hostname.clone(),
             host.port,

@@ -1,0 +1,44 @@
+#!/bin/bash
+
+# Pre-push hook to run CI checks before pushing
+# This prevents pushing code that will fail GitHub Actions CI
+
+set -e
+
+echo "Running pre-push CI checks..."
+echo ""
+
+# Format check
+echo "==> Checking code formatting (cargo fmt --all --check)..."
+if ! cargo fmt --all --check; then
+    echo ""
+    echo "ERROR: Code formatting check failed!"
+    echo "Run 'cargo fmt --all' to fix formatting issues."
+    exit 1
+fi
+echo "    Format check passed."
+echo ""
+
+# Clippy
+echo "==> Running clippy (cargo clippy --all-targets -- -D warnings)..."
+if ! cargo clippy --all-targets -- -D warnings; then
+    echo ""
+    echo "ERROR: Clippy found warnings/errors!"
+    echo "Fix the issues reported above before pushing."
+    exit 1
+fi
+echo "    Clippy passed."
+echo ""
+
+# Tests
+echo "==> Running tests (cargo test)..."
+if ! cargo test; then
+    echo ""
+    echo "ERROR: Tests failed!"
+    echo "Fix the failing tests before pushing."
+    exit 1
+fi
+echo "    Tests passed."
+echo ""
+
+echo "All CI checks passed! Proceeding with push..."

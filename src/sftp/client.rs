@@ -8,18 +8,18 @@ use russh::client::{self, Config};
 use russh::keys::HashAlg;
 use russh_sftp::client::SftpSession as RusshSftpSession;
 use tokio::net::TcpStream;
-use tokio::sync::mpsc;
 use tokio::sync::Mutex;
+use tokio::sync::mpsc;
 use tokio::time::timeout;
 
 use crate::config::Host;
 use crate::error::SftpError;
+use crate::ssh::SshEvent;
 use crate::ssh::auth::ResolvedAuth;
 use crate::ssh::handler::ClientHandler;
 use crate::ssh::known_hosts::KnownHostsManager;
-use crate::ssh::SshEvent;
 
-use super::session::{SharedSftpSession, SftpSession};
+use super::session::{SftpSession, SharedSftpSession};
 
 /// SFTP client for establishing connections
 pub struct SftpClient {

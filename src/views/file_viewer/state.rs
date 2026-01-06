@@ -2,8 +2,8 @@
 
 use iced::widget::text_editor;
 
-use crate::message::SessionId;
 use super::types::{FileSource, FileType};
+use crate::message::SessionId;
 
 /// Content held by the viewer based on file type
 #[derive(Debug, Clone)]
@@ -11,9 +11,7 @@ pub enum ViewerContent {
     /// Loading state - content not yet available
     Loading,
     /// Text content for editing
-    Text {
-        content: text_editor::Content,
-    },
+    Text { content: text_editor::Content },
     /// Markdown with edit/preview toggle
     Markdown {
         content: text_editor::Content,
@@ -24,10 +22,14 @@ pub enum ViewerContent {
     Image {
         data: Vec<u8>,
         zoom: f32,
+        width: u32,
+        height: u32,
+        is_svg: bool,
     },
     /// PDF pages
     Pdf {
-        pages: Vec<Vec<u8>>, // Rendered page images
+        pages: Vec<Option<Vec<u8>>>, // Rendered page images (lazy)
+        rendering_pages: Vec<bool>,
         current_page: usize,
         total_pages: usize,
     },
@@ -100,7 +102,12 @@ impl FileViewerState {
 
     /// Toggle markdown preview mode
     pub fn toggle_preview(&mut self) {
-        if let ViewerContent::Markdown { preview_mode, content, raw_text } = &mut self.content {
+        if let ViewerContent::Markdown {
+            preview_mode,
+            content,
+            raw_text,
+        } = &mut self.content
+        {
             *preview_mode = !*preview_mode;
             // Update raw_text when leaving preview mode
             if !*preview_mode {
@@ -111,16 +118,45 @@ impl FileViewerState {
 
     /// Change PDF page
     pub fn set_pdf_page(&mut self, page: usize) {
-        if let ViewerContent::Pdf { current_page, total_pages, .. } = &mut self.content {
+        if let ViewerContent::Pdf {
+            current_page,
+            total_pages,
+            ..
+        } = &mut self.content
+        {
             if page < *total_pages {
                 *current_page = page;
             }
         }
     }
 
+    /// Mark a PDF page as rendering
+    pub fn set_pdf_rendering(&mut self, page: usize, rendering: bool) {
+        if let ViewerContent::Pdf {
+            rendering_pages, ..
+        } = &mut self.content
+        {
+            if let Some(slot) = rendering_pages.get_mut(page) {
+                *slot = rendering;
+            }
+        }
+    }
+
+    /// Store rendered data for a PDF page
+    pub fn set_pdf_page_data(&mut self, page: usize, data: Vec<u8>) {
+        if let ViewerContent::Pdf { pages, .. } = &mut self.content {
+            if let Some(slot) = pages.get_mut(page) {
+                *slot = Some(data);
+            }
+        }
+    }
+
     /// Set image zoom level
     pub fn set_zoom(&mut self, zoom: f32) {
-        if let ViewerContent::Image { zoom: current_zoom, .. } = &mut self.content {
+        if let ViewerContent::Image {
+            zoom: current_zoom, ..
+        } = &mut self.content
+        {
             *current_zoom = zoom.clamp(0.1, 5.0);
         }
     }
@@ -151,7 +187,11 @@ mod tests {
 
         state.toggle_preview();
         match &state.content {
-            ViewerContent::Markdown { preview_mode, raw_text, .. } => {
+            ViewerContent::Markdown {
+                preview_mode,
+                raw_text,
+                ..
+            } => {
                 assert!(*preview_mode);
                 assert_eq!(raw_text, "initial");
             }
@@ -164,7 +204,11 @@ mod tests {
 
         state.toggle_preview();
         match &state.content {
-            ViewerContent::Markdown { preview_mode, raw_text, .. } => {
+            ViewerContent::Markdown {
+                preview_mode,
+                raw_text,
+                ..
+            } => {
                 assert!(!*preview_mode);
                 assert_eq!(raw_text, "updated");
             }

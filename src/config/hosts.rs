@@ -84,10 +84,7 @@ impl DetectedOs {
         for line in content.lines() {
             let line = line.trim();
             if let Some(stripped) = line.strip_prefix("ID=") {
-                let id = stripped
-                    .trim_matches('"')
-                    .trim_matches('\'')
-                    .to_lowercase();
+                let id = stripped.trim_matches('"').trim_matches('\'').to_lowercase();
                 return Some(match id.as_str() {
                     "ubuntu" => DetectedOs::Ubuntu,
                     "debian" => DetectedOs::Debian,
@@ -168,28 +165,28 @@ impl DetectedOs {
     /// Get icon color for theming (returns RGB tuple)
     pub fn icon_color(&self) -> (u8, u8, u8) {
         match self {
-            DetectedOs::FreeBSD => (0xAB, 0x22, 0x28),   // Red
-            DetectedOs::OpenBSD => (0xF2, 0xCA, 0x30),   // Yellow
-            DetectedOs::NetBSD => (0xF0, 0x80, 0x00),    // Orange
-            DetectedOs::MacOS => (0xA0, 0xA0, 0xA0),     // Gray
-            DetectedOs::Windows => (0x00, 0x78, 0xD4),   // Blue
-            DetectedOs::Ubuntu => (0xE9, 0x54, 0x20),    // Ubuntu orange
-            DetectedOs::Debian => (0xA8, 0x00, 0x30),    // Debian red
-            DetectedOs::Fedora => (0x51, 0xA2, 0xDA),    // Fedora blue
-            DetectedOs::Arch => (0x17, 0x93, 0xD1),      // Arch blue
-            DetectedOs::CentOS => (0x93, 0x2E, 0x7D),    // CentOS purple
-            DetectedOs::RedHat => (0xEE, 0x00, 0x00),    // Red Hat red
-            DetectedOs::OpenSUSE => (0x73, 0xBA, 0x25),  // openSUSE green
-            DetectedOs::NixOS => (0x7E, 0xBF, 0xFE),     // NixOS blue
-            DetectedOs::Manjaro => (0x35, 0xBF, 0x5C),   // Manjaro green
-            DetectedOs::Mint => (0x87, 0xCF, 0x3E),      // Mint green
-            DetectedOs::PopOS => (0x48, 0xB9, 0xC7),     // Pop cyan
-            DetectedOs::Gentoo => (0xBB, 0xBB, 0xD1),    // Gentoo lavender
-            DetectedOs::Alpine => (0x0D, 0x59, 0x7F),    // Alpine blue
-            DetectedOs::Kali => (0x55, 0x7C, 0x94),      // Kali blue-gray
-            DetectedOs::Rocky => (0x10, 0xB9, 0x81),     // Rocky green
-            DetectedOs::Alma => (0x0F, 0x43, 0x28),      // Alma dark green
-            DetectedOs::Linux => (0xE9, 0x5A, 0x20),     // Generic orange
+            DetectedOs::FreeBSD => (0xAB, 0x22, 0x28),    // Red
+            DetectedOs::OpenBSD => (0xF2, 0xCA, 0x30),    // Yellow
+            DetectedOs::NetBSD => (0xF0, 0x80, 0x00),     // Orange
+            DetectedOs::MacOS => (0xA0, 0xA0, 0xA0),      // Gray
+            DetectedOs::Windows => (0x00, 0x78, 0xD4),    // Blue
+            DetectedOs::Ubuntu => (0xE9, 0x54, 0x20),     // Ubuntu orange
+            DetectedOs::Debian => (0xA8, 0x00, 0x30),     // Debian red
+            DetectedOs::Fedora => (0x51, 0xA2, 0xDA),     // Fedora blue
+            DetectedOs::Arch => (0x17, 0x93, 0xD1),       // Arch blue
+            DetectedOs::CentOS => (0x93, 0x2E, 0x7D),     // CentOS purple
+            DetectedOs::RedHat => (0xEE, 0x00, 0x00),     // Red Hat red
+            DetectedOs::OpenSUSE => (0x73, 0xBA, 0x25),   // openSUSE green
+            DetectedOs::NixOS => (0x7E, 0xBF, 0xFE),      // NixOS blue
+            DetectedOs::Manjaro => (0x35, 0xBF, 0x5C),    // Manjaro green
+            DetectedOs::Mint => (0x87, 0xCF, 0x3E),       // Mint green
+            DetectedOs::PopOS => (0x48, 0xB9, 0xC7),      // Pop cyan
+            DetectedOs::Gentoo => (0xBB, 0xBB, 0xD1),     // Gentoo lavender
+            DetectedOs::Alpine => (0x0D, 0x59, 0x7F),     // Alpine blue
+            DetectedOs::Kali => (0x55, 0x7C, 0x94),       // Kali blue-gray
+            DetectedOs::Rocky => (0x10, 0xB9, 0x81),      // Rocky green
+            DetectedOs::Alma => (0x0F, 0x43, 0x28),       // Alma dark green
+            DetectedOs::Linux => (0xE9, 0x5A, 0x20),      // Generic orange
             DetectedOs::Unknown(_) => (0x70, 0x70, 0x70), // Muted gray
         }
     }
@@ -226,7 +223,6 @@ pub struct Host {
     pub last_connected: Option<chrono::DateTime<chrono::Utc>>,
 }
 
-
 /// Group/folder for organizing hosts
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HostGroup {
@@ -238,7 +234,6 @@ pub struct HostGroup {
     pub collapsed: bool,
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
-
 
 /// Root configuration for hosts.toml
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -319,7 +314,6 @@ impl HostsConfig {
         })?;
 
         let content = toml::to_string_pretty(self).map_err(ConfigError::Serialize)?;
-        super::write_atomic(&path, &content)
-            .map_err(|e| ConfigError::WriteFile { path, source: e })
+        super::write_atomic(&path, &content).map_err(|e| ConfigError::WriteFile { path, source: e })
     }
 }

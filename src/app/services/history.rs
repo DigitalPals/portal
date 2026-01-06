@@ -29,7 +29,13 @@ mod tests {
         history.add_entry(entry);
 
         assert!(mark_entry_disconnected(&mut history, entry_id));
-        assert!(history.find_entry(entry_id).unwrap().disconnected_at.is_some());
+        assert!(
+            history
+                .find_entry(entry_id)
+                .unwrap()
+                .disconnected_at
+                .is_some()
+        );
     }
 
     #[test]

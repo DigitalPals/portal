@@ -5,6 +5,8 @@ use std::sync::Arc;
 
 use chrono::{TimeZone, Utc};
 use russh_sftp::client::SftpSession as RusshSftpSession;
+use russh_sftp::protocol::OpenFlags;
+use tokio::io;
 use tokio::sync::Mutex;
 
 use crate::error::SftpError;
@@ -96,6 +98,17 @@ impl SftpSession {
         let sftp = self.sftp.lock().await;
         let path_str = path.to_string_lossy().to_string();
 
+        match sftp.try_exists(path_str.clone()).await {
+            Ok(true) => return Ok(()),
+            Ok(false) => {}
+            Err(e) => {
+                return Err(SftpError::FileOperation(format!(
+                    "Failed to check directory {}: {}",
+                    path_str, e
+                )));
+            }
+        }
+
         sftp.create_dir(path_str.clone()).await.map_err(|e| {
             SftpError::FileOperation(format!("Failed to create directory {}: {}", path_str, e))
         })
@@ -107,9 +120,14 @@ impl SftpSession {
         let old_path_str = old_path.to_string_lossy().to_string();
         let new_path_str = new_path.to_string_lossy().to_string();
 
-        sftp.rename(old_path_str.clone(), new_path_str.clone()).await.map_err(|e| {
-            SftpError::FileOperation(format!("Failed to rename {} to {}: {}", old_path_str, new_path_str, e))
-        })
+        sftp.rename(old_path_str.clone(), new_path_str.clone())
+            .await
+            .map_err(|e| {
+                SftpError::FileOperation(format!(
+                    "Failed to rename {} to {}: {}",
+                    old_path_str, new_path_str, e
+                ))
+            })
     }
 
     /// Set file/directory permissions (chmod)
@@ -123,9 +141,14 @@ impl SftpSession {
             ..Default::default()
         };
 
-        sftp.set_metadata(path_str.clone(), attrs).await.map_err(|e| {
-            SftpError::FileOperation(format!("Failed to set permissions on {}: {}", path_str, e))
-        })
+        sftp.set_metadata(path_str.clone(), attrs)
+            .await
+            .map_err(|e| {
+                SftpError::FileOperation(format!(
+                    "Failed to set permissions on {}: {}",
+                    path_str, e
+                ))
+            })
     }
 
     /// Remove a file
@@ -181,13 +204,11 @@ impl SftpSession {
         let sftp = self.sftp.lock().await;
         let remote_str = remote_path.to_string_lossy().to_string();
 
-        // Read file from remote
-        let contents = sftp.read(remote_str.clone()).await.map_err(|e| {
-            SftpError::Transfer(format!("Failed to read remote file {}: {}", remote_str, e))
+        let mut remote = sftp.open(remote_str.clone()).await.map_err(|e| {
+            SftpError::Transfer(format!("Failed to open remote file {}: {}", remote_str, e))
         })?;
 
-        // Write to local file
-        tokio::fs::write(local_path, &contents).await.map_err(|e| {
+        let mut local = tokio::fs::File::create(local_path).await.map_err(|e| {
             SftpError::LocalIo(format!(
                 "Failed to write local file {}: {}",
                 local_path.display(),
@@ -195,13 +216,21 @@ impl SftpSession {
             ))
         })?;
 
-        Ok(contents.len() as u64)
+        let bytes = io::copy(&mut remote, &mut local).await.map_err(|e| {
+            SftpError::Transfer(format!(
+                "Failed to download {} to {}: {}",
+                remote_str,
+                local_path.display(),
+                e
+            ))
+        })?;
+
+        Ok(bytes)
     }
 
     /// Upload a file from local to remote
     pub async fn upload(&self, local_path: &Path, remote_path: &Path) -> Result<u64, SftpError> {
-        // Read local file
-        let contents = tokio::fs::read(local_path).await.map_err(|e| {
+        let mut local = tokio::fs::File::open(local_path).await.map_err(|e| {
             SftpError::LocalIo(format!(
                 "Failed to read local file {}: {}",
                 local_path.display(),
@@ -212,14 +241,26 @@ impl SftpSession {
         let sftp = self.sftp.lock().await;
         let remote_str = remote_path.to_string_lossy().to_string();
 
-        // Write to remote file
-        sftp.write(remote_str.clone(), &contents)
+        let mut remote = sftp
+            .open_with_flags(
+                remote_str.clone(),
+                OpenFlags::WRITE | OpenFlags::CREATE | OpenFlags::TRUNCATE,
+            )
             .await
             .map_err(|e| {
-                SftpError::Transfer(format!("Failed to write remote file {}: {}", remote_str, e))
+                SftpError::Transfer(format!("Failed to open remote file {}: {}", remote_str, e))
             })?;
 
-        Ok(contents.len() as u64)
+        let bytes = io::copy(&mut local, &mut remote).await.map_err(|e| {
+            SftpError::Transfer(format!(
+                "Failed to upload {} to {}: {}",
+                local_path.display(),
+                remote_str,
+                e
+            ))
+        })?;
+
+        Ok(bytes)
     }
 
     /// Download a directory recursively from remote to local
@@ -276,19 +317,23 @@ impl SftpSession {
             ))
         })?;
 
-        while let Some(entry) = entries.next_entry().await.map_err(|e| {
-            SftpError::LocalIo(format!("Failed to read directory entry: {}", e))
-        })? {
-            let file_type = entry.file_type().await.map_err(|e| {
-                SftpError::LocalIo(format!("Failed to get file type: {}", e))
-            })?;
+        while let Some(entry) = entries
+            .next_entry()
+            .await
+            .map_err(|e| SftpError::LocalIo(format!("Failed to read directory entry: {}", e)))?
+        {
+            let file_type = entry
+                .file_type()
+                .await
+                .map_err(|e| SftpError::LocalIo(format!("Failed to get file type: {}", e)))?;
 
             let entry_name = entry.file_name();
             let local_entry_path = entry.path();
             let remote_entry_path = remote_path.join(&entry_name);
 
             if file_type.is_dir() {
-                count += Box::pin(self.upload_recursive(&local_entry_path, &remote_entry_path)).await?;
+                count +=
+                    Box::pin(self.upload_recursive(&local_entry_path, &remote_entry_path)).await?;
             } else if file_type.is_file() {
                 self.upload(&local_entry_path, &remote_entry_path).await?;
                 count += 1;

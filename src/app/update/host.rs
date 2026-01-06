@@ -6,8 +6,8 @@ use uuid::Uuid;
 use crate::app::Portal;
 use crate::config::{AuthMethod, Host};
 use crate::message::{HostMessage, Message};
-use crate::views::toast::Toast;
 use crate::views::dialogs::host_dialog::HostDialogState;
+use crate::views::toast::Toast;
 
 /// Handle host management messages
 pub fn handle_host(portal: &mut Portal, msg: HostMessage) -> Task<Message> {
@@ -37,7 +37,9 @@ pub fn handle_host(portal: &mut Portal, msg: HostMessage) -> Task<Message> {
             // Parse search query as [ssh] [user@]hostname[:port]
             let query = portal.search_query.trim();
             if query.is_empty() {
-                portal.toast_manager.push(Toast::warning("Enter a hostname to connect"));
+                portal
+                    .toast_manager
+                    .push(Toast::warning("Enter a hostname to connect"));
                 return Task::none();
             }
 
@@ -63,13 +65,11 @@ pub fn handle_host(portal: &mut Portal, msg: HostMessage) -> Task<Message> {
             };
 
             // Get current username as default
-            let username = user_part
-                .map(|s| s.to_string())
-                .unwrap_or_else(|| {
-                    std::env::var("USER")
-                        .or_else(|_| std::env::var("USERNAME"))
-                        .unwrap_or_else(|_| "root".to_string())
-                });
+            let username = user_part.map(|s| s.to_string()).unwrap_or_else(|| {
+                std::env::var("USER")
+                    .or_else(|_| std::env::var("USERNAME"))
+                    .unwrap_or_else(|_| "root".to_string())
+            });
 
             let now = chrono::Utc::now();
             let temp_host = Host {

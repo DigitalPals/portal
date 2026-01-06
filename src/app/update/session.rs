@@ -1,14 +1,17 @@
 //! Terminal session message handlers
 
-use std::time::Instant;
 use iced::Task;
+use futures::stream;
+use iced::clipboard;
+use std::time::Instant;
 use uuid::Uuid;
 
 use crate::app::managers::{ActiveSession, SessionBackend};
 use crate::app::{Portal, Tab, View};
 use crate::message::{Message, SessionMessage};
-use crate::views::toast::Toast;
 use crate::views::terminal_view::TerminalSession;
+use crate::terminal::backend::TerminalEvent;
+use crate::views::toast::Toast;
 
 /// Handle terminal session messages
 pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message> {
@@ -61,7 +64,7 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
             };
 
             // Create terminal session for this connection
-            let terminal = TerminalSession::new(&host_name);
+            let (terminal, terminal_events) = TerminalSession::new(&host_name);
 
             // Store the active session
             portal.sessions.insert(
@@ -90,7 +93,14 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
             }
             portal.sidebar_state = crate::app::SidebarState::Hidden;
 
-            Task::none()
+            let event_listener = Task::run(
+                stream::unfold(terminal_events, |mut rx| async move {
+                    rx.recv().await.map(|event| (event, rx))
+                }),
+                move |event| Message::Session(SessionMessage::TerminalEvent(session_id, event)),
+            );
+
+            event_listener
         }
         SessionMessage::LocalConnected {
             session_id,
@@ -107,7 +117,7 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
             }
 
             // Create terminal session
-            let terminal = TerminalSession::new("Local Terminal");
+            let (terminal, terminal_events) = TerminalSession::new("Local Terminal");
 
             // Store the active session
             portal.sessions.insert(
@@ -136,7 +146,14 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
             }
             portal.sidebar_state = crate::app::SidebarState::Hidden;
 
-            Task::none()
+            let event_listener = Task::run(
+                stream::unfold(terminal_events, |mut rx| async move {
+                    rx.recv().await.map(|event| (event, rx))
+                }),
+                move |event| Message::Session(SessionMessage::TerminalEvent(session_id, event)),
+            );
+
+            event_listener
         }
         SessionMessage::Data(session_id, data) => {
             if let Some(session) = portal.sessions.get_mut(session_id) {
@@ -147,7 +164,9 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
         SessionMessage::Disconnected(session_id) => {
             tracing::info!("Terminal session disconnected: {}", session_id);
             if let Some(session) = portal.sessions.get(session_id) {
-                portal.history_config.mark_disconnected(session.history_entry_id);
+                portal
+                    .history_config
+                    .mark_disconnected(session.history_entry_id);
                 if let Err(e) = portal.history_config.save() {
                     tracing::error!("Failed to save history config: {}", e);
                 }
@@ -158,6 +177,30 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
         SessionMessage::Error(error) => {
             tracing::error!("Session error: {}", error);
             portal.toast_manager.push(Toast::error(error));
+            Task::none()
+        }
+        SessionMessage::TerminalEvent(session_id, event) => match event {
+            TerminalEvent::Title(title) => {
+                if let Some(tab) = portal.tabs.iter_mut().find(|tab| tab.id == session_id) {
+                    tab.title = title;
+                }
+                Task::none()
+            }
+            TerminalEvent::Bell => {
+                portal.toast_manager.push(Toast::warning("Terminal bell"));
+                Task::none()
+            }
+            TerminalEvent::ClipboardStore(contents) => clipboard::write::<Message>(contents),
+            TerminalEvent::ClipboardLoad => clipboard::read().map(move |contents| {
+                Message::Session(SessionMessage::ClipboardLoaded(session_id, contents))
+            }),
+            TerminalEvent::Exit => handle_session(portal, SessionMessage::Disconnected(session_id)),
+            TerminalEvent::Wakeup => Task::none(),
+        },
+        SessionMessage::ClipboardLoaded(session_id, contents) => {
+            if let Some(text) = contents {
+                return handle_session(portal, SessionMessage::Input(session_id, text.into_bytes()));
+            }
             Task::none()
         }
         SessionMessage::Input(session_id, bytes) => {
@@ -177,10 +220,9 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                     }
                     SessionBackend::Local(local_session) => {
                         let local_session = local_session.clone();
-                        // Local session send is sync, but we run it in a task for consistency
                         return Task::perform(
                             async move {
-                                if let Err(e) = local_session.send(&bytes) {
+                                if let Err(e) = local_session.send(&bytes).await {
                                     tracing::error!("Failed to send to local PTY: {}", e);
                                 }
                             },
@@ -192,19 +234,36 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
             Task::none()
         }
         SessionMessage::Resize(session_id, cols, rows) => {
-            tracing::debug!("Terminal resize for session {}: {}x{}", session_id, cols, rows);
+            tracing::debug!(
+                "Terminal resize for session {}: {}x{}",
+                session_id,
+                cols,
+                rows
+            );
             if let Some(session) = portal.sessions.get_mut(session_id) {
                 session.terminal.resize(cols, rows);
                 match &session.backend {
                     SessionBackend::Ssh(ssh_session) => {
-                        if let Err(e) = ssh_session.window_change(cols, rows) {
-                            tracing::error!("Failed to send window change: {}", e);
-                        }
+                        let ssh_session = ssh_session.clone();
+                        return Task::perform(
+                            async move {
+                                if let Err(e) = ssh_session.window_change(cols, rows).await {
+                                    tracing::error!("Failed to send window change: {}", e);
+                                }
+                            },
+                            |_| Message::Noop,
+                        );
                     }
                     SessionBackend::Local(local_session) => {
-                        if let Err(e) = local_session.resize(cols, rows) {
-                            tracing::error!("Failed to resize local PTY: {}", e);
-                        }
+                        let local_session = local_session.clone();
+                        return Task::perform(
+                            async move {
+                                if let Err(e) = local_session.resize(cols, rows).await {
+                                    tracing::error!("Failed to resize local PTY: {}", e);
+                                }
+                            },
+                            |_| Message::Noop,
+                        );
                     }
                 }
             }
@@ -217,7 +276,8 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
         SessionMessage::InstallKey(session_id) => {
             if let Some(session) = portal.sessions.get_mut(session_id) {
                 if let SessionBackend::Ssh(ssh_session) = &session.backend {
-                    session.status_message = Some(("Installing key...".to_string(), Instant::now()));
+                    session.status_message =
+                        Some(("Installing key...".to_string(), Instant::now()));
                     let ssh_session = ssh_session.clone();
                     return Task::perform(
                         async move { crate::ssh::install_ssh_key(&ssh_session).await },
@@ -230,7 +290,9 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                     );
                 } else {
                     // Key installation only applies to SSH sessions
-                    portal.toast_manager.push(Toast::error("Key installation is only available for SSH sessions"));
+                    portal.toast_manager.push(Toast::error(
+                        "Key installation is only available for SSH sessions",
+                    ));
                 }
             }
             Task::none()
@@ -241,13 +303,19 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
             }
             match result {
                 Ok(true) => {
-                    portal.toast_manager.push(Toast::success("SSH key installed on remote server"));
+                    portal
+                        .toast_manager
+                        .push(Toast::success("SSH key installed on remote server"));
                 }
                 Ok(false) => {
-                    portal.toast_manager.push(Toast::success("SSH key already installed"));
+                    portal
+                        .toast_manager
+                        .push(Toast::success("SSH key already installed"));
                 }
                 Err(e) => {
-                    portal.toast_manager.push(Toast::error(format!("Failed to install key: {}", e)));
+                    portal
+                        .toast_manager
+                        .push(Toast::error(format!("Failed to install key: {}", e)));
                 }
             }
             Task::none()

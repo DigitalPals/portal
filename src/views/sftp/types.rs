@@ -74,8 +74,12 @@ impl Default for ContextMenuState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SftpDialogType {
     NewFolder,
-    Rename { original_name: String },
-    Delete { entries: Vec<(String, std::path::PathBuf, bool)> }, // (name, path, is_dir)
+    Rename {
+        original_name: String,
+    },
+    Delete {
+        entries: Vec<(String, std::path::PathBuf, bool)>,
+    }, // (name, path, is_dir)
     EditPermissions {
         name: String,
         path: std::path::PathBuf,
@@ -130,15 +134,33 @@ impl PermissionBits {
     /// Convert to Unix mode
     pub fn to_mode(self) -> u32 {
         let mut mode = 0u32;
-        if self.owner_read { mode |= 0o400; }
-        if self.owner_write { mode |= 0o200; }
-        if self.owner_execute { mode |= 0o100; }
-        if self.group_read { mode |= 0o040; }
-        if self.group_write { mode |= 0o020; }
-        if self.group_execute { mode |= 0o010; }
-        if self.other_read { mode |= 0o004; }
-        if self.other_write { mode |= 0o002; }
-        if self.other_execute { mode |= 0o001; }
+        if self.owner_read {
+            mode |= 0o400;
+        }
+        if self.owner_write {
+            mode |= 0o200;
+        }
+        if self.owner_execute {
+            mode |= 0o100;
+        }
+        if self.group_read {
+            mode |= 0o040;
+        }
+        if self.group_write {
+            mode |= 0o020;
+        }
+        if self.group_execute {
+            mode |= 0o010;
+        }
+        if self.other_read {
+            mode |= 0o004;
+        }
+        if self.other_write {
+            mode |= 0o002;
+        }
+        if self.other_execute {
+            mode |= 0o001;
+        }
         mode
     }
 

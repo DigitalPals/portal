@@ -5,7 +5,7 @@
 
 use std::time::Instant;
 
-use iced::widget::{container, row, text, Space};
+use iced::widget::{Space, container, row, text};
 use iced::{Alignment, Element, Length};
 
 use crate::message::Message;
@@ -53,7 +53,9 @@ pub fn terminal_status_bar<'a>(
     // Right side: shortcut hint
     let right = row![
         text("Ctrl+Shift+K").size(11).color(theme.text_muted),
-        text(" Install SSH Key").size(11).color(theme.text_secondary),
+        text(" Install SSH Key")
+            .size(11)
+            .color(theme.text_secondary),
     ]
     .align_y(Alignment::Center);
 

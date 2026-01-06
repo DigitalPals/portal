@@ -1,13 +1,13 @@
 //! Settings page view (full page, not dialog)
 
 use iced::widget::{
-    column, container, mouse_area, row, scrollable, slider, text, Column, Row, Space,
+    Column, Row, Space, column, container, mouse_area, row, scrollable, slider, text,
 };
 use iced::{Alignment, Element, Fill, Length};
 
 use crate::fonts::TerminalFont;
 use crate::message::{Message, UiMessage};
-use crate::theme::{get_theme, Theme, ThemeId, BORDER_RADIUS, CARD_BORDER_RADIUS};
+use crate::theme::{BORDER_RADIUS, CARD_BORDER_RADIUS, Theme, ThemeId, get_theme};
 
 /// Build the settings page view
 pub fn settings_page_view(
@@ -71,11 +71,7 @@ fn settings_section<'a>(
     let mut section = Column::new().spacing(8);
 
     // Section title
-    section = section.push(
-        text(title)
-            .size(12)
-            .color(theme.text_muted),
-    );
+    section = section.push(text(title).size(12).color(theme.text_muted));
 
     // Section card with items
     let mut card_content = Column::new().spacing(16).padding(20);
@@ -83,16 +79,16 @@ fn settings_section<'a>(
         card_content = card_content.push(item);
     }
 
-    let card = container(card_content).width(Fill).style(move |_| {
-        container::Style {
+    let card = container(card_content)
+        .width(Fill)
+        .style(move |_| container::Style {
             background: Some(theme.surface.into()),
             border: iced::Border {
                 radius: CARD_BORDER_RADIUS.into(),
                 ..Default::default()
             },
             ..Default::default()
-        }
-    });
+        });
 
     section.push(card).into()
 }
@@ -117,7 +113,11 @@ fn theme_tiles_row(current: ThemeId, theme: Theme) -> Element<'static, Message> 
 }
 
 /// Individual theme tile with mini app preview
-fn theme_tile(tile_theme_id: ThemeId, is_selected: bool, current_theme: Theme) -> Element<'static, Message> {
+fn theme_tile(
+    tile_theme_id: ThemeId,
+    is_selected: bool,
+    current_theme: Theme,
+) -> Element<'static, Message> {
     let preview_theme = get_theme(tile_theme_id);
 
     // Mini app preview
@@ -132,13 +132,11 @@ fn theme_tile(tile_theme_id: ThemeId, is_selected: bool, current_theme: Theme) -
         ThemeId::CatppuccinMocha => "Mocha",
     };
 
-    let name = text(short_name)
-        .size(11)
-        .color(if is_selected {
-            current_theme.accent
-        } else {
-            current_theme.text_secondary
-        });
+    let name = text(short_name).size(11).color(if is_selected {
+        current_theme.accent
+    } else {
+        current_theme.text_secondary
+    });
 
     let border_width = if is_selected { 2.0 } else { 1.0 };
     let border_color = if is_selected {
@@ -189,14 +187,15 @@ fn mini_app_preview(preview_theme: Theme) -> Element<'static, Message> {
     };
 
     // Accent button element
-    let accent_button = container(Space::new().width(20).height(5)).style(move |_| container::Style {
-        background: Some(preview_theme.accent.into()),
-        border: iced::Border {
-            radius: 2.0.into(),
+    let accent_button =
+        container(Space::new().width(20).height(5)).style(move |_| container::Style {
+            background: Some(preview_theme.accent.into()),
+            border: iced::Border {
+                radius: 2.0.into(),
+                ..Default::default()
+            },
             ..Default::default()
-        },
-        ..Default::default()
-    });
+        });
 
     let main_content = column![
         Space::new().height(5),
@@ -271,13 +270,11 @@ fn font_tile(font: TerminalFont, is_selected: bool, theme: Theme) -> Element<'st
         .font(iced_font)
         .color(theme.text_primary);
 
-    let name = text(font.display_name())
-        .size(11)
-        .color(if is_selected {
-            theme.accent
-        } else {
-            theme.text_secondary
-        });
+    let name = text(font.display_name()).size(11).color(if is_selected {
+        theme.accent
+    } else {
+        theme.text_secondary
+    });
 
     let border_width = if is_selected { 2.0 } else { 1.0 };
     let border_color = if is_selected {
@@ -290,17 +287,18 @@ fn font_tile(font: TerminalFont, is_selected: bool, theme: Theme) -> Element<'st
         .align_x(Alignment::Center)
         .spacing(0);
 
-    let tile_container = container(tile_content)
-        .padding([12, 20])
-        .style(move |_| container::Style {
-            background: Some(theme.background.into()),
-            border: iced::Border {
-                radius: BORDER_RADIUS.into(),
-                width: border_width,
-                color: border_color,
-            },
-            ..Default::default()
-        });
+    let tile_container =
+        container(tile_content)
+            .padding([12, 20])
+            .style(move |_| container::Style {
+                background: Some(theme.background.into()),
+                border: iced::Border {
+                    radius: BORDER_RADIUS.into(),
+                    width: border_width,
+                    color: border_color,
+                },
+                ..Default::default()
+            });
 
     mouse_area(tile_container)
         .on_press(Message::Ui(UiMessage::FontChange(font)))
@@ -311,9 +309,7 @@ fn font_tile(font: TerminalFont, is_selected: bool, theme: Theme) -> Element<'st
 fn font_size_setting(current_size: f32, theme: Theme) -> Element<'static, Message> {
     let label = text("Font Size").size(14).color(theme.text_primary);
 
-    let description = text("Terminal text size")
-        .size(12)
-        .color(theme.text_muted);
+    let description = text("Terminal text size").size(12).color(theme.text_muted);
 
     let slider_widget = slider(6.0..=20.0, current_size, |v| {
         Message::Ui(UiMessage::FontSizeChange(v))
@@ -344,12 +340,9 @@ fn font_size_setting(current_size: f32, theme: Theme) -> Element<'static, Messag
 /// About section content
 fn about_content(theme: Theme) -> Element<'static, Message> {
     column![
-        text(format!(
-            "Portal SSH Client v{}",
-            env!("CARGO_PKG_VERSION")
-        ))
-        .size(14)
-        .color(theme.text_primary),
+        text(format!("Portal SSH Client v{}", env!("CARGO_PKG_VERSION")))
+            .size(14)
+            .color(theme.text_primary),
         Space::new().height(4),
         text("A modern SSH client built with Rust and Iced")
             .size(12)
@@ -358,4 +351,3 @@ fn about_content(theme: Theme) -> Element<'static, Message> {
     .spacing(0)
     .into()
 }
-

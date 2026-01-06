@@ -16,12 +16,12 @@ pub mod state;
 pub mod types;
 
 // Re-export types for external use
+pub use state::DualPaneSftpState;
 pub use types::{
     ContextMenuAction, PaneId, PaneSource, PermissionBit, PermissionBits, SftpDialogType,
 };
-pub use state::DualPaneSftpState;
 
-use iced::widget::{container, row, stack, Space};
+use iced::widget::{Space, container, row, stack};
 use iced::{Element, Fill, Length};
 use uuid::Uuid;
 

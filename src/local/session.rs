@@ -2,7 +2,7 @@
 //!
 //! Spawns a local shell with a pseudo-terminal and manages I/O.
 
-use portable_pty::{native_pty_system, CommandBuilder, PtySize};
+use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use std::io::{Read, Write};
 use tokio::sync::mpsc;
 
@@ -47,7 +47,11 @@ impl LocalSession {
         event_tx: mpsc::Sender<LocalEvent>,
     ) -> Result<Self, LocalError> {
         // Get user's shell
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+        let shell = if cfg!(target_os = "windows") {
+            std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string())
+        } else {
+            std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string())
+        };
         tracing::info!("Spawning local terminal with shell: {}", shell);
 
         // Create PTY system
@@ -65,7 +69,9 @@ impl LocalSession {
 
         // Build command for shell as login shell to source profile/rc files
         let mut cmd = CommandBuilder::new(&shell);
-        cmd.arg("-l");
+        if !cfg!(target_os = "windows") {
+            cmd.arg("-l");
+        }
         // Set TERM for proper terminal emulation
         cmd.env("TERM", "xterm-256color");
 
@@ -128,11 +134,11 @@ impl LocalSession {
         });
 
         // Writer task - receives commands and writes to PTY
-        tokio::spawn(async move {
+        std::thread::spawn(move || {
             // Keep master alive for resize
             let _master = master;
 
-            while let Some(cmd) = command_rx.recv().await {
+            while let Some(cmd) = command_rx.blocking_recv() {
                 match cmd {
                     PtyCommand::Data(data) => {
                         if let Err(e) = writer.write_all(&data) {
@@ -155,27 +161,29 @@ impl LocalSession {
             }
 
             // Channel closed, send disconnect
-            let _ = event_tx.send(LocalEvent::Disconnected).await;
+            let _ = event_tx.blocking_send(LocalEvent::Disconnected);
         });
     }
 
     /// Send data to the local shell
-    pub fn send(&self, data: &[u8]) -> Result<(), LocalError> {
+    pub async fn send(&self, data: &[u8]) -> Result<(), LocalError> {
         self.command_tx
-            .try_send(PtyCommand::Data(data.to_vec()))
+            .send(PtyCommand::Data(data.to_vec()))
+            .await
             .map_err(|e| {
-                tracing::debug!("Local PTY send dropped: {}", e);
+                tracing::debug!("Local PTY send failed: {}", e);
                 LocalError::Io(e.to_string())
             })?;
         Ok(())
     }
 
     /// Notify the local shell of a window size change
-    pub fn resize(&self, cols: u16, rows: u16) -> Result<(), LocalError> {
+    pub async fn resize(&self, cols: u16, rows: u16) -> Result<(), LocalError> {
         self.command_tx
-            .try_send(PtyCommand::Resize { cols, rows })
+            .send(PtyCommand::Resize { cols, rows })
+            .await
             .map_err(|e| {
-                tracing::debug!("Local PTY resize dropped: {}", e);
+                tracing::debug!("Local PTY resize failed: {}", e);
                 LocalError::Io(e.to_string())
             })?;
         Ok(())

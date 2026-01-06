@@ -303,7 +303,6 @@ impl Theme {
             },
         }
     }
-
 }
 
 /// Get theme by ID

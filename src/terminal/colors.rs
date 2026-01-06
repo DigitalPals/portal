@@ -8,23 +8,23 @@ use crate::theme::TerminalColors;
 /// Standard ANSI color palette (dark theme) - kept for backward compatibility
 pub const ANSI_COLORS: [Color; 16] = [
     // Normal colors (0-7)
-    Color::from_rgb(0.0, 0.0, 0.0),           // Black
-    Color::from_rgb(0.8, 0.0, 0.0),           // Red
-    Color::from_rgb(0.0, 0.8, 0.0),           // Green
-    Color::from_rgb(0.8, 0.8, 0.0),           // Yellow
-    Color::from_rgb(0.0, 0.0, 0.8),           // Blue
-    Color::from_rgb(0.8, 0.0, 0.8),           // Magenta
-    Color::from_rgb(0.0, 0.8, 0.8),           // Cyan
-    Color::from_rgb(0.75, 0.75, 0.75),        // White
+    Color::from_rgb(0.0, 0.0, 0.0),    // Black
+    Color::from_rgb(0.8, 0.0, 0.0),    // Red
+    Color::from_rgb(0.0, 0.8, 0.0),    // Green
+    Color::from_rgb(0.8, 0.8, 0.0),    // Yellow
+    Color::from_rgb(0.0, 0.0, 0.8),    // Blue
+    Color::from_rgb(0.8, 0.0, 0.8),    // Magenta
+    Color::from_rgb(0.0, 0.8, 0.8),    // Cyan
+    Color::from_rgb(0.75, 0.75, 0.75), // White
     // Bright colors (8-15)
-    Color::from_rgb(0.5, 0.5, 0.5),           // Bright Black (Gray)
-    Color::from_rgb(1.0, 0.0, 0.0),           // Bright Red
-    Color::from_rgb(0.0, 1.0, 0.0),           // Bright Green
-    Color::from_rgb(1.0, 1.0, 0.0),           // Bright Yellow
-    Color::from_rgb(0.0, 0.0, 1.0),           // Bright Blue
-    Color::from_rgb(1.0, 0.0, 1.0),           // Bright Magenta
-    Color::from_rgb(0.0, 1.0, 1.0),           // Bright Cyan
-    Color::from_rgb(1.0, 1.0, 1.0),           // Bright White
+    Color::from_rgb(0.5, 0.5, 0.5), // Bright Black (Gray)
+    Color::from_rgb(1.0, 0.0, 0.0), // Bright Red
+    Color::from_rgb(0.0, 1.0, 0.0), // Bright Green
+    Color::from_rgb(1.0, 1.0, 0.0), // Bright Yellow
+    Color::from_rgb(0.0, 0.0, 1.0), // Bright Blue
+    Color::from_rgb(1.0, 0.0, 1.0), // Bright Magenta
+    Color::from_rgb(0.0, 1.0, 1.0), // Bright Cyan
+    Color::from_rgb(1.0, 1.0, 1.0), // Bright White
 ];
 
 /// Default foreground color - kept for backward compatibility
@@ -90,9 +90,21 @@ fn indexed_to_iced_themed(idx: u8, colors: &TerminalColors) -> Color {
         let g = (idx / 6) % 6;
         let b = idx % 6;
         Color::from_rgb(
-            if r == 0 { 0.0 } else { (r as f32 * 40.0 + 55.0) / 255.0 },
-            if g == 0 { 0.0 } else { (g as f32 * 40.0 + 55.0) / 255.0 },
-            if b == 0 { 0.0 } else { (b as f32 * 40.0 + 55.0) / 255.0 },
+            if r == 0 {
+                0.0
+            } else {
+                (r as f32 * 40.0 + 55.0) / 255.0
+            },
+            if g == 0 {
+                0.0
+            } else {
+                (g as f32 * 40.0 + 55.0) / 255.0
+            },
+            if b == 0 {
+                0.0
+            } else {
+                (b as f32 * 40.0 + 55.0) / 255.0
+            },
         )
     } else {
         // Grayscale ramp (24 shades) - same calculation as non-themed
@@ -104,10 +116,5 @@ fn indexed_to_iced_themed(idx: u8, colors: &TerminalColors) -> Color {
 
 /// Create a dimmed version of a color
 fn dim_color(color: Color) -> Color {
-    Color::from_rgba(
-        color.r * 0.66,
-        color.g * 0.66,
-        color.b * 0.66,
-        color.a,
-    )
+    Color::from_rgba(color.r * 0.66, color.g * 0.66, color.b * 0.66, color.a)
 }

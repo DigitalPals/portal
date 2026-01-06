@@ -1,4 +1,6 @@
-use iced::widget::{button, column, container, mouse_area, row, text, text_input, Column, Row, Space};
+use iced::widget::{
+    Column, Row, Space, button, column, container, mouse_area, row, text, text_input,
+};
 use iced::{Alignment, Element, Fill, Length, Padding};
 use uuid::Uuid;
 
@@ -12,8 +14,8 @@ use crate::config::DetectedOs;
 use crate::icons::{self, icon_with_color};
 use crate::message::{HostMessage, Message, UiMessage};
 use crate::theme::{
-    Theme, BORDER_RADIUS, CARD_BORDER_RADIUS, CARD_HEIGHT, GRID_PADDING, GRID_SPACING,
-    MIN_CARD_WIDTH, SIDEBAR_WIDTH, SIDEBAR_WIDTH_COLLAPSED,
+    BORDER_RADIUS, CARD_BORDER_RADIUS, CARD_HEIGHT, GRID_PADDING, GRID_SPACING, MIN_CARD_WIDTH,
+    SIDEBAR_WIDTH, SIDEBAR_WIDTH_COLLAPSED, Theme,
 };
 
 /// Group card data for the grid view
@@ -47,7 +49,8 @@ pub fn calculate_columns(window_width: f32, sidebar_state: SidebarState) -> usiz
     // Calculate how many cards fit
     // Formula: content_width >= n * MIN_CARD_WIDTH + (n-1) * GRID_SPACING
     // Solving: n <= (content_width + GRID_SPACING) / (MIN_CARD_WIDTH + GRID_SPACING)
-    let columns = ((content_width + GRID_SPACING) / (MIN_CARD_WIDTH + GRID_SPACING)).floor() as usize;
+    let columns =
+        ((content_width + GRID_SPACING) / (MIN_CARD_WIDTH + GRID_SPACING)).floor() as usize;
 
     // Clamp between 1 and 4 columns
     columns.clamp(1, 4)
@@ -207,7 +210,8 @@ pub fn host_grid_view(
 
     // Groups section (if any groups exist)
     if !groups_empty {
-        let groups_section = build_groups_section(groups, column_count, theme, focus_section, focus_index);
+        let groups_section =
+            build_groups_section(groups, column_count, theme, focus_section, focus_index);
         content = content.push(groups_section);
     }
 
@@ -221,13 +225,18 @@ pub fn host_grid_view(
         } else {
             None
         };
-        let hosts_section = build_hosts_section(hosts, column_count, theme, focus_section, host_focus_index, hovered_host);
+        let hosts_section = build_hosts_section(
+            hosts,
+            column_count,
+            theme,
+            focus_section,
+            host_focus_index,
+            hovered_host,
+        );
         content = content.push(hosts_section);
     }
 
-    let scrollable_content = iced::widget::scrollable(content)
-        .height(Fill)
-        .width(Fill);
+    let scrollable_content = iced::widget::scrollable(content).height(Fill).width(Fill);
 
     // Action bar (fixed at top, below tab bar)
     let action_bar = build_action_bar(search_query, theme);
@@ -253,9 +262,7 @@ fn build_groups_section(
     focus_section: FocusSection,
     focus_index: Option<usize>,
 ) -> Element<'static, Message> {
-    let section_header = text("Groups")
-        .size(16)
-        .color(theme.text_primary);
+    let section_header = text("Groups").size(16).color(theme.text_primary);
 
     // Build grid of group cards (dynamic columns)
     let mut rows: Vec<Element<'static, Message>> = Vec::new();
@@ -277,20 +284,14 @@ fn build_groups_section(
     // Add remaining cards in the last row
     if !current_row.is_empty() {
         while current_row.len() < column_count {
-            current_row.push(
-                container(text(""))
-                    .width(Length::FillPortion(1))
-                    .into(),
-            );
+            current_row.push(container(text("")).width(Length::FillPortion(1)).into());
         }
         rows.push(Row::with_children(current_row).spacing(GRID_SPACING).into());
     }
 
     let grid = Column::with_children(rows).spacing(GRID_SPACING);
 
-    column![section_header, grid]
-        .spacing(12)
-        .into()
+    column![section_header, grid].spacing(12).into()
 }
 
 /// Build the hosts section
@@ -302,9 +303,7 @@ fn build_hosts_section(
     focus_index: Option<usize>,
     hovered_host: Option<Uuid>,
 ) -> Element<'static, Message> {
-    let section_header = text("Hosts")
-        .size(16)
-        .color(theme.text_primary);
+    let section_header = text("Hosts").size(16).color(theme.text_primary);
 
     // Build grid of host cards (dynamic columns)
     let mut rows: Vec<Element<'static, Message>> = Vec::new();
@@ -327,20 +326,14 @@ fn build_hosts_section(
     // Add remaining cards in the last row
     if !current_row.is_empty() {
         while current_row.len() < column_count {
-            current_row.push(
-                container(text(""))
-                    .width(Length::FillPortion(1))
-                    .into(),
-            );
+            current_row.push(container(text("")).width(Length::FillPortion(1)).into());
         }
         rows.push(Row::with_children(current_row).spacing(GRID_SPACING).into());
     }
 
     let grid = Column::with_children(rows).spacing(GRID_SPACING);
 
-    column![section_header, grid]
-        .spacing(12)
-        .into()
+    column![section_header, grid].spacing(12).into()
 }
 
 /// Single group card
@@ -348,9 +341,11 @@ fn group_card(group: GroupCard, theme: Theme, is_focused: bool) -> Element<'stat
     let group_id = group.id;
 
     // Folder icon with vibrant accent background
-    let icon_widget = container(
-        icon_with_color(icons::ui::FOLDER_CLOSED, 18, iced::Color::WHITE)
-    )
+    let icon_widget = container(icon_with_color(
+        icons::ui::FOLDER_CLOSED,
+        18,
+        iced::Color::WHITE,
+    ))
     .width(40)
     .height(40)
     .align_x(Alignment::Center)
@@ -473,7 +468,12 @@ fn os_icon_color(os: &Option<DetectedOs>) -> iced::Color {
 }
 
 /// Single host card
-fn host_card(host: HostCard, theme: Theme, is_focused: bool, is_hovered: bool) -> Element<'static, Message> {
+fn host_card(
+    host: HostCard,
+    theme: Theme,
+    is_focused: bool,
+    is_hovered: bool,
+) -> Element<'static, Message> {
     let host_id = host.id;
 
     // Get OS icon and color
@@ -481,21 +481,21 @@ fn host_card(host: HostCard, theme: Theme, is_focused: bool, is_hovered: bool) -
     let os_color = os_icon_color(&host.detected_os);
 
     // OS icon with vibrant solid background and white icon
-    let icon_widget = container(
-        icon_with_color(os_icon_bytes, 20, iced::Color::WHITE)
-    )
-    .width(40)
-    .height(40)
-    .align_x(Alignment::Center)
-    .align_y(Alignment::Center)
-    .style(move |_theme| container::Style {
-        background: Some(iced::Color::from_rgba(os_color.r, os_color.g, os_color.b, 0.85).into()),
-        border: iced::Border {
-            radius: CARD_BORDER_RADIUS.into(),
+    let icon_widget = container(icon_with_color(os_icon_bytes, 20, iced::Color::WHITE))
+        .width(40)
+        .height(40)
+        .align_x(Alignment::Center)
+        .align_y(Alignment::Center)
+        .style(move |_theme| container::Style {
+            background: Some(
+                iced::Color::from_rgba(os_color.r, os_color.g, os_color.b, 0.85).into(),
+            ),
+            border: iced::Border {
+                radius: CARD_BORDER_RADIUS.into(),
+                ..Default::default()
+            },
             ..Default::default()
-        },
-        ..Default::default()
-    });
+        });
 
     // Host info
     let os_text = match &host.detected_os {
@@ -511,27 +511,25 @@ fn host_card(host: HostCard, theme: Theme, is_focused: bool, is_hovered: bool) -
 
     // Edit button - only visible on hover
     let edit_button: Element<'static, Message> = if is_hovered {
-        button(
-            icon_with_color(icons::ui::PENCIL, 16, theme.text_secondary)
-        )
-        .padding(8)
-        .style(move |_theme, status| {
-            let bg = match status {
-                button::Status::Hovered => theme.hover,
-                _ => iced::Color::TRANSPARENT,
-            };
-            button::Style {
-                background: Some(bg.into()),
-                text_color: theme.text_secondary,
-                border: iced::Border {
-                    radius: 6.0.into(),
+        button(icon_with_color(icons::ui::PENCIL, 16, theme.text_secondary))
+            .padding(8)
+            .style(move |_theme, status| {
+                let bg = match status {
+                    button::Status::Hovered => theme.hover,
+                    _ => iced::Color::TRANSPARENT,
+                };
+                button::Style {
+                    background: Some(bg.into()),
+                    text_color: theme.text_secondary,
+                    border: iced::Border {
+                        radius: 6.0.into(),
+                        ..Default::default()
+                    },
                     ..Default::default()
-                },
-                ..Default::default()
-            }
-        })
-        .on_press(Message::Host(HostMessage::Edit(host_id)))
-        .into()
+                }
+            })
+            .on_press(Message::Host(HostMessage::Edit(host_id)))
+            .into()
     } else {
         Space::new().into()
     };
@@ -600,7 +598,9 @@ fn host_card(host: HostCard, theme: Theme, is_focused: bool, is_hovered: bool) -
 fn empty_state(theme: Theme) -> Element<'static, Message> {
     let content = column![
         icon_with_color(icons::ui::SERVER, 48, theme.text_muted),
-        text("No hosts configured").size(18).color(theme.text_primary),
+        text("No hosts configured")
+            .size(18)
+            .color(theme.text_primary),
         text("Click NEW HOST to add your first server")
             .size(14)
             .color(theme.text_muted),

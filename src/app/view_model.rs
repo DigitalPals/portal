@@ -47,8 +47,7 @@ pub(super) fn filter_host_cards(query: &str, cards: Vec<HostCard>) -> Vec<HostCa
     cards
         .into_iter()
         .filter(|h| {
-            h.name.to_lowercase().contains(&query)
-                || h.hostname.to_lowercase().contains(&query)
+            h.name.to_lowercase().contains(&query) || h.hostname.to_lowercase().contains(&query)
         })
         .collect()
 }

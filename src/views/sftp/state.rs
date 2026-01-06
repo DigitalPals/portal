@@ -135,7 +135,9 @@ impl SftpDialogState {
 
     pub fn rename(pane_id: PaneId, original_name: String) -> Self {
         Self {
-            dialog_type: SftpDialogType::Rename { original_name: original_name.clone() },
+            dialog_type: SftpDialogType::Rename {
+                original_name: original_name.clone(),
+            },
             target_pane: pane_id,
             input_value: original_name,
             error: None,
@@ -151,9 +153,18 @@ impl SftpDialogState {
         }
     }
 
-    pub fn edit_permissions(pane_id: PaneId, name: String, path: PathBuf, permissions: PermissionBits) -> Self {
+    pub fn edit_permissions(
+        pane_id: PaneId,
+        name: String,
+        path: PathBuf,
+        permissions: PermissionBits,
+    ) -> Self {
         Self {
-            dialog_type: SftpDialogType::EditPermissions { name, path, permissions },
+            dialog_type: SftpDialogType::EditPermissions {
+                name,
+                path,
+                permissions,
+            },
             target_pane: pane_id,
             input_value: String::new(),
             error: None,
@@ -166,7 +177,11 @@ impl SftpDialogState {
             SftpDialogType::EditPermissions { .. } => true, // Always valid
             _ => {
                 let name = self.input_value.trim();
-                !name.is_empty() && !name.contains('/') && !name.contains('\\') && name != "." && name != ".."
+                !name.is_empty()
+                    && !name.contains('/')
+                    && !name.contains('\\')
+                    && name != "."
+                    && name != ".."
             }
         }
     }
@@ -238,8 +253,18 @@ impl DualPaneSftpState {
         self.hide_context_menu();
     }
 
-    pub fn show_permissions_dialog(&mut self, name: String, path: PathBuf, permissions: PermissionBits) {
-        self.dialog = Some(SftpDialogState::edit_permissions(self.active_pane, name, path, permissions));
+    pub fn show_permissions_dialog(
+        &mut self,
+        name: String,
+        path: PathBuf,
+        permissions: PermissionBits,
+    ) {
+        self.dialog = Some(SftpDialogState::edit_permissions(
+            self.active_pane,
+            name,
+            path,
+            permissions,
+        ));
         self.hide_context_menu();
     }
 
@@ -302,7 +327,11 @@ mod tests {
         state.entries = vec![entry(".."), entry(".secret"), entry("notes.txt")];
         state.show_hidden = false;
 
-        let visible: Vec<_> = state.visible_entries().into_iter().map(|(_, e)| e.name.clone()).collect();
+        let visible: Vec<_> = state
+            .visible_entries()
+            .into_iter()
+            .map(|(_, e)| e.name.clone())
+            .collect();
 
         assert_eq!(visible, vec!["..", "notes.txt"]);
     }
@@ -313,7 +342,11 @@ mod tests {
         state.entries = vec![entry("alpha.txt"), entry("Beta.md"), entry("gamma.log")];
         state.filter_text = "be".to_string();
 
-        let visible: Vec<_> = state.visible_entries().into_iter().map(|(_, e)| e.name.clone()).collect();
+        let visible: Vec<_> = state
+            .visible_entries()
+            .into_iter()
+            .map(|(_, e)| e.name.clone())
+            .collect();
 
         assert_eq!(visible, vec!["Beta.md"]);
     }

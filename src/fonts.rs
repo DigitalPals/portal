@@ -53,5 +53,4 @@ pub const JETBRAINS_MONO_NERD_BYTES: &[u8] =
     include_bytes!("../assets/fonts/JetBrainsMonoNerdFont-Regular.ttf");
 
 /// Raw font bytes for loading at startup - Hack
-pub const HACK_NERD_BYTES: &[u8] =
-    include_bytes!("../assets/fonts/HackNerdFont-Regular.ttf");
+pub const HACK_NERD_BYTES: &[u8] = include_bytes!("../assets/fonts/HackNerdFont-Regular.ttf");

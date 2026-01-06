@@ -33,23 +33,39 @@ fn list_local_dir_sync(path: &Path) -> Result<Vec<FileEntry>, String> {
         }
     }
 
-    let entries = std::fs::read_dir(path)
-        .map_err(|e| format!("Failed to read directory: {}", e))?;
+    let entries =
+        std::fs::read_dir(path).map_err(|e| format!("Failed to read directory: {}", e))?;
 
     for entry in entries {
         let entry = entry.map_err(|e| format!("Failed to read entry: {}", e))?;
-        let metadata = entry.metadata().map_err(|e| format!("Failed to read metadata: {}", e))?;
+        let entry_path = entry.path();
+        let metadata = std::fs::symlink_metadata(&entry_path)
+            .map_err(|e| format!("Failed to read metadata: {}", e))?;
+        let target_metadata = if metadata.file_type().is_symlink() {
+            std::fs::metadata(&entry_path).ok()
+        } else {
+            None
+        };
 
         let name = entry.file_name().to_string_lossy().to_string();
-        let entry_path = entry.path();
-        let is_dir = metadata.is_dir();
+        let is_dir = target_metadata
+            .as_ref()
+            .map(|meta| meta.is_dir())
+            .unwrap_or_else(|| metadata.is_dir());
         let is_symlink = metadata.file_type().is_symlink();
-        let size = metadata.len();
+        let size = target_metadata
+            .as_ref()
+            .map(|meta| meta.len())
+            .unwrap_or_else(|| metadata.len());
 
-        let modified = metadata.modified().ok().and_then(|mtime| {
-            let duration = mtime.duration_since(std::time::UNIX_EPOCH).ok()?;
-            Utc.timestamp_opt(duration.as_secs() as i64, 0).single()
-        });
+        let modified = target_metadata
+            .as_ref()
+            .and_then(|meta| meta.modified().ok())
+            .or_else(|| metadata.modified().ok())
+            .and_then(|mtime| {
+                let duration = mtime.duration_since(std::time::UNIX_EPOCH).ok()?;
+                Utc.timestamp_opt(duration.as_secs() as i64, 0).single()
+            });
 
         result.push(FileEntry {
             name,

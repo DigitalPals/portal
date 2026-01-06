@@ -10,9 +10,7 @@ use crate::config::Host;
 use crate::fs_utils::{cleanup_temp_dir, copy_dir_recursive, count_items_in_dir};
 use crate::local::{LocalEvent, LocalSession};
 use crate::local_fs::list_local_dir;
-use crate::message::{
-    Message, SessionId, SessionMessage, SftpMessage,
-};
+use crate::message::{Message, SessionId, SessionMessage, SftpMessage};
 use crate::views::file_viewer::{FileSource, FileType};
 use crate::views::sftp::{ContextMenuAction, PaneId, PaneSource, PermissionBits, SftpDialogType};
 use crate::views::tabs::Tab;
@@ -148,7 +146,9 @@ impl Portal {
             }),
             move |event| match event {
                 LocalEvent::Data(data) => Message::Session(SessionMessage::Data(session_id, data)),
-                LocalEvent::Disconnected => Message::Session(SessionMessage::Disconnected(session_id)),
+                LocalEvent::Disconnected => {
+                    Message::Session(SessionMessage::Disconnected(session_id))
+                }
             },
         );
 
@@ -166,7 +166,10 @@ impl Portal {
             }
             Err(e) => {
                 tracing::error!("Failed to spawn local terminal: {}", e);
-                self.toast_manager.push(Toast::error(format!("Failed to spawn local terminal: {}", e)));
+                self.toast_manager.push(Toast::error(format!(
+                    "Failed to spawn local terminal: {}",
+                    e
+                )));
                 Task::none()
             }
         }
@@ -185,25 +188,21 @@ impl Portal {
             match &pane.source {
                 PaneSource::Local => {
                     // Load local directory
-                    Task::perform(
-                        async move { list_local_dir(&path).await },
-                        move |result| Message::Sftp(SftpMessage::PaneListResult(tab_id, pane_id, result)),
-                    )
+                    Task::perform(async move { list_local_dir(&path).await }, move |result| {
+                        Message::Sftp(SftpMessage::PaneListResult(tab_id, pane_id, result))
+                    })
                 }
                 PaneSource::Remote { session_id, .. } => {
                     // Load remote directory via SFTP
                     if let Some(sftp) = self.sftp.get_connection(*session_id) {
                         let sftp = sftp.clone();
-                        Task::perform(
-                            async move { sftp.list_dir(&path).await },
-                            move |result| {
-                                Message::Sftp(SftpMessage::PaneListResult(
-                                    tab_id,
-                                    pane_id,
-                                    result.map_err(|e| e.to_string()),
-                                ))
-                            },
-                        )
+                        Task::perform(async move { sftp.list_dir(&path).await }, move |result| {
+                            Message::Sftp(SftpMessage::PaneListResult(
+                                tab_id,
+                                pane_id,
+                                result.map_err(|e| e.to_string()),
+                            ))
+                        })
                     } else {
                         Task::none()
                     }
@@ -227,7 +226,8 @@ impl Portal {
         let host_id = host.id;
 
         // Store pending connection info for host key verification
-        self.sftp.set_pending_connection(Some((tab_id, pane_id, host_id)));
+        self.sftp
+            .set_pending_connection(Some((tab_id, pane_id, host_id)));
 
         connection::sftp_connect_tasks(host, tab_id, pane_id, sftp_session_id, host_id)
     }
@@ -257,8 +257,9 @@ impl Portal {
 
                         // Check if file type is viewable
                         if !file_type.is_viewable() {
-                            self.toast_manager
-                                .push(Toast::warning("Binary files are not supported in the viewer."));
+                            self.toast_manager.push(Toast::warning(
+                                "Binary files are not supported in the viewer.",
+                            ));
                             return Task::none();
                         }
 
@@ -266,14 +267,12 @@ impl Portal {
                         let viewer_id = Uuid::new_v4();
 
                         let (viewer_state, load_task) = match &pane.source {
-                            PaneSource::Local => {
-                                file_viewer::build_local_viewer(
-                                    viewer_id,
-                                    file_name.clone(),
-                                    file_path.clone(),
-                                    file_type.clone(),
-                                )
-                            }
+                            PaneSource::Local => file_viewer::build_local_viewer(
+                                viewer_id,
+                                file_name.clone(),
+                                file_path.clone(),
+                                file_type.clone(),
+                            ),
                             PaneSource::Remote { session_id, .. } => {
                                 if let Some(sftp) = self.sftp.get_connection(*session_id) {
                                     file_viewer::build_remote_viewer(
@@ -420,7 +419,9 @@ impl Portal {
                                 .await
                                 .map_err(|e| e.to_string())?
                             },
-                            move |result| Message::Sftp(SftpMessage::NewFolderResult(tab_id, pane_id, result)),
+                            move |result| {
+                                Message::Sftp(SftpMessage::NewFolderResult(tab_id, pane_id, result))
+                            },
                         )
                     }
                     PaneSource::Remote { session_id, .. } => {
@@ -433,7 +434,11 @@ impl Portal {
                                         .await
                                         .map_err(|e| e.to_string())
                                 },
-                                move |result| Message::Sftp(SftpMessage::NewFolderResult(tab_id, pane_id, result)),
+                                move |result| {
+                                    Message::Sftp(SftpMessage::NewFolderResult(
+                                        tab_id, pane_id, result,
+                                    ))
+                                },
                             )
                         } else {
                             Task::none()
@@ -456,7 +461,9 @@ impl Portal {
                                 .await
                                 .map_err(|e| e.to_string())?
                             },
-                            move |result| Message::Sftp(SftpMessage::RenameResult(tab_id, pane_id, result)),
+                            move |result| {
+                                Message::Sftp(SftpMessage::RenameResult(tab_id, pane_id, result))
+                            },
                         )
                     }
                     PaneSource::Remote { session_id, .. } => {
@@ -469,7 +476,11 @@ impl Portal {
                                         .await
                                         .map_err(|e| e.to_string())
                                 },
-                                move |result| Message::Sftp(SftpMessage::RenameResult(tab_id, pane_id, result)),
+                                move |result| {
+                                    Message::Sftp(SftpMessage::RenameResult(
+                                        tab_id, pane_id, result,
+                                    ))
+                                },
                             )
                         } else {
                             Task::none()
@@ -500,7 +511,7 @@ impl Portal {
                                                     "Failed to delete {}: {}",
                                                     path.display(),
                                                     e
-                                                ))
+                                                ));
                                             }
                                         }
                                     }
@@ -509,7 +520,9 @@ impl Portal {
                                 .await
                                 .map_err(|e| e.to_string())?
                             },
-                            move |result| Message::Sftp(SftpMessage::DeleteResult(tab_id, pane_id, result)),
+                            move |result| {
+                                Message::Sftp(SftpMessage::DeleteResult(tab_id, pane_id, result))
+                            },
                         )
                     }
                     PaneSource::Remote { session_id, .. } => {
@@ -532,13 +545,17 @@ impl Portal {
                                                     "Failed to delete {}: {}",
                                                     path.display(),
                                                     e
-                                                ))
+                                                ));
                                             }
                                         }
                                     }
                                     Ok(deleted_count)
                                 },
-                                move |result| Message::Sftp(SftpMessage::DeleteResult(tab_id, pane_id, result)),
+                                move |result| {
+                                    Message::Sftp(SftpMessage::DeleteResult(
+                                        tab_id, pane_id, result,
+                                    ))
+                                },
                             )
                         } else {
                             Task::none()
@@ -546,7 +563,9 @@ impl Portal {
                     }
                 }
             }
-            SftpDialogType::EditPermissions { path, permissions, .. } => {
+            SftpDialogType::EditPermissions {
+                path, permissions, ..
+            } => {
                 let path = path.clone();
                 let mode = permissions.to_mode();
 
@@ -560,19 +579,25 @@ impl Portal {
                                     {
                                         use std::os::unix::fs::PermissionsExt;
                                         let permissions = std::fs::Permissions::from_mode(mode);
-                                        std::fs::set_permissions(&path, permissions)
-                                            .map_err(|e| format!("Failed to set permissions: {}", e))
+                                        std::fs::set_permissions(&path, permissions).map_err(|e| {
+                                            format!("Failed to set permissions: {}", e)
+                                        })
                                     }
                                     #[cfg(not(unix))]
                                     {
                                         let _ = (path, mode);
-                                        Err("Permissions are only supported on Unix systems".to_string())
+                                        Err("Permissions are only supported on Unix systems"
+                                            .to_string())
                                     }
                                 })
                                 .await
                                 .map_err(|e| e.to_string())?
                             },
-                            move |result| Message::Sftp(SftpMessage::PermissionsResult(tab_id, pane_id, result)),
+                            move |result| {
+                                Message::Sftp(SftpMessage::PermissionsResult(
+                                    tab_id, pane_id, result,
+                                ))
+                            },
                         )
                     }
                     PaneSource::Remote { session_id, .. } => {
@@ -585,7 +610,11 @@ impl Portal {
                                         .await
                                         .map_err(|e| e.to_string())
                                 },
-                                move |result| Message::Sftp(SftpMessage::PermissionsResult(tab_id, pane_id, result)),
+                                move |result| {
+                                    Message::Sftp(SftpMessage::PermissionsResult(
+                                        tab_id, pane_id, result,
+                                    ))
+                                },
                             )
                         } else {
                             Task::none()
@@ -651,7 +680,9 @@ impl Portal {
                         .await
                         .map_err(|e| e.to_string())?
                     },
-                    move |result| Message::Sftp(SftpMessage::CopyResult(tab_id, target_pane_id, result)),
+                    move |result| {
+                        Message::Sftp(SftpMessage::CopyResult(tab_id, target_pane_id, result))
+                    },
                 )
             }
             (PaneSource::Local, PaneSource::Remote { session_id, .. }) => {
@@ -684,7 +715,9 @@ impl Portal {
                             );
                             Ok(count)
                         },
-                        move |result| Message::Sftp(SftpMessage::CopyResult(tab_id, target_pane_id, result)),
+                        move |result| {
+                            Message::Sftp(SftpMessage::CopyResult(tab_id, target_pane_id, result))
+                        },
                     )
                 } else {
                     Task::none()
@@ -720,15 +753,23 @@ impl Portal {
                             );
                             Ok(count)
                         },
-                        move |result| Message::Sftp(SftpMessage::CopyResult(tab_id, target_pane_id, result)),
+                        move |result| {
+                            Message::Sftp(SftpMessage::CopyResult(tab_id, target_pane_id, result))
+                        },
                     )
                 } else {
                     Task::none()
                 }
             }
             (
-                PaneSource::Remote { session_id: source_session_id, .. },
-                PaneSource::Remote { session_id: target_session_id, .. },
+                PaneSource::Remote {
+                    session_id: source_session_id,
+                    ..
+                },
+                PaneSource::Remote {
+                    session_id: target_session_id,
+                    ..
+                },
             ) => {
                 // Remote to Remote copy (via local temp)
                 let source_sftp_id = *source_session_id;
@@ -742,10 +783,11 @@ impl Portal {
                         async move {
                             let start = Instant::now();
                             let mut count = 0;
-                            let temp_dir = std::env::temp_dir().join(format!("portal_copy_{}", uuid::Uuid::new_v4()));
-                            tokio::fs::create_dir_all(&temp_dir).await.map_err(|e| {
-                                format!("Failed to create temp directory: {}", e)
-                            })?;
+                            let temp_dir = std::env::temp_dir()
+                                .join(format!("portal_copy_{}", uuid::Uuid::new_v4()));
+                            tokio::fs::create_dir_all(&temp_dir)
+                                .await
+                                .map_err(|e| format!("Failed to create temp directory: {}", e))?;
 
                             let result = async {
                                 for (name, source_path, is_dir) in entries_to_copy {
@@ -795,7 +837,9 @@ impl Portal {
 
                             result
                         },
-                        move |result| Message::Sftp(SftpMessage::CopyResult(tab_id, target_pane_id, result)),
+                        move |result| {
+                            Message::Sftp(SftpMessage::CopyResult(tab_id, target_pane_id, result))
+                        },
                     )
                 } else {
                     Task::none()

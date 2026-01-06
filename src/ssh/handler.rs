@@ -1,18 +1,18 @@
 use std::future::Future;
 use std::sync::Arc;
 
+use russh::ChannelId;
 use russh::client::{Handler, Session};
 use russh::keys::PublicKey;
-use russh::ChannelId;
-use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::sync::{Mutex, mpsc, oneshot};
 
 use crate::error::SshError;
 
+use super::SshEvent;
 use super::host_key_verification::{
     HostKeyInfo, HostKeyVerificationRequest, HostKeyVerificationResponse,
 };
 use super::known_hosts::{HostKeyStatus, KnownHostsManager};
-use super::SshEvent;
 
 /// SSH client handler implementation
 pub struct ClientHandler {
@@ -69,6 +69,17 @@ impl Handler for ClientHandler {
                 HostKeyStatus::Known => {
                     tracing::debug!("Host key verified for {}:{}", host, port);
                     Ok(true)
+                }
+                HostKeyStatus::Revoked { fingerprint, .. } => {
+                    tracing::warn!(
+                        "HOST KEY REVOKED for {}:{} - {}",
+                        host,
+                        port,
+                        fingerprint
+                    );
+                    Err(SshError::HostKeyVerification(
+                        "Host key has been revoked".to_string(),
+                    ))
                 }
                 HostKeyStatus::Unknown {
                     fingerprint,

@@ -1,10 +1,10 @@
-use iced::widget::{button, column, container, row, text, tooltip, Column};
+use iced::widget::{Column, button, column, container, row, text, tooltip};
 use iced::{Alignment, Element, Fill, Length};
 
 use crate::app::{FocusSection, SidebarState};
 use crate::icons::{self, icon_with_color};
 use crate::message::{Message, SidebarMenuItem, UiMessage};
-use crate::theme::{Theme, BORDER_RADIUS, SIDEBAR_WIDTH, SIDEBAR_WIDTH_COLLAPSED};
+use crate::theme::{BORDER_RADIUS, SIDEBAR_WIDTH, SIDEBAR_WIDTH_COLLAPSED, Theme};
 
 /// Menu item definition
 struct MenuItem {
@@ -79,10 +79,7 @@ pub fn sidebar_view(
         menu_items = menu_items.push(item_element);
     }
 
-    let sidebar_content = column![
-        menu_items,
-    ]
-    .height(Fill);
+    let sidebar_content = column![menu_items,].height(Fill);
 
     // Right border (1px vertical line)
     let right_border = container(column![])

@@ -3,22 +3,22 @@
 //! This module contains the update handlers for each message category,
 //! breaking down the monolithic update() function into focused handlers.
 
+mod dialog;
+mod file_viewer;
+mod history;
+mod host;
 mod session;
 mod sftp;
-mod file_viewer;
-mod dialog;
-mod tab;
-mod host;
-mod history;
 mod snippet;
+mod tab;
 mod ui;
 
+pub use dialog::handle_dialog;
+pub use file_viewer::handle_file_viewer;
+pub use history::handle_history;
+pub use host::handle_host;
 pub use session::handle_session;
 pub use sftp::handle_sftp;
-pub use file_viewer::handle_file_viewer;
-pub use dialog::handle_dialog;
-pub use tab::handle_tab;
-pub use host::handle_host;
-pub use history::handle_history;
 pub use snippet::handle_snippet;
+pub use tab::handle_tab;
 pub use ui::handle_ui;

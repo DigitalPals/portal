@@ -6,14 +6,14 @@
 use std::path::PathBuf;
 
 use iced::widget::{
-    button, column, container, pick_list, row, scrollable, text, text_input, Column, Row, Space,
+    Column, Row, Space, button, column, container, pick_list, row, scrollable, text, text_input,
 };
 use iced::{Alignment, Color, Element, Fill, Length, Padding};
 use uuid::Uuid;
 
 use crate::icons::{self, icon_with_color};
 use crate::message::{Message, SessionId, SftpMessage};
-use crate::sftp::{format_size, FileEntry, FileIcon};
+use crate::sftp::{FileEntry, FileIcon, format_size};
 use crate::theme::Theme;
 use crate::widgets::mouse_area;
 
@@ -93,10 +93,16 @@ pub fn pane_header(
         Some(current_source.clone()),
         move |selected| {
             if selected == "Local" {
-                Message::Sftp(SftpMessage::PaneSourceChanged(tab_id, pane_id, PaneSource::Local))
+                Message::Sftp(SftpMessage::PaneSourceChanged(
+                    tab_id,
+                    pane_id,
+                    PaneSource::Local,
+                ))
             } else {
                 // Find the host ID by name and trigger connection
-                if let Some((host_id, _)) = hosts_for_closure.iter().find(|(_, name)| name == &selected) {
+                if let Some((host_id, _)) =
+                    hosts_for_closure.iter().find(|(_, name)| name == &selected)
+                {
                     Message::Sftp(SftpMessage::ConnectHost(tab_id, pane_id, *host_id))
                 } else {
                     Message::Noop
@@ -154,10 +160,16 @@ pub fn pane_header(
         }
     })
     .padding([4, 8])
-    .on_press(Message::Sftp(SftpMessage::ToggleActionsMenu(tab_id, pane_id)));
+    .on_press(Message::Sftp(SftpMessage::ToggleActionsMenu(
+        tab_id, pane_id,
+    )));
 
     // Active pane indicator: colored top border
-    let border_color = if is_active { theme.accent } else { theme.border };
+    let border_color = if is_active {
+        theme.accent
+    } else {
+        theme.border
+    };
 
     container(
         row![
@@ -193,24 +205,28 @@ pub fn pane_breadcrumb_bar(
     let path = &state.current_path;
 
     // Back button (navigate to parent)
-    let back_btn = button(icon_with_color(icons::ui::CHEVRON_LEFT, 14, theme.text_primary))
-        .style(move |_theme, status| {
-            let bg = match status {
-                iced::widget::button::Status::Hovered => Some(theme.hover.into()),
-                _ => None,
-            };
-            iced::widget::button::Style {
-                background: bg,
-                text_color: theme.text_primary,
-                border: iced::Border {
-                    radius: 4.0.into(),
-                    ..Default::default()
-                },
+    let back_btn = button(icon_with_color(
+        icons::ui::CHEVRON_LEFT,
+        14,
+        theme.text_primary,
+    ))
+    .style(move |_theme, status| {
+        let bg = match status {
+            iced::widget::button::Status::Hovered => Some(theme.hover.into()),
+            _ => None,
+        };
+        iced::widget::button::Style {
+            background: bg,
+            text_color: theme.text_primary,
+            border: iced::Border {
+                radius: 4.0.into(),
                 ..Default::default()
-            }
-        })
-        .padding([2, 6])
-        .on_press(Message::Sftp(SftpMessage::PaneNavigateUp(tab_id, pane_id)));
+            },
+            ..Default::default()
+        }
+    })
+    .padding([2, 6])
+    .on_press(Message::Sftp(SftpMessage::PaneNavigateUp(tab_id, pane_id)));
 
     // Forward button (placeholder - disabled for now)
     let forward_btn = button(icon_with_color(
@@ -249,12 +265,7 @@ pub fn pane_breadcrumb_bar(
 
         // Add separator if not first
         if i > 0 {
-            breadcrumb_elements.push(
-                text(">")
-                    .size(12)
-                    .color(theme.text_muted)
-                    .into(),
-            );
+            breadcrumb_elements.push(text(">").size(12).color(theme.text_muted).into());
         }
 
         // Folder icon + clickable segment
@@ -440,8 +451,9 @@ pub fn pane_file_list<'a>(
         .style(move |_theme, status| {
             let scroller_color = match status {
                 scrollable::Status::Active { .. } => Color::TRANSPARENT,
-                scrollable::Status::Hovered { .. }
-                | scrollable::Status::Dragged { .. } => scrollbar_color,
+                scrollable::Status::Hovered { .. } | scrollable::Status::Dragged { .. } => {
+                    scrollbar_color
+                }
             };
             scrollable::Style {
                 container: container::Style::default(),
@@ -583,7 +595,9 @@ pub fn pane_file_entry_row(
             tab_id, pane_id, path,
         )))
     } else {
-        btn.on_press(Message::Sftp(SftpMessage::PaneSelect(tab_id, pane_id, index)))
+        btn.on_press(Message::Sftp(SftpMessage::PaneSelect(
+            tab_id, pane_id, index,
+        )))
     };
 
     // Wrap in mouse_area to handle right-click
@@ -592,7 +606,13 @@ pub fn pane_file_entry_row(
         area.into()
     } else {
         area.on_right_press(move |x, y| {
-            Message::Sftp(SftpMessage::ShowContextMenu(tab_id, pane_id, x, y, Some(index)))
+            Message::Sftp(SftpMessage::ShowContextMenu(
+                tab_id,
+                pane_id,
+                x,
+                y,
+                Some(index),
+            ))
         })
         .into()
     }
@@ -673,7 +693,9 @@ pub fn actions_menu_overlay(
                 ..Default::default()
             }
         })
-        .on_press(Message::Sftp(SftpMessage::ToggleShowHidden(tab_id, pane_id)));
+        .on_press(Message::Sftp(SftpMessage::ToggleShowHidden(
+            tab_id, pane_id,
+        )));
 
     let menu_bg = Color::from_rgb(0.98, 0.98, 0.98);
     let menu = container(column![menu_item])
@@ -699,14 +721,14 @@ pub fn actions_menu_overlay(
             .width(Fill)
             .height(Fill),
     )
-    .on_press(Message::Sftp(SftpMessage::ToggleActionsMenu(tab_id, pane_id)));
+    .on_press(Message::Sftp(SftpMessage::ToggleActionsMenu(
+        tab_id, pane_id,
+    )));
 
     // Position menu at top-right of pane (below the Actions button)
-    let positioned_menu = container(
-        container(menu).align_x(Alignment::End),
-    )
-    .width(Fill)
-    .padding(Padding::new(0.0).top(40.0).right(8.0));
+    let positioned_menu = container(container(menu).align_x(Alignment::End))
+        .width(Fill)
+        .padding(Padding::new(0.0).top(40.0).right(8.0));
 
     iced::widget::stack![background, positioned_menu].into()
 }

@@ -8,4 +8,4 @@ pub mod types;
 
 pub use client::SftpClient;
 pub use session::SharedSftpSession;
-pub use types::{format_size, FileEntry, FileIcon, SortOrder};
+pub use types::{FileEntry, FileIcon, SortOrder, format_size};

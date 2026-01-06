@@ -3,7 +3,10 @@
 //! Detects the operating system of a remote host by executing `uname -s`
 //! and parsing `/etc/os-release` for Linux distribution identification.
 
+use std::time::Duration;
+
 use russh::ChannelMsg;
+use tokio::time::timeout;
 
 use crate::config::DetectedOs;
 use crate::error::SshError;
@@ -15,41 +18,52 @@ async fn exec_command(
     handle: &mut russh::client::Handle<ClientHandler>,
     command: &str,
 ) -> Result<String, SshError> {
-    let mut channel = handle
-        .channel_open_session()
-        .await
-        .map_err(|e| SshError::Channel(format!("Failed to open channel: {}", e)))?;
+    let timeout_result = timeout(Duration::from_secs(5), async {
+        let mut channel = handle
+            .channel_open_session()
+            .await
+            .map_err(|e| SshError::Channel(format!("Failed to open channel: {}", e)))?;
 
-    channel
-        .exec(true, command)
-        .await
-        .map_err(|e| SshError::Channel(format!("Failed to exec '{}': {}", command, e)))?;
+        channel
+            .exec(true, command)
+            .await
+            .map_err(|e| SshError::Channel(format!("Failed to exec '{}': {}", command, e)))?;
 
-    let mut output = String::new();
+        let mut output = String::new();
 
-    loop {
-        match channel.wait().await {
-            Some(ChannelMsg::Data { data }) => {
-                if let Ok(s) = std::str::from_utf8(&data) {
-                    output.push_str(s);
+        loop {
+            match channel.wait().await {
+                Some(ChannelMsg::Data { data }) => {
+                    if let Ok(s) = std::str::from_utf8(&data) {
+                        output.push_str(s);
+                    }
                 }
-            }
-            Some(ChannelMsg::ExtendedData { data, .. }) => {
-                tracing::debug!("{} stderr: {:?}", command, std::str::from_utf8(&data));
-            }
-            Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => {
-                break;
-            }
-            Some(ChannelMsg::ExitStatus { exit_status }) => {
-                if exit_status != 0 {
-                    tracing::debug!("{} exited with status {}", command, exit_status);
+                Some(ChannelMsg::ExtendedData { data, .. }) => {
+                    tracing::debug!("{} stderr: {:?}", command, std::str::from_utf8(&data));
                 }
+                Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => {
+                    break;
+                }
+                Some(ChannelMsg::ExitStatus { exit_status }) => {
+                    if exit_status != 0 {
+                        tracing::debug!("{} exited with status {}", command, exit_status);
+                    }
+                }
+                Some(_) => {}
             }
-            Some(_) => {}
         }
-    }
 
-    Ok(output)
+        Ok(output)
+    })
+    .await;
+
+    match timeout_result {
+        Ok(result) => result,
+        Err(_) => Err(SshError::Channel(format!(
+            "Command '{}' timed out",
+            command
+        ))),
+    }
 }
 
 /// Detect the operating system of a remote host using an existing SSH connection.
@@ -63,14 +77,22 @@ pub async fn detect_os(
     // First, detect OS family with uname -s
     let uname_output = exec_command(handle, "uname -s").await?;
     let mut os = DetectedOs::from_uname(&uname_output);
-    tracing::info!("Detected OS family: {:?} (from uname: {:?})", os, uname_output.trim());
+    tracing::info!(
+        "Detected OS family: {:?} (from uname: {:?})",
+        os,
+        uname_output.trim()
+    );
 
     // For Linux, try to identify the specific distribution
     if os.is_linux() {
         tracing::debug!("Linux detected, attempting to read /etc/os-release");
         match exec_command(handle, "cat /etc/os-release 2>/dev/null").await {
             Ok(os_release) => {
-                tracing::debug!("os-release content ({} bytes): {:?}", os_release.len(), os_release.lines().take(5).collect::<Vec<_>>());
+                tracing::debug!(
+                    "os-release content ({} bytes): {:?}",
+                    os_release.len(),
+                    os_release.lines().take(5).collect::<Vec<_>>()
+                );
                 if !os_release.is_empty() {
                     if let Some(distro) = DetectedOs::from_os_release(&os_release) {
                         tracing::info!("Detected Linux distro: {:?}", distro);

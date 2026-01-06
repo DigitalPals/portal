@@ -1,6 +1,6 @@
 //! About dialog showing application info and credits
 
-use iced::widget::{button, column, container, row, scrollable, text, Column, Space};
+use iced::widget::{Column, Space, button, column, container, row, scrollable, text};
 use iced::{Alignment, Element, Font, Length};
 
 use crate::message::{DialogMessage, Message};
@@ -61,21 +61,23 @@ pub fn about_dialog_view(_state: &AboutDialogState, theme: Theme) -> Element<'st
 
     // Vibe coded note
     let vibe_text = row![
-        text("Proudly vibe coded with ").size(12).color(theme.text_muted),
+        text("Proudly vibe coded with ")
+            .size(12)
+            .color(theme.text_muted),
         text("Claude Code").size(12).color(theme.accent),
         text(" & ").size(12).color(theme.text_muted),
         text("Codex CLI").size(12).color(theme.accent),
     ];
 
     let time_text = row![
-        text("in less than two days ").size(12).color(theme.text_muted),
+        text("in less than two days ")
+            .size(12)
+            .color(theme.text_muted),
         text("\u{1F92F}").size(14), // Mind blown emoji
     ];
 
     // Credits section
-    let credits_title = text("Built with")
-        .size(14)
-        .color(theme.text_primary);
+    let credits_title = text("Built with").size(14).color(theme.text_primary);
 
     let credits_list = vec![
         ("Iced", "Cross-platform GUI framework"),

@@ -6,9 +6,9 @@ use crate::app::Portal;
 use crate::config::Host;
 use crate::message::{DialogMessage, HostDialogField, Message};
 use crate::ssh::host_key_verification::HostKeyVerificationResponse;
-use crate::views::toast::Toast;
 use crate::views::dialogs::host_dialog::AuthMethodChoice;
 use crate::views::dialogs::host_key_dialog::HostKeyDialogState;
+use crate::views::toast::Toast;
 
 /// Handle dialog messages
 pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
@@ -78,7 +78,9 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
         }
         DialogMessage::HostKeyVerification(mut wrapper) => {
             if let Some(request) = wrapper.0.take() {
-                portal.dialogs.open_host_key(HostKeyDialogState::from_request(*request));
+                portal
+                    .dialogs
+                    .open_host_key(HostKeyDialogState::from_request(*request));
                 tracing::info!("Host key verification dialog opened");
             }
             Task::none()

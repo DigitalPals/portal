@@ -6,9 +6,9 @@ use std::sync::Arc;
 
 use alacritty_terminal::event::{Event, EventListener};
 use alacritty_terminal::grid::Dimensions;
-use alacritty_terminal::term::cell::Flags as CellFlags;
 use alacritty_terminal::term::Config as TermConfig;
 use alacritty_terminal::term::Term;
+use alacritty_terminal::term::cell::Flags as CellFlags;
 use alacritty_terminal::vte::ansi::{Color as AnsiColor, CursorShape, Processor};
 use parking_lot::Mutex;
 use tokio::sync::mpsc;
@@ -135,8 +135,8 @@ pub struct TerminalBackend {
 
 impl TerminalBackend {
     /// Create a new terminal backend with the given size
-    pub fn new(size: TerminalSize) -> Self {
-        let (event_tx, _event_rx) = mpsc::channel(256);
+    pub fn new(size: TerminalSize) -> (Self, mpsc::Receiver<TerminalEvent>) {
+        let (event_tx, event_rx) = mpsc::channel(256);
         let event_proxy = EventProxy::new(event_tx);
 
         // Create terminal config with scrollback history
@@ -148,11 +148,13 @@ impl TerminalBackend {
         // Create the terminal
         let term = Term::new(config, &size, event_proxy);
 
-        Self {
+        let backend = Self {
             term: Arc::new(Mutex::new(term)),
             processor: Mutex::new(Processor::new()),
             size,
-        }
+        };
+
+        (backend, event_rx)
     }
 
     /// Get a clone of the term for rendering

@@ -1,14 +1,17 @@
 //! UI state message handlers
 
-use iced::keyboard::{self, Key};
 use iced::Task;
+use iced::keyboard::{self, Key};
 
-use crate::app::{FocusSection, Portal, View, SIDEBAR_AUTO_COLLAPSE_THRESHOLD};
-use crate::message::{Message, SessionMessage, SftpMessage, SidebarMenuItem, TabMessage, HistoryMessage, HostMessage, UiMessage};
+use crate::app::{FocusSection, Portal, SIDEBAR_AUTO_COLLAPSE_THRESHOLD, View};
+use crate::message::{
+    HistoryMessage, HostMessage, Message, SessionMessage, SftpMessage, SidebarMenuItem, TabMessage,
+    UiMessage,
+};
 use crate::ssh::host_key_verification::HostKeyVerificationResponse;
-use crate::views::toast::Toast;
 use crate::views::dialogs::snippets_dialog::SnippetsDialogState;
 use crate::views::sftp::PaneId;
+use crate::views::toast::Toast;
 
 /// Handle UI state messages
 pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
@@ -129,9 +132,7 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
             portal.toast_manager.cleanup_expired();
             Task::none()
         }
-        UiMessage::KeyboardEvent(key, modifiers) => {
-            handle_keyboard_event(portal, key, modifiers)
-        }
+        UiMessage::KeyboardEvent(key, modifiers) => handle_keyboard_event(portal, key, modifiers),
     }
 }
 
@@ -146,7 +147,9 @@ fn handle_keyboard_event(
         if let Key::Named(keyboard::key::Named::Escape) = key {
             if let Some(dialog) = portal.dialogs.host_key_mut() {
                 dialog.respond(HostKeyVerificationResponse::Reject);
-                portal.toast_manager.push(Toast::warning("Connection cancelled"));
+                portal
+                    .toast_manager
+                    .push(Toast::warning("Connection cancelled"));
             }
             portal.dialogs.close();
         }
@@ -251,7 +254,8 @@ fn handle_sidebar_keyboard(
             portal.sidebar_focus_index = portal.sidebar_focus_index.saturating_sub(1);
         }
         Key::Named(keyboard::key::Named::ArrowDown) => {
-            portal.sidebar_focus_index = (portal.sidebar_focus_index + 1).min(SIDEBAR_MENU_COUNT - 1);
+            portal.sidebar_focus_index =
+                (portal.sidebar_focus_index + 1).min(SIDEBAR_MENU_COUNT - 1);
         }
         Key::Named(keyboard::key::Named::Home) => {
             portal.sidebar_focus_index = 0;
@@ -339,16 +343,14 @@ fn handle_content_keyboard(
             }
             Task::none()
         }
-        View::HostGrid => {
-            match portal.sidebar_selection {
-                SidebarMenuItem::Hosts | SidebarMenuItem::Sftp | SidebarMenuItem::Snippets | SidebarMenuItem::Settings | SidebarMenuItem::About => {
-                    handle_host_grid_keyboard(portal, key, modifiers)
-                }
-                SidebarMenuItem::History => {
-                    handle_history_keyboard(portal, key, modifiers)
-                }
-            }
-        }
+        View::HostGrid => match portal.sidebar_selection {
+            SidebarMenuItem::Hosts
+            | SidebarMenuItem::Sftp
+            | SidebarMenuItem::Snippets
+            | SidebarMenuItem::Settings
+            | SidebarMenuItem::About => handle_host_grid_keyboard(portal, key, modifiers),
+            SidebarMenuItem::History => handle_history_keyboard(portal, key, modifiers),
+        },
         View::Terminal(_session_id) => {
             // Enter key or any character captures terminal
             match key {
@@ -365,9 +367,7 @@ fn handle_content_keyboard(
             }
             Task::none()
         }
-        View::DualSftp(tab_id) => {
-            handle_sftp_keyboard(portal, *tab_id, key, modifiers)
-        }
+        View::DualSftp(tab_id) => handle_sftp_keyboard(portal, *tab_id, key, modifiers),
         View::FileViewer(_) => {
             // File viewer keyboard - arrow left goes back to sidebar
             if let Key::Named(keyboard::key::Named::ArrowLeft) = key {
@@ -401,7 +401,8 @@ fn handle_host_grid_keyboard(
     }
 
     // Calculate column count for 2D navigation
-    let columns = crate::views::host_grid::calculate_columns(portal.window_size.width, portal.sidebar_state);
+    let columns =
+        crate::views::host_grid::calculate_columns(portal.window_size.width, portal.sidebar_state);
 
     match key {
         Key::Named(keyboard::key::Named::ArrowUp) => {
@@ -694,8 +695,10 @@ fn handle_sftp_keyboard(
         }
         Key::Named(keyboard::key::Named::Backspace) => {
             // Navigate to parent
-            return portal
-                .update(Message::Sftp(SftpMessage::PaneNavigateUp(tab_id, active_pane)));
+            return portal.update(Message::Sftp(SftpMessage::PaneNavigateUp(
+                tab_id,
+                active_pane,
+            )));
         }
         Key::Named(keyboard::key::Named::F5) => {
             // Refresh

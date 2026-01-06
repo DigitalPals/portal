@@ -4,33 +4,33 @@ mod services;
 mod update;
 mod view_model;
 
+use iced::widget::{column, row, stack, text};
+use iced::{Element, Fill, Subscription, Task, Theme as IcedTheme, event, time, window};
 use std::time::Duration;
-use iced::widget::{column, row, text, stack};
-use iced::{event, time, window, Element, Fill, Subscription, Task, Theme as IcedTheme};
 use uuid::Uuid;
 
 use iced::keyboard;
 
 use crate::config::{HistoryConfig, HostsConfig, SettingsConfig, SnippetsConfig};
 use crate::message::{Message, SessionId, SessionMessage, SidebarMenuItem, UiMessage};
-use crate::theme::{get_theme, ThemeId};
+use crate::theme::{ThemeId, get_theme};
 use crate::views::dialogs::about_dialog::about_dialog_view;
 use crate::views::dialogs::host_dialog::host_dialog_view;
 use crate::views::dialogs::host_key_dialog::host_key_dialog_view;
 use crate::views::dialogs::snippets_dialog::snippets_dialog_view;
-use crate::views::settings_page::settings_page_view;
+use crate::views::file_viewer::file_viewer_view;
 use crate::views::history_view::history_view;
 use crate::views::host_grid::{calculate_columns, host_grid_view, search_input_id};
-use crate::views::file_viewer::file_viewer_view;
+use crate::views::settings_page::settings_page_view;
 use crate::views::sftp::{dual_pane_sftp_view, sftp_context_menu_overlay};
 use crate::views::sidebar::sidebar_view;
-use crate::views::tabs::{tab_bar_view, Tab};
+use crate::views::tabs::{Tab, tab_bar_view};
 use crate::views::terminal_view::terminal_view_with_status;
-use crate::views::toast::{toast_overlay_view, ToastManager};
+use crate::views::toast::{ToastManager, toast_overlay_view};
 
-use self::managers::{ActiveDialog, DialogManager, FileViewerManager, SessionManager, SftpManager};
 #[allow(unused_imports)]
 pub use self::managers::ActiveSession;
+use self::managers::{ActiveDialog, DialogManager, FileViewerManager, SessionManager, SftpManager};
 use self::view_model::{filter_group_cards, filter_host_cards, group_cards, host_cards};
 
 /// Threshold for auto-collapsing sidebar (in pixels)
@@ -51,18 +51,18 @@ pub enum View {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum FocusSection {
     #[default]
-    Content,   // Main content area (host grid, SFTP, history)
-    Sidebar,   // Sidebar menu
-    TabBar,    // Tab navigation bar
+    Content, // Main content area (host grid, SFTP, history)
+    Sidebar, // Sidebar menu
+    TabBar,  // Tab navigation bar
 }
 
 /// Sidebar visibility state
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SidebarState {
-    Hidden,     // Completely hidden (0 width)
-    IconsOnly,  // Collapsed to icons only
+    Hidden,    // Completely hidden (0 width)
+    IconsOnly, // Collapsed to icons only
     #[default]
-    Expanded,   // Full width with labels
+    Expanded, // Full width with labels
 }
 
 impl SidebarState {
@@ -86,7 +86,7 @@ pub struct Portal {
 
     // Sidebar state
     sidebar_state: SidebarState,
-    sidebar_state_before_session: Option<SidebarState>,  // Saved state before hiding for terminal
+    sidebar_state_before_session: Option<SidebarState>, // Saved state before hiding for terminal
     sidebar_selection: SidebarMenuItem,
 
     // Tab management
@@ -116,7 +116,7 @@ pub struct Portal {
 
     // Responsive layout
     window_size: iced::Size,
-    sidebar_manually_set: bool,  // True if user manually changed sidebar state
+    sidebar_manually_set: bool, // True if user manually changed sidebar state
 
     // Keyboard navigation focus state
     focus_section: FocusSection,
@@ -157,7 +157,10 @@ impl Portal {
         // Load history from config file
         let history_config = match HistoryConfig::load() {
             Ok(config) => {
-                tracing::info!("Loaded {} history entries from config", config.entries.len());
+                tracing::info!(
+                    "Loaded {} history entries from config",
+                    config.entries.len()
+                );
                 config
             }
             Err(e) => {
@@ -169,7 +172,11 @@ impl Portal {
         // Load settings from config file
         let settings_config = match SettingsConfig::load() {
             Ok(config) => {
-                tracing::info!("Loaded settings: font_size={}, theme={:?}", config.terminal_font_size, config.theme);
+                tracing::info!(
+                    "Loaded settings: font_size={}, theme={:?}",
+                    config.terminal_font_size,
+                    config.theme
+                );
                 config
             }
             Err(e) => {
@@ -253,15 +260,20 @@ impl Portal {
 
         // Main content - prioritize active sessions over sidebar selection
         let main_content: Element<'_, Message> = match &self.active_view {
-            View::Settings => {
-                settings_page_view(self.theme_id, self.terminal_font_size, self.terminal_font, theme)
-            }
+            View::Settings => settings_page_view(
+                self.theme_id,
+                self.terminal_font_size,
+                self.terminal_font,
+                theme,
+            ),
             View::Terminal(session_id) => {
                 if let Some(session) = self.sessions.get(*session_id) {
                     let session_id = *session_id;
 
                     // Get transient status message if not expired (show for 3 seconds)
-                    let status_message = session.status_message.as_ref()
+                    let status_message = session
+                        .status_message
+                        .as_ref()
                         .filter(|(_, shown_at)| shown_at.elapsed() < Duration::from_secs(3))
                         .map(|(msg, _)| msg.as_str());
 
@@ -273,8 +285,12 @@ impl Portal {
                         status_message,
                         self.terminal_font_size,
                         self.terminal_font,
-                        move |_sid, bytes| Message::Session(SessionMessage::Input(session_id, bytes)),
-                        move |_sid, cols, rows| Message::Session(SessionMessage::Resize(session_id, cols, rows)),
+                        move |_sid, bytes| {
+                            Message::Session(SessionMessage::Input(session_id, bytes))
+                        },
+                        move |_sid, cols, rows| {
+                            Message::Session(SessionMessage::Resize(session_id, cols, rows))
+                        },
                     )
                 } else {
                     text("Session not found").into()
@@ -283,7 +299,10 @@ impl Portal {
             View::DualSftp(tab_id) => {
                 if let Some(state) = self.sftp.get_tab(*tab_id) {
                     // Build available sources list for dropdown
-                    let available_hosts: Vec<_> = self.hosts_config.hosts.iter()
+                    let available_hosts: Vec<_> = self
+                        .hosts_config
+                        .hosts
+                        .iter()
                         .map(|h| (h.id, h.name.clone()))
                         .collect();
                     dual_pane_sftp_view(state, available_hosts, theme)
@@ -306,14 +325,37 @@ impl Portal {
                 match self.sidebar_selection {
                     SidebarMenuItem::Hosts | SidebarMenuItem::Sftp => {
                         // SFTP now opens directly into dual-pane view, so show hosts grid as fallback
-                        host_grid_view(&self.search_query, filtered_groups, filtered_cards, column_count, theme, self.focus_section, self.host_grid_focus_index, self.hovered_host)
+                        host_grid_view(
+                            &self.search_query,
+                            filtered_groups,
+                            filtered_cards,
+                            column_count,
+                            theme,
+                            self.focus_section,
+                            self.host_grid_focus_index,
+                            self.hovered_host,
+                        )
                     }
-                    SidebarMenuItem::History => {
-                        history_view(&self.history_config, theme, self.focus_section, self.history_focus_index)
-                    }
-                    SidebarMenuItem::Snippets | SidebarMenuItem::Settings | SidebarMenuItem::About => {
+                    SidebarMenuItem::History => history_view(
+                        &self.history_config,
+                        theme,
+                        self.focus_section,
+                        self.history_focus_index,
+                    ),
+                    SidebarMenuItem::Snippets
+                    | SidebarMenuItem::Settings
+                    | SidebarMenuItem::About => {
                         // These open dialogs or pages, show hosts grid as fallback
-                        host_grid_view(&self.search_query, filtered_groups, filtered_cards, column_count, theme, self.focus_section, self.host_grid_focus_index, self.hovered_host)
+                        host_grid_view(
+                            &self.search_query,
+                            filtered_groups,
+                            filtered_cards,
+                            column_count,
+                            theme,
+                            self.focus_section,
+                            self.host_grid_focus_index,
+                            self.hovered_host,
+                        )
                     }
                 }
             }
@@ -334,15 +376,11 @@ impl Portal {
         );
 
         // Content row: sidebar | main content
-        let content_row = row![sidebar, main_content]
-            .width(Fill)
-            .height(Fill);
+        let content_row = row![sidebar, main_content].width(Fill).height(Fill);
 
         // Full layout: tab bar on top, then sidebar+content below (Termius-style)
-        let main_layout: Element<'_, Message> = column![header, content_row]
-            .width(Fill)
-            .height(Fill)
-            .into();
+        let main_layout: Element<'_, Message> =
+            column![header, content_row].width(Fill).height(Fill).into();
 
         // Overlay dialog if open - host key dialog takes priority as it's connection-critical
         let with_dialog: Element<'_, Message> = match self.dialogs.active() {
@@ -382,7 +420,11 @@ impl Portal {
 
         // Overlay toast notifications on top of everything
         if self.toast_manager.has_toasts() {
-            stack![with_context_menu, toast_overlay_view(&self.toast_manager, theme)].into()
+            stack![
+                with_context_menu,
+                toast_overlay_view(&self.toast_manager, theme)
+            ]
+            .into()
         } else {
             with_context_menu
         }
@@ -413,7 +455,10 @@ impl Portal {
         let mut subscriptions = vec![
             // Keyboard events
             event::listen_with(|event, _status, _id| {
-                if let iced::Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) = event {
+                if let iced::Event::Keyboard(keyboard::Event::KeyPressed {
+                    key, modifiers, ..
+                }) = event
+                {
                     Some(Message::Ui(UiMessage::KeyboardEvent(key, modifiers)))
                 } else {
                     None
@@ -426,14 +471,15 @@ impl Portal {
         // Toast tick timer (only when toasts are visible)
         if self.toast_manager.has_toasts() {
             subscriptions.push(
-                time::every(Duration::from_millis(100)).map(|_| Message::Ui(UiMessage::ToastTick))
+                time::every(Duration::from_millis(100)).map(|_| Message::Ui(UiMessage::ToastTick)),
             );
         }
 
         // Session duration tick (only when viewing a terminal)
         if matches!(self.active_view, View::Terminal(_)) && !self.sessions.is_empty() {
             subscriptions.push(
-                time::every(Duration::from_secs(1)).map(|_| Message::Session(SessionMessage::DurationTick))
+                time::every(Duration::from_secs(1))
+                    .map(|_| Message::Session(SessionMessage::DurationTick)),
             );
         }
 

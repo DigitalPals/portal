@@ -12,8 +12,9 @@ use uuid::Uuid;
 
 use crate::fonts::TerminalFont;
 use crate::message::{Message, SessionId};
-use crate::terminal::backend::{EventProxy, TerminalSize};
 use crate::terminal::TerminalBackend;
+use crate::terminal::backend::{EventProxy, TerminalEvent, TerminalSize};
+use tokio::sync::mpsc;
 use crate::terminal::widget::TerminalWidget;
 use crate::theme::Theme;
 
@@ -28,12 +29,16 @@ pub struct TerminalSession {
 
 impl TerminalSession {
     /// Create a new terminal session
-    pub fn new(_title: impl Into<String>) -> Self {
+    pub fn new(_title: impl Into<String>) -> (Self, mpsc::Receiver<TerminalEvent>) {
         let size = TerminalSize::new(80, 24);
-        Self {
-            id: Uuid::new_v4(),
-            backend: TerminalBackend::new(size),
-        }
+        let (backend, event_rx) = TerminalBackend::new(size);
+        (
+            Self {
+                id: Uuid::new_v4(),
+                backend,
+            },
+            event_rx,
+        )
     }
 
     /// Get the terminal for rendering
@@ -74,13 +79,14 @@ pub fn terminal_view_with_status<'a>(
         .font(terminal_font)
         .terminal_colors(theme.terminal);
 
-    let terminal_container = container(terminal_widget)
-        .width(Fill)
-        .height(Fill)
-        .style(move |_theme| container::Style {
-            background: Some(theme.terminal.background.into()),
-            ..Default::default()
-        });
+    let terminal_container =
+        container(terminal_widget)
+            .width(Fill)
+            .height(Fill)
+            .style(move |_theme| container::Style {
+                background: Some(theme.terminal.background.into()),
+                ..Default::default()
+            });
 
     let status_bar = terminal_status_bar(theme, host_name, session_start, status_message);
 

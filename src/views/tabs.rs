@@ -1,6 +1,6 @@
 //! Tab bar component for managing multiple sessions
 
-use iced::widget::{button, container, mouse_area, row, text, Row};
+use iced::widget::{Row, button, container, mouse_area, row, text};
 use iced::{Alignment, Color, Element, Length, Padding};
 use uuid::Uuid;
 
@@ -72,13 +72,15 @@ pub fn tab_bar_view<'a>(
     hovered_tab: Option<Uuid>,
 ) -> Element<'a, Message> {
     // Determine if we should use terminal background (seamless look)
-    let use_terminal_bg = matches!(active_view, View::Terminal(_) | View::DualSftp(_) | View::FileViewer(_));
+    let use_terminal_bg = matches!(
+        active_view,
+        View::Terminal(_) | View::DualSftp(_) | View::FileViewer(_)
+    );
     // Hamburger menu button for sidebar toggle
     let menu_icon = icons::ui::MENU;
 
     let hamburger_btn = button(
-        container(icon_with_color(menu_icon, 20, theme.text_secondary))
-            .padding(Padding::new(10.0)),
+        container(icon_with_color(menu_icon, 20, theme.text_secondary)).padding(Padding::new(10.0)),
     )
     .style(move |_theme, status| {
         let background = match status {
@@ -104,7 +106,14 @@ pub fn tab_bar_view<'a>(
         let is_active = active_tab == Some(tab.id);
         let is_focused = focus_section == FocusSection::TabBar && idx == focus_index;
         let is_hovered = hovered_tab == Some(tab.id);
-        tab_elements.push(tab_button(tab, is_active, is_focused, is_hovered, theme, hosts_config));
+        tab_elements.push(tab_button(
+            tab,
+            is_active,
+            is_focused,
+            is_hovered,
+            theme,
+            hosts_config,
+        ));
     }
 
     // Add "+" button for new connection

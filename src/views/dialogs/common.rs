@@ -9,7 +9,7 @@ use iced::widget::{button, container, mouse_area};
 use iced::{Alignment, Element, Length};
 
 use crate::message::Message;
-use crate::theme::{Theme, BORDER_RADIUS};
+use crate::theme::{BORDER_RADIUS, Theme};
 
 /// Wrap dialog content in a centered backdrop with modal styling.
 ///

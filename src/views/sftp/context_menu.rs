@@ -3,7 +3,7 @@
 //! This module contains the rendering functions for the context menu
 //! in the dual-pane SFTP browser.
 
-use iced::widget::{button, container, text, Column, Space};
+use iced::widget::{Column, Space, button, container, text};
 use iced::{Color, Element, Fill, Length, Padding};
 
 use crate::message::{Message, SessionId, SftpMessage};
@@ -58,8 +58,10 @@ fn context_menu_item<'a>(
         });
 
     if enabled {
-        btn.on_press(Message::Sftp(SftpMessage::ContextMenuAction(tab_id, action)))
-            .into()
+        btn.on_press(Message::Sftp(SftpMessage::ContextMenuAction(
+            tab_id, action,
+        )))
+        .into()
     } else {
         btn.into()
     }
@@ -189,12 +191,15 @@ pub fn context_menu_view(state: &DualPaneSftpState, theme: Theme) -> Element<'_,
     let pos = state.context_menu.position;
 
     // Wrap in a clickable background to dismiss when clicking outside
-    let background = mouse_area(container(Space::new().width(Fill).height(Fill)).width(Fill).height(Fill))
-        .on_press(Message::Sftp(SftpMessage::HideContextMenu(tab_id)));
+    let background = mouse_area(
+        container(Space::new().width(Fill).height(Fill))
+            .width(Fill)
+            .height(Fill),
+    )
+    .on_press(Message::Sftp(SftpMessage::HideContextMenu(tab_id)));
 
     // Position the menu using margins
-    let positioned_menu =
-        container(menu).padding(Padding::new(0.0).top(pos.y).left(pos.x));
+    let positioned_menu = container(menu).padding(Padding::new(0.0).top(pos.y).left(pos.x));
 
     iced::widget::stack![background, positioned_menu].into()
 }

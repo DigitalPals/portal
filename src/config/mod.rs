@@ -23,6 +23,8 @@ pub fn write_atomic(path: &Path, content: &str) -> std::io::Result<()> {
         .and_then(|name| name.to_str())
         .unwrap_or("config");
     let temp_path = parent.join(format!(".{}.tmp-{}", file_name, Uuid::new_v4()));
+    let backup_path = parent.join(format!(".{}.bak-{}", file_name, Uuid::new_v4()));
+    let original_permissions = path.metadata().ok().map(|meta| meta.permissions());
 
     let mut file = std::fs::OpenOptions::new()
         .write(true)
@@ -31,14 +33,28 @@ pub fn write_atomic(path: &Path, content: &str) -> std::io::Result<()> {
     file.write_all(content.as_bytes())?;
     file.sync_all()?;
 
+    if let Some(permissions) = original_permissions {
+        let _ = std::fs::set_permissions(&temp_path, permissions);
+    }
+
+    let mut backup_created = false;
     if path.exists() {
-        let _ = std::fs::remove_file(path);
+        std::fs::rename(path, &backup_path)?;
+        backup_created = true;
     }
 
     match std::fs::rename(&temp_path, path) {
-        Ok(()) => Ok(()),
+        Ok(()) => {
+            if backup_created {
+                let _ = std::fs::remove_file(&backup_path);
+            }
+            Ok(())
+        }
         Err(err) => {
             let _ = std::fs::remove_file(&temp_path);
+            if backup_created {
+                let _ = std::fs::rename(&backup_path, path);
+            }
             Err(err)
         }
     }
@@ -59,7 +75,10 @@ mod tests {
         assert_eq!(fs::read_to_string(&path).expect("read first"), "first=1\n");
 
         write_atomic(&path, "second=2\n").expect("write second");
-        assert_eq!(fs::read_to_string(&path).expect("read second"), "second=2\n");
+        assert_eq!(
+            fs::read_to_string(&path).expect("read second"),
+            "second=2\n"
+        );
     }
 
     #[test]

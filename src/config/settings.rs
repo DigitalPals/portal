@@ -88,7 +88,6 @@ impl SettingsConfig {
         })?;
 
         let content = toml::to_string_pretty(self).map_err(ConfigError::Serialize)?;
-        super::write_atomic(&path, &content)
-            .map_err(|e| ConfigError::WriteFile { path, source: e })
+        super::write_atomic(&path, &content).map_err(|e| ConfigError::WriteFile { path, source: e })
     }
 }
