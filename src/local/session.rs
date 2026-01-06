@@ -63,8 +63,9 @@ impl LocalSession {
             })
             .map_err(|e| LocalError::PtyCreation(e.to_string()))?;
 
-        // Build command for shell
+        // Build command for shell as login shell to source profile/rc files
         let mut cmd = CommandBuilder::new(&shell);
+        cmd.arg("-l");
         // Set TERM for proper terminal emulation
         cmd.env("TERM", "xterm-256color");
 
