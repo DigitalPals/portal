@@ -110,7 +110,7 @@ jobs:
             ./linuxdeploy-x86_64.AppImage \
             --appdir AppDir \
             --desktop-file assets/app-icons/portal.desktop \
-            --icon-file assets/app-icons/png/portal-256.png \
+            --icon-file assets/app-icons/portal.svg \
             --output appimage
           appimage_path=$(ls Portal-*.AppImage | head -n 1)
           mv "$appimage_path" portal-${{ github.ref_name }}-${{ matrix.name }}.AppImage
