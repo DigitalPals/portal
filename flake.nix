@@ -14,7 +14,7 @@
       {
         packages.default = pkgs.rustPlatform.buildRustPackage {
           pname = "portal";
-          version = "0.5.0";
+          version = "0.5.1";
           src = ./.;
           cargoLock = {
             lockFile = ./Cargo.lock;

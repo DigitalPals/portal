@@ -127,41 +127,56 @@ Pick the file that matches your OS and CPU:
 
 | Platform | Asset name |
 |----------|------------|
-| macOS (Apple Silicon) | `portal-v0.5.0-macos-arm64.tar.gz` |
-| macOS (Intel) | `portal-v0.5.0-macos-x86_64.tar.gz` |
-| Linux (arm64) | `portal-v0.5.0-linux-arm64.tar.gz` |
-| Linux (x86_64) | `portal-v0.5.0-linux-x86_64.tar.gz` |
+| macOS (Apple Silicon) | `portal-v0.5.1-macos-arm64.app.zip` |
+| macOS (Intel) | `portal-v0.5.1-macos-x86_64.app.zip` |
+| Linux (arm64) | `portal-v0.5.1-linux-arm64.deb` / `portal-v0.5.1-linux-arm64.rpm` / `portal-v0.5.1-linux-arm64.tar.gz` |
+| Linux (x86_64) | `portal-v0.5.1-linux-x86_64.AppImage` / `portal-v0.5.1-linux-x86_64.deb` / `portal-v0.5.1-linux-x86_64.rpm` / `portal-v0.5.1-linux-x86_64.tar.gz` |
 
 ### Install on macOS
 
-1. Download the matching `portal-v0.5.0-macos-*.tar.gz` from Releases.
+1. Download the matching `portal-v0.5.1-macos-*.app.zip` from Releases.
 2. Extract it:
    ```bash
-   tar -xzf portal-v0.5.0-macos-*.tar.gz
+   unzip portal-v0.5.1-macos-*.app.zip
    ```
-3. Move the `portal` binary to your PATH (example):
-   ```bash
-   sudo mv portal /usr/local/bin/
-   ```
-4. Run it:
-   ```bash
-   portal
-   ```
+3. Move `Portal.app` to your Applications folder (or run it in place).
 
 If macOS blocks the app, open **System Settings > Privacy & Security** and click **Open Anyway** for Portal, then run it again.
 
 ### Install on Linux
 
-1. Download the matching `portal-v0.5.0-linux-*.tar.gz` from Releases.
-2. Extract it:
+Pick one of these options:
+
+**AppImage (x86_64):**
+1. Download `portal-v0.5.1-linux-x86_64.AppImage`.
+2. Make it executable and run:
    ```bash
-   tar -xzf portal-v0.5.0-linux-*.tar.gz
+   chmod +x portal-v0.5.1-linux-x86_64.AppImage
+   ./portal-v0.5.1-linux-x86_64.AppImage
    ```
-3. Move the `portal` binary to your PATH (example):
+
+**DEB (Debian/Ubuntu):**
+1. Download `portal-v0.5.1-linux-*.deb`.
+2. Install:
    ```bash
+   sudo dpkg -i portal-v0.5.1-linux-*.deb
+   ```
+
+**RPM (Fedora/RHEL):**
+1. Download `portal-v0.5.1-linux-*.rpm`.
+2. Install:
+   ```bash
+   sudo rpm -i portal-v0.5.1-linux-*.rpm
+   ```
+
+**Tarball (manual):**
+1. Download `portal-v0.5.1-linux-*.tar.gz`.
+2. Extract and move the binary into your PATH:
+   ```bash
+   tar -xzf portal-v0.5.1-linux-*.tar.gz
    sudo mv portal /usr/local/bin/
    ```
-4. Run it:
+3. Run it:
    ```bash
    portal
    ```
