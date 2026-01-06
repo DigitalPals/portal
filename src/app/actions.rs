@@ -19,17 +19,17 @@ use super::{Portal, View};
 impl Portal {
     pub(super) fn set_active_tab(&mut self, tab_id: Uuid) {
         self.active_tab = Some(tab_id);
-        if self.sessions.contains_key(&tab_id) {
+        if self.sessions.contains(tab_id) {
             self.active_view = View::Terminal(tab_id);
-        } else if self.dual_sftp_tabs.contains_key(&tab_id) {
+        } else if self.sftp.contains_tab(tab_id) {
             self.active_view = View::DualSftp(tab_id);
         }
     }
 
     pub(super) fn close_tab(&mut self, tab_id: Uuid) {
         let sftp_sessions_to_close = self
-            .dual_sftp_tabs
-            .get(&tab_id)
+            .sftp
+            .get_tab(tab_id)
             .map(|state| {
                 let mut ids = Vec::new();
                 for pane in [&state.left_pane, &state.right_pane] {
@@ -44,18 +44,15 @@ impl Portal {
             .unwrap_or_default();
 
         self.tabs.retain(|t| t.id != tab_id);
-        self.sessions.remove(&tab_id);
-        self.dual_sftp_tabs.remove(&tab_id);
+        self.sessions.remove(tab_id);
+        self.sftp.remove_tab(tab_id);
 
         let mut history_changed = false;
         for session_id in sftp_sessions_to_close {
-            let still_used = self.dual_sftp_tabs.values().any(|state| {
-                matches!(state.left_pane.source, PaneSource::Remote { session_id: id, .. } if id == session_id)
-                    || matches!(state.right_pane.source, PaneSource::Remote { session_id: id, .. } if id == session_id)
-            });
+            let still_used = self.sftp.is_connection_in_use(session_id);
             if !still_used {
-                self.sftp_connections.remove(&session_id);
-                if let Some(entry_id) = self.sftp_history_entries.remove(&session_id) {
+                self.sftp.remove_connection(session_id);
+                if let Some(entry_id) = self.sftp.remove_history_entry(session_id) {
                     self.history_config.mark_disconnected(entry_id);
                     history_changed = true;
                 }
@@ -194,7 +191,7 @@ impl Portal {
         tab_id: SessionId,
         pane_id: PaneId,
     ) -> Task<Message> {
-        if let Some(tab_state) = self.dual_sftp_tabs.get(&tab_id) {
+        if let Some(tab_state) = self.sftp.get_tab(tab_id) {
             let pane = tab_state.pane(pane_id);
             let path = pane.current_path.clone();
 
@@ -208,7 +205,7 @@ impl Portal {
                 }
                 PaneSource::Remote { session_id, .. } => {
                     // Load remote directory via SFTP
-                    if let Some(sftp) = self.sftp_connections.get(session_id) {
+                    if let Some(sftp) = self.sftp.get_connection(*session_id) {
                         let sftp = sftp.clone();
                         Task::perform(
                             async move { sftp.list_dir(&path).await },
@@ -243,7 +240,7 @@ impl Portal {
         let host_id = host.id;
 
         // Store pending connection info for host key verification
-        self.pending_dual_sftp_connection = Some((tab_id, pane_id, host_id));
+        self.sftp.set_pending_connection(Some((tab_id, pane_id, host_id)));
 
         // Create event channel for SSH events (including host key verification)
         let (event_tx, event_rx) = mpsc::unbounded_channel::<SshEvent>();
@@ -295,7 +292,7 @@ impl Portal {
         tab_id: SessionId,
         action: ContextMenuAction,
     ) -> Task<Message> {
-        let Some(tab_state) = self.dual_sftp_tabs.get(&tab_id) else {
+        let Some(tab_state) = self.sftp.get_tab(tab_id) else {
             return Task::none();
         };
 
@@ -324,7 +321,7 @@ impl Portal {
                             }
                             PaneSource::Remote { session_id, .. } => {
                                 // For remote files, download to temp and open
-                                if let Some(sftp) = self.sftp_connections.get(session_id) {
+                                if let Some(sftp) = self.sftp.get_connection(*session_id) {
                                     let sftp = sftp.clone();
                                     return Task::perform(
                                         async move {
@@ -362,7 +359,7 @@ impl Portal {
                         let file_path = entry.path.clone();
                         let is_remote = matches!(pane.source, PaneSource::Remote { .. });
 
-                        if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
+                        if let Some(tab_state) = self.sftp.get_tab_mut(tab_id) {
                             tab_state.show_open_with_dialog(file_name, file_path, is_remote);
                         }
                     }
@@ -377,7 +374,7 @@ impl Portal {
                 if let Some(entry) = selected_entries.first() {
                     if !entry.is_parent() {
                         let original_name = entry.name.clone();
-                        if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
+                        if let Some(tab_state) = self.sftp.get_tab_mut(tab_id) {
                             tab_state.show_rename_dialog(original_name);
                         }
                     }
@@ -392,21 +389,21 @@ impl Portal {
                     .collect();
 
                 if !entries_to_delete.is_empty() {
-                    if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
+                    if let Some(tab_state) = self.sftp.get_tab_mut(tab_id) {
                         tab_state.show_delete_dialog(entries_to_delete);
                     }
                 }
             }
             ContextMenuAction::Refresh => {
                 // Refresh the current pane
-                if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
+                if let Some(tab_state) = self.sftp.get_tab_mut(tab_id) {
                     tab_state.pane_mut(active_pane).loading = true;
                 }
                 return self.load_dual_pane_directory(tab_id, active_pane);
             }
             ContextMenuAction::NewFolder => {
                 // Show the New Folder dialog
-                if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
+                if let Some(tab_state) = self.sftp.get_tab_mut(tab_id) {
                     tab_state.show_new_folder_dialog();
                 }
             }
@@ -444,7 +441,7 @@ impl Portal {
                             }
                         };
 
-                        if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
+                        if let Some(tab_state) = self.sftp.get_tab_mut(tab_id) {
                             tab_state.show_permissions_dialog(name, path, permissions);
                         }
                     }
@@ -457,7 +454,7 @@ impl Portal {
 
     /// Handle dialog submission (New Folder or Rename)
     pub(super) fn handle_sftp_dialog_submit(&mut self, tab_id: SessionId) -> Task<Message> {
-        let Some(tab_state) = self.dual_sftp_tabs.get(&tab_id) else {
+        let Some(tab_state) = self.sftp.get_tab(tab_id) else {
             return Task::none();
         };
 
@@ -489,7 +486,7 @@ impl Portal {
                     }
                     PaneSource::Remote { session_id, .. } => {
                         // Create remote folder via SFTP
-                        if let Some(sftp) = self.sftp_connections.get(session_id) {
+                        if let Some(sftp) = self.sftp.get_connection(*session_id) {
                             let sftp = sftp.clone();
                             Task::perform(
                                 async move {
@@ -521,7 +518,7 @@ impl Portal {
                     }
                     PaneSource::Remote { session_id, .. } => {
                         // Rename remote file/folder via SFTP
-                        if let Some(sftp) = self.sftp_connections.get(session_id) {
+                        if let Some(sftp) = self.sftp.get_connection(*session_id) {
                             let sftp = sftp.clone();
                             Task::perform(
                                 async move {
@@ -570,7 +567,7 @@ impl Portal {
                     }
                     PaneSource::Remote { session_id, .. } => {
                         // Delete remote files/folders via SFTP
-                        if let Some(sftp) = self.sftp_connections.get(session_id) {
+                        if let Some(sftp) = self.sftp.get_connection(*session_id) {
                             let sftp = sftp.clone();
                             Task::perform(
                                 async move {
@@ -629,7 +626,7 @@ impl Portal {
                     }
                     PaneSource::Remote { session_id, .. } => {
                         // Set remote file permissions via SFTP
-                        if let Some(sftp) = self.sftp_connections.get(session_id) {
+                        if let Some(sftp) = self.sftp.get_connection(*session_id) {
                             let sftp = sftp.clone();
                             Task::perform(
                                 async move {
@@ -652,14 +649,14 @@ impl Portal {
                 let pane_source = pane.source.clone();
 
                 // Close dialog immediately
-                if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
+                if let Some(tab_state) = self.sftp.get_tab_mut(tab_id) {
                     tab_state.close_dialog();
                 }
 
                 if is_remote {
                     // For remote files, download to temp first, then open with command
                     if let PaneSource::Remote { session_id, .. } = &pane_source {
-                        if let Some(sftp) = self.sftp_connections.get(session_id) {
+                        if let Some(sftp) = self.sftp.get_connection(*session_id) {
                             let sftp = sftp.clone();
                             let file_name = path.file_name()
                                 .map(|n| n.to_string_lossy().to_string())
@@ -717,7 +714,7 @@ impl Portal {
 
     /// Handle copying selected files from active pane to target pane
     pub(super) fn handle_copy_to_target(&mut self, tab_id: SessionId) -> Task<Message> {
-        let Some(tab_state) = self.dual_sftp_tabs.get(&tab_id) else {
+        let Some(tab_state) = self.sftp.get_tab(tab_id) else {
             return Task::none();
         };
 
@@ -772,7 +769,7 @@ impl Portal {
             (PaneSource::Local, PaneSource::Remote { session_id, .. }) => {
                 // Local to Remote upload
                 let sftp_session_id = *session_id;
-                if let Some(sftp) = self.sftp_connections.get(&sftp_session_id) {
+                if let Some(sftp) = self.sftp.get_connection(sftp_session_id) {
                     let sftp = sftp.clone();
                     Task::perform(
                         async move {
@@ -802,7 +799,7 @@ impl Portal {
             (PaneSource::Remote { session_id, .. }, PaneSource::Local) => {
                 // Remote to Local download
                 let sftp_session_id = *session_id;
-                if let Some(sftp) = self.sftp_connections.get(&sftp_session_id) {
+                if let Some(sftp) = self.sftp.get_connection(sftp_session_id) {
                     let sftp = sftp.clone();
                     Task::perform(
                         async move {
@@ -837,8 +834,8 @@ impl Portal {
                 let source_sftp_id = *source_session_id;
                 let target_sftp_id = *target_session_id;
 
-                let source_sftp = self.sftp_connections.get(&source_sftp_id).cloned();
-                let target_sftp = self.sftp_connections.get(&target_sftp_id).cloned();
+                let source_sftp = self.sftp.get_connection(source_sftp_id).cloned();
+                let target_sftp = self.sftp.get_connection(target_sftp_id).cloned();
 
                 if let (Some(source_sftp), Some(target_sftp)) = (source_sftp, target_sftp) {
                     Task::perform(

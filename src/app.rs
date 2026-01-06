@@ -2,8 +2,6 @@ mod actions;
 pub mod managers;
 mod view_model;
 
-use std::collections::HashMap;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 use iced::keyboard::{self, Key};
 use iced::widget::{column, row, text, stack, Space};
@@ -12,8 +10,6 @@ use uuid::Uuid;
 
 use crate::config::{AuthMethod, HistoryConfig, Host, HostsConfig, SettingsConfig, Snippet, SnippetsConfig};
 use crate::message::{HostDialogField, Message, SessionId, SidebarMenuItem, SnippetField};
-use crate::sftp::SharedSftpSession;
-use crate::ssh::SshSession;
 use crate::theme::{theme_for, SIDEBAR_AUTO_COLLAPSE_THRESHOLD};
 use crate::ssh::host_key_verification::HostKeyVerificationResponse;
 use crate::views::dialogs::host_dialog::{
@@ -33,6 +29,8 @@ use crate::views::tabs::{tab_bar_view, Tab};
 use crate::views::terminal_view::{terminal_view_with_status, TerminalSession};
 use crate::views::toast::{toast_overlay_view, Toast, ToastManager};
 
+use self::managers::{ActiveDialog, DialogManager, SessionManager, SftpManager};
+pub use self::managers::ActiveSession;
 use self::view_model::{filter_group_cards, filter_host_cards, group_cards, host_cards};
 
 /// The active view in the main content area
@@ -42,17 +40,6 @@ pub enum View {
     HostGrid,
     Terminal(SessionId),
     DualSftp(SessionId),  // Dual-pane SFTP browser
-}
-
-/// Active SSH session with its terminal
-pub struct ActiveSession {
-    pub ssh_session: Arc<SshSession>,
-    pub terminal: TerminalSession,
-    pub session_start: Instant,
-    pub host_name: String,
-    pub history_entry_id: Uuid,
-    /// Transient status message (message, shown_at) - auto-expires after 3 seconds
-    pub status_message: Option<(String, Instant)>,
 }
 
 /// Main application state
@@ -69,11 +56,10 @@ pub struct Portal {
     tabs: Vec<Tab>,
     active_tab: Option<Uuid>,
 
-    // Dialog state
-    dialog: Option<HostDialogState>,
-    settings_dialog: Option<SettingsDialogState>,
-    snippets_dialog: Option<SnippetsDialogState>,
-    host_key_dialog: Option<HostKeyDialogState>,
+    // Domain managers
+    sessions: SessionManager,
+    sftp: SftpManager,
+    dialogs: DialogManager,
 
     // Theme preference
     dark_mode: bool,
@@ -85,19 +71,6 @@ pub struct Portal {
     hosts_config: HostsConfig,
     snippets_config: SnippetsConfig,
     history_config: HistoryConfig,
-
-    // Active sessions
-    sessions: HashMap<SessionId, ActiveSession>,
-
-    // Dual-pane SFTP tabs
-    dual_sftp_tabs: HashMap<SessionId, DualPaneSftpState>,
-
-    // Shared SFTP connections pool (can be used by multiple panes)
-    sftp_connections: HashMap<SessionId, SharedSftpSession>,
-    sftp_history_entries: HashMap<SessionId, Uuid>,
-
-    // Pending dual-pane SFTP connection (tab_id, pane_id, host_id)
-    pending_dual_sftp_connection: Option<(SessionId, PaneId, Uuid)>,
 
     // Toast notifications
     toast_manager: ToastManager,
@@ -165,20 +138,14 @@ impl Portal {
             sidebar_selection: SidebarMenuItem::Hosts,
             tabs: Vec::new(),
             active_tab: None,
-            dialog: None,
-            settings_dialog: None,
-            snippets_dialog: None,
-            host_key_dialog: None,
+            sessions: SessionManager::new(),
+            sftp: SftpManager::new(),
+            dialogs: DialogManager::new(),
             dark_mode: settings_config.dark_mode,
             terminal_font_size: settings_config.terminal_font_size,
             hosts_config,
             snippets_config,
             history_config,
-            sessions: HashMap::new(),
-            dual_sftp_tabs: HashMap::new(),
-            sftp_connections: HashMap::new(),
-            sftp_history_entries: HashMap::new(),
-            pending_dual_sftp_connection: None,
             toast_manager: ToastManager::new(),
             window_size: iced::Size::new(1200.0, 800.0),
             sidebar_manually_collapsed: false,
@@ -226,7 +193,7 @@ impl Portal {
                     SidebarMenuItem::Sftp => {
                         // Open dual-pane SFTP browser directly
                         // Check if we already have a dual sftp tab open
-                        if let Some(tab_id) = self.dual_sftp_tabs.keys().next().cloned() {
+                        if let Some(tab_id) = self.sftp.first_tab_id() {
                             // Switch to existing dual sftp tab
                             self.set_active_tab(tab_id);
                         } else {
@@ -235,13 +202,13 @@ impl Portal {
                         }
                     }
                     SidebarMenuItem::Settings => {
-                        self.settings_dialog = Some(SettingsDialogState {
+                        self.dialogs.open_settings(SettingsDialogState {
                             dark_mode: self.dark_mode,
                             terminal_font_size: self.terminal_font_size,
                         });
                     }
                     SidebarMenuItem::Snippets => {
-                        self.snippets_dialog = Some(SnippetsDialogState::new(
+                        self.dialogs.open_snippets(SnippetsDialogState::new(
                             self.snippets_config.snippets.clone(),
                         ));
                     }
@@ -268,7 +235,7 @@ impl Portal {
                 }
             }
             Message::HostAdd => {
-                self.dialog = Some(HostDialogState::new_host());
+                self.dialogs.open_host(HostDialogState::new_host());
             }
             Message::QuickConnect => {
                 // Parse search query as [ssh] [user@]hostname[:port]
@@ -333,12 +300,10 @@ impl Portal {
                 tracing::info!("Local terminal requested (not yet implemented)");
             }
             Message::DialogClose => {
-                self.dialog = None;
-                self.settings_dialog = None;
-                self.snippets_dialog = None;
+                self.dialogs.close();
             }
             Message::DialogSubmit => {
-                if let Some(ref dialog_state) = self.dialog {
+                if let Some(dialog_state) = self.dialogs.host() {
                     if let Some(host) = dialog_state.to_host() {
                         // Preserve created_at for edits
                         let host = if let Some(existing_id) = dialog_state.editing_id {
@@ -354,7 +319,8 @@ impl Portal {
                             host
                         };
 
-                        if dialog_state.editing_id.is_some() {
+                        let is_edit = dialog_state.editing_id.is_some();
+                        if is_edit {
                             if let Err(e) = self.hosts_config.update_host(host.clone()) {
                                 tracing::error!("Failed to update host: {}", e);
                             } else {
@@ -368,12 +334,12 @@ impl Portal {
                         if let Err(e) = self.hosts_config.save() {
                             tracing::error!("Failed to save config: {}", e);
                         }
-                        self.dialog = None;
+                        self.dialogs.close();
                     }
                 }
             }
             Message::DialogFieldChanged(field, value) => {
-                if let Some(ref mut dialog_state) = self.dialog {
+                if let Some(dialog_state) = self.dialogs.host_mut() {
                     match field {
                         HostDialogField::Name => dialog_state.name = value,
                         HostDialogField::Hostname => dialog_state.hostname = value,
@@ -420,19 +386,19 @@ impl Portal {
             // Host key verification
             Message::HostKeyVerification(mut wrapper) => {
                 if let Some(request) = wrapper.0.take() {
-                    self.host_key_dialog = Some(HostKeyDialogState::from_request(*request));
+                    self.dialogs.open_host_key(HostKeyDialogState::from_request(*request));
                     tracing::info!("Host key verification dialog opened");
                 }
             }
             Message::HostKeyVerificationAccept => {
-                if let Some(ref mut dialog) = self.host_key_dialog {
+                if let Some(dialog) = self.dialogs.host_key_mut() {
                     dialog.respond(HostKeyVerificationResponse::Accept);
                     tracing::info!("Host key accepted for {}:{}", dialog.host, dialog.port);
                 }
-                self.host_key_dialog = None;
+                self.dialogs.close();
             }
             Message::HostKeyVerificationReject => {
-                if let Some(ref mut dialog) = self.host_key_dialog {
+                if let Some(dialog) = self.dialogs.host_key_mut() {
                     dialog.respond(HostKeyVerificationResponse::Reject);
                     tracing::info!("Host key rejected for {}:{}", dialog.host, dialog.port);
                     self.toast_manager.push(Toast::error(format!(
@@ -440,13 +406,13 @@ impl Portal {
                         dialog.host
                     )));
                 }
-                self.host_key_dialog = None;
+                self.dialogs.close();
             }
             // Terminal messages
             Message::TerminalInput(session_id, bytes) => {
                 tracing::debug!("Terminal input for session {}: {:?}", session_id, bytes);
                 // Send to SSH channel
-                if let Some(session) = self.sessions.get(&session_id) {
+                if let Some(session) = self.sessions.get(session_id) {
                     let ssh_session = session.ssh_session.clone();
                     return Task::perform(
                         async move {
@@ -466,7 +432,7 @@ impl Portal {
                     rows
                 );
                 // Resize the terminal backend and notify SSH server
-                if let Some(session) = self.sessions.get_mut(&session_id) {
+                if let Some(session) = self.sessions.get_mut(session_id) {
                     session.terminal.resize(cols, rows);
                     // Send window change to SSH server
                     if let Err(e) = session.ssh_session.window_change(cols, rows) {
@@ -548,13 +514,13 @@ impl Portal {
                 // Event listener is already running from connect_to_host
             }
             Message::SshData(session_id, data) => {
-                if let Some(session) = self.sessions.get_mut(&session_id) {
+                if let Some(session) = self.sessions.get_mut(session_id) {
                     session.terminal.process_output(&data);
                 }
             }
             Message::SshDisconnected(session_id) => {
                 tracing::info!("SSH disconnected: {}", session_id);
-                if let Some(session) = self.sessions.get(&session_id) {
+                if let Some(session) = self.sessions.get(session_id) {
                     self.history_config.mark_disconnected(session.history_entry_id);
                     if let Err(e) = self.history_config.save() {
                         tracing::error!("Failed to save history config: {}", e);
@@ -570,7 +536,7 @@ impl Portal {
                 // No-op: triggers a re-render to update duration display
             }
             Message::InstallSshKey(session_id) => {
-                if let Some(session) = self.sessions.get_mut(&session_id) {
+                if let Some(session) = self.sessions.get_mut(session_id) {
                     // Set status message to show we're installing
                     session.status_message = Some(("Installing key...".to_string(), Instant::now()));
 
@@ -584,7 +550,7 @@ impl Portal {
                 }
             }
             Message::InstallSshKeyResult(session_id, result) => {
-                if let Some(session) = self.sessions.get_mut(&session_id) {
+                if let Some(session) = self.sessions.get_mut(session_id) {
                     // Clear the "Installing..." status message
                     session.status_message = None;
                 }
@@ -619,7 +585,7 @@ impl Portal {
                 // Create a new dual-pane SFTP tab with both panes starting as Local
                 let tab_id = Uuid::new_v4();
                 let dual_state = DualPaneSftpState::new(tab_id);
-                self.dual_sftp_tabs.insert(tab_id, dual_state);
+                self.sftp.insert_tab(tab_id, dual_state);
 
                 // Create tab and switch view
                 let tab = Tab::new_sftp(tab_id, "File Browser".to_string());
@@ -633,30 +599,30 @@ impl Portal {
                 return Task::batch([left_task, right_task]);
             }
             Message::DualSftpPaneSourceChanged(tab_id, pane_id, new_source) => {
-                if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
-                    let pane = tab_state.pane_mut(pane_id);
-
-                    // Update source and reset path
-                    match &new_source {
-                        PaneSource::Local => {
-                            let home_dir = directories::BaseDirs::new()
-                                .map(|d| d.home_dir().to_path_buf())
-                                .unwrap_or_else(|| std::path::PathBuf::from("/"));
-                            pane.source = new_source;
-                            pane.current_path = home_dir;
-                        }
-                        PaneSource::Remote { session_id, host_name: _ } => {
-                            // Get home dir from existing connection if available
-                            if let Some(sftp) = self.sftp_connections.get(session_id) {
-                                pane.source = new_source;
-                                pane.current_path = sftp.home_dir().to_path_buf();
-                            } else {
-                                // Connection not available - shouldn't happen with proper UI
-                                tracing::warn!("SFTP connection {} not found", session_id);
-                                return Task::none();
-                            }
+                // First, get the new path based on source (to avoid borrow conflicts)
+                let new_path = match &new_source {
+                    PaneSource::Local => {
+                        directories::BaseDirs::new()
+                            .map(|d| d.home_dir().to_path_buf())
+                            .unwrap_or_else(|| std::path::PathBuf::from("/"))
+                    }
+                    PaneSource::Remote { session_id, .. } => {
+                        // Get home dir from existing connection if available
+                        if let Some(sftp) = self.sftp.get_connection(*session_id) {
+                            sftp.home_dir().to_path_buf()
+                        } else {
+                            // Connection not available - shouldn't happen with proper UI
+                            tracing::warn!("SFTP connection {} not found", session_id);
+                            return Task::none();
                         }
                     }
+                };
+
+                // Now we can mutably borrow the tab
+                if let Some(tab_state) = self.sftp.get_tab_mut(tab_id) {
+                    let pane = tab_state.pane_mut(pane_id);
+                    pane.source = new_source;
+                    pane.current_path = new_path;
                     pane.loading = true;
                     pane.entries.clear();
 
@@ -664,7 +630,7 @@ impl Portal {
                 }
             }
             Message::DualSftpPaneNavigate(tab_id, pane_id, path) => {
-                if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
+                if let Some(tab_state) = self.sftp.get_tab_mut(tab_id) {
                     tab_state.active_pane = pane_id;
                     let pane = tab_state.pane_mut(pane_id);
                     pane.current_path = path;
@@ -673,7 +639,7 @@ impl Portal {
                 }
             }
             Message::DualSftpPaneNavigateUp(tab_id, pane_id) => {
-                if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
+                if let Some(tab_state) = self.sftp.get_tab_mut(tab_id) {
                     tab_state.active_pane = pane_id;
                     let pane = tab_state.pane_mut(pane_id);
                     if let Some(parent) = pane.current_path.parent() {
@@ -684,20 +650,20 @@ impl Portal {
                 }
             }
             Message::DualSftpPaneRefresh(tab_id, pane_id) => {
-                if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
+                if let Some(tab_state) = self.sftp.get_tab_mut(tab_id) {
                     tab_state.active_pane = pane_id;
                     tab_state.pane_mut(pane_id).loading = true;
                     return self.load_dual_pane_directory(tab_id, pane_id);
                 }
             }
             Message::DualSftpPaneSelect(tab_id, pane_id, index) => {
-                if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
+                if let Some(tab_state) = self.sftp.get_tab_mut(tab_id) {
                     tab_state.active_pane = pane_id;
                     tab_state.pane_mut(pane_id).select(index);
                 }
             }
             Message::DualSftpShowContextMenu(tab_id, pane_id, x, y, index) => {
-                if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
+                if let Some(tab_state) = self.sftp.get_tab_mut(tab_id) {
                     tab_state.active_pane = pane_id;
                     // Select the item if index provided and not already selected
                     if let Some(idx) = index {
@@ -709,19 +675,19 @@ impl Portal {
                 }
             }
             Message::DualSftpHideContextMenu(tab_id) => {
-                if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
+                if let Some(tab_state) = self.sftp.get_tab_mut(tab_id) {
                     tab_state.hide_context_menu();
                 }
             }
             Message::DualSftpContextMenuAction(tab_id, action) => {
-                if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
+                if let Some(tab_state) = self.sftp.get_tab_mut(tab_id) {
                     tab_state.hide_context_menu();
                     // Handle context menu actions - implemented below
                     return self.handle_sftp_context_action(tab_id, action);
                 }
             }
             Message::DualSftpDialogInputChanged(tab_id, value) => {
-                if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
+                if let Some(tab_state) = self.sftp.get_tab_mut(tab_id) {
                     if let Some(ref mut dialog) = tab_state.dialog {
                         dialog.input_value = value;
                         dialog.error = None; // Clear error when user types
@@ -729,12 +695,12 @@ impl Portal {
                 }
             }
             Message::DualSftpDialogCancel(tab_id) => {
-                if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
+                if let Some(tab_state) = self.sftp.get_tab_mut(tab_id) {
                     tab_state.close_dialog();
                 }
             }
             Message::DualSftpDialogSubmit(tab_id) => {
-                if let Some(tab_state) = self.dual_sftp_tabs.get(&tab_id) {
+                if let Some(tab_state) = self.sftp.get_tab(tab_id) {
                     if let Some(ref dialog) = tab_state.dialog {
                         if dialog.is_valid() {
                             return self.handle_sftp_dialog_submit(tab_id);
@@ -743,7 +709,7 @@ impl Portal {
                 }
             }
             Message::DualSftpNewFolderResult(tab_id, pane_id, result) => {
-                if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
+                if let Some(tab_state) = self.sftp.get_tab_mut(tab_id) {
                     match result {
                         Ok(()) => {
                             self.toast_manager.push(Toast::success("Folder created"));
@@ -760,7 +726,7 @@ impl Portal {
                 }
             }
             Message::DualSftpRenameResult(tab_id, pane_id, result) => {
-                if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
+                if let Some(tab_state) = self.sftp.get_tab_mut(tab_id) {
                     match result {
                         Ok(()) => {
                             self.toast_manager.push(Toast::success("Renamed successfully"));
@@ -777,7 +743,7 @@ impl Portal {
                 }
             }
             Message::DualSftpDeleteResult(tab_id, pane_id, result) => {
-                if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
+                if let Some(tab_state) = self.sftp.get_tab_mut(tab_id) {
                     match result {
                         Ok(count) => {
                             tracing::info!("Deleted {} item(s)", count);
@@ -803,7 +769,7 @@ impl Portal {
                 return self.handle_copy_to_target(tab_id);
             }
             Message::DualSftpCopyResult(tab_id, target_pane_id, result) => {
-                if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
+                if let Some(tab_state) = self.sftp.get_tab_mut(tab_id) {
                     match result {
                         Ok(count) => {
                             tracing::info!("Copied {} item(s)", count);
@@ -825,14 +791,14 @@ impl Portal {
                 }
             }
             Message::DualSftpPermissionToggle(tab_id, bit, value) => {
-                if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
+                if let Some(tab_state) = self.sftp.get_tab_mut(tab_id) {
                     if let Some(ref mut dialog) = tab_state.dialog {
                         dialog.set_permission(bit, value);
                     }
                 }
             }
             Message::DualSftpPermissionsResult(tab_id, pane_id, result) => {
-                if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
+                if let Some(tab_state) = self.sftp.get_tab_mut(tab_id) {
                     match result {
                         Ok(()) => {
                             tracing::info!("Permissions updated successfully");
@@ -855,7 +821,7 @@ impl Portal {
                 }
             }
             Message::DualSftpPaneListResult(tab_id, pane_id, result) => {
-                if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
+                if let Some(tab_state) = self.sftp.get_tab_mut(tab_id) {
                     let pane = tab_state.pane_mut(pane_id);
                     match result {
                         Ok(entries) => pane.set_entries(entries),
@@ -879,7 +845,7 @@ impl Portal {
                 sftp_session,
             } => {
                 tracing::info!("SFTP connected to {} for pane {:?}", host_name, pane_id);
-                self.pending_dual_sftp_connection = None;
+                self.sftp.clear_pending_connection();
 
                 if let Some(host) = self.hosts_config.find_host(host_id) {
                     let entry = crate::config::HistoryEntry::new(
@@ -891,7 +857,7 @@ impl Portal {
                     );
                     let entry_id = entry.id;
                     self.history_config.add_entry(entry);
-                    self.sftp_history_entries.insert(sftp_session_id, entry_id);
+                    self.sftp.insert_history_entry(sftp_session_id, entry_id);
                     if let Err(e) = self.history_config.save() {
                         tracing::error!("Failed to save history config: {}", e);
                     }
@@ -899,10 +865,10 @@ impl Portal {
 
                 // Store the SFTP connection in the pool
                 let home_dir = sftp_session.home_dir().to_path_buf();
-                self.sftp_connections.insert(sftp_session_id, sftp_session);
+                self.sftp.insert_connection(sftp_session_id, sftp_session);
 
                 // Update the pane source to point to this connection
-                if let Some(tab_state) = self.dual_sftp_tabs.get_mut(&tab_id) {
+                if let Some(tab_state) = self.sftp.get_tab_mut(tab_id) {
                     let pane = tab_state.pane_mut(pane_id);
                     pane.source = PaneSource::Remote {
                         session_id: sftp_session_id,
@@ -923,18 +889,15 @@ impl Portal {
                     // Escape - close dialogs and context menus
                     (Key::Named(keyboard::key::Named::Escape), _, _) => {
                         // Host key dialog - Escape means reject
-                        if let Some(ref mut dialog) = self.host_key_dialog {
+                        if let Some(dialog) = self.dialogs.host_key_mut() {
                             dialog.respond(HostKeyVerificationResponse::Reject);
                             self.toast_manager.push(Toast::warning("Connection cancelled"));
-                            self.host_key_dialog = None;
-                        } else if self.dialog.is_some() || self.settings_dialog.is_some()
-                            || self.snippets_dialog.is_some() {
-                            self.dialog = None;
-                            self.settings_dialog = None;
-                            self.snippets_dialog = None;
+                            self.dialogs.close();
+                        } else if self.dialogs.is_open() {
+                            self.dialogs.close();
                         }
                         // Close any open SFTP context menu or dialog
-                        for tab_state in self.dual_sftp_tabs.values_mut() {
+                        for tab_state in self.sftp.tab_values_mut() {
                             tab_state.hide_context_menu();
                             tab_state.close_dialog();
                         }
@@ -958,7 +921,7 @@ impl Portal {
                     // Ctrl+Shift+K - Install SSH key on remote server
                     (Key::Character(c), true, true) if c.as_str() == "k" || c.as_str() == "K" => {
                         if let View::Terminal(session_id) = self.active_view {
-                            if self.sessions.contains_key(&session_id) {
+                            if self.sessions.contains(session_id) {
                                 return self.update(Message::InstallSshKey(session_id));
                             }
                         }
@@ -968,30 +931,30 @@ impl Portal {
             }
             Message::SettingsThemeToggle(enabled) => {
                 self.dark_mode = enabled;
-                if let Some(ref mut dialog) = self.settings_dialog {
+                if let Some(dialog) = self.dialogs.settings_mut() {
                     dialog.dark_mode = enabled;
                 }
                 self.save_settings();
             }
             Message::SettingsFontSizeChange(size) => {
                 self.terminal_font_size = size;
-                if let Some(ref mut dialog) = self.settings_dialog {
+                if let Some(dialog) = self.dialogs.settings_mut() {
                     dialog.terminal_font_size = size;
                 }
                 self.save_settings();
             }
             Message::SnippetSelect(id) => {
-                if let Some(ref mut dialog) = self.snippets_dialog {
+                if let Some(dialog) = self.dialogs.snippets_mut() {
                     dialog.selected_id = Some(id);
                 }
             }
             Message::SnippetNew => {
-                if let Some(ref mut dialog) = self.snippets_dialog {
+                if let Some(dialog) = self.dialogs.snippets_mut() {
                     dialog.start_new();
                 }
             }
             Message::SnippetEdit(id) => {
-                if let Some(ref mut dialog) = self.snippets_dialog {
+                if let Some(dialog) = self.dialogs.snippets_mut() {
                     if let Some(snippet) = dialog.snippets.iter().find(|s| s.id == id).cloned() {
                         dialog.start_edit(&snippet);
                     }
@@ -999,7 +962,7 @@ impl Portal {
             }
             Message::SnippetDelete(id) => {
                 // Remove from dialog and config
-                if let Some(ref mut dialog) = self.snippets_dialog {
+                if let Some(dialog) = self.dialogs.snippets_mut() {
                     dialog.snippets.retain(|s| s.id != id);
                     dialog.selected_id = None;
                 }
@@ -1011,7 +974,7 @@ impl Portal {
                 if let Some(snippet) = self.snippets_config.find_snippet(id) {
                     let command = snippet.command.clone();
                     if let Some(session_id) = self.active_tab {
-                        if let Some(session) = self.sessions.get(&session_id) {
+                        if let Some(session) = self.sessions.get(session_id) {
                             let data = command.into_bytes();
                             let ssh = session.ssh_session.clone();
                             return Task::perform(
@@ -1023,10 +986,10 @@ impl Portal {
                         }
                     }
                 }
-                self.snippets_dialog = None;
+                self.dialogs.close();
             }
             Message::SnippetFieldChanged(field, value) => {
-                if let Some(ref mut dialog) = self.snippets_dialog {
+                if let Some(dialog) = self.dialogs.snippets_mut() {
                     match field {
                         SnippetField::Name => dialog.edit_name = value,
                         SnippetField::Command => dialog.edit_command = value,
@@ -1035,12 +998,12 @@ impl Portal {
                 }
             }
             Message::SnippetEditCancel => {
-                if let Some(ref mut dialog) = self.snippets_dialog {
+                if let Some(dialog) = self.dialogs.snippets_mut() {
                     dialog.cancel_edit();
                 }
             }
             Message::SnippetSave => {
-                if let Some(ref mut dialog) = self.snippets_dialog {
+                if let Some(dialog) = self.dialogs.snippets_mut() {
                     if dialog.is_form_valid() {
                         let now = chrono::Utc::now();
                         if let Some(id) = dialog.selected_id {
@@ -1108,7 +1071,7 @@ impl Portal {
         // Main content - prioritize active sessions over sidebar selection
         let main_content: Element<'_, Message> = match &self.active_view {
             View::Terminal(session_id) => {
-                if let Some(session) = self.sessions.get(session_id) {
+                if let Some(session) = self.sessions.get(*session_id) {
                     let session_id = *session_id;
 
                     // Get transient status message if not expired (show for 3 seconds)
@@ -1131,7 +1094,7 @@ impl Portal {
                 }
             }
             View::DualSftp(tab_id) => {
-                if let Some(state) = self.dual_sftp_tabs.get(tab_id) {
+                if let Some(state) = self.sftp.get_tab(*tab_id) {
                     // Build available sources list for dropdown
                     let available_hosts: Vec<_> = self.hosts_config.hosts.iter()
                         .map(|h| (h.id, h.name.clone()))
@@ -1179,25 +1142,29 @@ impl Portal {
             .into();
 
         // Overlay dialog if open - host key dialog takes priority as it's connection-critical
-        let with_dialog: Element<'_, Message> = if let Some(ref host_key_state) = self.host_key_dialog {
-            let dialog = host_key_dialog_view(host_key_state, theme);
-            stack![main_layout, dialog].into()
-        } else if let Some(ref dialog_state) = self.dialog {
-            let dialog = host_dialog_view(dialog_state, &self.hosts_config.groups, theme);
-            stack![main_layout, dialog].into()
-        } else if let Some(ref settings_state) = self.settings_dialog {
-            let dialog = settings_dialog_view(settings_state, theme);
-            stack![main_layout, dialog].into()
-        } else if let Some(ref snippets_state) = self.snippets_dialog {
-            let dialog = snippets_dialog_view(snippets_state, theme);
-            stack![main_layout, dialog].into()
-        } else {
-            main_layout
+        let with_dialog: Element<'_, Message> = match self.dialogs.active() {
+            ActiveDialog::HostKey(host_key_state) => {
+                let dialog = host_key_dialog_view(host_key_state, theme);
+                stack![main_layout, dialog].into()
+            }
+            ActiveDialog::Host(dialog_state) => {
+                let dialog = host_dialog_view(dialog_state, &self.hosts_config.groups, theme);
+                stack![main_layout, dialog].into()
+            }
+            ActiveDialog::Settings(settings_state) => {
+                let dialog = settings_dialog_view(settings_state, theme);
+                stack![main_layout, dialog].into()
+            }
+            ActiveDialog::Snippets(snippets_state) => {
+                let dialog = snippets_dialog_view(snippets_state, theme);
+                stack![main_layout, dialog].into()
+            }
+            ActiveDialog::None => main_layout,
         };
 
         // Overlay SFTP context menu if visible (rendered at app level for correct window positioning)
         let with_context_menu: Element<'_, Message> = if let Some(tab_id) = self.active_tab {
-            if let Some(sftp_state) = self.dual_sftp_tabs.get(&tab_id) {
+            if let Some(sftp_state) = self.sftp.get_tab(tab_id) {
                 if sftp_state.context_menu.visible {
                     stack![with_dialog, sftp_context_menu_overlay(sftp_state, theme)].into()
                 } else {

@@ -5,4 +5,5 @@ pub mod settings_dialog;
 pub mod snippets_dialog;
 
 // Re-export common utilities for convenience
+#[allow(unused_imports)]
 pub use common::{dialog_backdrop, primary_button_style, secondary_button_style};

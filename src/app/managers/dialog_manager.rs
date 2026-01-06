@@ -58,6 +58,7 @@ impl DialogManager {
     }
 
     /// Get a mutable reference to the active dialog
+    #[allow(dead_code)]
     pub fn active_mut(&mut self) -> &mut ActiveDialog {
         &mut self.active
     }
@@ -93,6 +94,7 @@ impl DialogManager {
     }
 
     /// Get settings dialog state if it's the active dialog
+    #[allow(dead_code)]
     pub fn settings(&self) -> Option<&SettingsDialogState> {
         match &self.active {
             ActiveDialog::Settings(state) => Some(state),
@@ -116,6 +118,7 @@ impl DialogManager {
     }
 
     /// Get snippets dialog state if it's the active dialog
+    #[allow(dead_code)]
     pub fn snippets(&self) -> Option<&SnippetsDialogState> {
         match &self.active {
             ActiveDialog::Snippets(state) => Some(state),
@@ -139,6 +142,7 @@ impl DialogManager {
     }
 
     /// Get host key dialog state if it's the active dialog
+    #[allow(dead_code)]
     pub fn host_key(&self) -> Option<&HostKeyDialogState> {
         match &self.active {
             ActiveDialog::HostKey(state) => Some(state),

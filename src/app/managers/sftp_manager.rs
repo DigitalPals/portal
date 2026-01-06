@@ -72,6 +72,7 @@ impl SftpManager {
     }
 
     /// Iterate over all tabs mutably
+    #[allow(dead_code)]
     pub fn tabs_mut(&mut self) -> impl Iterator<Item = (&SessionId, &mut DualPaneSftpState)> {
         self.tabs.iter_mut()
     }
@@ -89,6 +90,7 @@ impl SftpManager {
     }
 
     /// Get a clone of an SFTP connection by session ID
+    #[allow(dead_code)]
     pub fn get_connection_cloned(&self, id: SessionId) -> Option<SharedSftpSession> {
         self.connections.get(&id).cloned()
     }
@@ -126,6 +128,7 @@ impl SftpManager {
     // ---- Pending connection operations ----
 
     /// Get the pending connection info
+    #[allow(dead_code)]
     pub fn pending_connection(&self) -> Option<(SessionId, PaneId, Uuid)> {
         self.pending_connection
     }
