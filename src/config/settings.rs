@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::error::ConfigError;
+use crate::theme::ThemeId;
 
 /// Application settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -9,24 +10,25 @@ pub struct SettingsConfig {
     #[serde(default = "default_terminal_font_size")]
     pub terminal_font_size: f32,
 
-    /// Dark mode enabled
-    #[serde(default = "default_dark_mode")]
-    pub dark_mode: bool,
+    /// Selected theme
+    #[serde(default)]
+    pub theme: ThemeId,
+
+    /// Legacy dark_mode field for migration (read-only, not serialized)
+    #[serde(default, skip_serializing)]
+    dark_mode: Option<bool>,
 }
 
 fn default_terminal_font_size() -> f32 {
     9.0
 }
 
-fn default_dark_mode() -> bool {
-    true
-}
-
 impl Default for SettingsConfig {
     fn default() -> Self {
         Self {
             terminal_font_size: default_terminal_font_size(),
-            dark_mode: default_dark_mode(),
+            theme: ThemeId::default(),
+            dark_mode: None,
         }
     }
 }
@@ -51,7 +53,20 @@ impl SettingsConfig {
             source: e,
         })?;
 
-        toml::from_str(&content).map_err(ConfigError::Parse)
+        let mut config: Self = toml::from_str(&content).map_err(ConfigError::Parse)?;
+
+        // Migration: convert old dark_mode to new theme field
+        if let Some(dark_mode) = config.dark_mode.take() {
+            config.theme = if dark_mode {
+                ThemeId::PortalDefault
+            } else {
+                ThemeId::CatppuccinLatte
+            };
+            // Save migrated config to persist the change
+            let _ = config.save();
+        }
+
+        Ok(config)
     }
 
     /// Save to file

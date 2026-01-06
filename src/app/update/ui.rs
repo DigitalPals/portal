@@ -7,7 +7,6 @@ use crate::app::{FocusSection, Portal, View, SIDEBAR_AUTO_COLLAPSE_THRESHOLD};
 use crate::message::{Message, SessionMessage, SftpMessage, SidebarMenuItem, TabMessage, HistoryMessage, HostMessage, UiMessage};
 use crate::ssh::host_key_verification::HostKeyVerificationResponse;
 use crate::views::toast::Toast;
-use crate::views::dialogs::settings_dialog::SettingsDialogState;
 use crate::views::dialogs::snippets_dialog::SnippetsDialogState;
 use crate::views::sftp::PaneId;
 
@@ -46,10 +45,8 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
                     }
                 }
                 SidebarMenuItem::Settings => {
-                    portal.dialogs.open_settings(SettingsDialogState {
-                        dark_mode: portal.dark_mode,
-                        terminal_font_size: portal.terminal_font_size,
-                    });
+                    // Open settings page view instead of dialog
+                    portal.active_view = View::Settings;
                 }
                 SidebarMenuItem::Snippets => {
                     portal.dialogs.open_snippets(SnippetsDialogState::new(
@@ -65,19 +62,13 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
             tracing::info!("Sidebar collapsed: {} (manual)", portal.sidebar_collapsed);
             Task::none()
         }
-        UiMessage::ThemeToggle(enabled) => {
-            portal.dark_mode = enabled;
-            if let Some(dialog) = portal.dialogs.settings_mut() {
-                dialog.dark_mode = enabled;
-            }
+        UiMessage::ThemeChange(theme_id) => {
+            portal.theme_id = theme_id;
             portal.save_settings();
             Task::none()
         }
         UiMessage::FontSizeChange(size) => {
             portal.terminal_font_size = size;
-            if let Some(dialog) = portal.dialogs.settings_mut() {
-                dialog.terminal_font_size = size;
-            }
             portal.save_settings();
             Task::none()
         }
@@ -310,6 +301,13 @@ fn handle_content_keyboard(
     modifiers: &keyboard::Modifiers,
 ) -> Task<Message> {
     match &portal.active_view {
+        View::Settings => {
+            // Settings page - arrow left goes back to sidebar
+            if let Key::Named(keyboard::key::Named::ArrowLeft) = key {
+                portal.focus_section = FocusSection::Sidebar;
+            }
+            Task::none()
+        }
         View::HostGrid => {
             match portal.sidebar_selection {
                 SidebarMenuItem::Hosts | SidebarMenuItem::Sftp | SidebarMenuItem::Snippets | SidebarMenuItem::Settings => {

@@ -13,11 +13,11 @@ use iced::keyboard;
 
 use crate::config::{HistoryConfig, HostsConfig, SettingsConfig, SnippetsConfig};
 use crate::message::{Message, SessionId, SessionMessage, SidebarMenuItem, UiMessage};
-use crate::theme::theme_for;
+use crate::theme::{get_theme, ThemeId};
 use crate::views::dialogs::host_dialog::host_dialog_view;
 use crate::views::dialogs::host_key_dialog::host_key_dialog_view;
-use crate::views::dialogs::settings_dialog::settings_dialog_view;
 use crate::views::dialogs::snippets_dialog::snippets_dialog_view;
+use crate::views::settings_page::settings_page_view;
 use crate::views::history_view::history_view;
 use crate::views::host_grid::{calculate_columns, host_grid_view, search_input_id};
 use crate::views::sftp::{dual_pane_sftp_view, sftp_context_menu_overlay};
@@ -41,6 +41,7 @@ pub enum View {
     HostGrid,
     Terminal(SessionId),
     DualSftp(SessionId),  // Dual-pane SFTP browser
+    Settings,              // Full-page settings view
 }
 
 /// Major UI sections that can receive keyboard focus
@@ -72,7 +73,7 @@ pub struct Portal {
     dialogs: DialogManager,
 
     // Theme preference
-    dark_mode: bool,
+    theme_id: ThemeId,
 
     // Terminal settings
     terminal_font_size: f32,
@@ -140,7 +141,7 @@ impl Portal {
         // Load settings from config file
         let settings_config = match SettingsConfig::load() {
             Ok(config) => {
-                tracing::info!("Loaded settings: font_size={}", config.terminal_font_size);
+                tracing::info!("Loaded settings: font_size={}, theme={:?}", config.terminal_font_size, config.theme);
                 config
             }
             Err(e) => {
@@ -159,7 +160,7 @@ impl Portal {
             sessions: SessionManager::new(),
             sftp: SftpManager::new(),
             dialogs: DialogManager::new(),
-            dark_mode: settings_config.dark_mode,
+            theme_id: settings_config.theme,
             terminal_font_size: settings_config.terminal_font_size,
             hosts_config,
             snippets_config,
@@ -205,7 +206,7 @@ impl Portal {
         let filtered_cards = filter_host_cards(&self.search_query, all_cards);
         let filtered_groups = filter_group_cards(&self.search_query, all_groups);
 
-        let theme = theme_for(self.dark_mode);
+        let theme = get_theme(self.theme_id);
 
         // Sidebar (new collapsible icon menu)
         let sidebar = sidebar_view(
@@ -218,6 +219,9 @@ impl Portal {
 
         // Main content - prioritize active sessions over sidebar selection
         let main_content: Element<'_, Message> = match &self.active_view {
+            View::Settings => {
+                settings_page_view(self.theme_id, self.terminal_font_size, theme)
+            }
             View::Terminal(session_id) => {
                 if let Some(session) = self.sessions.get(*session_id) {
                     let session_id = *session_id;
@@ -299,10 +303,6 @@ impl Portal {
                 let dialog = host_dialog_view(dialog_state, &self.hosts_config.groups, theme);
                 stack![main_layout, dialog].into()
             }
-            ActiveDialog::Settings(settings_state) => {
-                let dialog = settings_dialog_view(settings_state, theme);
-                stack![main_layout, dialog].into()
-            }
             ActiveDialog::Snippets(snippets_state) => {
                 let dialog = snippets_dialog_view(snippets_state, theme);
                 stack![main_layout, dialog].into()
@@ -333,9 +333,9 @@ impl Portal {
         }
     }
 
-    /// Theme based on dark_mode preference
+    /// Theme based on theme_id preference
     pub fn theme(&self) -> IcedTheme {
-        if self.dark_mode {
+        if self.theme_id.is_dark() {
             IcedTheme::Dark
         } else {
             IcedTheme::Light
@@ -343,11 +343,10 @@ impl Portal {
     }
 
     /// Save settings to config file
-    fn save_settings(&self) {
-        let settings = SettingsConfig {
-            terminal_font_size: self.terminal_font_size,
-            dark_mode: self.dark_mode,
-        };
+    pub(crate) fn save_settings(&self) {
+        let mut settings = SettingsConfig::default();
+        settings.terminal_font_size = self.terminal_font_size;
+        settings.theme = self.theme_id;
         if let Err(e) = settings.save() {
             tracing::error!("Failed to save settings: {}", e);
         }

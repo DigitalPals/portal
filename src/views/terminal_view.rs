@@ -67,13 +67,14 @@ pub fn terminal_view_with_status<'a>(
     let term = session.term();
     let terminal_widget = TerminalWidget::new(term, move |bytes| on_input(session_id, bytes))
         .on_resize(move |cols, rows| on_resize(session_id, cols, rows))
-        .font_size(font_size);
+        .font_size(font_size)
+        .terminal_colors(theme.terminal);
 
     let terminal_container = container(terminal_widget)
         .width(Fill)
         .height(Fill)
         .style(move |_theme| container::Style {
-            background: Some(theme.background.into()),
+            background: Some(theme.terminal.background.into()),
             ..Default::default()
         });
 

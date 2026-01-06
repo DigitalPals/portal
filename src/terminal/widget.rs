@@ -18,8 +18,9 @@ use iced::{Background, Border, Color, Element, Event, Length, Rectangle, Shadow,
 use parking_lot::Mutex;
 
 use super::backend::{CursorInfo, EventProxy, RenderCell};
-use super::colors::{ansi_to_iced, DEFAULT_BG, DEFAULT_FG};
+use super::colors::{ansi_to_iced_themed, DEFAULT_BG, DEFAULT_FG};
 use crate::fonts::JETBRAINS_MONO_NERD;
+use crate::theme::TerminalColors;
 
 /// Terminal widget for iced
 pub struct TerminalWidget<'a, Message> {
@@ -27,6 +28,7 @@ pub struct TerminalWidget<'a, Message> {
     on_input: Box<dyn Fn(Vec<u8>) -> Message + 'a>,
     on_resize: Option<Box<dyn Fn(u16, u16) -> Message + 'a>>,
     font_size: f32,
+    terminal_colors: Option<TerminalColors>,
 }
 
 impl<'a, Message> TerminalWidget<'a, Message> {
@@ -40,12 +42,19 @@ impl<'a, Message> TerminalWidget<'a, Message> {
             on_input: Box::new(on_input),
             on_resize: None,
             font_size: 9.0,
+            terminal_colors: None,
         }
     }
 
     /// Set font size
     pub fn font_size(mut self, size: f32) -> Self {
         self.font_size = size;
+        self
+    }
+
+    /// Set terminal colors from theme
+    pub fn terminal_colors(mut self, colors: TerminalColors) -> Self {
+        self.terminal_colors = Some(colors);
         self
     }
 
@@ -372,6 +381,15 @@ where
         let bounds = layout.bounds();
         let state = tree.state.downcast_ref::<TerminalState>();
 
+        // Get terminal colors (from theme or defaults)
+        let default_colors = TerminalColors {
+            foreground: DEFAULT_FG,
+            background: DEFAULT_BG,
+            cursor: DEFAULT_FG,
+            ansi: super::colors::ANSI_COLORS,
+        };
+        let colors = self.terminal_colors.as_ref().unwrap_or(&default_colors);
+
         // Draw background
         renderer.fill_quad(
             Quad {
@@ -379,7 +397,7 @@ where
                 border: Border::default(),
                 shadow: Shadow::default(),
             },
-            Background::Color(DEFAULT_BG),
+            Background::Color(colors.background),
         );
 
         let cell_width = self.cell_width();
@@ -392,8 +410,8 @@ where
             let y = bounds.y + cell.line as f32 * cell_height;
 
             // Draw cell background if not default
-            let bg_color = ansi_to_iced(cell.bg);
-            if bg_color != DEFAULT_BG {
+            let bg_color = ansi_to_iced_themed(cell.bg, colors);
+            if bg_color != colors.background {
                 renderer.fill_quad(
                     Quad {
                         bounds: Rectangle {
@@ -411,7 +429,7 @@ where
 
             // Draw character
             if cell.character != ' ' {
-                let mut fg_color = ansi_to_iced(cell.fg);
+                let mut fg_color = ansi_to_iced_themed(cell.fg, colors);
 
                 // Handle flags
                 if cell.flags.contains(CellFlags::DIM) {
@@ -425,7 +443,7 @@ where
 
                 if cell.flags.contains(CellFlags::INVERSE) {
                     // Use bg color as fg (inverse)
-                    fg_color = ansi_to_iced(cell.bg);
+                    fg_color = ansi_to_iced_themed(cell.bg, colors);
                 }
 
                 // Draw the character using text renderer
@@ -495,7 +513,7 @@ where
                     let cursor_x = bounds.x + cursor_info.column as f32 * cell_width;
                     let cursor_y = bounds.y + cursor_info.line as f32 * cell_height;
 
-                    let cursor_color = DEFAULT_FG;
+                    let cursor_color = colors.cursor;
 
                     match cursor_info.shape {
                         CursorShape::Block => {

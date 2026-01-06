@@ -5,6 +5,7 @@ use uuid::Uuid;
 
 use crate::app::FocusSection;
 use crate::config::DetectedOs;
+use crate::theme::ThemeId;
 use crate::sftp::{FileEntry, SharedSftpSession};
 use crate::ssh::host_key_verification::HostKeyVerificationRequest;
 use crate::ssh::SshSession;
@@ -217,8 +218,8 @@ pub enum UiMessage {
     SidebarItemSelect(SidebarMenuItem),
     /// Toggle sidebar collapsed state
     SidebarToggleCollapse,
-    /// Toggle dark/light theme
-    ThemeToggle(bool),
+    /// Theme changed
+    ThemeChange(ThemeId),
     /// Terminal font size changed
     FontSizeChange(f32),
     /// Window resized

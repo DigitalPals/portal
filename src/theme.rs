@@ -1,8 +1,88 @@
-use iced::Color;
+//! Theme system for Portal SSH client
+//!
+//! Supports 5 pre-configured themes:
+//! - Portal Default (dark navy blue)
+//! - Catppuccin Latte (light)
+//! - Catppuccin Frappé (dark, muted)
+//! - Catppuccin Macchiato (dark, medium)
+//! - Catppuccin Mocha (dark, rich)
 
-/// Dark theme colors based on the UI specification
+use iced::Color;
+use serde::{Deserialize, Serialize};
+use std::fmt;
+
+/// Available theme identifiers
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum ThemeId {
+    #[default]
+    PortalDefault,
+    CatppuccinLatte,
+    CatppuccinFrappe,
+    CatppuccinMacchiato,
+    CatppuccinMocha,
+}
+
+impl ThemeId {
+    /// Get all available themes
+    pub const fn all() -> &'static [ThemeId] {
+        &[
+            ThemeId::PortalDefault,
+            ThemeId::CatppuccinLatte,
+            ThemeId::CatppuccinFrappe,
+            ThemeId::CatppuccinMacchiato,
+            ThemeId::CatppuccinMocha,
+        ]
+    }
+
+    /// Display name for UI
+    pub const fn display_name(&self) -> &'static str {
+        match self {
+            ThemeId::PortalDefault => "Portal Default",
+            ThemeId::CatppuccinLatte => "Catppuccin Latte",
+            ThemeId::CatppuccinFrappe => "Catppuccin Frappé",
+            ThemeId::CatppuccinMacchiato => "Catppuccin Macchiato",
+            ThemeId::CatppuccinMocha => "Catppuccin Mocha",
+        }
+    }
+
+    /// Description for UI
+    pub const fn description(&self) -> &'static str {
+        match self {
+            ThemeId::PortalDefault => "Classic dark navy blue theme",
+            ThemeId::CatppuccinLatte => "Light, warm pastel theme",
+            ThemeId::CatppuccinFrappe => "Mid-tone muted dark theme",
+            ThemeId::CatppuccinMacchiato => "Slightly lighter dark theme",
+            ThemeId::CatppuccinMocha => "Deep, rich dark theme",
+        }
+    }
+
+    /// Whether this is a dark theme (for Iced theme selection)
+    pub const fn is_dark(&self) -> bool {
+        !matches!(self, ThemeId::CatppuccinLatte)
+    }
+}
+
+impl fmt::Display for ThemeId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.display_name())
+    }
+}
+
+/// Terminal color palette (16 ANSI colors + fg/bg/cursor)
+#[derive(Clone, Copy)]
+pub struct TerminalColors {
+    pub foreground: Color,
+    pub background: Color,
+    pub cursor: Color,
+    /// Standard ANSI colors (16 colors: 0-7 normal, 8-15 bright)
+    pub ansi: [Color; 16],
+}
+
+/// Complete theme including UI and terminal colors
 #[derive(Clone, Copy)]
 pub struct Theme {
+    // UI colors
     pub background: Color,
     pub surface: Color,
     pub sidebar: Color,
@@ -14,52 +94,256 @@ pub struct Theme {
     pub hover: Color,
     pub selected: Color,
     pub focus_ring: Color,
+    // Terminal colors
+    pub terminal: TerminalColors,
 }
 
 impl Theme {
-    /// Dark theme (default) - Royal TSX-style navy blue-gray
-    pub fn dark() -> Self {
+    /// Portal Default theme - Royal TSX-style navy blue-gray
+    pub fn portal_default() -> Self {
         Self {
-            background: Color::from_rgb8(0x1e, 0x22, 0x33),    // #1e2233 - dark navy blue
-            surface: Color::from_rgb8(0x2a, 0x31, 0x42),       // #2a3142 - slate blue-gray
-            sidebar: Color::from_rgb8(0x1a, 0x1d, 0x2b),       // #1a1d2b - darker navy
-            accent: Color::from_rgb8(0x00, 0x78, 0xd4),        // #0078d4 - bright blue
-            text_primary: Color::from_rgb8(0xe8, 0xe8, 0xe8),  // #e8e8e8 - bright white
-            text_secondary: Color::from_rgb8(0x9a, 0xa0, 0xb0), // #9aa0b0 - blue-gray text
-            text_muted: Color::from_rgb8(0x6a, 0x70, 0x80),    // #6a7080 - muted blue-gray
-            border: Color::from_rgb8(0x3a, 0x40, 0x55),        // #3a4055 - navy border
-            hover: Color::from_rgb8(0x35, 0x3d, 0x50),         // #353d50 - hover blue-gray
-            selected: Color::from_rgb8(0x2a, 0x4a, 0x6d),      // #2a4a6d - selected blue
-            focus_ring: Color::from_rgb8(0x58, 0x9c, 0xff),    // #589cff - bright blue focus
+            background: Color::from_rgb8(0x1e, 0x22, 0x33),
+            surface: Color::from_rgb8(0x2a, 0x31, 0x42),
+            sidebar: Color::from_rgb8(0x1a, 0x1d, 0x2b),
+            accent: Color::from_rgb8(0x00, 0x78, 0xd4),
+            text_primary: Color::from_rgb8(0xe8, 0xe8, 0xe8),
+            text_secondary: Color::from_rgb8(0x9a, 0xa0, 0xb0),
+            text_muted: Color::from_rgb8(0x6a, 0x70, 0x80),
+            border: Color::from_rgb8(0x3a, 0x40, 0x55),
+            hover: Color::from_rgb8(0x35, 0x3d, 0x50),
+            selected: Color::from_rgb8(0x2a, 0x4a, 0x6d),
+            focus_ring: Color::from_rgb8(0x58, 0x9c, 0xff),
+            terminal: TerminalColors {
+                foreground: Color::from_rgb8(0xe6, 0xe6, 0xe6),
+                background: Color::from_rgb8(0x1a, 0x1a, 0x1a),
+                cursor: Color::from_rgb8(0xe6, 0xe6, 0xe6),
+                ansi: [
+                    // Normal colors (0-7)
+                    Color::from_rgb8(0x00, 0x00, 0x00), // Black
+                    Color::from_rgb8(0xcc, 0x00, 0x00), // Red
+                    Color::from_rgb8(0x00, 0xcc, 0x00), // Green
+                    Color::from_rgb8(0xcc, 0xcc, 0x00), // Yellow
+                    Color::from_rgb8(0x00, 0x00, 0xcc), // Blue
+                    Color::from_rgb8(0xcc, 0x00, 0xcc), // Magenta
+                    Color::from_rgb8(0x00, 0xcc, 0xcc), // Cyan
+                    Color::from_rgb8(0xc0, 0xc0, 0xc0), // White
+                    // Bright colors (8-15)
+                    Color::from_rgb8(0x80, 0x80, 0x80), // Bright Black
+                    Color::from_rgb8(0xff, 0x00, 0x00), // Bright Red
+                    Color::from_rgb8(0x00, 0xff, 0x00), // Bright Green
+                    Color::from_rgb8(0xff, 0xff, 0x00), // Bright Yellow
+                    Color::from_rgb8(0x00, 0x00, 0xff), // Bright Blue
+                    Color::from_rgb8(0xff, 0x00, 0xff), // Bright Magenta
+                    Color::from_rgb8(0x00, 0xff, 0xff), // Bright Cyan
+                    Color::from_rgb8(0xff, 0xff, 0xff), // Bright White
+                ],
+            },
         }
     }
 
-    /// Light theme
-    pub fn light() -> Self {
+    /// Catppuccin Latte - Light pastel theme
+    pub fn catppuccin_latte() -> Self {
         Self {
-            background: Color::from_rgb8(0xff, 0xff, 0xff),    // #ffffff
-            surface: Color::from_rgb8(0xf3, 0xf3, 0xf3),       // #f3f3f3
-            sidebar: Color::from_rgb8(0xf0, 0xf0, 0xf0),       // #f0f0f0
-            accent: Color::from_rgb8(0x00, 0x78, 0xd4),        // #0078d4
-            text_primary: Color::from_rgb8(0x1a, 0x1a, 0x1a),  // #1a1a1a
-            text_secondary: Color::from_rgb8(0x50, 0x50, 0x50), // #505050
-            text_muted: Color::from_rgb8(0x90, 0x90, 0x90),    // #909090
-            border: Color::from_rgb8(0xd0, 0xd0, 0xd0),        // #d0d0d0
-            hover: Color::from_rgb8(0xe8, 0xe8, 0xe8),         // #e8e8e8
-            selected: Color::from_rgb8(0xcc, 0xe4, 0xf7),      // #cce4f7
-            focus_ring: Color::from_rgb8(0x00, 0x5a, 0x9e),    // #005a9e - darker blue focus
+            background: Color::from_rgb8(0xef, 0xf1, 0xf5), // Base
+            surface: Color::from_rgb8(0xe6, 0xe9, 0xef),    // Mantle
+            sidebar: Color::from_rgb8(0xdc, 0xe0, 0xe8),    // Crust
+            accent: Color::from_rgb8(0x1e, 0x66, 0xf5),     // Blue
+            text_primary: Color::from_rgb8(0x4c, 0x4f, 0x69), // Text
+            text_secondary: Color::from_rgb8(0x5c, 0x5f, 0x77), // Subtext1
+            text_muted: Color::from_rgb8(0x6c, 0x6f, 0x85), // Subtext0
+            border: Color::from_rgb8(0xcc, 0xd0, 0xda),     // Surface0
+            hover: Color::from_rgb8(0xbc, 0xc0, 0xcc),      // Surface1
+            selected: Color::from_rgb8(0xac, 0xb0, 0xbe),   // Surface2
+            focus_ring: Color::from_rgb8(0x1e, 0x66, 0xf5), // Blue
+            terminal: TerminalColors {
+                foreground: Color::from_rgb8(0x4c, 0x4f, 0x69), // Text
+                background: Color::from_rgb8(0xef, 0xf1, 0xf5), // Base
+                cursor: Color::from_rgb8(0xdc, 0x8a, 0x78),     // Rosewater
+                ansi: [
+                    // Normal colors (0-7)
+                    Color::from_rgb8(0x5c, 0x5f, 0x77), // Black (Subtext1)
+                    Color::from_rgb8(0xd2, 0x0f, 0x39), // Red
+                    Color::from_rgb8(0x40, 0xa0, 0x2b), // Green
+                    Color::from_rgb8(0xdf, 0x8e, 0x1d), // Yellow
+                    Color::from_rgb8(0x1e, 0x66, 0xf5), // Blue
+                    Color::from_rgb8(0x88, 0x39, 0xef), // Magenta (Mauve)
+                    Color::from_rgb8(0x17, 0x92, 0x99), // Cyan (Teal)
+                    Color::from_rgb8(0xbc, 0xc0, 0xcc), // White (Surface1)
+                    // Bright colors (8-15)
+                    Color::from_rgb8(0x6c, 0x6f, 0x85), // Bright Black (Subtext0)
+                    Color::from_rgb8(0xd2, 0x0f, 0x39), // Bright Red
+                    Color::from_rgb8(0x40, 0xa0, 0x2b), // Bright Green
+                    Color::from_rgb8(0xdf, 0x8e, 0x1d), // Bright Yellow
+                    Color::from_rgb8(0x1e, 0x66, 0xf5), // Bright Blue
+                    Color::from_rgb8(0x88, 0x39, 0xef), // Bright Magenta
+                    Color::from_rgb8(0x17, 0x92, 0x99), // Bright Cyan
+                    Color::from_rgb8(0x4c, 0x4f, 0x69), // Bright White (Text)
+                ],
+            },
         }
+    }
+
+    /// Catppuccin Frappé - Mid-tone muted dark theme
+    pub fn catppuccin_frappe() -> Self {
+        Self {
+            background: Color::from_rgb8(0x30, 0x34, 0x46), // Base
+            surface: Color::from_rgb8(0x29, 0x2c, 0x3c),    // Mantle
+            sidebar: Color::from_rgb8(0x23, 0x26, 0x34),    // Crust
+            accent: Color::from_rgb8(0xba, 0xbb, 0xf1),     // Lavender
+            text_primary: Color::from_rgb8(0xc6, 0xd0, 0xf5), // Text
+            text_secondary: Color::from_rgb8(0xb5, 0xbf, 0xe2), // Subtext1
+            text_muted: Color::from_rgb8(0xa5, 0xad, 0xce), // Subtext0
+            border: Color::from_rgb8(0x41, 0x45, 0x59),     // Surface0
+            hover: Color::from_rgb8(0x51, 0x57, 0x6d),      // Surface1
+            selected: Color::from_rgb8(0x62, 0x68, 0x80),   // Surface2
+            focus_ring: Color::from_rgb8(0xba, 0xbb, 0xf1), // Lavender
+            terminal: TerminalColors {
+                foreground: Color::from_rgb8(0xc6, 0xd0, 0xf5), // Text
+                background: Color::from_rgb8(0x30, 0x34, 0x46), // Base
+                cursor: Color::from_rgb8(0xf2, 0xd5, 0xcf),     // Rosewater
+                ansi: [
+                    // Normal colors (0-7)
+                    Color::from_rgb8(0x51, 0x57, 0x6d), // Black (Surface1)
+                    Color::from_rgb8(0xe7, 0x82, 0x84), // Red
+                    Color::from_rgb8(0xa6, 0xd1, 0x89), // Green
+                    Color::from_rgb8(0xe5, 0xc8, 0x90), // Yellow
+                    Color::from_rgb8(0x8c, 0xaa, 0xee), // Blue
+                    Color::from_rgb8(0xca, 0x9e, 0xe6), // Magenta (Mauve)
+                    Color::from_rgb8(0x81, 0xc8, 0xbe), // Cyan (Teal)
+                    Color::from_rgb8(0xb5, 0xbf, 0xe2), // White (Subtext1)
+                    // Bright colors (8-15)
+                    Color::from_rgb8(0x62, 0x68, 0x80), // Bright Black (Surface2)
+                    Color::from_rgb8(0xe7, 0x82, 0x84), // Bright Red
+                    Color::from_rgb8(0xa6, 0xd1, 0x89), // Bright Green
+                    Color::from_rgb8(0xe5, 0xc8, 0x90), // Bright Yellow
+                    Color::from_rgb8(0x8c, 0xaa, 0xee), // Bright Blue
+                    Color::from_rgb8(0xca, 0x9e, 0xe6), // Bright Magenta
+                    Color::from_rgb8(0x81, 0xc8, 0xbe), // Bright Cyan
+                    Color::from_rgb8(0xc6, 0xd0, 0xf5), // Bright White (Text)
+                ],
+            },
+        }
+    }
+
+    /// Catppuccin Macchiato - Slightly lighter dark theme
+    pub fn catppuccin_macchiato() -> Self {
+        Self {
+            background: Color::from_rgb8(0x24, 0x27, 0x3a), // Base
+            surface: Color::from_rgb8(0x1e, 0x20, 0x30),    // Mantle
+            sidebar: Color::from_rgb8(0x18, 0x19, 0x26),    // Crust
+            accent: Color::from_rgb8(0xc6, 0xa0, 0xf6),     // Mauve
+            text_primary: Color::from_rgb8(0xca, 0xd3, 0xf5), // Text
+            text_secondary: Color::from_rgb8(0xb8, 0xc0, 0xe0), // Subtext1
+            text_muted: Color::from_rgb8(0xa5, 0xad, 0xcb), // Subtext0
+            border: Color::from_rgb8(0x36, 0x3a, 0x4f),     // Surface0
+            hover: Color::from_rgb8(0x49, 0x4d, 0x64),      // Surface1
+            selected: Color::from_rgb8(0x5b, 0x60, 0x78),   // Surface2
+            focus_ring: Color::from_rgb8(0xc6, 0xa0, 0xf6), // Mauve
+            terminal: TerminalColors {
+                foreground: Color::from_rgb8(0xca, 0xd3, 0xf5), // Text
+                background: Color::from_rgb8(0x24, 0x27, 0x3a), // Base
+                cursor: Color::from_rgb8(0xf4, 0xdb, 0xd6),     // Rosewater
+                ansi: [
+                    // Normal colors (0-7)
+                    Color::from_rgb8(0x49, 0x4d, 0x64), // Black (Surface1)
+                    Color::from_rgb8(0xed, 0x87, 0x96), // Red
+                    Color::from_rgb8(0xa6, 0xda, 0x95), // Green
+                    Color::from_rgb8(0xee, 0xd4, 0x9f), // Yellow
+                    Color::from_rgb8(0x8a, 0xad, 0xf4), // Blue
+                    Color::from_rgb8(0xc6, 0xa0, 0xf6), // Magenta (Mauve)
+                    Color::from_rgb8(0x8b, 0xd5, 0xca), // Cyan (Teal)
+                    Color::from_rgb8(0xb8, 0xc0, 0xe0), // White (Subtext1)
+                    // Bright colors (8-15)
+                    Color::from_rgb8(0x5b, 0x60, 0x78), // Bright Black (Surface2)
+                    Color::from_rgb8(0xed, 0x87, 0x96), // Bright Red
+                    Color::from_rgb8(0xa6, 0xda, 0x95), // Bright Green
+                    Color::from_rgb8(0xee, 0xd4, 0x9f), // Bright Yellow
+                    Color::from_rgb8(0x8a, 0xad, 0xf4), // Bright Blue
+                    Color::from_rgb8(0xc6, 0xa0, 0xf6), // Bright Magenta
+                    Color::from_rgb8(0x8b, 0xd5, 0xca), // Bright Cyan
+                    Color::from_rgb8(0xca, 0xd3, 0xf5), // Bright White (Text)
+                ],
+            },
+        }
+    }
+
+    /// Catppuccin Mocha - Deep, rich dark theme
+    pub fn catppuccin_mocha() -> Self {
+        Self {
+            background: Color::from_rgb8(0x1e, 0x1e, 0x2e), // Base
+            surface: Color::from_rgb8(0x18, 0x18, 0x25),    // Mantle
+            sidebar: Color::from_rgb8(0x11, 0x11, 0x1b),    // Crust
+            accent: Color::from_rgb8(0xfa, 0xb3, 0x87),     // Peach
+            text_primary: Color::from_rgb8(0xcd, 0xd6, 0xf4), // Text
+            text_secondary: Color::from_rgb8(0xba, 0xc2, 0xde), // Subtext1
+            text_muted: Color::from_rgb8(0xa6, 0xad, 0xc8), // Subtext0
+            border: Color::from_rgb8(0x31, 0x32, 0x44),     // Surface0
+            hover: Color::from_rgb8(0x45, 0x47, 0x5a),      // Surface1
+            selected: Color::from_rgb8(0x58, 0x5b, 0x70),   // Surface2
+            focus_ring: Color::from_rgb8(0xfa, 0xb3, 0x87), // Peach
+            terminal: TerminalColors {
+                foreground: Color::from_rgb8(0xcd, 0xd6, 0xf4), // Text
+                background: Color::from_rgb8(0x1e, 0x1e, 0x2e), // Base
+                cursor: Color::from_rgb8(0xf5, 0xe0, 0xdc),     // Rosewater
+                ansi: [
+                    // Normal colors (0-7)
+                    Color::from_rgb8(0x45, 0x47, 0x5a), // Black (Surface1)
+                    Color::from_rgb8(0xf3, 0x8b, 0xa8), // Red
+                    Color::from_rgb8(0xa6, 0xe3, 0xa1), // Green
+                    Color::from_rgb8(0xf9, 0xe2, 0xaf), // Yellow
+                    Color::from_rgb8(0x89, 0xb4, 0xfa), // Blue
+                    Color::from_rgb8(0xcb, 0xa6, 0xf7), // Magenta (Mauve)
+                    Color::from_rgb8(0x94, 0xe2, 0xd5), // Cyan (Teal)
+                    Color::from_rgb8(0xba, 0xc2, 0xde), // White (Subtext1)
+                    // Bright colors (8-15)
+                    Color::from_rgb8(0x58, 0x5b, 0x70), // Bright Black (Surface2)
+                    Color::from_rgb8(0xf3, 0x8b, 0xa8), // Bright Red
+                    Color::from_rgb8(0xa6, 0xe3, 0xa1), // Bright Green
+                    Color::from_rgb8(0xf9, 0xe2, 0xaf), // Bright Yellow
+                    Color::from_rgb8(0x89, 0xb4, 0xfa), // Bright Blue
+                    Color::from_rgb8(0xcb, 0xa6, 0xf7), // Bright Magenta
+                    Color::from_rgb8(0x94, 0xe2, 0xd5), // Bright Cyan
+                    Color::from_rgb8(0xcd, 0xd6, 0xf4), // Bright White (Text)
+                ],
+            },
+        }
+    }
+
+    /// Legacy dark theme (alias for portal_default)
+    #[deprecated(note = "Use portal_default() instead")]
+    pub fn dark() -> Self {
+        Self::portal_default()
+    }
+
+    /// Legacy light theme (alias for catppuccin_latte)
+    #[deprecated(note = "Use catppuccin_latte() instead")]
+    pub fn light() -> Self {
+        Self::catppuccin_latte()
     }
 }
 
-/// Select theme based on preference.
+/// Get theme by ID
+pub fn get_theme(id: ThemeId) -> Theme {
+    match id {
+        ThemeId::PortalDefault => Theme::portal_default(),
+        ThemeId::CatppuccinLatte => Theme::catppuccin_latte(),
+        ThemeId::CatppuccinFrappe => Theme::catppuccin_frappe(),
+        ThemeId::CatppuccinMacchiato => Theme::catppuccin_macchiato(),
+        ThemeId::CatppuccinMocha => Theme::catppuccin_mocha(),
+    }
+}
+
+/// Select theme based on preference (legacy compatibility)
+#[deprecated(note = "Use get_theme(ThemeId) instead")]
 pub fn theme_for(dark_mode: bool) -> Theme {
     if dark_mode {
-        Theme::dark()
+        Theme::portal_default()
     } else {
-        Theme::light()
+        Theme::catppuccin_latte()
     }
 }
+
+// Layout constants
 
 /// Sidebar width when expanded
 pub const SIDEBAR_WIDTH: f32 = 200.0;

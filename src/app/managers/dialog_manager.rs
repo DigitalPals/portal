@@ -5,7 +5,6 @@
 
 use crate::views::dialogs::host_dialog::HostDialogState;
 use crate::views::dialogs::host_key_dialog::HostKeyDialogState;
-use crate::views::dialogs::settings_dialog::SettingsDialogState;
 use crate::views::dialogs::snippets_dialog::SnippetsDialogState;
 
 /// The currently active dialog, if any
@@ -14,8 +13,6 @@ pub enum ActiveDialog {
     None,
     /// Host add/edit dialog
     Host(HostDialogState),
-    /// Application settings dialog
-    Settings(SettingsDialogState),
     /// Snippets management dialog
     Snippets(SnippetsDialogState),
     /// SSH host key verification dialog
@@ -82,30 +79,6 @@ impl DialogManager {
     pub fn host_mut(&mut self) -> Option<&mut HostDialogState> {
         match &mut self.active {
             ActiveDialog::Host(state) => Some(state),
-            _ => None,
-        }
-    }
-
-    // ---- Settings dialog operations ----
-
-    /// Open the settings dialog with the given state
-    pub fn open_settings(&mut self, state: SettingsDialogState) {
-        self.active = ActiveDialog::Settings(state);
-    }
-
-    /// Get settings dialog state if it's the active dialog
-    #[allow(dead_code)]
-    pub fn settings(&self) -> Option<&SettingsDialogState> {
-        match &self.active {
-            ActiveDialog::Settings(state) => Some(state),
-            _ => None,
-        }
-    }
-
-    /// Get mutable settings dialog state if it's the active dialog
-    pub fn settings_mut(&mut self) -> Option<&mut SettingsDialogState> {
-        match &mut self.active {
-            ActiveDialog::Settings(state) => Some(state),
             _ => None,
         }
     }
