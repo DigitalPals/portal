@@ -61,6 +61,13 @@ pub fn count_items_in_dir(dir: &Path) -> Result<usize, String> {
     Ok(count)
 }
 
+/// Remove a directory tree (async) for temp cleanup.
+pub async fn cleanup_temp_dir(path: &Path) -> Result<(), String> {
+    tokio::fs::remove_dir_all(path)
+        .await
+        .map_err(|e| format!("Failed to remove {}: {}", path.display(), e))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -105,5 +112,16 @@ mod tests {
             fs::read_to_string(target_path.join("file1.txt")).unwrap(),
             "content1"
         );
+    }
+
+    #[tokio::test]
+    async fn cleanup_temp_dir_removes_tree() {
+        let dir = tempdir().unwrap();
+        let nested = dir.path().join("nested");
+        fs::create_dir_all(&nested).unwrap();
+        fs::write(nested.join("file.txt"), "content").unwrap();
+
+        cleanup_temp_dir(dir.path()).await.unwrap();
+        assert!(!dir.path().exists());
     }
 }

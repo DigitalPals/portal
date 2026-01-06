@@ -52,7 +52,7 @@ impl SftpClient {
     pub async fn connect(
         &self,
         host: &Host,
-        event_tx: mpsc::UnboundedSender<SshEvent>,
+        event_tx: mpsc::Sender<SshEvent>,
         connection_timeout: Duration,
         password: Option<&str>,
     ) -> Result<SharedSftpSession, SftpError> {
@@ -88,7 +88,7 @@ impl SftpClient {
     async fn establish_sftp_session(
         &self,
         host: &Host,
-        event_tx: mpsc::UnboundedSender<SshEvent>,
+        event_tx: mpsc::Sender<SshEvent>,
         stream: TcpStream,
         password: Option<&str>,
     ) -> Result<SharedSftpSession, SftpError> {

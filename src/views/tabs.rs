@@ -59,6 +59,7 @@ impl Tab {
 }
 
 /// Build the tab bar view
+#[allow(clippy::too_many_arguments)]
 pub fn tab_bar_view<'a>(
     tabs: &'a [Tab],
     active_tab: Option<Uuid>,

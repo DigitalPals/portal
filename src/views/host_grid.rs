@@ -184,6 +184,7 @@ fn build_action_bar(search_query: &str, theme: Theme) -> Element<'static, Messag
 }
 
 /// Build the host grid view (main content area)
+#[allow(clippy::too_many_arguments)]
 pub fn host_grid_view(
     search_query: &str,
     groups: Vec<GroupCard>,
@@ -282,10 +283,10 @@ fn build_groups_section(
                     .into(),
             );
         }
-        rows.push(Row::with_children(current_row).spacing(GRID_SPACING as f32).into());
+        rows.push(Row::with_children(current_row).spacing(GRID_SPACING).into());
     }
 
-    let grid = Column::with_children(rows).spacing(GRID_SPACING as f32);
+    let grid = Column::with_children(rows).spacing(GRID_SPACING);
 
     column![section_header, grid]
         .spacing(12)
@@ -332,10 +333,10 @@ fn build_hosts_section(
                     .into(),
             );
         }
-        rows.push(Row::with_children(current_row).spacing(GRID_SPACING as f32).into());
+        rows.push(Row::with_children(current_row).spacing(GRID_SPACING).into());
     }
 
-    let grid = Column::with_children(rows).spacing(GRID_SPACING as f32);
+    let grid = Column::with_children(rows).spacing(GRID_SPACING);
 
     column![section_header, grid]
         .spacing(12)

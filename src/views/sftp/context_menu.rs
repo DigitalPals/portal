@@ -87,19 +87,11 @@ pub fn context_menu_view(state: &DualPaneSftpState, theme: Theme) -> Element<'_,
     // Order matches screenshot: Copy to target, Rename, Delete, divider, Refresh, New Folder, Edit Permissions
     let mut items: Vec<Element<'_, Message>> = vec![];
 
-    // Open / Open With (only for single file selection)
+    // Open (only for single file selection)
     if is_single && is_file_selected {
         items.push(context_menu_item(
             "Open",
             ContextMenuAction::Open,
-            tab_id,
-            true,
-            false,
-            theme,
-        ));
-        items.push(context_menu_item(
-            "Open With...",
-            ContextMenuAction::OpenWith,
             tab_id,
             true,
             false,

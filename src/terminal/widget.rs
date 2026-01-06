@@ -482,7 +482,7 @@ where
                     )),
                     font: self.font,
                     align_x: iced::alignment::Horizontal::Left.into(),
-                    align_y: iced::alignment::Vertical::Top.into(),
+                    align_y: iced::alignment::Vertical::Top,
                     shaping: iced::advanced::text::Shaping::Advanced,
                     wrapping: iced::advanced::text::Wrapping::None,
                 };
@@ -673,9 +673,9 @@ where
                         let cols = (bounds.width / self.cell_width()) as usize;
 
                         // Check for multi-click (same position, within time threshold)
-                        let is_multi_click = state.last_click_time.map_or(false, |t| {
+                        let is_multi_click = state.last_click_time.is_some_and(|t| {
                             now.duration_since(t) < MULTI_CLICK_THRESHOLD
-                        }) && state.last_click_position.map_or(false, |pos| {
+                        }) && state.last_click_position.is_some_and(|pos| {
                             // Allow 1-cell tolerance for position
                             let col_diff = (pos.0 as i32 - cell.0 as i32).abs();
                             let row_diff = (pos.1 as i32 - cell.1 as i32).abs();

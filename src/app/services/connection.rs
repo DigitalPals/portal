@@ -14,6 +14,8 @@ use crate::sftp::SftpClient;
 use crate::ssh::{SshClient, SshEvent};
 use crate::views::sftp::PaneId;
 
+const SSH_EVENT_CHANNEL_CAPACITY: usize = 1024;
+
 pub fn should_detect_os(detected_os: Option<&DetectedOs>) -> bool {
     match detected_os {
         None => true,
@@ -28,7 +30,7 @@ pub fn ssh_connect_tasks(
     host_id: Uuid,
     should_detect_os: bool,
 ) -> Task<Message> {
-    let (event_tx, event_rx) = mpsc::unbounded_channel::<SshEvent>();
+    let (event_tx, event_rx) = mpsc::channel::<SshEvent>(SSH_EVENT_CHANNEL_CAPACITY);
 
     let event_listener = Task::run(
         stream::unfold(event_rx, |mut rx| async move {
@@ -83,7 +85,7 @@ pub fn sftp_connect_tasks(
     sftp_session_id: SessionId,
     host_id: Uuid,
 ) -> Task<Message> {
-    let (event_tx, event_rx) = mpsc::unbounded_channel::<SshEvent>();
+    let (event_tx, event_rx) = mpsc::channel::<SshEvent>(SSH_EVENT_CHANNEL_CAPACITY);
     let sftp_client = SftpClient::default();
 
     let event_listener = Task::run(

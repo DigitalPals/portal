@@ -54,6 +54,7 @@ impl TerminalSession {
 
 /// Build a terminal view element
 /// Build a terminal view element with status bar
+#[allow(clippy::too_many_arguments)]
 pub fn terminal_view_with_status<'a>(
     theme: Theme,
     session: &'a TerminalSession,

@@ -33,11 +33,11 @@ pub enum TerminalEvent {
 /// Event proxy that forwards alacritty events to our channel
 #[derive(Clone)]
 pub struct EventProxy {
-    sender: mpsc::UnboundedSender<TerminalEvent>,
+    sender: mpsc::Sender<TerminalEvent>,
 }
 
 impl EventProxy {
-    pub fn new(sender: mpsc::UnboundedSender<TerminalEvent>) -> Self {
+    pub fn new(sender: mpsc::Sender<TerminalEvent>) -> Self {
         Self { sender }
     }
 }
@@ -53,7 +53,9 @@ impl EventListener for EventProxy {
             Event::ClipboardLoad(_, _) => TerminalEvent::ClipboardLoad,
             _ => return, // Ignore other events for now
         };
-        let _ = self.sender.send(terminal_event);
+        if let Err(error) = self.sender.try_send(terminal_event) {
+            tracing::debug!("Terminal event dropped: {}", error);
+        }
     }
 }
 
@@ -134,7 +136,7 @@ pub struct TerminalBackend {
 impl TerminalBackend {
     /// Create a new terminal backend with the given size
     pub fn new(size: TerminalSize) -> Self {
-        let (event_tx, _event_rx) = mpsc::unbounded_channel();
+        let (event_tx, _event_rx) = mpsc::channel(256);
         let event_proxy = EventProxy::new(event_tx);
 
         // Create terminal config with scrollback history

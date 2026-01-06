@@ -118,8 +118,10 @@ impl SftpSession {
         let path_str = path.to_string_lossy().to_string();
 
         // Create file attributes with only permissions set
-        let mut attrs = russh_sftp::protocol::FileAttributes::default();
-        attrs.permissions = Some(mode);
+        let attrs = russh_sftp::protocol::FileAttributes {
+            permissions: Some(mode),
+            ..Default::default()
+        };
 
         sftp.set_metadata(path_str.clone(), attrs).await.map_err(|e| {
             SftpError::FileOperation(format!("Failed to set permissions on {}: {}", path_str, e))

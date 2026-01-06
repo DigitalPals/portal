@@ -28,7 +28,7 @@ impl TerminalFont {
     }
 
     /// Convert to Iced Font
-    pub const fn to_iced_font(&self) -> Font {
+    pub const fn to_iced_font(self) -> Font {
         match self {
             TerminalFont::JetBrainsMono => JETBRAINS_MONO_NERD,
             TerminalFont::Hack => HACK_NERD,

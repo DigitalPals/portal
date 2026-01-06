@@ -44,7 +44,6 @@ impl PaneSource {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContextMenuAction {
     Open,
-    OpenWith,
     CopyToTarget,
     Rename,
     Delete,
@@ -81,11 +80,6 @@ pub enum SftpDialogType {
         name: String,
         path: std::path::PathBuf,
         permissions: PermissionBits,
-    },
-    OpenWith {
-        name: String,
-        path: std::path::PathBuf,
-        is_remote: bool,
     },
 }
 
@@ -134,7 +128,7 @@ impl PermissionBits {
     }
 
     /// Convert to Unix mode
-    pub fn to_mode(&self) -> u32 {
+    pub fn to_mode(self) -> u32 {
         let mut mode = 0u32;
         if self.owner_read { mode |= 0o400; }
         if self.owner_write { mode |= 0o200; }

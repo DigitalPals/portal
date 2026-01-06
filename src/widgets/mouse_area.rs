@@ -100,7 +100,7 @@ where
     }
 
     fn state(&self) -> widget::tree::State {
-        widget::tree::State::new(State::default())
+        widget::tree::State::new(State)
     }
 
     fn children(&self) -> Vec<widget::Tree> {
@@ -189,11 +189,9 @@ where
         }
 
         // Capture all events if requested
-        if self.capture_all_events && cursor.is_over(layout.bounds()) {
-            if matches!(event, Event::Mouse(_)) {
-                shell.capture_event();
-                return;
-            }
+        if self.capture_all_events && cursor.is_over(layout.bounds()) && matches!(event, Event::Mouse(_)) {
+            shell.capture_event();
+            return;
         }
 
         // Handle left-click

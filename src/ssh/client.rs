@@ -46,7 +46,7 @@ impl SshClient {
         &self,
         host: &Host,
         terminal_size: (u16, u16),
-        event_tx: mpsc::UnboundedSender<SshEvent>,
+        event_tx: mpsc::Sender<SshEvent>,
         connection_timeout: Duration,
         password: Option<&str>,
         detect_os_on_connect: bool,
@@ -121,7 +121,7 @@ impl SshClient {
             .await
             .map_err(|e| SshError::Channel(format!("Shell request failed: {}", e)))?;
 
-        let _ = event_tx.send(SshEvent::Connected);
+        let _ = event_tx.send(SshEvent::Connected).await;
 
         // Session spawns its own reader task in new()
         let session = Arc::new(SshSession::new(handle, channel, event_tx));

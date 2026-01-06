@@ -17,7 +17,7 @@ enum ChannelCommand {
 
 /// Active SSH session handle
 pub struct SshSession {
-    command_tx: mpsc::UnboundedSender<ChannelCommand>,
+    command_tx: mpsc::Sender<ChannelCommand>,
     handle: Arc<Mutex<Handle<ClientHandler>>>,
 }
 
@@ -35,9 +35,9 @@ impl SshSession {
     pub fn new(
         handle: Handle<ClientHandler>,
         mut channel: Channel<russh::client::Msg>,
-        event_tx: mpsc::UnboundedSender<SshEvent>,
+        event_tx: mpsc::Sender<SshEvent>,
     ) -> Self {
-        let (command_tx, mut command_rx) = mpsc::unbounded_channel::<ChannelCommand>();
+        let (command_tx, mut command_rx) = mpsc::channel::<ChannelCommand>(256);
 
         // Wrap handle in Arc<Mutex> so it can be shared
         let handle = Arc::new(Mutex::new(handle));
@@ -54,17 +54,17 @@ impl SshSession {
                     msg = channel.wait() => {
                         match msg {
                             Some(ChannelMsg::Data { data }) => {
-                                let _ = event_tx.send(SshEvent::Data(data.to_vec()));
+                                let _ = event_tx.send(SshEvent::Data(data.to_vec())).await;
                             }
                             Some(ChannelMsg::ExtendedData { data, .. }) => {
-                                let _ = event_tx.send(SshEvent::Data(data.to_vec()));
+                                let _ = event_tx.send(SshEvent::Data(data.to_vec())).await;
                             }
                             Some(ChannelMsg::Eof) => {
-                                let _ = event_tx.send(SshEvent::Disconnected);
+                                let _ = event_tx.send(SshEvent::Disconnected).await;
                                 break;
                             }
                             Some(ChannelMsg::Close) => {
-                                let _ = event_tx.send(SshEvent::Disconnected);
+                                let _ = event_tx.send(SshEvent::Disconnected).await;
                                 break;
                             }
                             Some(ChannelMsg::ExitStatus { exit_status }) => {
@@ -72,7 +72,7 @@ impl SshSession {
                             }
                             Some(_) => {}
                             None => {
-                                let _ = event_tx.send(SshEvent::Disconnected);
+                                let _ = event_tx.send(SshEvent::Disconnected).await;
                                 break;
                             }
                         }
@@ -109,19 +109,25 @@ impl SshSession {
     /// Send data to the remote shell
     pub async fn send(&self, data: &[u8]) -> Result<(), SshError> {
         self.command_tx
-            .send(ChannelCommand::Data(data.to_vec()))
-            .map_err(|e| SshError::Channel(e.to_string()))?;
+            .try_send(ChannelCommand::Data(data.to_vec()))
+            .map_err(|e| {
+                tracing::debug!("SSH send dropped: {}", e);
+                SshError::Channel(e.to_string())
+            })?;
         Ok(())
     }
 
     /// Notify the remote shell of a window size change
     pub fn window_change(&self, cols: u16, rows: u16) -> Result<(), SshError> {
         self.command_tx
-            .send(ChannelCommand::WindowChange {
+            .try_send(ChannelCommand::WindowChange {
                 cols: cols as u32,
                 rows: rows as u32,
             })
-            .map_err(|e| SshError::Channel(e.to_string()))?;
+            .map_err(|e| {
+                tracing::debug!("SSH window change dropped: {}", e);
+                SshError::Channel(e.to_string())
+            })?;
         Ok(())
     }
 

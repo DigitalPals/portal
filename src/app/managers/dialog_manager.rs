@@ -9,8 +9,10 @@ use crate::views::dialogs::host_key_dialog::HostKeyDialogState;
 use crate::views::dialogs::snippets_dialog::SnippetsDialogState;
 
 /// The currently active dialog, if any
+#[derive(Default)]
 pub enum ActiveDialog {
     /// No dialog is open
+    #[default]
     None,
     /// Host add/edit dialog
     Host(HostDialogState),
@@ -20,12 +22,6 @@ pub enum ActiveDialog {
     HostKey(HostKeyDialogState),
     /// About dialog
     About(AboutDialogState),
-}
-
-impl Default for ActiveDialog {
-    fn default() -> Self {
-        ActiveDialog::None
-    }
 }
 
 /// Manages the active dialog state

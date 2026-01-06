@@ -83,8 +83,11 @@ impl DetectedOs {
         // Parse ID= field from os-release
         for line in content.lines() {
             let line = line.trim();
-            if line.starts_with("ID=") {
-                let id = line[3..].trim_matches('"').trim_matches('\'').to_lowercase();
+            if let Some(stripped) = line.strip_prefix("ID=") {
+                let id = stripped
+                    .trim_matches('"')
+                    .trim_matches('\'')
+                    .to_lowercase();
                 return Some(match id.as_str() {
                     "ubuntu" => DetectedOs::Ubuntu,
                     "debian" => DetectedOs::Debian,
@@ -316,6 +319,7 @@ impl HostsConfig {
         })?;
 
         let content = toml::to_string_pretty(self).map_err(ConfigError::Serialize)?;
-        std::fs::write(&path, content).map_err(|e| ConfigError::WriteFile { path, source: e })
+        super::write_atomic(&path, &content)
+            .map_err(|e| ConfigError::WriteFile { path, source: e })
     }
 }

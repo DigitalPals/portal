@@ -1,10 +1,9 @@
 //! SFTP dialog rendering
 //!
 //! This module contains the rendering functions for SFTP-related dialogs
-//! (New Folder, Rename, Delete, Permissions, Open With).
+//! (New Folder, Rename, Delete, Permissions).
 
 use std::path::PathBuf;
-
 use iced::widget::{button, column, container, row, text, text_input, Column, Space};
 use iced::{Alignment, Element, Fill, Length, Padding};
 
@@ -71,21 +70,16 @@ pub fn sftp_dialog_view(state: &DualPaneSftpState, theme: Theme) -> Element<'_, 
     backdrop.into()
 }
 
-/// Build input dialog for New Folder, Rename, or Open With
+/// Build input dialog for New Folder or Rename
 fn build_input_dialog(
     tab_id: SessionId,
     dialog: &SftpDialogState,
     theme: Theme,
 ) -> Element<'_, Message> {
-    let (title, placeholder, submit_label, subtitle) = match &dialog.dialog_type {
-        SftpDialogType::NewFolder => ("New Folder", "Folder name", "Create", None),
-        SftpDialogType::Rename { .. } => ("Rename", "New name", "Rename", None),
-        SftpDialogType::OpenWith { name, .. } => (
-            "Open With",
-            "Command (e.g., vim, code, nano)",
-            "Open",
-            Some(format!("Opening: {}", name)),
-        ),
+    let (title, placeholder, submit_label, subtitle): (&'static str, &'static str, &'static str, Option<String>) =
+        match &dialog.dialog_type {
+            SftpDialogType::NewFolder => ("New Folder", "Folder name", "Create", None),
+            SftpDialogType::Rename { .. } => ("Rename", "New name", "Rename", None),
         SftpDialogType::Delete { .. } | SftpDialogType::EditPermissions { .. } => unreachable!(),
     };
 
@@ -413,6 +407,7 @@ fn build_permissions_dialog<'a>(
 }
 
 /// Create a row of permission checkboxes for owner/group/other
+#[allow(clippy::too_many_arguments)]
 fn permission_row<'a>(
     tab_id: SessionId,
     label: &'a str,

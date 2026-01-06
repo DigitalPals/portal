@@ -2,22 +2,23 @@ use std::sync::Arc;
 
 use futures::stream;
 use iced::Task;
+use std::time::Instant;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::config::Host;
-use crate::fs_utils::{copy_dir_recursive, count_items_in_dir};
+use crate::fs_utils::{cleanup_temp_dir, copy_dir_recursive, count_items_in_dir};
 use crate::local::{LocalEvent, LocalSession};
 use crate::local_fs::list_local_dir;
 use crate::message::{
     Message, SessionId, SessionMessage, SftpMessage,
 };
-use crate::views::file_viewer::FileType;
+use crate::views::file_viewer::{FileSource, FileType};
 use crate::views::sftp::{ContextMenuAction, PaneId, PaneSource, PermissionBits, SftpDialogType};
 use crate::views::tabs::Tab;
 use crate::views::toast::Toast;
 
-use super::services::{connection, file_viewer, history, open_with};
+use super::services::{connection, file_viewer, history};
 use super::{Portal, View};
 
 impl Portal {
@@ -37,7 +38,15 @@ impl Portal {
 
         self.tabs.retain(|t| t.id != tab_id);
         self.sessions.remove(tab_id);
-        self.file_viewers.remove(tab_id);
+        if let Some(viewer_state) = self.file_viewers.remove(tab_id) {
+            if let FileSource::Remote { temp_path, .. } = viewer_state.file_source {
+                if let Some(temp_dir) = temp_path.parent().map(|path| path.to_path_buf()) {
+                    tokio::spawn(async move {
+                        let _ = cleanup_temp_dir(&temp_dir).await;
+                    });
+                }
+            }
+        }
 
         let mut history_changed = false;
         for session_id in sftp_sessions_to_close {
@@ -130,7 +139,7 @@ impl Portal {
         let session_id = Uuid::new_v4();
 
         // Create event channel for local PTY events
-        let (event_tx, event_rx) = mpsc::unbounded_channel::<LocalEvent>();
+        let (event_tx, event_rx) = mpsc::channel::<LocalEvent>(1024);
 
         // Start listening for events
         let event_listener = Task::run(
@@ -248,17 +257,9 @@ impl Portal {
 
                         // Check if file type is viewable
                         if !file_type.is_viewable() {
-                            // Fall back to external opening for binary files
-                            return match &pane.source {
-                                PaneSource::Local => open_with::open_local_default(file_path.clone()),
-                                PaneSource::Remote { session_id, .. } => {
-                                    if let Some(sftp) = self.sftp.get_connection(*session_id) {
-                                        open_with::open_remote_default(sftp.clone(), file_path.clone())
-                                    } else {
-                                        Task::none()
-                                    }
-                                }
-                            };
+                            self.toast_manager
+                                .push(Toast::warning("Binary files are not supported in the viewer."));
+                            return Task::none();
                         }
 
                         // Create a new file viewer
@@ -299,20 +300,6 @@ impl Portal {
                         self.active_view = View::FileViewer(viewer_id);
 
                         return load_task;
-                    }
-                }
-            }
-            ContextMenuAction::OpenWith => {
-                // Show the Open With dialog for single selection
-                if let Some(entry) = selected_entries.first() {
-                    if !entry.is_dir && !entry.is_parent() {
-                        let file_name = entry.name.clone();
-                        let file_path = entry.path.clone();
-                        let is_remote = matches!(pane.source, PaneSource::Remote { .. });
-
-                        if let Some(tab_state) = self.sftp.get_tab_mut(tab_id) {
-                            tab_state.show_open_with_dialog(file_name, file_path, is_remote);
-                        }
                     }
                 }
             }
@@ -427,10 +414,11 @@ impl Portal {
                         // Create local folder
                         Task::perform(
                             async move {
-                                match std::fs::create_dir(&new_folder_path) {
-                                    Ok(()) => Ok(()),
-                                    Err(e) => Err(e.to_string()),
-                                }
+                                tokio::task::spawn_blocking(move || {
+                                    std::fs::create_dir(&new_folder_path).map_err(|e| e.to_string())
+                                })
+                                .await
+                                .map_err(|e| e.to_string())?
                             },
                             move |result| Message::Sftp(SftpMessage::NewFolderResult(tab_id, pane_id, result)),
                         )
@@ -462,7 +450,11 @@ impl Portal {
                         // Rename local file/folder
                         Task::perform(
                             async move {
-                                std::fs::rename(&old_path, &new_path).map_err(|e| e.to_string())
+                                tokio::task::spawn_blocking(move || {
+                                    std::fs::rename(&old_path, &new_path).map_err(|e| e.to_string())
+                                })
+                                .await
+                                .map_err(|e| e.to_string())?
                             },
                             move |result| Message::Sftp(SftpMessage::RenameResult(tab_id, pane_id, result)),
                         )
@@ -493,25 +485,29 @@ impl Portal {
                         // Delete local files/folders
                         Task::perform(
                             async move {
-                                let mut deleted_count = 0;
-                                for (_, path, is_dir) in entries {
-                                    let result = if is_dir {
-                                        std::fs::remove_dir_all(&path)
-                                    } else {
-                                        std::fs::remove_file(&path)
-                                    };
-                                    match result {
-                                        Ok(()) => deleted_count += 1,
-                                        Err(e) => {
-                                            return Err(format!(
-                                                "Failed to delete {}: {}",
-                                                path.display(),
-                                                e
-                                            ))
+                                tokio::task::spawn_blocking(move || {
+                                    let mut deleted_count = 0;
+                                    for (_, path, is_dir) in entries {
+                                        let result = if is_dir {
+                                            std::fs::remove_dir_all(&path)
+                                        } else {
+                                            std::fs::remove_file(&path)
+                                        };
+                                        match result {
+                                            Ok(()) => deleted_count += 1,
+                                            Err(e) => {
+                                                return Err(format!(
+                                                    "Failed to delete {}: {}",
+                                                    path.display(),
+                                                    e
+                                                ))
+                                            }
                                         }
                                     }
-                                }
-                                Ok(deleted_count)
+                                    Ok(deleted_count)
+                                })
+                                .await
+                                .map_err(|e| e.to_string())?
                             },
                             move |result| Message::Sftp(SftpMessage::DeleteResult(tab_id, pane_id, result)),
                         )
@@ -559,18 +555,22 @@ impl Portal {
                         // Set local file permissions
                         Task::perform(
                             async move {
-                                #[cfg(unix)]
-                                {
-                                    use std::os::unix::fs::PermissionsExt;
-                                    let permissions = std::fs::Permissions::from_mode(mode);
-                                    std::fs::set_permissions(&path, permissions)
-                                        .map_err(|e| format!("Failed to set permissions: {}", e))
-                                }
-                                #[cfg(not(unix))]
-                                {
-                                    let _ = (path, mode);
-                                    Err("Permissions are only supported on Unix systems".to_string())
-                                }
+                                tokio::task::spawn_blocking(move || {
+                                    #[cfg(unix)]
+                                    {
+                                        use std::os::unix::fs::PermissionsExt;
+                                        let permissions = std::fs::Permissions::from_mode(mode);
+                                        std::fs::set_permissions(&path, permissions)
+                                            .map_err(|e| format!("Failed to set permissions: {}", e))
+                                    }
+                                    #[cfg(not(unix))]
+                                    {
+                                        let _ = (path, mode);
+                                        Err("Permissions are only supported on Unix systems".to_string())
+                                    }
+                                })
+                                .await
+                                .map_err(|e| e.to_string())?
                             },
                             move |result| Message::Sftp(SftpMessage::PermissionsResult(tab_id, pane_id, result)),
                         )
@@ -591,32 +591,6 @@ impl Portal {
                             Task::none()
                         }
                     }
-                }
-            }
-            SftpDialogType::OpenWith { path, is_remote, .. } => {
-                let path = path.clone();
-                let is_remote = *is_remote;
-                let command = input_value;
-                let pane_source = pane.source.clone();
-
-                // Close dialog immediately
-                if let Some(tab_state) = self.sftp.get_tab_mut(tab_id) {
-                    tab_state.close_dialog();
-                }
-
-                if is_remote {
-                    if let PaneSource::Remote { session_id, .. } = &pane_source {
-                        if let Some(sftp) = self.sftp.get_connection(*session_id) {
-                            return open_with::open_remote_with_command(
-                                sftp.clone(),
-                                path,
-                                command,
-                            );
-                        }
-                    }
-                    Task::none()
-                } else {
-                    open_with::open_local_with_command(path, command)
                 }
             }
         }
@@ -658,20 +632,24 @@ impl Portal {
                 // Local to Local copy
                 Task::perform(
                     async move {
-                        let mut count = 0;
-                        for (name, source_path, is_dir) in entries_to_copy {
-                            let target_path = target_dir.join(&name);
-                            if is_dir {
-                                copy_dir_recursive(&source_path, &target_path)?;
-                                count += count_items_in_dir(&source_path)?;
-                            } else {
-                                std::fs::copy(&source_path, &target_path).map_err(|e| {
-                                    format!("Failed to copy {}: {}", source_path.display(), e)
-                                })?;
-                                count += 1;
+                        tokio::task::spawn_blocking(move || {
+                            let mut count = 0;
+                            for (name, source_path, is_dir) in entries_to_copy {
+                                let target_path = target_dir.join(&name);
+                                if is_dir {
+                                    copy_dir_recursive(&source_path, &target_path)?;
+                                    count += count_items_in_dir(&source_path)?;
+                                } else {
+                                    std::fs::copy(&source_path, &target_path).map_err(|e| {
+                                        format!("Failed to copy {}: {}", source_path.display(), e)
+                                    })?;
+                                    count += 1;
+                                }
                             }
-                        }
-                        Ok(count)
+                            Ok(count)
+                        })
+                        .await
+                        .map_err(|e| e.to_string())?
                     },
                     move |result| Message::Sftp(SftpMessage::CopyResult(tab_id, target_pane_id, result)),
                 )
@@ -683,6 +661,7 @@ impl Portal {
                     let sftp = sftp.clone();
                     Task::perform(
                         async move {
+                            let start = Instant::now();
                             let mut count = 0;
                             for (name, source_path, is_dir) in entries_to_copy {
                                 let target_path = target_dir.join(&name);
@@ -698,6 +677,11 @@ impl Portal {
                                     count += 1;
                                 }
                             }
+                            tracing::info!(
+                                "SFTP upload completed: {} item(s) in {:?}",
+                                count,
+                                start.elapsed()
+                            );
                             Ok(count)
                         },
                         move |result| Message::Sftp(SftpMessage::CopyResult(tab_id, target_pane_id, result)),
@@ -713,6 +697,7 @@ impl Portal {
                     let sftp = sftp.clone();
                     Task::perform(
                         async move {
+                            let start = Instant::now();
                             let mut count = 0;
                             for (name, source_path, is_dir) in entries_to_copy {
                                 let target_path = target_dir.join(&name);
@@ -728,6 +713,11 @@ impl Portal {
                                     count += 1;
                                 }
                             }
+                            tracing::info!(
+                                "SFTP download completed: {} item(s) in {:?}",
+                                count,
+                                start.elapsed()
+                            );
                             Ok(count)
                         },
                         move |result| Message::Sftp(SftpMessage::CopyResult(tab_id, target_pane_id, result)),
@@ -750,48 +740,60 @@ impl Portal {
                 if let (Some(source_sftp), Some(target_sftp)) = (source_sftp, target_sftp) {
                     Task::perform(
                         async move {
+                            let start = Instant::now();
                             let mut count = 0;
                             let temp_dir = std::env::temp_dir().join(format!("portal_copy_{}", uuid::Uuid::new_v4()));
                             tokio::fs::create_dir_all(&temp_dir).await.map_err(|e| {
                                 format!("Failed to create temp directory: {}", e)
                             })?;
 
-                            for (name, source_path, is_dir) in entries_to_copy {
-                                let temp_path = temp_dir.join(&name);
-                                let target_path = target_dir.join(&name);
+                            let result = async {
+                                for (name, source_path, is_dir) in entries_to_copy {
+                                    let temp_path = temp_dir.join(&name);
+                                    let target_path = target_dir.join(&name);
 
-                                // Download to temp
-                                if is_dir {
-                                    source_sftp
-                                        .download_recursive(&source_path, &temp_path)
-                                        .await
-                                        .map_err(|e| e.to_string())?;
-                                } else {
-                                    source_sftp
-                                        .download(&source_path, &temp_path)
-                                        .await
-                                        .map_err(|e| e.to_string())?;
+                                    // Download to temp
+                                    if is_dir {
+                                        source_sftp
+                                            .download_recursive(&source_path, &temp_path)
+                                            .await
+                                            .map_err(|e| e.to_string())?;
+                                    } else {
+                                        source_sftp
+                                            .download(&source_path, &temp_path)
+                                            .await
+                                            .map_err(|e| e.to_string())?;
+                                    }
+
+                                    // Upload from temp to target
+                                    if is_dir {
+                                        count += target_sftp
+                                            .upload_recursive(&temp_path, &target_path)
+                                            .await
+                                            .map_err(|e| e.to_string())?;
+                                    } else {
+                                        target_sftp
+                                            .upload(&temp_path, &target_path)
+                                            .await
+                                            .map_err(|e| e.to_string())?;
+                                        count += 1;
+                                    }
                                 }
 
-                                // Upload from temp to target
-                                if is_dir {
-                                    count += target_sftp
-                                        .upload_recursive(&temp_path, &target_path)
-                                        .await
-                                        .map_err(|e| e.to_string())?;
-                                } else {
-                                    target_sftp
-                                        .upload(&temp_path, &target_path)
-                                        .await
-                                        .map_err(|e| e.to_string())?;
-                                    count += 1;
-                                }
+                                Ok(count)
+                            }
+                            .await;
+
+                            let _ = cleanup_temp_dir(&temp_dir).await;
+                            if result.is_ok() {
+                                tracing::info!(
+                                    "SFTP remote copy completed: {} item(s) in {:?}",
+                                    count,
+                                    start.elapsed()
+                                );
                             }
 
-                            // Clean up temp directory
-                            let _ = tokio::fs::remove_dir_all(&temp_dir).await;
-
-                            Ok(count)
+                            result
                         },
                         move |result| Message::Sftp(SftpMessage::CopyResult(tab_id, target_pane_id, result)),
                     )

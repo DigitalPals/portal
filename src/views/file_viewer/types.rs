@@ -1,6 +1,6 @@
 //! File viewer type definitions
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::message::SessionId;
 
@@ -68,7 +68,7 @@ impl FileType {
     }
 
     /// Get file type from a file path
-    pub fn from_path(path: &PathBuf) -> Self {
+    pub fn from_path(path: &Path) -> Self {
         path.extension()
             .and_then(|ext| ext.to_str())
             .map(Self::from_extension)

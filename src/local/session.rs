@@ -25,7 +25,7 @@ enum PtyCommand {
 
 /// Handle to an active local terminal session
 pub struct LocalSession {
-    command_tx: mpsc::UnboundedSender<PtyCommand>,
+    command_tx: mpsc::Sender<PtyCommand>,
 }
 
 impl std::fmt::Debug for LocalSession {
@@ -44,7 +44,7 @@ impl LocalSession {
     pub fn spawn(
         cols: u16,
         rows: u16,
-        event_tx: mpsc::UnboundedSender<LocalEvent>,
+        event_tx: mpsc::Sender<LocalEvent>,
     ) -> Result<Self, LocalError> {
         // Get user's shell
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
@@ -88,7 +88,7 @@ impl LocalSession {
         // Keep master alive for resize operations
         let master = pair.master;
 
-        let (command_tx, command_rx) = mpsc::unbounded_channel::<PtyCommand>();
+        let (command_tx, command_rx) = mpsc::channel::<PtyCommand>(256);
 
         // Spawn background task for PTY I/O
         Self::spawn_io_task(reader, writer, master, command_rx, event_tx);
@@ -101,8 +101,8 @@ impl LocalSession {
         mut reader: Box<dyn Read + Send>,
         mut writer: Box<dyn Write + Send>,
         master: Box<dyn portable_pty::MasterPty + Send>,
-        mut command_rx: mpsc::UnboundedReceiver<PtyCommand>,
-        event_tx: mpsc::UnboundedSender<LocalEvent>,
+        mut command_rx: mpsc::Receiver<PtyCommand>,
+        event_tx: mpsc::Sender<LocalEvent>,
     ) {
         // Reader task - reads from PTY in a blocking thread
         let event_tx_reader = event_tx.clone();
@@ -112,15 +112,15 @@ impl LocalSession {
                 match reader.read(&mut buf) {
                     Ok(0) => {
                         // EOF - PTY closed
-                        let _ = event_tx_reader.send(LocalEvent::Disconnected);
+                        let _ = event_tx_reader.blocking_send(LocalEvent::Disconnected);
                         break;
                     }
                     Ok(n) => {
-                        let _ = event_tx_reader.send(LocalEvent::Data(buf[..n].to_vec()));
+                        let _ = event_tx_reader.blocking_send(LocalEvent::Data(buf[..n].to_vec()));
                     }
                     Err(e) => {
                         tracing::error!("PTY read error: {}", e);
-                        let _ = event_tx_reader.send(LocalEvent::Disconnected);
+                        let _ = event_tx_reader.blocking_send(LocalEvent::Disconnected);
                         break;
                     }
                 }
@@ -155,23 +155,29 @@ impl LocalSession {
             }
 
             // Channel closed, send disconnect
-            let _ = event_tx.send(LocalEvent::Disconnected);
+            let _ = event_tx.send(LocalEvent::Disconnected).await;
         });
     }
 
     /// Send data to the local shell
     pub fn send(&self, data: &[u8]) -> Result<(), LocalError> {
         self.command_tx
-            .send(PtyCommand::Data(data.to_vec()))
-            .map_err(|e| LocalError::Io(e.to_string()))?;
+            .try_send(PtyCommand::Data(data.to_vec()))
+            .map_err(|e| {
+                tracing::debug!("Local PTY send dropped: {}", e);
+                LocalError::Io(e.to_string())
+            })?;
         Ok(())
     }
 
     /// Notify the local shell of a window size change
     pub fn resize(&self, cols: u16, rows: u16) -> Result<(), LocalError> {
         self.command_tx
-            .send(PtyCommand::Resize { cols, rows })
-            .map_err(|e| LocalError::Io(e.to_string()))?;
+            .try_send(PtyCommand::Resize { cols, rows })
+            .map_err(|e| {
+                tracing::debug!("Local PTY resize dropped: {}", e);
+                LocalError::Io(e.to_string())
+            })?;
         Ok(())
     }
 }

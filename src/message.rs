@@ -139,8 +139,6 @@ pub enum SftpMessage {
     CopyToTarget(SessionId),
     /// Result of copy operation (count copied, target pane)
     CopyResult(SessionId, PaneId, Result<usize, String>),
-    /// Result of open with command
-    OpenWithResult(Result<(), String>),
     /// Toggle hidden files visibility
     ToggleShowHidden(SessionId, PaneId),
     /// Toggle actions menu visibility

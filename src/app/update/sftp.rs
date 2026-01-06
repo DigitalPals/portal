@@ -311,12 +311,6 @@ pub fn handle_sftp(portal: &mut Portal, msg: SftpMessage) -> Task<Message> {
             }
             Task::none()
         }
-        SftpMessage::OpenWithResult(result) => {
-            if let Err(error) = result {
-                portal.toast_manager.push(Toast::error(error));
-            }
-            Task::none()
-        }
         SftpMessage::ToggleShowHidden(tab_id, pane_id) => {
             if let Some(tab_state) = portal.sftp.get_tab_mut(tab_id) {
                 let pane = tab_state.pane_mut(pane_id);

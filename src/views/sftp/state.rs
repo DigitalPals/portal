@@ -160,20 +160,10 @@ impl SftpDialogState {
         }
     }
 
-    pub fn open_with(pane_id: PaneId, name: String, path: PathBuf, is_remote: bool) -> Self {
-        Self {
-            dialog_type: SftpDialogType::OpenWith { name, path, is_remote },
-            target_pane: pane_id,
-            input_value: String::new(),
-            error: None,
-        }
-    }
-
     pub fn is_valid(&self) -> bool {
         match &self.dialog_type {
             SftpDialogType::Delete { entries } => !entries.is_empty(),
             SftpDialogType::EditPermissions { .. } => true, // Always valid
-            SftpDialogType::OpenWith { .. } => !self.input_value.trim().is_empty(), // Need a command
             _ => {
                 let name = self.input_value.trim();
                 !name.is_empty() && !name.contains('/') && !name.contains('\\') && name != "." && name != ".."
@@ -250,11 +240,6 @@ impl DualPaneSftpState {
 
     pub fn show_permissions_dialog(&mut self, name: String, path: PathBuf, permissions: PermissionBits) {
         self.dialog = Some(SftpDialogState::edit_permissions(self.active_pane, name, path, permissions));
-        self.hide_context_menu();
-    }
-
-    pub fn show_open_with_dialog(&mut self, name: String, path: PathBuf, is_remote: bool) {
-        self.dialog = Some(SftpDialogState::open_with(self.active_pane, name, path, is_remote));
         self.hide_context_menu();
     }
 
@@ -364,18 +349,7 @@ mod tests {
     }
 
     #[test]
-    fn dialog_is_valid_for_open_with_and_delete() {
-        let mut open = SftpDialogState::open_with(
-            PaneId::Right,
-            "notes.txt".to_string(),
-            PathBuf::from("notes.txt"),
-            false,
-        );
-        open.input_value = "code".to_string();
-        assert!(open.is_valid());
-        open.input_value = "   ".to_string();
-        assert!(!open.is_valid());
-
+    fn dialog_is_valid_for_delete() {
         let empty_delete = SftpDialogState::delete(PaneId::Left, Vec::new());
         assert!(!empty_delete.is_valid());
 

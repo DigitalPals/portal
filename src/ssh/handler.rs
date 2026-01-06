@@ -20,7 +20,7 @@ pub struct ClientHandler {
     port: u16,
     known_hosts: Arc<Mutex<KnownHostsManager>>,
     /// Channel to send events to UI (including verification requests)
-    event_tx: mpsc::UnboundedSender<SshEvent>,
+    event_tx: mpsc::Sender<SshEvent>,
 }
 
 impl ClientHandler {
@@ -28,7 +28,7 @@ impl ClientHandler {
         host: String,
         port: u16,
         known_hosts: Arc<Mutex<KnownHostsManager>>,
-        event_tx: mpsc::UnboundedSender<SshEvent>,
+        event_tx: mpsc::Sender<SshEvent>,
     ) -> Self {
         Self {
             host,
@@ -98,6 +98,7 @@ impl Handler for ClientHandler {
                     // Send request to UI via event channel
                     event_tx
                         .send(SshEvent::HostKeyVerification(Box::new(request)))
+                        .await
                         .map_err(|_| {
                             SshError::HostKeyVerification(
                                 "Failed to request host key verification".to_string(),
@@ -169,6 +170,7 @@ impl Handler for ClientHandler {
                     // Send request to UI via event channel
                     event_tx
                         .send(SshEvent::HostKeyVerification(Box::new(request)))
+                        .await
                         .map_err(|_| {
                             SshError::HostKeyVerification(
                                 "Failed to request host key verification".to_string(),
