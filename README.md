@@ -1,5 +1,4 @@
-<div align="center">
-<pre>
+```
                                   .             oooo
                                 .o8             `888
  oo.ooooo.   .ooooo.  oooo d8b .o888oo  .oooo.    888
@@ -9,8 +8,7 @@
   888bod8P' `Y8bod8P' d888b      "888" `Y888""8o o888o
   888
  o888o
-</pre>
-</div>
+```
 
 <div align="center">
 
