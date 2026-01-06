@@ -41,6 +41,9 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
                 }
             }
 
+            // Release keyboard capture when navigating via sidebar
+            portal.terminal_captured = false;
+
             portal.sidebar_selection = item;
             tracing::info!("Sidebar item selected: {:?}", item);
             match item {
@@ -352,18 +355,18 @@ fn handle_content_keyboard(
             SidebarMenuItem::History => handle_history_keyboard(portal, key, modifiers),
         },
         View::Terminal(_session_id) => {
-            // Enter key or any character captures terminal
+            // When terminal_captured is false (after Ctrl+Escape), allow keyboard navigation
             match key {
-                Key::Named(keyboard::key::Named::Enter) | Key::Character(_) => {
-                    portal.terminal_captured = true;
-                }
                 Key::Named(keyboard::key::Named::ArrowUp) => {
                     portal.focus_section = FocusSection::TabBar;
                 }
                 Key::Named(keyboard::key::Named::ArrowLeft) => {
                     portal.focus_section = FocusSection::Sidebar;
                 }
-                _ => {}
+                _ => {
+                    // Re-capture terminal on any other key press
+                    portal.terminal_captured = true;
+                }
             }
             Task::none()
         }

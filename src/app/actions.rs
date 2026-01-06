@@ -24,10 +24,13 @@ impl Portal {
         self.active_tab = Some(tab_id);
         if self.sessions.contains(tab_id) {
             self.active_view = View::Terminal(tab_id);
+            self.terminal_captured = true;
         } else if self.sftp.contains_tab(tab_id) {
             self.active_view = View::DualSftp(tab_id);
+            self.terminal_captured = false;
         } else if self.file_viewers.contains(tab_id) {
             self.active_view = View::FileViewer(tab_id);
+            self.terminal_captured = false;
         }
     }
 

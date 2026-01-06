@@ -70,6 +70,8 @@ pub enum SessionMessage {
     },
     /// Data received from terminal (SSH or local)
     Data(SessionId, Vec<u8>),
+    /// Process buffered terminal output in time-sliced chunks
+    ProcessOutputTick,
     /// Terminal session disconnected
     Disconnected(SessionId),
     /// Session error occurred

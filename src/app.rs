@@ -483,6 +483,13 @@ impl Portal {
             );
         }
 
+        if self.sessions.has_pending_output() {
+            subscriptions.push(
+                time::every(Duration::from_millis(16))
+                    .map(|_| Message::Session(SessionMessage::ProcessOutputTick)),
+            );
+        }
+
         Subscription::batch(subscriptions)
     }
 }

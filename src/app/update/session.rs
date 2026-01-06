@@ -3,6 +3,7 @@
 use futures::stream;
 use iced::Task;
 use iced::clipboard;
+use std::collections::VecDeque;
 use std::time::Instant;
 use uuid::Uuid;
 
@@ -76,6 +77,7 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                     host_name: host_name.clone(),
                     history_entry_id,
                     status_message: None,
+                    pending_output: VecDeque::new(),
                 },
             );
 
@@ -86,6 +88,9 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
 
             // Switch to terminal view
             portal.active_view = View::Terminal(session_id);
+
+            // Auto-capture keyboard for terminal
+            portal.terminal_captured = true;
 
             // Auto-hide sidebar for immersive terminal experience (save previous state)
             if portal.sidebar_state != crate::app::SidebarState::Hidden {
@@ -127,6 +132,7 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                     host_name: "Local Terminal".to_string(),
                     history_entry_id,
                     status_message: None,
+                    pending_output: VecDeque::new(),
                 },
             );
 
@@ -137,6 +143,9 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
 
             // Switch to terminal view
             portal.active_view = View::Terminal(session_id);
+
+            // Auto-capture keyboard for terminal
+            portal.terminal_captured = true;
 
             // Auto-hide sidebar for immersive terminal experience (save previous state)
             if portal.sidebar_state != crate::app::SidebarState::Hidden {
@@ -153,8 +162,34 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
         }
         SessionMessage::Data(session_id, data) => {
             if let Some(session) = portal.sessions.get_mut(session_id) {
-                session.terminal.process_output(&data);
+                if !data.is_empty() {
+                    session.pending_output.push_back(data);
+                }
             }
+            Task::none()
+        }
+        SessionMessage::ProcessOutputTick => {
+            const MAX_OUTPUT_BYTES_PER_TICK: usize = 16 * 1024;
+
+            for session in portal.sessions.values_mut() {
+                let mut budget = MAX_OUTPUT_BYTES_PER_TICK;
+                while budget > 0 {
+                    let Some(mut chunk) = session.pending_output.pop_front() else {
+                        break;
+                    };
+
+                    if chunk.len() > budget {
+                        let remainder = chunk.split_off(budget);
+                        session.terminal.process_output(&chunk);
+                        session.pending_output.push_front(remainder);
+                        budget = 0;
+                    } else {
+                        session.terminal.process_output(&chunk);
+                        budget -= chunk.len();
+                    }
+                }
+            }
+
             Task::none()
         }
         SessionMessage::Disconnected(session_id) => {
