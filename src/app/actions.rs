@@ -65,6 +65,10 @@ impl Portal {
                 self.active_tab = None;
                 self.active_view = View::HostGrid;
                 self.sidebar_selection = crate::message::SidebarMenuItem::Hosts;
+                // Restore sidebar state if returning from terminal
+                if let Some(saved_state) = self.sidebar_state_before_session.take() {
+                    self.sidebar_state = saved_state;
+                }
                 // Reset keyboard navigation state when returning to host grid
                 self.terminal_captured = false;
                 self.focus_section = crate::app::FocusSection::Content;

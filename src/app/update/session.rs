@@ -84,7 +84,10 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
             // Switch to terminal view
             portal.active_view = View::Terminal(session_id);
 
-            // Auto-hide sidebar for immersive terminal experience
+            // Auto-hide sidebar for immersive terminal experience (save previous state)
+            if portal.sidebar_state != crate::app::SidebarState::Hidden {
+                portal.sidebar_state_before_session = Some(portal.sidebar_state);
+            }
             portal.sidebar_state = crate::app::SidebarState::Hidden;
 
             Task::none()
@@ -127,7 +130,10 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
             // Switch to terminal view
             portal.active_view = View::Terminal(session_id);
 
-            // Auto-hide sidebar for immersive terminal experience
+            // Auto-hide sidebar for immersive terminal experience (save previous state)
+            if portal.sidebar_state != crate::app::SidebarState::Hidden {
+                portal.sidebar_state_before_session = Some(portal.sidebar_state);
+            }
             portal.sidebar_state = crate::app::SidebarState::Hidden;
 
             Task::none()

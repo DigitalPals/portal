@@ -55,7 +55,7 @@ impl Tab {
 pub fn tab_bar_view<'a>(
     tabs: &'a [Tab],
     active_tab: Option<Uuid>,
-    sidebar_state: SidebarState,
+    _sidebar_state: SidebarState,
     theme: Theme,
     focus_section: FocusSection,
     focus_index: usize,
@@ -63,12 +63,8 @@ pub fn tab_bar_view<'a>(
 ) -> Element<'a, Message> {
     // Determine if we should use terminal background (seamless look)
     let use_terminal_bg = matches!(active_view, View::Terminal(_) | View::DualSftp(_) | View::FileViewer(_));
-    // Hamburger menu button for sidebar toggle - show expand icon when not fully expanded
-    let menu_icon = if sidebar_state != SidebarState::Expanded {
-        icons::ui::PANEL_LEFT_OPEN
-    } else {
-        icons::ui::MENU
-    };
+    // Hamburger menu button for sidebar toggle
+    let menu_icon = icons::ui::MENU;
 
     let hamburger_btn = button(
         container(icon_with_color(menu_icon, 20, theme.text_secondary))
@@ -127,18 +123,9 @@ pub fn tab_bar_view<'a>(
         } else {
             theme.tab_bar
         };
-        let border_color = if use_terminal_bg {
-            theme.terminal.background
-        } else {
-            theme.border
-        };
         container::Style {
             background: Some(bg_color.into()),
-            border: iced::Border {
-                color: border_color,
-                width: 1.0,
-                radius: 0.0.into(),
-            },
+            border: iced::Border::default(),
             ..Default::default()
         }
     })

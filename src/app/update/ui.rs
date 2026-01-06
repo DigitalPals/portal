@@ -43,10 +43,18 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
             match item {
                 SidebarMenuItem::Hosts => {
                     portal.active_view = View::HostGrid;
+                    // Restore sidebar state if returning from terminal
+                    if let Some(saved_state) = portal.sidebar_state_before_session.take() {
+                        portal.sidebar_state = saved_state;
+                    }
                     return iced::widget::operation::focus(crate::app::search_input_id());
                 }
                 SidebarMenuItem::History => {
                     portal.active_view = View::HostGrid;
+                    // Restore sidebar state if returning from terminal
+                    if let Some(saved_state) = portal.sidebar_state_before_session.take() {
+                        portal.sidebar_state = saved_state;
+                    }
                 }
                 SidebarMenuItem::Sftp => {
                     if let Some(tab_id) = portal.sftp.first_tab_id() {
@@ -88,6 +96,7 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
             Task::none()
         }
         UiMessage::FontChange(font) => {
+            tracing::info!("Font changed to: {:?}", font);
             portal.terminal_font = font;
             portal.save_settings();
             Task::none()
@@ -184,6 +193,10 @@ fn handle_keyboard_event(
         (Key::Character(c), true, false) if c.as_str() == "n" => {
             portal.active_view = View::HostGrid;
             portal.focus_section = FocusSection::Content;
+            // Restore sidebar state if returning from terminal
+            if let Some(saved_state) = portal.sidebar_state_before_session.take() {
+                portal.sidebar_state = saved_state;
+            }
             return Task::none();
         }
         // Ctrl+W - close current tab

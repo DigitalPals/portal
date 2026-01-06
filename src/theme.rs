@@ -95,7 +95,7 @@ impl Theme {
             background: Color::from_rgb8(0x1e, 0x22, 0x33),
             surface: Color::from_rgb8(0x2a, 0x31, 0x42),
             sidebar: Color::from_rgb8(0x1a, 0x1d, 0x2b),
-            tab_bar: Color::from_rgb8(0x1a, 0x1c, 0x25),
+            tab_bar: Color::from_rgb8(0x14, 0x17, 0x29),
             accent: Color::from_rgb8(0x00, 0x78, 0xd4),
             text_primary: Color::from_rgb8(0xe8, 0xe8, 0xe8),
             text_secondary: Color::from_rgb8(0x9a, 0xa0, 0xb0),

@@ -183,17 +183,13 @@ fn build_action_bar(search_query: &str, theme: Theme) -> Element<'static, Messag
     ]
     .align_y(Alignment::Center);
 
-    // Container with top border and padding
+    // Container with padding (no border)
     container(bar_content)
         .width(Fill)
         .padding([16, 24])
         .style(move |_theme| container::Style {
             background: Some(theme.surface.into()),
-            border: iced::Border {
-                color: theme.border,
-                width: 1.0,
-                radius: 0.0.into(),
-            },
+            border: iced::Border::default(),
             ..Default::default()
         })
         .into()

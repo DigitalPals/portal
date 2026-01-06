@@ -22,6 +22,9 @@ use super::colors::{ansi_to_iced_themed, DEFAULT_BG, DEFAULT_FG};
 use crate::fonts::{TerminalFont, JETBRAINS_MONO_NERD};
 use crate::theme::TerminalColors;
 
+/// Left padding for terminal content (matches Termius style)
+const TERMINAL_PADDING_LEFT: f32 = 12.0;
+
 /// Terminal widget for iced
 pub struct TerminalWidget<'a, Message> {
     term: Arc<Mutex<Term<EventProxy>>>,
@@ -158,7 +161,8 @@ impl<'a, Message> TerminalWidget<'a, Message> {
         if !bounds.contains(position) {
             return None;
         }
-        let col = ((position.x - bounds.x) / self.cell_width()) as usize;
+        // Account for left padding when converting to cell coordinates
+        let col = ((position.x - bounds.x - TERMINAL_PADDING_LEFT).max(0.0) / self.cell_width()) as usize;
         let row = ((position.y - bounds.y) / self.cell_height()) as usize;
         Some((col, row))
     }
@@ -420,7 +424,7 @@ where
         // Draw cells
         let cells = self.get_cells();
         for cell in cells {
-            let x = bounds.x + cell.column as f32 * cell_width;
+            let x = bounds.x + TERMINAL_PADDING_LEFT + cell.column as f32 * cell_width;
             let y = bounds.y + cell.line as f32 * cell_height;
 
             // Draw cell background if not default
@@ -508,7 +512,7 @@ where
                 let start_col = if line == start.1 { start.0 } else { 0 };
                 let end_col = if line == end.1 { end.0 } else { cols.saturating_sub(1) };
 
-                let x = bounds.x + start_col as f32 * cell_width;
+                let x = bounds.x + TERMINAL_PADDING_LEFT + start_col as f32 * cell_width;
                 let y = bounds.y + line as f32 * cell_height;
                 let width = (end_col - start_col + 1) as f32 * cell_width;
 
@@ -533,7 +537,7 @@ where
         if state.is_focused && state.cursor_visible {
             if let Some(cursor_info) = self.get_cursor() {
                 if cursor_info.visible {
-                    let cursor_x = bounds.x + cursor_info.column as f32 * cell_width;
+                    let cursor_x = bounds.x + TERMINAL_PADDING_LEFT + cursor_info.column as f32 * cell_width;
                     let cursor_y = bounds.y + cursor_info.line as f32 * cell_height;
 
                     let cursor_color = colors.cursor;
@@ -635,8 +639,8 @@ where
 
         // Detect size changes and emit resize message
         if let Some(ref on_resize) = self.on_resize {
-            // Calculate terminal dimensions from pixel bounds
-            let cols = (bounds.width / self.cell_width()) as u16;
+            // Calculate terminal dimensions from pixel bounds (accounting for padding)
+            let cols = ((bounds.width - TERMINAL_PADDING_LEFT) / self.cell_width()) as u16;
             let rows = (bounds.height / self.cell_height()) as u16;
 
             // Enforce minimum size

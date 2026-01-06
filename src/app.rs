@@ -83,6 +83,7 @@ pub struct Portal {
 
     // Sidebar state
     sidebar_state: SidebarState,
+    sidebar_state_before_session: Option<SidebarState>,  // Saved state before hiding for terminal
     sidebar_selection: SidebarMenuItem,
 
     // Tab management
@@ -178,6 +179,7 @@ impl Portal {
             active_view: View::HostGrid,
             search_query: String::new(),
             sidebar_state: SidebarState::Expanded,
+            sidebar_state_before_session: None,
             sidebar_selection: SidebarMenuItem::Hosts,
             tabs: Vec::new(),
             active_tab: None,
