@@ -6,16 +6,16 @@ cd "$(dirname "$0")"
 case "${1:-run}" in
     build)
         echo "Building Portal2..."
-        cargo build --release
+        nix-shell --run "cargo build --release"
         echo "Build complete: target/release/portal"
         ;;
     run)
         echo "Building and running Portal2..."
-        nix-shell -p wayland --run "cargo run --release"
+        nix-shell --run "cargo run --release"
         ;;
     dev)
         echo "Running Portal2 in debug mode..."
-        nix-shell -p wayland --run "cargo run"
+        nix-shell --run "cargo run"
         ;;
     check)
         echo "Checking Portal2..."
