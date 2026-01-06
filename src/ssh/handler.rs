@@ -1,6 +1,6 @@
 use std::future::Future;
-use std::time::Duration;
 use std::sync::Arc;
+use std::time::Duration;
 
 use russh::ChannelId;
 use russh::client::{Handler, Session};
@@ -223,11 +223,7 @@ impl Handler for ClientHandler {
                             ))
                         }
                         Err(_) => {
-                            tracing::warn!(
-                                "Host key verification timed out for {}:{}",
-                                host,
-                                port
-                            );
+                            tracing::warn!("Host key verification timed out for {}:{}", host, port);
                             Err(SshError::HostKeyVerification(
                                 "Host key verification timed out".to_string(),
                             ))
