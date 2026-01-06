@@ -2,6 +2,8 @@
 
 use std::path::PathBuf;
 
+use crate::message::SessionId;
+
 
 /// Detected file type for viewing/editing
 #[derive(Debug, Clone, PartialEq)]
@@ -93,5 +95,9 @@ pub enum FileSource {
     Remote {
         /// Local temporary path for editing
         temp_path: PathBuf,
+        /// SFTP session ID for uploading changes
+        session_id: SessionId,
+        /// Original remote path on the server
+        remote_path: PathBuf,
     },
 }

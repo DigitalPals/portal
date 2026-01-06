@@ -388,6 +388,8 @@ impl Portal {
 
                                 let source = FileSource::Remote {
                                     temp_path: temp_path.clone(),
+                                    session_id: *session_id,
+                                    remote_path: file_path.clone(),
                                 };
 
                                 if let Some(sftp) = self.sftp.get_connection(*session_id) {

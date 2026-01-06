@@ -3,7 +3,9 @@
 use iced::Task;
 
 use crate::app::Portal;
-use crate::message::{FileViewerMessage, Message};
+use crate::message::{FileViewerMessage, Message, TabMessage};
+use crate::sftp::SharedSftpSession;
+use crate::views::file_viewer::FileSource;
 use crate::views::toast::{Toast, ToastType};
 
 /// Handle file viewer messages
@@ -49,9 +51,16 @@ pub fn handle_file_viewer(app: &mut Portal, msg: FileViewerMessage) -> Task<Mess
                 if let Some(text) = viewer.get_text() {
                     let source = viewer.file_source.clone();
 
+                    // Get SFTP session if this is a remote file
+                    let sftp_session = if let FileSource::Remote { session_id, .. } = &source {
+                        app.sftp.get_connection(*session_id).cloned()
+                    } else {
+                        None
+                    };
+
                     return Task::perform(
                         async move {
-                            save_file_content(source, text).await
+                            save_file_content(source, text, sftp_session).await
                         },
                         move |result| {
                             Message::FileViewer(FileViewerMessage::SaveResult(viewer_id, result))
@@ -67,11 +76,9 @@ pub fn handle_file_viewer(app: &mut Portal, msg: FileViewerMessage) -> Task<Mess
                 match result {
                     Ok(()) => {
                         viewer.mark_saved();
-                        // Update tab title (remove modified indicator)
-                        if let Some(tab) = app.tabs.iter_mut().find(|t| t.id == viewer_id) {
-                            tab.title = viewer.file_name.clone();
-                        }
                         app.toast_manager.push(Toast::new("File saved", ToastType::Success));
+                        // Close the tab after successful save
+                        return Task::done(Message::Tab(TabMessage::Close(viewer_id)));
                     }
                     Err(e) => {
                         app.toast_manager.push(Toast::new(format!("Failed to save: {}", e), ToastType::Error));
@@ -103,11 +110,10 @@ pub fn handle_file_viewer(app: &mut Portal, msg: FileViewerMessage) -> Task<Mess
 
 /// Save file content to local or remote location
 async fn save_file_content(
-    source: crate::views::file_viewer::FileSource,
+    source: FileSource,
     text: String,
+    sftp_session: Option<SharedSftpSession>,
 ) -> Result<(), String> {
-    use crate::views::file_viewer::FileSource;
-
     match source {
         FileSource::Local { path } => {
             tokio::fs::write(&path, text)
@@ -115,14 +121,18 @@ async fn save_file_content(
                 .map_err(|e| format!("Failed to write file: {}", e))?;
             Ok(())
         }
-        FileSource::Remote { temp_path } => {
-            // Save to temp path - actual SFTP upload would be handled separately
+        FileSource::Remote { temp_path, remote_path, .. } => {
+            // Save to temp path first
             tokio::fs::write(&temp_path, text)
                 .await
                 .map_err(|e| format!("Failed to write temp file: {}", e))?;
 
-            // TODO: Upload temp file back to remote via SFTP
-            // For now, just save locally
+            // Upload to remote via SFTP
+            let sftp = sftp_session.ok_or_else(|| "SFTP connection not available".to_string())?;
+            sftp.upload(&temp_path, &remote_path)
+                .await
+                .map_err(|e| format!("Failed to upload file: {}", e))?;
+
             Ok(())
         }
     }
