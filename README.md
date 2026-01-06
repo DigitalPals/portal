@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="assets/logo.png" alt="portal" />
+<img src="assets/logo.png" alt="portal" width="75%" />
 
 # Portal
 
