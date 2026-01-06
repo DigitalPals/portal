@@ -97,7 +97,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           cargo generate-rpm --target ${{ matrix.target }}
-          rpm_path=$(ls target/generate-rpm/*.rpm | head -n 1)
+          rpm_path=$(ls target/${{ matrix.target }}/generate-rpm/*.rpm | head -n 1)
           mv "$rpm_path" portal-${{ github.ref_name }}-${{ matrix.name }}.rpm
 
       - name: Package AppImage
