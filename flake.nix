@@ -19,7 +19,7 @@
           cargoLock = {
             lockFile = ./Cargo.lock;
           };
-          nativeBuildInputs = [ pkgs.pkg-config ];
+          nativeBuildInputs = [ pkgs.pkg-config pkgs.makeWrapper ];
           buildInputs = [
             pkgs.wayland
             pkgs.libxkbcommon
@@ -31,6 +31,14 @@
             install -Dm644 assets/app-icons/png/portal-128.png $out/share/icons/hicolor/128x128/apps/portal.png
             install -Dm644 assets/app-icons/png/portal-256.png $out/share/icons/hicolor/256x256/apps/portal.png
             install -Dm644 assets/app-icons/png/portal-512.png $out/share/icons/hicolor/512x512/apps/portal.png
+          '';
+          postFixup = ''
+            wrapProgram $out/bin/portal \
+              --prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath [
+                pkgs.wayland
+                pkgs.libxkbcommon
+                pkgs.vulkan-loader
+              ]}
           '';
         };
 
