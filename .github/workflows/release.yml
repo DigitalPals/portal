@@ -155,7 +155,12 @@ jobs:
           chmod +x "$appimage"
           "./$appimage" --appimage-extract
           test -f squashfs-root/portal.desktop
-          test -f squashfs-root/usr/share/icons/hicolor/256x256/apps/portal.png
+          if [ ! -f squashfs-root/usr/share/icons/hicolor/256x256/apps/portal.png ] && \
+             [ ! -f squashfs-root/usr/share/icons/hicolor/256x256/apps/portal-256.png ] && \
+             [ ! -f squashfs-root/usr/share/icons/hicolor/scalable/apps/portal.svg ]; then
+            echo "Expected portal icon not found in AppImage."
+            exit 1
+          fi
 
   release:
     name: Create Release
