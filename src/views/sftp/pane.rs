@@ -45,11 +45,12 @@ pub fn single_pane_view(
     tab_id: SessionId,
     available_hosts: Vec<(Uuid, String)>,
     is_active: bool,
+    context_menu_open: bool,
     theme: Theme,
 ) -> Element<'_, Message> {
     let header = pane_header(state, pane_id, tab_id, available_hosts, is_active, theme);
     let breadcrumbs = pane_breadcrumb_bar(state, pane_id, tab_id, theme);
-    let file_list = pane_file_list(state, pane_id, tab_id, theme);
+    let file_list = pane_file_list(state, pane_id, tab_id, context_menu_open, theme);
     let footer = pane_footer(state, pane_id, tab_id, theme);
 
     let content = column![header, breadcrumbs, file_list, footer].spacing(0);
@@ -325,6 +326,7 @@ pub fn pane_file_list<'a>(
     state: &'a FilePaneState,
     pane_id: PaneId,
     tab_id: SessionId,
+    context_menu_open: bool,
     theme: Theme,
 ) -> Element<'a, Message> {
     if state.loading {
@@ -419,6 +421,7 @@ pub fn pane_file_list<'a>(
                 state.is_selected(*original_index),
                 tab_id,
                 pane_id,
+                context_menu_open,
                 theme,
             )
         })
@@ -474,6 +477,7 @@ pub fn pane_file_entry_row(
     is_selected: bool,
     tab_id: SessionId,
     pane_id: PaneId,
+    context_menu_open: bool,
     theme: Theme,
 ) -> Element<'static, Message> {
     let icon_type = entry.icon_type();
@@ -549,7 +553,9 @@ pub fn pane_file_entry_row(
     )
     .style(move |_theme, status| {
         let background = match status {
-            iced::widget::button::Status::Hovered if !is_selected => theme.hover,
+            iced::widget::button::Status::Hovered if !is_selected && !context_menu_open => {
+                theme.hover
+            }
             _ => bg_color,
         };
         iced::widget::button::Style {
@@ -560,19 +566,28 @@ pub fn pane_file_entry_row(
         }
     })
     .padding(0)
-    .width(Fill)
-    .on_press(if is_dir {
-        Message::Sftp(SftpMessage::PaneNavigate(tab_id, pane_id, path))
+    .width(Fill);
+
+    let btn = if context_menu_open {
+        btn
+    } else if is_dir {
+        btn.on_press(Message::Sftp(SftpMessage::PaneNavigate(
+            tab_id, pane_id, path,
+        )))
     } else {
-        Message::Sftp(SftpMessage::PaneSelect(tab_id, pane_id, index))
-    });
+        btn.on_press(Message::Sftp(SftpMessage::PaneSelect(tab_id, pane_id, index)))
+    };
 
     // Wrap in mouse_area to handle right-click
-    mouse_area(btn)
-        .on_right_press(move |x, y| {
+    let area = mouse_area(btn);
+    if context_menu_open {
+        area.into()
+    } else {
+        area.on_right_press(move |x, y| {
             Message::Sftp(SftpMessage::ShowContextMenu(tab_id, pane_id, x, y, Some(index)))
         })
         .into()
+    }
 }
 
 /// Footer with status for a pane

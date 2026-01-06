@@ -17,6 +17,7 @@ where
     on_right_press: Option<Box<dyn Fn(f32, f32) -> Message + 'a>>,
     on_ctrl_press: Option<Message>,
     on_shift_press: Option<Message>,
+    capture_all_events: bool,
     width: Length,
     height: Length,
 }
@@ -33,6 +34,7 @@ where
             on_right_press: None,
             on_ctrl_press: None,
             on_shift_press: None,
+            capture_all_events: false,
             width: Length::Shrink,
             height: Length::Shrink,
         }
@@ -74,6 +76,12 @@ where
     /// Sets the message to emit on Shift+click
     pub fn on_shift_press(mut self, message: Message) -> Self {
         self.on_shift_press = Some(message);
+        self
+    }
+
+    /// Captures all mouse events while the cursor is over the area.
+    pub fn capture_all_events(mut self, capture: bool) -> Self {
+        self.capture_all_events = capture;
         self
     }
 }
@@ -161,6 +169,15 @@ where
         // If content handled it, we're done
         if content_status == Status::Captured {
             return Status::Captured;
+        }
+
+        // Prevent event propagation if requested and cursor is over this area.
+        if self.capture_all_events {
+            if cursor.is_over(layout.bounds()) {
+                if matches!(event, Event::Mouse(_)) {
+                    return Status::Captured;
+                }
+            }
         }
 
         // Handle left-click if content didn't handle it

@@ -15,6 +15,7 @@ use super::types::ContextMenuAction;
 
 /// Red color for destructive actions
 const DESTRUCTIVE_COLOR: Color = Color::from_rgb(0.86, 0.24, 0.24);
+const CONTEXT_MENU_WIDTH: f32 = 240.0;
 
 /// Build a context menu item button
 fn context_menu_item<'a>(
@@ -35,7 +36,7 @@ fn context_menu_item<'a>(
 
     let btn = button(text(label).size(13).color(text_color))
         .padding([6, 12])
-        .width(Length::Shrink)
+        .width(Length::Fill)
         .style(move |_theme, status| {
             let bg = if enabled {
                 match status {
@@ -193,6 +194,7 @@ pub fn context_menu_view(state: &DualPaneSftpState, theme: Theme) -> Element<'_,
     // Menu container with larger radius and theme-aware background
     let menu = container(Column::with_children(items).spacing(4))
         .padding(8)
+        .width(Length::Fixed(CONTEXT_MENU_WIDTH))
         .style(move |_| container::Style {
             background: Some(theme.surface.into()),
             border: iced::Border {
@@ -207,6 +209,7 @@ pub fn context_menu_view(state: &DualPaneSftpState, theme: Theme) -> Element<'_,
             },
             ..Default::default()
         });
+    let menu = mouse_area(menu).capture_all_events(true);
 
     // Position the menu at the click location
     let pos = state.context_menu.position;
@@ -216,10 +219,8 @@ pub fn context_menu_view(state: &DualPaneSftpState, theme: Theme) -> Element<'_,
         .on_press(Message::Sftp(SftpMessage::HideContextMenu(tab_id)));
 
     // Position the menu using margins
-    let positioned_menu = container(menu)
-        .width(Fill)
-        .height(Fill)
-        .padding(Padding::new(0.0).top(pos.y).left(pos.x));
+    let positioned_menu =
+        container(menu).padding(Padding::new(0.0).top(pos.y).left(pos.x));
 
     iced::widget::stack![background, positioned_menu].into()
 }

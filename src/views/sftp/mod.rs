@@ -44,6 +44,7 @@ pub fn dual_pane_sftp_view(
         state.tab_id,
         available_hosts.clone(),
         state.active_pane == PaneId::Left,
+        state.context_menu.visible,
         theme,
     );
 
@@ -53,6 +54,7 @@ pub fn dual_pane_sftp_view(
         state.tab_id,
         available_hosts,
         state.active_pane == PaneId::Right,
+        state.context_menu.visible,
         theme,
     );
 
