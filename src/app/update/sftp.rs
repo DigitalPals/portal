@@ -16,7 +16,7 @@ pub fn handle_sftp(portal: &mut Portal, msg: SftpMessage) -> Task<Message> {
             let dual_state = DualPaneSftpState::new(tab_id);
             portal.sftp.insert_tab(tab_id, dual_state);
 
-            let tab = Tab::new_sftp(tab_id, "File Browser".to_string());
+            let tab = Tab::new_sftp(tab_id, "File Browser".to_string(), None);
             portal.tabs.push(tab);
             portal.active_tab = Some(tab_id);
             portal.active_view = View::DualSftp(tab_id);

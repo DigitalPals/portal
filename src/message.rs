@@ -176,6 +176,8 @@ pub enum TabMessage {
     Close(Uuid),
     /// Open new tab (go to host grid)
     New,
+    /// Track which tab is being hovered (for showing close button)
+    Hover(Option<Uuid>),
 }
 
 /// Host management messages

@@ -77,7 +77,7 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
             );
 
             // Create a new tab for this session
-            let tab = Tab::new_terminal(session_id, host_name);
+            let tab = Tab::new_terminal(session_id, host_name, Some(host_id));
             portal.tabs.push(tab);
             portal.active_tab = Some(session_id);
 
@@ -122,8 +122,8 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                 },
             );
 
-            // Create a new tab for this session
-            let tab = Tab::new_terminal(session_id, "Local Terminal".to_string());
+            // Create a new tab for this session (no host_id for local terminal)
+            let tab = Tab::new_terminal(session_id, "Local Terminal".to_string(), None);
             portal.tabs.push(tab);
             portal.active_tab = Some(session_id);
 

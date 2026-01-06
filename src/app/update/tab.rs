@@ -27,5 +27,9 @@ pub fn handle_tab(portal: &mut Portal, msg: TabMessage) -> Task<Message> {
             }
             Task::none()
         }
+        TabMessage::Hover(id) => {
+            portal.hovered_tab = id;
+            Task::none()
+        }
     }
 }

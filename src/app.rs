@@ -81,6 +81,7 @@ pub struct Portal {
     active_view: View,
     search_query: String,
     hovered_host: Option<Uuid>,
+    hovered_tab: Option<Uuid>,
 
     // Sidebar state
     sidebar_state: SidebarState,
@@ -180,6 +181,7 @@ impl Portal {
             active_view: View::HostGrid,
             search_query: String::new(),
             hovered_host: None,
+            hovered_tab: None,
             sidebar_state: SidebarState::Expanded,
             sidebar_state_before_session: None,
             sidebar_selection: SidebarMenuItem::Hosts,
@@ -326,6 +328,8 @@ impl Portal {
             self.focus_section,
             self.tab_focus_index,
             &self.active_view,
+            &self.hosts_config,
+            self.hovered_tab,
         );
 
         // Content row: sidebar | main content

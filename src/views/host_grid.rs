@@ -464,7 +464,7 @@ fn group_card(group: GroupCard, theme: Theme, is_focused: bool) -> Element<'stat
 }
 
 /// Get the icon data for a detected OS
-fn os_icon_data(os: &Option<DetectedOs>) -> &'static [u8] {
+pub fn os_icon_data(os: &Option<DetectedOs>) -> &'static [u8] {
     match os {
         // BSD family
         Some(DetectedOs::FreeBSD) => icons::os::FREEBSD,
