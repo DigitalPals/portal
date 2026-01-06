@@ -20,7 +20,7 @@ o888o
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey.svg)]()
 [![Rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](https://www.rust-lang.org/)
 
-<!-- Add hero screenshot: ![Portal Screenshot](assets/screenshots/hero.png) -->
+![Portal Screenshot](assets/screenshots/hosts.png)
 
 </div>
 
@@ -124,6 +124,8 @@ Save frequently used commands and insert them into any session with a click. Nev
 - **Responsive layout** — Sidebar auto-collapses on narrow windows
 - **Keyboard-first** — Full keyboard navigation support
 
+![SFTP Browser](assets/screenshots/sftp.png)
+
 ## Installation
 
 ### Download
@@ -180,14 +182,6 @@ That's it. You're in.
 | `Ctrl+Tab` | Switch to next tab |
 | `Ctrl+Shift+Tab` | Switch to previous tab |
 | `Ctrl+W` | Close current tab |
-
-## Screenshots
-
-### Host Grid
-![Host Grid](assets/screenshots/hosts.png)
-
-### SFTP Browser
-![SFTP](assets/screenshots/sftp.png)
 
 ## Built With
 
