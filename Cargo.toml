@@ -12,7 +12,7 @@ rust-version = "1.85"
 iced = { version = "0.14", features = ["tokio", "advanced", "svg", "markdown", "highlighter", "image"] }
 
 # Terminal emulation
-alacritty_terminal = "0.24"
+alacritty_terminal = "0.25.1"
 
 # SSH
 russh = "0.56.0"

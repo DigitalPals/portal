@@ -168,9 +168,7 @@ impl TerminalBackend {
         let mut term = self.term.lock();
         let mut processor = self.processor.lock();
 
-        for byte in bytes {
-            processor.advance(&mut *term, *byte);
-        }
+        processor.advance(&mut *term, bytes);
     }
 
     /// Resize the terminal to new dimensions
