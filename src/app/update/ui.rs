@@ -509,6 +509,8 @@ fn handle_sftp_keyboard(
     key: &Key,
     _modifiers: &keyboard::Modifiers,
 ) -> Task<Message> {
+    use iced::widget::scrollable;
+
     let Some(state) = portal.sftp.get_tab_mut(tab_id) else {
         return Task::none();
     };
@@ -519,7 +521,12 @@ fn handle_sftp_keyboard(
         PaneId::Right => &mut state.right_pane,
     };
 
-    let file_count = pane_state.entries.len();
+    // Get visible entries (respecting filter and show_hidden)
+    let visible = pane_state.visible_entries();
+    let visible_count = visible.len();
+
+    // Height of each file row for scroll calculation
+    const ROW_HEIGHT: f32 = 35.0;
 
     match key {
         // Tab switches between panes
@@ -530,36 +537,85 @@ fn handle_sftp_keyboard(
             };
         }
         Key::Named(keyboard::key::Named::ArrowUp) => {
-            if file_count > 0 {
-                let current = pane_state.last_selected_index.unwrap_or(0);
-                let new_idx = current.saturating_sub(1);
+            if visible_count > 0 {
+                // Find current position in visible entries
+                let current_visible_pos = pane_state
+                    .last_selected_index
+                    .and_then(|idx| visible.iter().position(|(i, _)| *i == idx))
+                    .unwrap_or(0);
+                let new_visible_pos = current_visible_pos.saturating_sub(1);
+                let new_idx = visible[new_visible_pos].0;
+
                 pane_state.selected_indices.clear();
                 pane_state.selected_indices.insert(new_idx);
                 pane_state.last_selected_index = Some(new_idx);
+
+                // Scroll to keep selection visible
+                let scroll_offset = new_visible_pos as f32 * ROW_HEIGHT;
+                return scrollable::scroll_to(
+                    pane_state.scrollable_id.clone(),
+                    scrollable::AbsoluteOffset {
+                        x: 0.0,
+                        y: scroll_offset,
+                    },
+                );
             }
         }
         Key::Named(keyboard::key::Named::ArrowDown) => {
-            if file_count > 0 {
-                let current = pane_state.last_selected_index.unwrap_or(0);
-                let new_idx = (current + 1).min(file_count - 1);
+            if visible_count > 0 {
+                // Find current position in visible entries
+                let current_visible_pos = pane_state
+                    .last_selected_index
+                    .and_then(|idx| visible.iter().position(|(i, _)| *i == idx))
+                    .unwrap_or(0);
+                let new_visible_pos = (current_visible_pos + 1).min(visible_count - 1);
+                let new_idx = visible[new_visible_pos].0;
+
                 pane_state.selected_indices.clear();
                 pane_state.selected_indices.insert(new_idx);
                 pane_state.last_selected_index = Some(new_idx);
+
+                // Scroll to keep selection visible
+                let scroll_offset = new_visible_pos as f32 * ROW_HEIGHT;
+                return scrollable::scroll_to(
+                    pane_state.scrollable_id.clone(),
+                    scrollable::AbsoluteOffset {
+                        x: 0.0,
+                        y: scroll_offset,
+                    },
+                );
             }
         }
         Key::Named(keyboard::key::Named::Home) => {
-            if file_count > 0 {
+            if visible_count > 0 {
+                let new_idx = visible[0].0;
                 pane_state.selected_indices.clear();
-                pane_state.selected_indices.insert(0);
-                pane_state.last_selected_index = Some(0);
+                pane_state.selected_indices.insert(new_idx);
+                pane_state.last_selected_index = Some(new_idx);
+
+                // Scroll to top
+                return scrollable::scroll_to(
+                    pane_state.scrollable_id.clone(),
+                    scrollable::AbsoluteOffset { x: 0.0, y: 0.0 },
+                );
             }
         }
         Key::Named(keyboard::key::Named::End) => {
-            if file_count > 0 {
-                let last = file_count - 1;
+            if visible_count > 0 {
+                let new_idx = visible[visible_count - 1].0;
                 pane_state.selected_indices.clear();
-                pane_state.selected_indices.insert(last);
-                pane_state.last_selected_index = Some(last);
+                pane_state.selected_indices.insert(new_idx);
+                pane_state.last_selected_index = Some(new_idx);
+
+                // Scroll to bottom
+                let scroll_offset = (visible_count - 1) as f32 * ROW_HEIGHT;
+                return scrollable::scroll_to(
+                    pane_state.scrollable_id.clone(),
+                    scrollable::AbsoluteOffset {
+                        x: 0.0,
+                        y: scroll_offset,
+                    },
+                );
             }
         }
         Key::Named(keyboard::key::Named::ArrowLeft) => {
@@ -589,14 +645,19 @@ fn handle_sftp_keyboard(
                 if let Some(entry) = pane_state.entries.get(idx) {
                     if entry.is_dir {
                         let path = entry.path.clone();
-                        return portal.update(Message::Sftp(SftpMessage::PaneNavigate(tab_id, active_pane, path)));
+                        return portal.update(Message::Sftp(SftpMessage::PaneNavigate(
+                            tab_id,
+                            active_pane,
+                            path,
+                        )));
                     }
                 }
             }
         }
         Key::Named(keyboard::key::Named::Backspace) => {
             // Navigate to parent
-            return portal.update(Message::Sftp(SftpMessage::PaneNavigateUp(tab_id, active_pane)));
+            return portal
+                .update(Message::Sftp(SftpMessage::PaneNavigateUp(tab_id, active_pane)));
         }
         Key::Named(keyboard::key::Named::F5) => {
             // Refresh

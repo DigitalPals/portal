@@ -5,6 +5,8 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 
+use iced::widget::scrollable;
+
 use crate::message::SessionId;
 use crate::sftp::{FileEntry, SortOrder};
 
@@ -23,6 +25,10 @@ pub struct FilePaneState {
     pub sort_order: SortOrder,
     pub loading: bool,
     pub error: Option<String>,
+    pub show_hidden: bool,
+    pub filter_text: String,
+    pub scrollable_id: scrollable::Id,
+    pub actions_menu_open: bool,
 }
 
 impl FilePaneState {
@@ -39,6 +45,10 @@ impl FilePaneState {
             sort_order: SortOrder::default(),
             loading: true,
             error: None,
+            show_hidden: false,
+            filter_text: String::new(),
+            scrollable_id: scrollable::Id::unique(),
+            actions_menu_open: false,
         }
     }
 
@@ -73,6 +83,33 @@ impl FilePaneState {
         self.selected_indices
             .iter()
             .filter_map(|&i| self.entries.get(i))
+            .collect()
+    }
+
+    /// Get filtered entries with their original indices
+    /// Respects show_hidden and filter_text settings
+    pub fn visible_entries(&self) -> Vec<(usize, &FileEntry)> {
+        self.entries
+            .iter()
+            .enumerate()
+            .filter(|(_, entry)| {
+                // Always show parent directory (..)
+                if entry.is_parent() {
+                    return true;
+                }
+                // Filter hidden files (starting with .)
+                if !self.show_hidden && entry.name.starts_with('.') {
+                    return false;
+                }
+                // Filter by search text (case-insensitive)
+                if !self.filter_text.is_empty() {
+                    return entry
+                        .name
+                        .to_lowercase()
+                        .contains(&self.filter_text.to_lowercase());
+                }
+                true
+            })
             .collect()
     }
 }

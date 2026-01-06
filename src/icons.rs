@@ -15,6 +15,8 @@ pub mod ui {
     pub const HISTORY: &[u8] = include_bytes!("../assets/icons/ui/history.svg");
     pub const SETTINGS: &[u8] = include_bytes!("../assets/icons/ui/settings.svg");
     pub const CHEVRON_LEFT: &[u8] = include_bytes!("../assets/icons/ui/chevron-left.svg");
+    pub const CHEVRON_RIGHT: &[u8] = include_bytes!("../assets/icons/ui/chevron-right.svg");
+    pub const CHEVRON_DOWN: &[u8] = include_bytes!("../assets/icons/ui/chevron-down.svg");
     pub const PLUS: &[u8] = include_bytes!("../assets/icons/ui/plus.svg");
     pub const FOLDER_CLOSED: &[u8] = include_bytes!("../assets/icons/ui/folder-closed.svg");
     pub const TERMINAL: &[u8] = include_bytes!("../assets/icons/ui/terminal.svg");

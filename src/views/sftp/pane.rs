@@ -3,8 +3,12 @@
 //! This module contains the rendering functions for individual panes
 //! in the dual-pane SFTP browser.
 
-use iced::widget::{button, column, container, pick_list, row, scrollable, text, Column};
-use iced::{Alignment, Element, Fill, Length, Padding};
+use std::path::PathBuf;
+
+use iced::widget::{
+    button, column, container, pick_list, row, scrollable, text, text_input, Column, Row, Space,
+};
+use iced::{Alignment, Color, Element, Fill, Length, Padding};
 use uuid::Uuid;
 
 use crate::icons::{self, icon_with_color};
@@ -44,19 +48,25 @@ pub fn single_pane_view(
     theme: Theme,
 ) -> Element<'_, Message> {
     let header = pane_header(state, pane_id, tab_id, available_hosts, is_active, theme);
+    let breadcrumbs = pane_breadcrumb_bar(state, pane_id, tab_id, theme);
     let file_list = pane_file_list(state, pane_id, tab_id, theme);
     let footer = pane_footer(state, pane_id, tab_id, theme);
 
-    let content = column![header, file_list, footer].spacing(0);
+    let content = column![header, breadcrumbs, file_list, footer].spacing(0);
 
-    // Simple container - focus is set via file clicks and context menu
-    container(content)
+    let main = container(content)
         .width(Length::FillPortion(1))
-        .height(Fill)
-        .into()
+        .height(Fill);
+
+    // Overlay actions menu if open
+    if state.actions_menu_open {
+        iced::widget::stack![main, actions_menu_overlay(state, pane_id, tab_id, theme)].into()
+    } else {
+        main.into()
+    }
 }
 
-/// Header with source dropdown, navigation buttons, and path bar
+/// Header with source dropdown, filter input, and actions menu
 pub fn pane_header(
     state: &FilePaneState,
     pane_id: PaneId,
@@ -65,8 +75,6 @@ pub fn pane_header(
     is_active: bool,
     theme: Theme,
 ) -> Element<'_, Message> {
-    let path_text = state.current_path.to_string_lossy().to_string();
-
     // Build source options: Local + all configured hosts
     let mut source_options: Vec<String> = vec!["Local".to_string()];
     for (_host_id, host_name) in &available_hosts {
@@ -99,67 +107,67 @@ pub fn pane_header(
     .text_size(12.0)
     .padding([4, 8]);
 
-    // Navigation buttons
-    let up_btn = button(icon_with_color(icons::ui::CHEVRON_LEFT, 14, theme.text_primary))
-        .style(move |_theme, status| {
-            let bg = match status {
-                iced::widget::button::Status::Hovered => Some(theme.hover.into()),
-                _ => Some(theme.surface.into()),
-            };
-            iced::widget::button::Style {
-                background: bg,
-                text_color: theme.text_primary,
-                border: iced::Border {
-                    radius: 4.0.into(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            }
-        })
+    // Filter input
+    let filter_value = state.filter_text.clone();
+    let filter_input = text_input("Filter...", &filter_value)
+        .on_input(move |value| Message::Sftp(SftpMessage::FilterChanged(tab_id, pane_id, value)))
         .padding([4, 8])
-        .on_press(Message::Sftp(SftpMessage::PaneNavigateUp(tab_id, pane_id)));
+        .size(12)
+        .width(Length::Fixed(120.0))
+        .style(move |_theme, _status| text_input::Style {
+            background: theme.background.into(),
+            border: iced::Border {
+                color: theme.border,
+                width: 1.0,
+                radius: 4.0.into(),
+            },
+            icon: theme.text_muted,
+            placeholder: theme.text_muted,
+            value: theme.text_primary,
+            selection: theme.accent,
+        });
 
-    let refresh_btn = button(icon_with_color(icons::ui::REFRESH, 14, theme.text_primary))
-        .style(move |_theme, status| {
-            let bg = match status {
-                iced::widget::button::Status::Hovered => Some(theme.hover.into()),
-                _ => Some(theme.surface.into()),
-            };
-            iced::widget::button::Style {
-                background: bg,
-                text_color: theme.text_primary,
-                border: iced::Border {
-                    radius: 4.0.into(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            }
-        })
-        .padding([4, 8])
-        .on_press(Message::Sftp(SftpMessage::PaneRefresh(tab_id, pane_id)));
-
-    // Path bar
-    let path_bar = container(text(path_text).size(12).color(theme.text_primary))
-        .padding(Padding::new(6.0).left(8.0).right(8.0))
-        .width(Fill)
-        .style(move |_theme| container::Style {
-            background: Some(theme.surface.into()),
+    // Actions dropdown button
+    let actions_btn = button(
+        row![
+            text("Actions").size(12).color(theme.text_primary),
+            icon_with_color(icons::ui::CHEVRON_DOWN, 12, theme.text_primary)
+        ]
+        .spacing(4)
+        .align_y(Alignment::Center),
+    )
+    .style(move |_theme, status| {
+        let bg = match status {
+            iced::widget::button::Status::Hovered => Some(theme.hover.into()),
+            _ => Some(theme.surface.into()),
+        };
+        iced::widget::button::Style {
+            background: bg,
+            text_color: theme.text_primary,
             border: iced::Border {
                 color: theme.border,
                 width: 1.0,
                 radius: 4.0.into(),
             },
             ..Default::default()
-        });
+        }
+    })
+    .padding([4, 8])
+    .on_press(Message::Sftp(SftpMessage::ToggleActionsMenu(tab_id, pane_id)));
 
     // Active pane indicator: colored top border
     let border_color = if is_active { theme.accent } else { theme.border };
 
     container(
-        row![source_picker, up_btn, refresh_btn, path_bar]
-            .spacing(8)
-            .padding(8)
-            .align_y(Alignment::Center),
+        row![
+            source_picker,
+            Space::with_width(Fill),
+            filter_input,
+            actions_btn
+        ]
+        .spacing(8)
+        .padding(8)
+        .align_y(Alignment::Center),
     )
     .width(Fill)
     .style(move |_theme| container::Style {
@@ -167,6 +175,144 @@ pub fn pane_header(
         border: iced::Border {
             color: border_color,
             width: if is_active { 2.0 } else { 1.0 },
+            radius: 0.0.into(),
+        },
+        ..Default::default()
+    })
+    .into()
+}
+
+/// Breadcrumb navigation bar with back/forward buttons and clickable path segments
+pub fn pane_breadcrumb_bar(
+    state: &FilePaneState,
+    pane_id: PaneId,
+    tab_id: SessionId,
+    theme: Theme,
+) -> Element<'_, Message> {
+    let path = &state.current_path;
+
+    // Back button (navigate to parent)
+    let back_btn = button(icon_with_color(icons::ui::CHEVRON_LEFT, 14, theme.text_primary))
+        .style(move |_theme, status| {
+            let bg = match status {
+                iced::widget::button::Status::Hovered => Some(theme.hover.into()),
+                _ => None,
+            };
+            iced::widget::button::Style {
+                background: bg,
+                text_color: theme.text_primary,
+                border: iced::Border {
+                    radius: 4.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+        })
+        .padding([2, 6])
+        .on_press(Message::Sftp(SftpMessage::PaneNavigateUp(tab_id, pane_id)));
+
+    // Forward button (placeholder - disabled for now)
+    let forward_btn = button(icon_with_color(
+        icons::ui::CHEVRON_RIGHT,
+        14,
+        theme.text_muted,
+    ))
+    .style(move |_theme, _status| iced::widget::button::Style {
+        background: None,
+        text_color: theme.text_muted,
+        border: iced::Border {
+            radius: 4.0.into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    })
+    .padding([2, 6]);
+
+    // Build breadcrumb segments
+    let components: Vec<_> = path.components().collect();
+    let mut breadcrumb_elements: Vec<Element<'_, Message>> = vec![];
+
+    for (i, component) in components.iter().enumerate() {
+        let component_name = component.as_os_str().to_string_lossy().to_string();
+        let display_name = if component_name.is_empty()
+            || component_name == "/"
+            || component_name == std::path::MAIN_SEPARATOR_STR
+        {
+            "/".to_string()
+        } else {
+            component_name
+        };
+
+        // Build path up to this component
+        let segment_path: PathBuf = components[..=i].iter().collect();
+
+        // Add separator if not first
+        if i > 0 {
+            breadcrumb_elements.push(
+                text(">")
+                    .size(12)
+                    .color(theme.text_muted)
+                    .into(),
+            );
+        }
+
+        // Folder icon + clickable segment
+        let segment = button(
+            row![
+                icon_with_color(icons::files::FOLDER, 14, theme.accent),
+                text(display_name).size(12).color(theme.text_primary)
+            ]
+            .spacing(4)
+            .align_y(Alignment::Center),
+        )
+        .style(move |_theme, status| {
+            let bg = match status {
+                iced::widget::button::Status::Hovered => Some(theme.hover.into()),
+                _ => None,
+            };
+            iced::widget::button::Style {
+                background: bg,
+                text_color: theme.text_primary,
+                border: iced::Border {
+                    radius: 4.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+        })
+        .padding([2, 6])
+        .on_press(Message::Sftp(SftpMessage::PaneBreadcrumbNavigate(
+            tab_id,
+            pane_id,
+            segment_path,
+        )));
+
+        breadcrumb_elements.push(segment.into());
+    }
+
+    let breadcrumb_row = Row::with_children(breadcrumb_elements)
+        .spacing(4)
+        .align_y(Alignment::Center);
+
+    // Wrap breadcrumbs in scrollable for long paths
+    let scrollable_breadcrumbs = scrollable(breadcrumb_row)
+        .direction(scrollable::Direction::Horizontal(
+            scrollable::Scrollbar::new().width(0).scroller_width(0),
+        ))
+        .width(Fill);
+
+    container(
+        row![back_btn, forward_btn, scrollable_breadcrumbs]
+            .spacing(4)
+            .padding([4, 8])
+            .align_y(Alignment::Center),
+    )
+    .width(Fill)
+    .style(move |_| container::Style {
+        background: Some(theme.surface.into()),
+        border: iced::Border {
+            color: theme.border,
+            width: 1.0,
             radius: 0.0.into(),
         },
         ..Default::default()
@@ -206,11 +352,19 @@ pub fn pane_file_list<'a>(
         .into();
     }
 
-    if state.entries.is_empty() {
+    // Get filtered entries
+    let visible = state.visible_entries();
+
+    if visible.is_empty() {
+        let message = if state.entries.is_empty() {
+            "Empty directory"
+        } else {
+            "No matching files"
+        };
         return container(
             column![
                 icon_with_color(icons::files::FOLDER, 32, theme.text_muted),
-                text("Empty directory").size(14).color(theme.text_muted),
+                text(message).size(14).color(theme.text_muted),
             ]
             .spacing(8)
             .align_x(Alignment::Center),
@@ -255,19 +409,60 @@ pub fn pane_file_list<'a>(
         ..Default::default()
     });
 
-    // File entries
-    let entries: Vec<Element<'_, Message>> = state
-        .entries
+    // File entries - use visible_entries which returns (original_index, &FileEntry)
+    let entries: Vec<Element<'_, Message>> = visible
         .iter()
-        .enumerate()
-        .map(|(index, entry)| {
-            pane_file_entry_row(entry, index, state.is_selected(index), tab_id, pane_id, theme)
+        .map(|(original_index, entry)| {
+            pane_file_entry_row(
+                entry,
+                *original_index,
+                state.is_selected(*original_index),
+                tab_id,
+                pane_id,
+                theme,
+            )
         })
         .collect();
 
+    // Scrollbar styling: show only when hovered/dragged
+    let scrollbar_color = theme.text_muted.scale_alpha(0.5);
     let file_list = scrollable(Column::with_children(entries).spacing(0))
+        .id(state.scrollable_id.clone())
         .height(Fill)
-        .width(Fill);
+        .width(Fill)
+        .direction(scrollable::Direction::Vertical(
+            scrollable::Scrollbar::new().width(6).scroller_width(6),
+        ))
+        .style(move |_theme, status| {
+            let scroller_color = match status {
+                scrollable::Status::Active => Color::TRANSPARENT,
+                scrollable::Status::Hovered { .. }
+                | scrollable::Status::Dragged { .. } => scrollbar_color,
+            };
+            scrollable::Style {
+                container: container::Style::default(),
+                vertical_rail: scrollable::Rail {
+                    background: None,
+                    border: iced::Border::default(),
+                    scroller: scrollable::Scroller {
+                        color: scroller_color,
+                        border: iced::Border {
+                            radius: 3.0.into(),
+                            ..Default::default()
+                        },
+                    },
+                },
+                horizontal_rail: scrollable::Rail {
+                    background: None,
+                    border: iced::Border::default(),
+                    scroller: scrollable::Scroller {
+                        color: Color::TRANSPARENT,
+                        border: iced::Border::default(),
+                    },
+                },
+                gap: None,
+            }
+        });
 
     column![headers, file_list].spacing(0).into()
 }
@@ -387,14 +582,18 @@ pub fn pane_footer<'a>(
     _tab_id: SessionId,
     theme: Theme,
 ) -> Element<'a, Message> {
-    let item_count = state.entries.len();
+    let total_count = state.entries.len();
+    let visible_count = state.visible_entries().len();
     let selected_count = state.selected_indices.len();
+
     let status = if state.loading {
         "Loading...".to_string()
     } else if selected_count > 0 {
-        format!("{} of {} items selected", selected_count, item_count)
+        format!("{} of {} items selected", selected_count, visible_count)
+    } else if visible_count != total_count {
+        format!("{} of {} items (filtered)", visible_count, total_count)
     } else {
-        format!("{} items", item_count)
+        format!("{} items", total_count)
     };
 
     container(
@@ -414,4 +613,77 @@ pub fn pane_footer<'a>(
         ..Default::default()
     })
     .into()
+}
+
+/// Actions dropdown menu overlay
+pub fn actions_menu_overlay(
+    state: &FilePaneState,
+    pane_id: PaneId,
+    tab_id: SessionId,
+    theme: Theme,
+) -> Element<'_, Message> {
+    if !state.actions_menu_open {
+        return Space::new(0, 0).into();
+    }
+
+    let show_hidden_label = if state.show_hidden {
+        "Hide Hidden Files"
+    } else {
+        "Show Hidden Files"
+    };
+
+    let menu_item = button(text(show_hidden_label).size(13).color(theme.text_primary))
+        .padding([8, 16])
+        .width(Length::Fixed(180.0))
+        .style(move |_theme, status| {
+            let bg = match status {
+                iced::widget::button::Status::Hovered => Some(theme.hover.into()),
+                _ => None,
+            };
+            iced::widget::button::Style {
+                background: bg,
+                text_color: theme.text_primary,
+                border: iced::Border {
+                    radius: 4.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+        })
+        .on_press(Message::Sftp(SftpMessage::ToggleShowHidden(tab_id, pane_id)));
+
+    let menu_bg = Color::from_rgb(0.98, 0.98, 0.98);
+    let menu = container(column![menu_item])
+        .padding(8)
+        .style(move |_| container::Style {
+            background: Some(menu_bg.into()),
+            border: iced::Border {
+                color: theme.border,
+                width: 1.0,
+                radius: 12.0.into(),
+            },
+            shadow: iced::Shadow {
+                color: Color::from_rgba(0.0, 0.0, 0.0, 0.15),
+                offset: iced::Vector::new(0.0, 4.0),
+                blur_radius: 16.0,
+            },
+            ..Default::default()
+        });
+
+    // Background to dismiss menu when clicking outside
+    let background = crate::widgets::mouse_area(
+        container(Space::new(Fill, Fill))
+            .width(Fill)
+            .height(Fill),
+    )
+    .on_press(Message::Sftp(SftpMessage::ToggleActionsMenu(tab_id, pane_id)));
+
+    // Position menu at top-right of pane (below the Actions button)
+    let positioned_menu = container(
+        container(menu).align_x(Alignment::End),
+    )
+    .width(Fill)
+    .padding(Padding::new(0.0).top(40.0).right(8.0));
+
+    iced::widget::stack![background, positioned_menu].into()
 }

@@ -317,5 +317,43 @@ pub fn handle_sftp(portal: &mut Portal, msg: SftpMessage) -> Task<Message> {
             }
             Task::none()
         }
+        SftpMessage::ToggleShowHidden(tab_id, pane_id) => {
+            if let Some(tab_state) = portal.sftp.get_tab_mut(tab_id) {
+                let pane = tab_state.pane_mut(pane_id);
+                pane.show_hidden = !pane.show_hidden;
+                pane.actions_menu_open = false;
+                // Clear selection since indices may change
+                pane.selected_indices.clear();
+                pane.last_selected_index = None;
+            }
+            Task::none()
+        }
+        SftpMessage::ToggleActionsMenu(tab_id, pane_id) => {
+            if let Some(tab_state) = portal.sftp.get_tab_mut(tab_id) {
+                let pane = tab_state.pane_mut(pane_id);
+                pane.actions_menu_open = !pane.actions_menu_open;
+            }
+            Task::none()
+        }
+        SftpMessage::FilterChanged(tab_id, pane_id, text) => {
+            if let Some(tab_state) = portal.sftp.get_tab_mut(tab_id) {
+                let pane = tab_state.pane_mut(pane_id);
+                pane.filter_text = text;
+                // Clear selection since filtered indices may change
+                pane.selected_indices.clear();
+                pane.last_selected_index = None;
+            }
+            Task::none()
+        }
+        SftpMessage::PaneBreadcrumbNavigate(tab_id, pane_id, path) => {
+            if let Some(tab_state) = portal.sftp.get_tab_mut(tab_id) {
+                tab_state.active_pane = pane_id;
+                let pane = tab_state.pane_mut(pane_id);
+                pane.current_path = path;
+                pane.loading = true;
+                return portal.load_dual_pane_directory(tab_id, pane_id);
+            }
+            Task::none()
+        }
     }
 }

@@ -134,6 +134,14 @@ pub enum SftpMessage {
     CopyResult(SessionId, PaneId, Result<usize, String>),
     /// Result of open with command
     OpenWithResult(Result<(), String>),
+    /// Toggle hidden files visibility
+    ToggleShowHidden(SessionId, PaneId),
+    /// Toggle actions menu visibility
+    ToggleActionsMenu(SessionId, PaneId),
+    /// Filter text changed
+    FilterChanged(SessionId, PaneId, String),
+    /// Navigate to specific breadcrumb path segment
+    PaneBreadcrumbNavigate(SessionId, PaneId, PathBuf),
 }
 
 /// Dialog-related messages
