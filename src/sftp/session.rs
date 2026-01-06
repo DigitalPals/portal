@@ -173,15 +173,19 @@ impl SftpSession {
 
     /// Remove a file or directory recursively
     pub async fn remove_recursive(&self, path: &Path) -> Result<(), SftpError> {
-        // First check if it's a directory
-        let is_dir = {
+        // First check if it's a directory or symlink (do not follow symlinks)
+        let (is_dir, is_symlink) = {
             let sftp = self.sftp.lock().await;
             let path_str = path.to_string_lossy().to_string();
-            let metadata = sftp.metadata(path_str.clone()).await.map_err(|e| {
+            let metadata = sftp.symlink_metadata(path_str.clone()).await.map_err(|e| {
                 SftpError::FileOperation(format!("Failed to get metadata for {}: {}", path_str, e))
             })?;
-            metadata.is_dir()
+            (metadata.is_dir(), metadata.is_symlink())
         };
+
+        if is_symlink {
+            return self.remove_file(path).await;
+        }
 
         if is_dir {
             // List and recursively delete contents

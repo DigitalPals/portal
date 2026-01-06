@@ -1,4 +1,5 @@
 use std::future::Future;
+use std::time::Duration;
 use std::sync::Arc;
 
 use russh::ChannelId;
@@ -111,9 +112,9 @@ impl Handler for ClientHandler {
                             )
                         })?;
 
-                    // Wait for user response
-                    match rx.await {
-                        Ok(HostKeyVerificationResponse::Accept) => {
+                    // Wait for user response (with timeout)
+                    match tokio::time::timeout(Duration::from_secs(60), rx).await {
+                        Ok(Ok(HostKeyVerificationResponse::Accept)) => {
                             tracing::debug!("User accepted host key for {}:{}", host, port);
                             // Save key to known_hosts
                             match tokio::task::spawn_blocking({
@@ -137,10 +138,16 @@ impl Handler for ClientHandler {
                             }
                             Ok(true)
                         }
-                        Ok(HostKeyVerificationResponse::Reject) | Err(_) => {
+                        Ok(Ok(HostKeyVerificationResponse::Reject)) | Ok(Err(_)) => {
                             tracing::debug!("User rejected host key for {}:{}", host, port);
                             Err(SshError::HostKeyVerification(
                                 "Host key rejected by user".to_string(),
+                            ))
+                        }
+                        Err(_) => {
+                            tracing::warn!("Host key verification timed out for {}:{}", host, port);
+                            Err(SshError::HostKeyVerification(
+                                "Host key verification timed out".to_string(),
                             ))
                         }
                     }
@@ -183,9 +190,9 @@ impl Handler for ClientHandler {
                             )
                         })?;
 
-                    // Wait for user response
-                    match rx.await {
-                        Ok(HostKeyVerificationResponse::Accept) => {
+                    // Wait for user response (with timeout)
+                    match tokio::time::timeout(Duration::from_secs(60), rx).await {
+                        Ok(Ok(HostKeyVerificationResponse::Accept)) => {
                             tracing::debug!("User accepted changed host key for {}:{}", host, port);
                             // Update key in known_hosts
                             match tokio::task::spawn_blocking({
@@ -209,10 +216,20 @@ impl Handler for ClientHandler {
                             }
                             Ok(true)
                         }
-                        Ok(HostKeyVerificationResponse::Reject) | Err(_) => {
+                        Ok(Ok(HostKeyVerificationResponse::Reject)) | Ok(Err(_)) => {
                             tracing::debug!("User rejected changed host key for {}:{}", host, port);
                             Err(SshError::HostKeyVerification(
                                 "Host key change rejected by user".to_string(),
+                            ))
+                        }
+                        Err(_) => {
+                            tracing::warn!(
+                                "Host key verification timed out for {}:{}",
+                                host,
+                                port
+                            );
+                            Err(SshError::HostKeyVerification(
+                                "Host key verification timed out".to_string(),
                             ))
                         }
                     }

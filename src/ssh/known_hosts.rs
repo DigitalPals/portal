@@ -77,7 +77,28 @@ impl KnownHostsManager {
     }
 
     fn primary_write_path(&self) -> Option<PathBuf> {
-        self.primary_path.clone().or(self.ssh_path.clone())
+        self.select_write_path()
+    }
+
+    fn select_write_path(&self) -> Option<PathBuf> {
+        if let Some(path) = &self.primary_path {
+            if Self::ensure_parent_dir(path).is_ok() {
+                return Some(path.clone());
+            }
+        }
+        if let Some(path) = &self.ssh_path {
+            if Self::ensure_parent_dir(path).is_ok() {
+                return Some(path.clone());
+            }
+        }
+        None
+    }
+
+    fn ensure_parent_dir(path: &PathBuf) -> std::io::Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        Ok(())
     }
 
     fn scan_known_hosts_for_host(&self, host: &str, port: u16) -> HostKeyScan {

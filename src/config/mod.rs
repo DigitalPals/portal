@@ -48,6 +48,7 @@ pub fn write_atomic(path: &Path, content: &str) -> std::io::Result<()> {
             if backup_created {
                 let _ = std::fs::remove_file(&backup_path);
             }
+            sync_parent_dir(path);
             Ok(())
         }
         Err(err) => {
@@ -55,7 +56,16 @@ pub fn write_atomic(path: &Path, content: &str) -> std::io::Result<()> {
             if backup_created {
                 let _ = std::fs::rename(&backup_path, path);
             }
+            sync_parent_dir(path);
             Err(err)
+        }
+    }
+}
+
+fn sync_parent_dir(path: &Path) {
+    if let Some(parent) = path.parent() {
+        if let Ok(dir) = std::fs::File::open(parent) {
+            let _ = dir.sync_all();
         }
     }
 }
