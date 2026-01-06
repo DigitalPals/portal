@@ -293,3 +293,96 @@ impl DualPaneSftpState {
         pane.current_path == home_dir
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+    use std::path::PathBuf;
+
+    fn entry(name: &str) -> FileEntry {
+        FileEntry {
+            name: name.to_string(),
+            path: PathBuf::from(name),
+            is_dir: false,
+            is_symlink: false,
+            size: 0,
+            modified: Some(Utc::now()),
+        }
+    }
+
+    #[test]
+    fn visible_entries_keeps_parent_and_filters_hidden() {
+        let mut state = FilePaneState::new_local();
+        state.entries = vec![entry(".."), entry(".secret"), entry("notes.txt")];
+        state.show_hidden = false;
+
+        let visible: Vec<_> = state.visible_entries().into_iter().map(|(_, e)| e.name.clone()).collect();
+
+        assert_eq!(visible, vec!["..", "notes.txt"]);
+    }
+
+    #[test]
+    fn visible_entries_filters_by_text_case_insensitive() {
+        let mut state = FilePaneState::new_local();
+        state.entries = vec![entry("alpha.txt"), entry("Beta.md"), entry("gamma.log")];
+        state.filter_text = "be".to_string();
+
+        let visible: Vec<_> = state.visible_entries().into_iter().map(|(_, e)| e.name.clone()).collect();
+
+        assert_eq!(visible, vec!["Beta.md"]);
+    }
+
+    #[test]
+    fn select_replaces_previous_selection() {
+        let mut state = FilePaneState::new_local();
+        state.entries = vec![entry("one"), entry("two"), entry("three")];
+        state.select(0);
+        state.select(2);
+
+        assert!(state.is_selected(2));
+        assert!(!state.is_selected(0));
+        assert_eq!(state.last_selected_index, Some(2));
+    }
+
+    #[test]
+    fn dialog_is_valid_for_rename_rules() {
+        let mut dialog = SftpDialogState::rename(PaneId::Left, "old".to_string());
+        assert!(dialog.is_valid());
+
+        dialog.input_value = "".to_string();
+        assert!(!dialog.is_valid());
+
+        dialog.input_value = "bad/name".to_string();
+        assert!(!dialog.is_valid());
+
+        dialog.input_value = ".".to_string();
+        assert!(!dialog.is_valid());
+
+        dialog.input_value = "..".to_string();
+        assert!(!dialog.is_valid());
+    }
+
+    #[test]
+    fn dialog_is_valid_for_open_with_and_delete() {
+        let mut open = SftpDialogState::open_with(
+            PaneId::Right,
+            "notes.txt".to_string(),
+            PathBuf::from("notes.txt"),
+            false,
+        );
+        open.input_value = "code".to_string();
+        assert!(open.is_valid());
+        open.input_value = "   ".to_string();
+        assert!(!open.is_valid());
+
+        let empty_delete = SftpDialogState::delete(PaneId::Left, Vec::new());
+        assert!(!empty_delete.is_valid());
+
+        let delete = SftpDialogState::delete(
+            PaneId::Left,
+            vec![("notes.txt".to_string(), PathBuf::from("notes.txt"), false)],
+        );
+        assert!(delete.is_valid());
+    }
+}

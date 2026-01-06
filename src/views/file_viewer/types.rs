@@ -101,3 +101,29 @@ pub enum FileSource {
         remote_path: PathBuf,
     },
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn file_type_from_extension_is_case_insensitive() {
+        assert_eq!(
+            FileType::from_extension("RS"),
+            FileType::Text {
+                language: Some("rust".to_string())
+            }
+        );
+    }
+
+    #[test]
+    fn file_type_from_extension_detects_markdown_and_image() {
+        assert_eq!(FileType::from_extension("md"), FileType::Markdown);
+        assert_eq!(FileType::from_extension("png"), FileType::Image);
+    }
+
+    #[test]
+    fn file_type_from_extension_falls_back_to_binary() {
+        assert_eq!(FileType::from_extension("unknownext"), FileType::Binary);
+    }
+}

@@ -44,3 +44,32 @@ impl FileViewerManager {
         self.viewers.contains_key(&viewer_id)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::views::file_viewer::{FileSource, FileType, FileViewerState};
+    use std::path::PathBuf;
+    use uuid::Uuid;
+
+    #[test]
+    fn insert_get_remove_viewer() {
+        let mut manager = FileViewerManager::new();
+        let viewer_id = Uuid::new_v4();
+        let state = FileViewerState::new(
+            viewer_id,
+            "notes.txt".to_string(),
+            FileSource::Local {
+                path: PathBuf::from("notes.txt"),
+            },
+            FileType::Text { language: None },
+        );
+
+        manager.insert(state);
+
+        assert!(manager.contains(viewer_id));
+        assert!(manager.get(viewer_id).is_some());
+        assert!(manager.remove(viewer_id).is_some());
+        assert!(!manager.contains(viewer_id));
+    }
+}

@@ -125,3 +125,50 @@ impl FileViewerState {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use iced::widget::text_editor;
+    use std::path::PathBuf;
+
+    #[test]
+    fn toggle_preview_updates_mode_and_raw_text() {
+        let mut state = FileViewerState::new(
+            uuid::Uuid::new_v4(),
+            "notes.md".to_string(),
+            FileSource::Local {
+                path: PathBuf::from("notes.md"),
+            },
+            FileType::Markdown,
+        );
+
+        state.content = ViewerContent::Markdown {
+            content: text_editor::Content::with_text("initial"),
+            raw_text: "initial".to_string(),
+            preview_mode: false,
+        };
+
+        state.toggle_preview();
+        match &state.content {
+            ViewerContent::Markdown { preview_mode, raw_text, .. } => {
+                assert!(*preview_mode);
+                assert_eq!(raw_text, "initial");
+            }
+            _ => panic!("expected markdown content"),
+        }
+
+        if let ViewerContent::Markdown { content, .. } = &mut state.content {
+            *content = text_editor::Content::with_text("updated");
+        }
+
+        state.toggle_preview();
+        match &state.content {
+            ViewerContent::Markdown { preview_mode, raw_text, .. } => {
+                assert!(!*preview_mode);
+                assert_eq!(raw_text, "updated");
+            }
+            _ => panic!("expected markdown content"),
+        }
+    }
+}

@@ -1,26 +1,23 @@
 use std::sync::Arc;
-use std::time::Duration;
 
 use futures::stream;
 use iced::Task;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-use crate::config::{DetectedOs, Host};
+use crate::config::Host;
 use crate::fs_utils::{copy_dir_recursive, count_items_in_dir};
 use crate::local::{LocalEvent, LocalSession};
 use crate::local_fs::list_local_dir;
 use crate::message::{
-    DialogMessage, FileViewerMessage, Message, SessionId, SessionMessage, SftpMessage,
-    VerificationRequestWrapper,
+    Message, SessionId, SessionMessage, SftpMessage,
 };
-use crate::sftp::SftpClient;
-use crate::ssh::{SshClient, SshEvent};
-use crate::views::file_viewer::{FileSource, FileType, FileViewerState, ViewerContent};
+use crate::views::file_viewer::FileType;
 use crate::views::sftp::{ContextMenuAction, PaneId, PaneSource, PermissionBits, SftpDialogType};
 use crate::views::tabs::Tab;
 use crate::views::toast::Toast;
 
+use super::services::{connection, file_viewer, history, open_with};
 use super::{Portal, View};
 
 impl Portal {
@@ -36,25 +33,10 @@ impl Portal {
     }
 
     pub(super) fn close_tab(&mut self, tab_id: Uuid) {
-        let sftp_sessions_to_close = self
-            .sftp
-            .get_tab(tab_id)
-            .map(|state| {
-                let mut ids = Vec::new();
-                for pane in [&state.left_pane, &state.right_pane] {
-                    if let PaneSource::Remote { session_id, .. } = pane.source {
-                        if !ids.contains(&session_id) {
-                            ids.push(session_id);
-                        }
-                    }
-                }
-                ids
-            })
-            .unwrap_or_default();
+        let sftp_sessions_to_close = self.sftp.remove_tab_and_collect_sessions(tab_id);
 
         self.tabs.retain(|t| t.id != tab_id);
         self.sessions.remove(tab_id);
-        self.sftp.remove_tab(tab_id);
         self.file_viewers.remove(tab_id);
 
         let mut history_changed = false;
@@ -63,8 +45,9 @@ impl Portal {
             if !still_used {
                 self.sftp.remove_connection(session_id);
                 if let Some(entry_id) = self.sftp.remove_history_entry(session_id) {
-                    self.history_config.mark_disconnected(entry_id);
-                    history_changed = true;
+                    if history::mark_entry_disconnected(&mut self.history_config, entry_id) {
+                        history_changed = true;
+                    }
                 }
             }
         }
@@ -133,69 +116,9 @@ impl Portal {
         let session_id = Uuid::new_v4();
         let host_id = host.id;
 
-        // Detect OS if not already detected, or if it's generic Linux (re-detect to get specific distro)
-        let should_detect_os = match &host.detected_os {
-            None => true,
-            Some(DetectedOs::Linux) => true, // Re-detect generic Linux to get specific distro
-            Some(_) => false,
-        };
+        let should_detect_os = connection::should_detect_os(host.detected_os.as_ref());
 
-        // Create two channels:
-        // 1. For sending events during connection (verification requests)
-        // 2. For ongoing session data after connection
-        let (event_tx, event_rx) = mpsc::unbounded_channel::<SshEvent>();
-
-        // Start listening for events immediately - this allows us to receive
-        // HostKeyVerification events during the connection handshake
-        let event_listener = Task::run(
-            stream::unfold(event_rx, |mut rx| async move {
-                rx.recv().await.map(|event| (event, rx))
-            }),
-            move |event| match event {
-                SshEvent::Data(data) => Message::Session(SessionMessage::Data(session_id, data)),
-                SshEvent::Disconnected => Message::Session(SessionMessage::Disconnected(session_id)),
-                SshEvent::HostKeyVerification(request) => {
-                    Message::Dialog(DialogMessage::HostKeyVerification(VerificationRequestWrapper(Some(request))))
-                }
-                SshEvent::Connected => Message::Noop,
-            },
-        );
-
-        let ssh_client = SshClient::default();
-        let host_for_task = Arc::clone(&host);
-
-        // Connection task
-        let connect_task = Task::perform(
-            async move {
-                let result = ssh_client
-                    .connect(
-                        &host_for_task,
-                        (80, 24),
-                        event_tx,
-                        Duration::from_secs(30),
-                        None,
-                        should_detect_os,
-                    )
-                    .await;
-
-                (session_id, host_id, host_for_task.name.clone(), result)
-            },
-            |(session_id, host_id, host_name, result)| match result {
-                Ok((ssh_session, detected_os)) => {
-                    Message::Session(SessionMessage::Connected {
-                        session_id,
-                        host_name,
-                        ssh_session,
-                        host_id,
-                        detected_os,
-                    })
-                }
-                Err(e) => Message::Session(SessionMessage::Error(format!("Connection failed: {}", e))),
-            },
-        );
-
-        // Run both tasks: listener starts immediately, connection proceeds in parallel
-        Task::batch([event_listener, connect_task])
+        connection::ssh_connect_tasks(host, session_id, host_id, should_detect_os)
     }
 
     /// Spawn a local terminal session
@@ -293,48 +216,7 @@ impl Portal {
         // Store pending connection info for host key verification
         self.sftp.set_pending_connection(Some((tab_id, pane_id, host_id)));
 
-        // Create event channel for SSH events (including host key verification)
-        let (event_tx, event_rx) = mpsc::unbounded_channel::<SshEvent>();
-
-        let sftp_client = SftpClient::default();
-
-        // Start listening for SSH events (host key verification)
-        let event_listener = Task::run(
-            futures::stream::unfold(event_rx, |mut rx| async move {
-                rx.recv().await.map(|event| (event, rx))
-            }),
-            move |event| match event {
-                SshEvent::HostKeyVerification(request) => {
-                    Message::Dialog(DialogMessage::HostKeyVerification(VerificationRequestWrapper(Some(request))))
-                }
-                _ => Message::Noop,
-            },
-        );
-
-        // Connection task
-        let host_for_task = Arc::clone(&host);
-        let connect_task = Task::perform(
-            async move {
-                let result = sftp_client
-                    .connect(&host_for_task, event_tx, Duration::from_secs(30), None)
-                    .await;
-
-                (tab_id, pane_id, sftp_session_id, host_for_task.name.clone(), result)
-            },
-            move |(tab_id, pane_id, sftp_session_id, host_name, result)| match result {
-                Ok(sftp_session) => Message::Sftp(SftpMessage::Connected {
-                    tab_id,
-                    pane_id,
-                    sftp_session_id,
-                    host_id,
-                    host_name,
-                    sftp_session,
-                }),
-                Err(e) => Message::Session(SessionMessage::Error(format!("SFTP connection failed: {}", e))),
-            },
-        );
-
-        Task::batch([event_listener, connect_task])
+        connection::sftp_connect_tasks(host, tab_id, pane_id, sftp_session_id, host_id)
     }
 
     /// Handle context menu actions for SFTP panes
@@ -363,113 +245,45 @@ impl Portal {
                         // Check if file type is viewable
                         if !file_type.is_viewable() {
                             // Fall back to external opening for binary files
-                            let path_for_open = file_path.clone();
-                            match &pane.source {
-                                PaneSource::Local => {
-                                    return Task::perform(
-                                        async move {
-                                            open::that(&path_for_open)
-                                                .map_err(|e| format!("Failed to open file: {}", e))
-                                        },
-                                        |result| Message::Sftp(SftpMessage::OpenWithResult(result)),
-                                    );
-                                }
+                            return match &pane.source {
+                                PaneSource::Local => open_with::open_local_default(file_path.clone()),
                                 PaneSource::Remote { session_id, .. } => {
                                     if let Some(sftp) = self.sftp.get_connection(*session_id) {
-                                        let sftp = sftp.clone();
-                                        let fname = file_name.clone();
-                                        return Task::perform(
-                                            async move {
-                                                let temp_dir = std::env::temp_dir()
-                                                    .join("portal_open")
-                                                    .join(format!("{}", uuid::Uuid::new_v4()));
-                                                tokio::fs::create_dir_all(&temp_dir).await
-                                                    .map_err(|e| format!("Failed to create temp directory: {}", e))?;
-                                                let local_path = temp_dir.join(&fname);
-                                                sftp.download(&path_for_open, &local_path).await
-                                                    .map_err(|e| format!("Failed to download file: {}", e))?;
-                                                open::that(&local_path)
-                                                    .map_err(|e| format!("Failed to open file: {}", e))
-                                            },
-                                            |result| Message::Sftp(SftpMessage::OpenWithResult(result)),
-                                        );
+                                        open_with::open_remote_default(sftp.clone(), file_path.clone())
+                                    } else {
+                                        Task::none()
                                     }
                                 }
-                            }
-                            return Task::none();
+                            };
                         }
 
                         // Create a new file viewer
                         let viewer_id = Uuid::new_v4();
 
-                        let (file_source, load_task): (FileSource, Task<Message>) = match &pane.source {
+                        let (viewer_state, load_task) = match &pane.source {
                             PaneSource::Local => {
-                                let source = FileSource::Local { path: file_path.clone() };
-                                let path = file_path.clone();
-                                let ftype = file_type.clone();
-                                let task = Task::perform(
-                                    async move { load_local_file(path, ftype).await },
-                                    move |result| match result {
-                                        Ok(content) => Message::FileViewer(
-                                            FileViewerMessage::ContentLoaded { viewer_id, content },
-                                        ),
-                                        Err(e) => Message::FileViewer(
-                                            FileViewerMessage::LoadError(viewer_id, e),
-                                        ),
-                                    },
-                                );
-                                (source, task)
+                                file_viewer::build_local_viewer(
+                                    viewer_id,
+                                    file_name.clone(),
+                                    file_path.clone(),
+                                    file_type.clone(),
+                                )
                             }
                             PaneSource::Remote { session_id, .. } => {
-                                let temp_dir = std::env::temp_dir()
-                                    .join("portal_viewer")
-                                    .join(format!("{}", viewer_id));
-                                let temp_path = temp_dir.join(&file_name);
-
-                                let source = FileSource::Remote {
-                                    temp_path: temp_path.clone(),
-                                    session_id: *session_id,
-                                    remote_path: file_path.clone(),
-                                };
-
                                 if let Some(sftp) = self.sftp.get_connection(*session_id) {
-                                    let sftp = sftp.clone();
-                                    let remote = file_path.clone();
-                                    let ftype = file_type.clone();
-                                    let task = Task::perform(
-                                        async move {
-                                            // Create temp directory
-                                            tokio::fs::create_dir_all(temp_dir).await
-                                                .map_err(|e| format!("Failed to create temp directory: {}", e))?;
-                                            // Download file
-                                            sftp.download(&remote, &temp_path).await
-                                                .map_err(|e| format!("Failed to download file: {}", e))?;
-                                            // Load content
-                                            load_local_file(temp_path, ftype).await
-                                        },
-                                        move |result| match result {
-                                            Ok(content) => Message::FileViewer(
-                                                FileViewerMessage::ContentLoaded { viewer_id, content },
-                                            ),
-                                            Err(e) => Message::FileViewer(
-                                                FileViewerMessage::LoadError(viewer_id, e),
-                                            ),
-                                        },
-                                    );
-                                    (source, task)
+                                    file_viewer::build_remote_viewer(
+                                        viewer_id,
+                                        file_name.clone(),
+                                        file_path.clone(),
+                                        *session_id,
+                                        sftp.clone(),
+                                        file_type.clone(),
+                                    )
                                 } else {
                                     return Task::none();
                                 }
                             }
                         };
-
-                        // Create the viewer state
-                        let viewer_state = FileViewerState::new(
-                            viewer_id,
-                            file_name.clone(),
-                            file_source,
-                            file_type,
-                        );
 
                         // Add viewer to manager
                         self.file_viewers.insert(viewer_state);
@@ -787,59 +601,18 @@ impl Portal {
                 }
 
                 if is_remote {
-                    // For remote files, download to temp first, then open with command
                     if let PaneSource::Remote { session_id, .. } = &pane_source {
                         if let Some(sftp) = self.sftp.get_connection(*session_id) {
-                            let sftp = sftp.clone();
-                            let file_name = path.file_name()
-                                .map(|n| n.to_string_lossy().to_string())
-                                .unwrap_or_default();
-                            return Task::perform(
-                                async move {
-                                    // Create temp directory for this file
-                                    let temp_dir = std::env::temp_dir()
-                                        .join("portal_open")
-                                        .join(format!("{}", uuid::Uuid::new_v4()));
-
-                                    tokio::fs::create_dir_all(&temp_dir).await
-                                        .map_err(|e| format!("Failed to create temp directory: {}", e))?;
-
-                                    let local_path = temp_dir.join(&file_name);
-
-                                    // Download the file
-                                    sftp.download(&path, &local_path).await
-                                        .map_err(|e| format!("Failed to download file: {}", e))?;
-
-                                    // Open with specified command
-                                    let status = std::process::Command::new(&command)
-                                        .arg(&local_path)
-                                        .spawn();
-
-                                    match status {
-                                        Ok(_) => Ok(()),
-                                        Err(e) => Err(format!("Failed to run '{}': {}", command, e)),
-                                    }
-                                },
-                                |result| Message::Sftp(SftpMessage::OpenWithResult(result)),
+                            return open_with::open_remote_with_command(
+                                sftp.clone(),
+                                path,
+                                command,
                             );
                         }
                     }
                     Task::none()
                 } else {
-                    // For local files, just run the command directly
-                    Task::perform(
-                        async move {
-                            let status = std::process::Command::new(&command)
-                                .arg(&path)
-                                .spawn();
-
-                            match status {
-                                Ok(_) => Ok(()),
-                                Err(e) => Err(format!("Failed to run '{}': {}", command, e)),
-                            }
-                        },
-                        |result| Message::Sftp(SftpMessage::OpenWithResult(result)),
-                    )
+                    open_with::open_local_with_command(path, command)
                 }
             }
         }
@@ -1022,50 +795,6 @@ impl Portal {
                     Task::none()
                 }
             }
-        }
-    }
-}
-
-/// Load file content from local path based on file type
-async fn load_local_file(
-    path: std::path::PathBuf,
-    file_type: FileType,
-) -> Result<ViewerContent, String> {
-    match file_type {
-        FileType::Text { .. } => {
-            let text = tokio::fs::read_to_string(&path)
-                .await
-                .map_err(|e| format!("Failed to read file: {}", e))?;
-            Ok(ViewerContent::Text {
-                content: iced::widget::text_editor::Content::with_text(&text),
-            })
-        }
-        FileType::Markdown => {
-            let text = tokio::fs::read_to_string(&path)
-                .await
-                .map_err(|e| format!("Failed to read file: {}", e))?;
-            Ok(ViewerContent::Markdown {
-                content: iced::widget::text_editor::Content::with_text(&text),
-                raw_text: text,
-                preview_mode: false,
-            })
-        }
-        FileType::Image => {
-            let data = tokio::fs::read(&path)
-                .await
-                .map_err(|e| format!("Failed to read image: {}", e))?;
-            Ok(ViewerContent::Image { data, zoom: 1.0 })
-        }
-        FileType::Pdf => {
-            // For now, just load as placeholder - PDF rendering would need pdfium
-            Ok(ViewerContent::Pdf {
-                pages: vec![],
-                current_page: 0,
-                total_pages: 1,
-            })
-        }
-        FileType::Binary => {
-            Err("Binary files cannot be viewed".to_string())
         }
     }
 }

@@ -15,8 +15,8 @@ iced = { version = "0.14", features = ["tokio", "advanced", "svg", "markdown", "
 alacritty_terminal = "0.24"
 
 # SSH
-russh = "0.54"
-russh-sftp = "2.0"
+russh = "0.56.0"
+russh-sftp = "2.1.1"
 ssh-key = { version = "0.6", features = ["std"] }
 
 # Async

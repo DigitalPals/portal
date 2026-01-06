@@ -74,24 +74,6 @@ impl SessionManager {
     pub fn is_empty(&self) -> bool {
         self.sessions.is_empty()
     }
-
-    /// Get the number of active sessions
-    #[allow(dead_code)]
-    pub fn len(&self) -> usize {
-        self.sessions.len()
-    }
-
-    /// Iterate over all sessions
-    #[allow(dead_code)]
-    pub fn iter(&self) -> impl Iterator<Item = (&SessionId, &ActiveSession)> {
-        self.sessions.iter()
-    }
-
-    /// Iterate over all sessions mutably
-    #[allow(dead_code)]
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = (&SessionId, &mut ActiveSession)> {
-        self.sessions.iter_mut()
-    }
 }
 
 impl Default for SessionManager {

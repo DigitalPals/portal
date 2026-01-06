@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 use crate::message::SessionId;
 use crate::sftp::SharedSftpSession;
-use crate::views::sftp::{DualPaneSftpState, PaneId};
+use crate::views::sftp::{DualPaneSftpState, PaneId, PaneSource};
 
 /// Manages SFTP connections and dual-pane browser tabs
 pub struct SftpManager {
@@ -50,9 +50,22 @@ impl SftpManager {
         self.tabs.insert(id, state);
     }
 
-    /// Remove a tab by ID
-    pub fn remove_tab(&mut self, id: SessionId) -> Option<DualPaneSftpState> {
-        self.tabs.remove(&id)
+    /// Remove a tab by ID and collect any unique remote session IDs it used
+    pub fn remove_tab_and_collect_sessions(&mut self, id: SessionId) -> Vec<SessionId> {
+        let Some(state) = self.tabs.remove(&id) else {
+            return Vec::new();
+        };
+
+        let mut ids = Vec::new();
+        for pane in [&state.left_pane, &state.right_pane] {
+            if let PaneSource::Remote { session_id, .. } = &pane.source {
+                if !ids.contains(session_id) {
+                    ids.push(*session_id);
+                }
+            }
+        }
+
+        ids
     }
 
     /// Check if a tab exists
@@ -65,18 +78,6 @@ impl SftpManager {
         self.tabs.keys().next().copied()
     }
 
-    /// Iterate over all tabs
-    #[allow(dead_code)]
-    pub fn tabs(&self) -> impl Iterator<Item = (&SessionId, &DualPaneSftpState)> {
-        self.tabs.iter()
-    }
-
-    /// Iterate over all tabs mutably
-    #[allow(dead_code)]
-    pub fn tabs_mut(&mut self) -> impl Iterator<Item = (&SessionId, &mut DualPaneSftpState)> {
-        self.tabs.iter_mut()
-    }
-
     /// Get all tab values mutably
     pub fn tab_values_mut(&mut self) -> impl Iterator<Item = &mut DualPaneSftpState> {
         self.tabs.values_mut()
@@ -87,12 +88,6 @@ impl SftpManager {
     /// Get a reference to an SFTP connection by session ID
     pub fn get_connection(&self, id: SessionId) -> Option<&SharedSftpSession> {
         self.connections.get(&id)
-    }
-
-    /// Get a clone of an SFTP connection by session ID
-    #[allow(dead_code)]
-    pub fn get_connection_cloned(&self, id: SessionId) -> Option<SharedSftpSession> {
-        self.connections.get(&id).cloned()
     }
 
     /// Insert a new SFTP connection
@@ -127,12 +122,6 @@ impl SftpManager {
 
     // ---- Pending connection operations ----
 
-    /// Get the pending connection info
-    #[allow(dead_code)]
-    pub fn pending_connection(&self) -> Option<(SessionId, PaneId, Uuid)> {
-        self.pending_connection
-    }
-
     /// Set the pending connection info
     pub fn set_pending_connection(&mut self, info: Option<(SessionId, PaneId, Uuid)>) {
         self.pending_connection = info;
@@ -147,5 +136,69 @@ impl SftpManager {
 impl Default for SftpManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::views::sftp::{DualPaneSftpState, PaneSource};
+
+    #[test]
+    fn remove_tab_and_collect_sessions_empty_when_missing() {
+        let mut manager = SftpManager::new();
+        let missing_id = Uuid::new_v4();
+
+        let sessions = manager.remove_tab_and_collect_sessions(missing_id);
+
+        assert!(sessions.is_empty());
+    }
+
+    #[test]
+    fn remove_tab_and_collect_sessions_returns_unique_ids() {
+        let mut manager = SftpManager::new();
+        let tab_id = Uuid::new_v4();
+        let mut state = DualPaneSftpState::new(tab_id);
+        let session_id = Uuid::new_v4();
+
+        state.left_pane.source = PaneSource::Remote {
+            session_id,
+            host_name: "alpha".to_string(),
+        };
+        state.right_pane.source = PaneSource::Remote {
+            session_id,
+            host_name: "alpha".to_string(),
+        };
+
+        manager.insert_tab(tab_id, state);
+
+        let sessions = manager.remove_tab_and_collect_sessions(tab_id);
+
+        assert_eq!(sessions, vec![session_id]);
+        assert!(manager.get_tab(tab_id).is_none());
+    }
+
+    #[test]
+    fn remove_tab_and_collect_sessions_keeps_both_panes() {
+        let mut manager = SftpManager::new();
+        let tab_id = Uuid::new_v4();
+        let mut state = DualPaneSftpState::new(tab_id);
+        let left_id = Uuid::new_v4();
+        let right_id = Uuid::new_v4();
+
+        state.left_pane.source = PaneSource::Remote {
+            session_id: left_id,
+            host_name: "left".to_string(),
+        };
+        state.right_pane.source = PaneSource::Remote {
+            session_id: right_id,
+            host_name: "right".to_string(),
+        };
+
+        manager.insert_tab(tab_id, state);
+
+        let sessions = manager.remove_tab_and_collect_sessions(tab_id);
+
+        assert_eq!(sessions, vec![left_id, right_id]);
     }
 }
