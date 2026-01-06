@@ -93,14 +93,12 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
             }
             portal.sidebar_state = crate::app::SidebarState::Hidden;
 
-            let event_listener = Task::run(
+            Task::run(
                 stream::unfold(terminal_events, |mut rx| async move {
                     rx.recv().await.map(|event| (event, rx))
                 }),
                 move |event| Message::Session(SessionMessage::TerminalEvent(session_id, event)),
-            );
-
-            event_listener
+            )
         }
         SessionMessage::LocalConnected {
             session_id,
@@ -146,14 +144,12 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
             }
             portal.sidebar_state = crate::app::SidebarState::Hidden;
 
-            let event_listener = Task::run(
+            Task::run(
                 stream::unfold(terminal_events, |mut rx| async move {
                     rx.recv().await.map(|event| (event, rx))
                 }),
                 move |event| Message::Session(SessionMessage::TerminalEvent(session_id, event)),
-            );
-
-            event_listener
+            )
         }
         SessionMessage::Data(session_id, data) => {
             if let Some(session) = portal.sessions.get_mut(session_id) {

@@ -64,7 +64,7 @@ pub fn handle_snippet(portal: &mut Portal, msg: SnippetMessage) -> Task<Message>
                                 let local = local_session.clone();
                                 return Task::perform(
                                     async move {
-                                        let _ = local.send(&data);
+                                        let _ = local.send(&data).await;
                                     },
                                     move |_| Message::Noop,
                                 );

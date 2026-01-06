@@ -414,6 +414,12 @@ fn glob_match(pattern: &str, text: &str) -> bool {
 }
 
 #[cfg(test)]
+impl Default for KnownHostsManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 mod tests {
     use super::{HostKeyStatus, KnownHostsManager};
     use russh::keys;
@@ -475,11 +481,5 @@ mod tests {
             manager.check_host_key("bad.example.com", 22, &key),
             HostKeyStatus::Unknown { .. }
         ));
-    }
-}
-
-impl Default for KnownHostsManager {
-    fn default() -> Self {
-        Self::new()
     }
 }

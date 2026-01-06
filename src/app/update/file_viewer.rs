@@ -24,7 +24,7 @@ pub fn handle_file_viewer(app: &mut Portal, msg: FileViewerMessage) -> Task<Mess
                 {
                     let page = *current_page;
                     if pages.get(page).and_then(|slot| slot.as_ref()).is_none()
-                        && rendering_pages.get(page).copied().unwrap_or(false) == false
+                        && !rendering_pages.get(page).copied().unwrap_or(false)
                     {
                         viewer.set_pdf_rendering(page, true);
                         let source = viewer.file_source.clone();
@@ -127,7 +127,7 @@ pub fn handle_file_viewer(app: &mut Portal, msg: FileViewerMessage) -> Task<Mess
                 } = &mut viewer.content
                 {
                     if pages.get(page).and_then(|slot| slot.as_ref()).is_none()
-                        && rendering_pages.get(page).copied().unwrap_or(false) == false
+                        && !rendering_pages.get(page).copied().unwrap_or(false)
                     {
                         viewer.set_pdf_rendering(page, true);
                         let source = viewer.file_source.clone();
@@ -153,7 +153,7 @@ pub fn handle_file_viewer(app: &mut Portal, msg: FileViewerMessage) -> Task<Mess
                 } = &mut viewer.content
                 {
                     if pages.get(page).and_then(|slot| slot.as_ref()).is_none()
-                        && rendering_pages.get(page).copied().unwrap_or(false) == false
+                        && !rendering_pages.get(page).copied().unwrap_or(false)
                     {
                         viewer.set_pdf_rendering(page, true);
                         let source = viewer.file_source.clone();
