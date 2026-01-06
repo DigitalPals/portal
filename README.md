@@ -1,4 +1,16 @@
-<!-- Add your logo here: ![Portal](assets/logo.png) -->
+<div align="center">
+<pre>
+                                  .             oooo
+                                .o8             `888
+ oo.ooooo.   .ooooo.  oooo d8b .o888oo  .oooo.    888
+  888' `88b d88' `88b `888""8P   888   `P  )88b   888
+  888   888 888   888  888       888    .oP"888   888
+  888   888 888   888  888       888 . d8(  888   888
+  888bod8P' `Y8bod8P' d888b      "888" `Y888""8o o888o
+  888
+ o888o
+</pre>
+</div>
 
 <div align="center">
 
@@ -173,24 +185,11 @@ That's it. You're in.
 
 ## Screenshots
 
-<!--
 ### Host Grid
 ![Host Grid](assets/screenshots/hosts.png)
 
-### Terminal Session
-![Terminal](assets/screenshots/terminal.png)
-
 ### SFTP Browser
 ![SFTP](assets/screenshots/sftp.png)
-
-### File Viewer
-![File Viewer](assets/screenshots/viewer.png)
-
-### Themes
-![Themes](assets/screenshots/themes.png)
--->
-
-*Screenshots coming soon.*
 
 ## Built With
 

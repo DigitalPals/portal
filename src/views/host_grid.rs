@@ -1,5 +1,5 @@
 use iced::widget::{button, column, container, mouse_area, row, text, text_input, Column, Row, Space};
-use iced::{Alignment, Element, Fill, Font, Length, Padding};
+use iced::{Alignment, Element, Fill, Length, Padding};
 use uuid::Uuid;
 
 /// Search input ID for auto-focus
@@ -15,18 +15,6 @@ use crate::theme::{
     Theme, BORDER_RADIUS, CARD_BORDER_RADIUS, CARD_HEIGHT, GRID_PADDING, GRID_SPACING,
     MIN_CARD_WIDTH, SIDEBAR_WIDTH, SIDEBAR_WIDTH_COLLAPSED,
 };
-
-const PORTAL_LOGO_TOP: &str = r#"                                  .             oooo
-                                .o8             `888
-oo.ooooo.   .ooooo.  oooo d8b .o888oo  .oooo.    888
- 888' `88b d88' `88b `888""8P   888   `P  )88b   888
- 888   888 888   888  888       888    .oP"888   888
- 888   888 888   888  888       888 . d8(  888   888
- 888bod8P' `Y8bod8P' d888b      "888" `Y888""8o o888o
- 888"#;
-
-const PORTAL_LOGO_LAST_LINE: &str = "o888o";
-const LOGO_WIDTH: usize = 54;
 
 /// Group card data for the grid view
 #[derive(Debug, Clone)]
@@ -206,30 +194,6 @@ pub fn host_grid_view(
     focus_index: Option<usize>,
     hovered_host: Option<Uuid>,
 ) -> Element<'static, Message> {
-    // ASCII Logo with version on last line (right-aligned)
-    let version = format!("v{}", env!("CARGO_PKG_VERSION"));
-    let padding_len = LOGO_WIDTH
-        .saturating_sub(PORTAL_LOGO_LAST_LINE.len())
-        .saturating_sub(version.len())
-        .saturating_sub(1); // 1 char from right edge
-    let last_line = format!(
-        "{}{} {}",
-        PORTAL_LOGO_LAST_LINE,
-        " ".repeat(padding_len),
-        version
-    );
-    let full_logo = format!("{}\n{}", PORTAL_LOGO_TOP, last_line);
-
-    let logo_section = container(
-        text(full_logo)
-            .size(10)
-            .color(theme.text_secondary)
-            .font(Font::MONOSPACE),
-    )
-    .width(Length::Fill)
-    .padding(Padding::new(16.0).top(48.0))
-    .align_x(Alignment::Center);
-
     // Main scrollable content
     let mut content = Column::new()
         .spacing(24)
@@ -259,9 +223,6 @@ pub fn host_grid_view(
         let hosts_section = build_hosts_section(hosts, column_count, theme, focus_section, host_focus_index, hovered_host);
         content = content.push(hosts_section);
     }
-
-    // Add logo below hosts
-    content = content.push(logo_section);
 
     let scrollable_content = iced::widget::scrollable(content)
         .height(Fill)

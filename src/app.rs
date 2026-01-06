@@ -14,6 +14,7 @@ use iced::keyboard;
 use crate::config::{HistoryConfig, HostsConfig, SettingsConfig, SnippetsConfig};
 use crate::message::{Message, SessionId, SessionMessage, SidebarMenuItem, UiMessage};
 use crate::theme::{get_theme, ThemeId};
+use crate::views::dialogs::about_dialog::about_dialog_view;
 use crate::views::dialogs::host_dialog::host_dialog_view;
 use crate::views::dialogs::host_key_dialog::host_key_dialog_view;
 use crate::views::dialogs::snippets_dialog::snippets_dialog_view;
@@ -310,8 +311,8 @@ impl Portal {
                     SidebarMenuItem::History => {
                         history_view(&self.history_config, theme, self.focus_section, self.history_focus_index)
                     }
-                    SidebarMenuItem::Snippets | SidebarMenuItem::Settings => {
-                        // These open dialogs, show hosts grid as fallback
+                    SidebarMenuItem::Snippets | SidebarMenuItem::Settings | SidebarMenuItem::About => {
+                        // These open dialogs or pages, show hosts grid as fallback
                         host_grid_view(&self.search_query, filtered_groups, filtered_cards, column_count, theme, self.focus_section, self.host_grid_focus_index, self.hovered_host)
                     }
                 }
@@ -355,6 +356,10 @@ impl Portal {
             }
             ActiveDialog::Snippets(snippets_state) => {
                 let dialog = snippets_dialog_view(snippets_state, theme);
+                stack![main_layout, dialog].into()
+            }
+            ActiveDialog::About(about_state) => {
+                let dialog = about_dialog_view(about_state, theme);
                 stack![main_layout, dialog].into()
             }
             ActiveDialog::None => main_layout,

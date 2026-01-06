@@ -25,6 +25,7 @@ pub enum SidebarMenuItem {
     Snippets,
     History,
     Settings,
+    About,
 }
 
 #[derive(Debug, Clone)]

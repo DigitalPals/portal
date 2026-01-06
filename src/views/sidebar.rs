@@ -39,6 +39,11 @@ const MENU_ITEMS: &[MenuItem] = &[
         icon: icons::ui::SETTINGS,
         label: "Settings",
     },
+    MenuItem {
+        item: SidebarMenuItem::About,
+        icon: icons::ui::INFO,
+        label: "About",
+    },
 ];
 
 /// Build the sidebar view

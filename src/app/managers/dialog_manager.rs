@@ -3,6 +3,7 @@
 //! Consolidates dialog state into a single enum, ensuring only one dialog
 //! can be open at a time and simplifying state management.
 
+use crate::views::dialogs::about_dialog::AboutDialogState;
 use crate::views::dialogs::host_dialog::HostDialogState;
 use crate::views::dialogs::host_key_dialog::HostKeyDialogState;
 use crate::views::dialogs::snippets_dialog::SnippetsDialogState;
@@ -17,6 +18,8 @@ pub enum ActiveDialog {
     Snippets(SnippetsDialogState),
     /// SSH host key verification dialog
     HostKey(HostKeyDialogState),
+    /// About dialog
+    About(AboutDialogState),
 }
 
 impl Default for ActiveDialog {
@@ -105,5 +108,12 @@ impl DialogManager {
             ActiveDialog::HostKey(state) => Some(state),
             _ => None,
         }
+    }
+
+    // ---- About dialog operations ----
+
+    /// Open the About dialog
+    pub fn open_about(&mut self) {
+        self.active = ActiveDialog::About(AboutDialogState::new());
     }
 }

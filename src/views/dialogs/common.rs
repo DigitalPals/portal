@@ -5,7 +5,7 @@
 //! - `primary_button_style` - Accent-colored action button
 //! - `secondary_button_style` - Outlined cancel/secondary button
 
-use iced::widget::{button, container};
+use iced::widget::{button, container, mouse_area};
 use iced::{Alignment, Element, Length};
 
 use crate::message::Message;
@@ -15,6 +15,7 @@ use crate::theme::{Theme, BORDER_RADIUS};
 ///
 /// Creates a semi-transparent overlay with the dialog box centered on screen.
 /// The dialog box has a shadow and rounded corners.
+/// The backdrop captures all mouse events to prevent interaction with elements behind it.
 pub fn dialog_backdrop(
     content: impl Into<Element<'static, Message>>,
     theme: Theme,
@@ -34,7 +35,7 @@ pub fn dialog_backdrop(
         ..Default::default()
     });
 
-    container(
+    let backdrop = container(
         container(dialog_box)
             .width(Length::Fill)
             .height(Length::Fill)
@@ -46,8 +47,13 @@ pub fn dialog_backdrop(
     .style(move |_theme| container::Style {
         background: Some(iced::Color::from_rgba8(0, 0, 0, 0.7).into()),
         ..Default::default()
-    })
-    .into()
+    });
+
+    // Wrap in mouse_area to capture all mouse events and block clicks from passing through
+    mouse_area(backdrop)
+        .on_press(Message::Noop)
+        .on_release(Message::Noop)
+        .into()
 }
 
 /// Primary button style - accent-colored for main actions (Save, Submit, etc.)

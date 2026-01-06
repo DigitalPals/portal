@@ -81,6 +81,9 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
                         has_terminal,
                     ));
                 }
+                SidebarMenuItem::About => {
+                    portal.dialogs.open_about();
+                }
             }
             Task::none()
         }
@@ -235,7 +238,7 @@ fn handle_keyboard_event(
 }
 
 /// Number of sidebar menu items
-const SIDEBAR_MENU_COUNT: usize = 5;
+const SIDEBAR_MENU_COUNT: usize = 6;
 
 /// Handle keyboard navigation in sidebar
 fn handle_sidebar_keyboard(
@@ -266,6 +269,7 @@ fn handle_sidebar_keyboard(
                 2 => SidebarMenuItem::Snippets,
                 3 => SidebarMenuItem::History,
                 4 => SidebarMenuItem::Settings,
+                5 => SidebarMenuItem::About,
                 _ => return Task::none(),
             };
             return portal.update(Message::Ui(UiMessage::SidebarItemSelect(item)));
@@ -337,7 +341,7 @@ fn handle_content_keyboard(
         }
         View::HostGrid => {
             match portal.sidebar_selection {
-                SidebarMenuItem::Hosts | SidebarMenuItem::Sftp | SidebarMenuItem::Snippets | SidebarMenuItem::Settings => {
+                SidebarMenuItem::Hosts | SidebarMenuItem::Sftp | SidebarMenuItem::Snippets | SidebarMenuItem::Settings | SidebarMenuItem::About => {
                     handle_host_grid_keyboard(portal, key, modifiers)
                 }
                 SidebarMenuItem::History => {
