@@ -81,7 +81,11 @@ assets = [
   { source = "assets/app-icons/png/portal-256.png", dest = "/usr/share/icons/hicolor/256x256/apps/portal.png", mode = "644" },
   { source = "assets/app-icons/png/portal-512.png", dest = "/usr/share/icons/hicolor/512x512/apps/portal.png", mode = "644" },
 ]
-requires = ["wayland", "libxkbcommon", "vulkan-loader"]
+
+[package.metadata.generate-rpm.requires]
+wayland = "*"
+libxkbcommon = "*"
+vulkan-loader = "*"
 
 [dev-dependencies]
 tempfile = "3.24.0"
