@@ -2,7 +2,7 @@ use iced::widget::{button, column, pick_list, row, text, text_input, Space};
 use iced::{Alignment, Element, Length};
 use uuid::Uuid;
 
-use crate::config::{AuthMethod, Host, HostGroup};
+use crate::config::{AuthMethod, Host};
 use crate::message::{DialogMessage, HostDialogField, Message};
 use crate::theme::Theme;
 
@@ -20,7 +20,6 @@ pub struct HostDialogState {
     pub username: String,
     pub auth_method: AuthMethodChoice,
     pub key_path: String,
-    pub group_id: Option<Uuid>,
     pub tags: String,
     pub notes: String,
 }
@@ -63,9 +62,33 @@ impl HostDialogState {
             username: String::new(),
             auth_method: AuthMethodChoice::Agent,
             key_path: String::new(),
-            group_id: None,
             tags: String::new(),
             notes: String::new(),
+        }
+    }
+
+    /// Create dialog state from an existing host for editing
+    pub fn from_host(host: &Host) -> Self {
+        Self {
+            editing_id: Some(host.id),
+            name: host.name.clone(),
+            hostname: host.hostname.clone(),
+            port: host.port.to_string(),
+            username: host.username.clone(),
+            auth_method: match &host.auth {
+                AuthMethod::Agent => AuthMethodChoice::Agent,
+                AuthMethod::Password => AuthMethodChoice::Password,
+                AuthMethod::PublicKey { .. } => AuthMethodChoice::PublicKey,
+            },
+            key_path: match &host.auth {
+                AuthMethod::PublicKey { key_path } => key_path
+                    .as_ref()
+                    .map(|p| p.to_string_lossy().to_string())
+                    .unwrap_or_default(),
+                _ => String::new(),
+            },
+            tags: host.tags.join(", "),
+            notes: host.notes.clone().unwrap_or_default(),
         }
     }
 
@@ -122,7 +145,7 @@ impl HostDialogState {
             port,
             username,
             auth,
-            group_id: self.group_id,
+            group_id: None,
             notes,
             tags,
             created_at,
@@ -138,23 +161,9 @@ impl HostDialogState {
     }
 }
 
-/// Group choice for the dropdown
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GroupChoice {
-    pub id: Option<Uuid>,
-    pub name: String,
-}
-
-impl std::fmt::Display for GroupChoice {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.name)
-    }
-}
-
 /// Build the host dialog view
 pub fn host_dialog_view(
     state: &HostDialogState,
-    groups: &[HostGroup],
     theme: Theme,
 ) -> Element<'static, Message> {
     let title = if state.editing_id.is_some() {
@@ -174,22 +183,6 @@ pub fn host_dialog_view(
     let auth_method = state.auth_method;
     let is_valid = state.is_valid();
     let username_placeholder = std::env::var("USER").unwrap_or_default();
-
-    // Build group choices
-    let mut group_choices = vec![GroupChoice {
-        id: None,
-        name: "(No folder)".to_string(),
-    }];
-    for group in groups {
-        group_choices.push(GroupChoice {
-            id: Some(group.id),
-            name: group.name.clone(),
-        });
-    }
-    let selected_group = group_choices
-        .iter()
-        .find(|g| g.id == state.group_id)
-        .cloned();
 
     // Form fields using owned values
     let name_input = column![
@@ -256,20 +249,6 @@ pub fn host_dialog_view(
         column![].into()
     };
 
-    // Group picker
-    let group_picker = column![
-        text("Folder").size(12).color(theme.text_secondary),
-        pick_list(
-            group_choices.clone(),
-            selected_group,
-            |choice| Message::Dialog(DialogMessage::FieldChanged(HostDialogField::GroupId,
-                choice.id.map(|id| id.to_string()).unwrap_or_default()))
-        )
-        .width(Length::Fill)
-        .padding(8)
-    ]
-    .spacing(4);
-
     let tags_input = column![
         text("Tags").size(12).color(theme.text_secondary),
         text_input("web, production", &tags_value)
@@ -324,7 +303,6 @@ pub fn host_dialog_view(
         username_input,
         auth_picker,
         key_path_section,
-        group_picker,
         tags_input,
         notes_input,
         Space::new().height(16),

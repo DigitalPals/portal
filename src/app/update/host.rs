@@ -23,6 +23,16 @@ pub fn handle_host(portal: &mut Portal, msg: HostMessage) -> Task<Message> {
             portal.dialogs.open_host(HostDialogState::new_host());
             Task::none()
         }
+        HostMessage::Edit(id) => {
+            if let Some(host) = portal.hosts_config.find_host(id) {
+                portal.dialogs.open_host(HostDialogState::from_host(host));
+            }
+            Task::none()
+        }
+        HostMessage::Hover(id) => {
+            portal.hovered_host = id;
+            Task::none()
+        }
         HostMessage::QuickConnect => {
             // Parse search query as [ssh] [user@]hostname[:port]
             let query = portal.search_query.trim();

@@ -1,7 +1,6 @@
 //! Dialog message handlers
 
 use iced::Task;
-use uuid::Uuid;
 
 use crate::app::Portal;
 use crate::config::Host;
@@ -71,13 +70,6 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                             "Password" => AuthMethodChoice::Password,
                             "PublicKey" => AuthMethodChoice::PublicKey,
                             _ => dialog_state.auth_method,
-                        };
-                    }
-                    HostDialogField::GroupId => {
-                        dialog_state.group_id = if value.is_empty() {
-                            None
-                        } else {
-                            Uuid::parse_str(&value).ok()
                         };
                     }
                 }

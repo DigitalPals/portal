@@ -1,4 +1,4 @@
-use iced::widget::{button, column, container, row, text, text_input, Column, Row, Space};
+use iced::widget::{button, column, container, mouse_area, row, text, text_input, Column, Row, Space};
 use iced::{Alignment, Element, Fill, Font, Length, Padding};
 use uuid::Uuid;
 
@@ -204,6 +204,7 @@ pub fn host_grid_view(
     theme: Theme,
     focus_section: FocusSection,
     focus_index: Option<usize>,
+    hovered_host: Option<Uuid>,
 ) -> Element<'static, Message> {
     // ASCII Logo with version on last line (right-aligned)
     let version = format!("v{}", env!("CARGO_PKG_VERSION"));
@@ -255,7 +256,7 @@ pub fn host_grid_view(
         } else {
             None
         };
-        let hosts_section = build_hosts_section(hosts, column_count, theme, focus_section, host_focus_index);
+        let hosts_section = build_hosts_section(hosts, column_count, theme, focus_section, host_focus_index, hovered_host);
         content = content.push(hosts_section);
     }
 
@@ -337,6 +338,7 @@ fn build_hosts_section(
     theme: Theme,
     focus_section: FocusSection,
     focus_index: Option<usize>,
+    hovered_host: Option<Uuid>,
 ) -> Element<'static, Message> {
     let section_header = text("Hosts")
         .size(16)
@@ -348,7 +350,8 @@ fn build_hosts_section(
 
     for (idx, host) in hosts.into_iter().enumerate() {
         let is_focused = focus_section == FocusSection::Content && focus_index == Some(idx);
-        current_row.push(host_card(host, theme, is_focused));
+        let is_hovered = hovered_host == Some(host.id);
+        current_row.push(host_card(host, theme, is_focused, is_hovered));
 
         if current_row.len() >= column_count {
             rows.push(
@@ -507,7 +510,7 @@ fn os_icon_color(os: &Option<DetectedOs>) -> iced::Color {
 }
 
 /// Single host card
-fn host_card(host: HostCard, theme: Theme, is_focused: bool) -> Element<'static, Message> {
+fn host_card(host: HostCard, theme: Theme, is_focused: bool, is_hovered: bool) -> Element<'static, Message> {
     let host_id = host.id;
 
     // Get OS icon and color
@@ -543,11 +546,43 @@ fn host_card(host: HostCard, theme: Theme, is_focused: bool) -> Element<'static,
     ]
     .spacing(4);
 
-    let card_content = row![icon_widget, info]
-        .spacing(14)
-        .align_y(Alignment::Center);
+    // Edit button - only visible on hover
+    let edit_button: Element<'static, Message> = if is_hovered {
+        button(
+            icon_with_color(icons::ui::PENCIL, 16, theme.text_secondary)
+        )
+        .padding(8)
+        .style(move |_theme, status| {
+            let bg = match status {
+                button::Status::Hovered => theme.hover,
+                _ => iced::Color::TRANSPARENT,
+            };
+            button::Style {
+                background: Some(bg.into()),
+                text_color: theme.text_secondary,
+                border: iced::Border {
+                    radius: 6.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+        })
+        .on_press(Message::Host(HostMessage::Edit(host_id)))
+        .into()
+    } else {
+        Space::new().into()
+    };
 
-    button(
+    let card_content = row![
+        icon_widget,
+        info,
+        Space::new().width(Length::Fill),
+        edit_button,
+    ]
+    .spacing(14)
+    .align_y(Alignment::Center);
+
+    let card_button = button(
         container(card_content)
             .padding(16)
             .width(Length::Fill)
@@ -555,9 +590,10 @@ fn host_card(host: HostCard, theme: Theme, is_focused: bool) -> Element<'static,
             .align_y(Alignment::Center),
     )
     .style(move |_theme, status| {
-        let (bg, shadow_alpha) = match (status, is_focused) {
-            (_, true) => (theme.hover, 0.25),
-            (button::Status::Hovered, _) => (theme.hover, 0.25),
+        let (bg, shadow_alpha) = match (status, is_focused, is_hovered) {
+            (_, true, _) => (theme.hover, 0.25),
+            (_, _, true) => (theme.hover, 0.25),
+            (button::Status::Hovered, _, _) => (theme.hover, 0.25),
             _ => (theme.surface, 0.15),
         };
         let border = if is_focused {
@@ -587,8 +623,13 @@ fn host_card(host: HostCard, theme: Theme, is_focused: bool) -> Element<'static,
     .padding(0)
     .width(Length::FillPortion(1))
     .height(Length::Fixed(CARD_HEIGHT))
-    .on_press(Message::Host(HostMessage::Connect(host_id)))
-    .into()
+    .on_press(Message::Host(HostMessage::Connect(host_id)));
+
+    // Wrap in mouse_area for hover detection
+    mouse_area(card_button)
+        .on_enter(Message::Host(HostMessage::Hover(Some(host_id))))
+        .on_exit(Message::Host(HostMessage::Hover(None)))
+        .into()
 }
 
 /// Empty state when no hosts are configured

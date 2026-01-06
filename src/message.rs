@@ -35,7 +35,6 @@ pub enum HostDialogField {
     Username,
     AuthMethod,
     KeyPath,
-    GroupId,
     Tags,
     Notes,
 }
@@ -186,6 +185,10 @@ pub enum HostMessage {
     Connect(Uuid),
     /// Open add host dialog
     Add,
+    /// Open edit host dialog for existing host
+    Edit(Uuid),
+    /// Track which host is being hovered (for showing edit button)
+    Hover(Option<Uuid>),
     /// Quick connect using search query
     QuickConnect,
     /// Open local terminal (stubbed)

@@ -80,6 +80,7 @@ pub struct Portal {
     // UI state
     active_view: View,
     search_query: String,
+    hovered_host: Option<Uuid>,
 
     // Sidebar state
     sidebar_state: SidebarState,
@@ -178,6 +179,7 @@ impl Portal {
         let app = Self {
             active_view: View::HostGrid,
             search_query: String::new(),
+            hovered_host: None,
             sidebar_state: SidebarState::Expanded,
             sidebar_state_before_session: None,
             sidebar_selection: SidebarMenuItem::Hosts,
@@ -301,14 +303,14 @@ impl Portal {
                 match self.sidebar_selection {
                     SidebarMenuItem::Hosts | SidebarMenuItem::Sftp => {
                         // SFTP now opens directly into dual-pane view, so show hosts grid as fallback
-                        host_grid_view(&self.search_query, filtered_groups, filtered_cards, column_count, theme, self.focus_section, self.host_grid_focus_index)
+                        host_grid_view(&self.search_query, filtered_groups, filtered_cards, column_count, theme, self.focus_section, self.host_grid_focus_index, self.hovered_host)
                     }
                     SidebarMenuItem::History => {
                         history_view(&self.history_config, theme, self.focus_section, self.history_focus_index)
                     }
                     SidebarMenuItem::Snippets | SidebarMenuItem::Settings => {
                         // These open dialogs, show hosts grid as fallback
-                        host_grid_view(&self.search_query, filtered_groups, filtered_cards, column_count, theme, self.focus_section, self.host_grid_focus_index)
+                        host_grid_view(&self.search_query, filtered_groups, filtered_cards, column_count, theme, self.focus_section, self.host_grid_focus_index, self.hovered_host)
                     }
                 }
             }
@@ -344,7 +346,7 @@ impl Portal {
                 stack![main_layout, dialog].into()
             }
             ActiveDialog::Host(dialog_state) => {
-                let dialog = host_dialog_view(dialog_state, &self.hosts_config.groups, theme);
+                let dialog = host_dialog_view(dialog_state, theme);
                 stack![main_layout, dialog].into()
             }
             ActiveDialog::Snippets(snippets_state) => {
