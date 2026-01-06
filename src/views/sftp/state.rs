@@ -275,4 +275,21 @@ impl DualPaneSftpState {
             PaneId::Right => &self.right_pane,
         }
     }
+
+    /// Check if the tab is pristine (no remote connection, no navigation from home)
+    pub fn is_pristine(&self) -> bool {
+        Self::pane_is_pristine(&self.left_pane) && Self::pane_is_pristine(&self.right_pane)
+    }
+
+    fn pane_is_pristine(pane: &FilePaneState) -> bool {
+        // Must be local (no remote connection)
+        if !matches!(pane.source, PaneSource::Local) {
+            return false;
+        }
+        // Must be at home directory (no navigation)
+        let home_dir = directories::BaseDirs::new()
+            .map(|d| d.home_dir().to_path_buf())
+            .unwrap_or_else(|| PathBuf::from("/"));
+        pane.current_path == home_dir
+    }
 }

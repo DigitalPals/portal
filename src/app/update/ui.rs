@@ -27,6 +27,17 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
             Task::none()
         }
         UiMessage::SidebarItemSelect(item) => {
+            // Auto-close pristine SFTP tab when navigating away (not when staying on SFTP)
+            if item != SidebarMenuItem::Sftp {
+                if let View::DualSftp(tab_id) = portal.active_view {
+                    if let Some(state) = portal.sftp.get_tab(tab_id) {
+                        if state.is_pristine() {
+                            portal.close_tab(tab_id);
+                        }
+                    }
+                }
+            }
+
             portal.sidebar_selection = item;
             tracing::info!("Sidebar item selected: {:?}", item);
             match item {
