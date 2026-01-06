@@ -399,7 +399,8 @@ pub fn pane_file_list<'a>(
                 .width(Length::FillPortion(2)),
         ]
         .spacing(8)
-        .padding(Padding::new(8.0).left(12.0).right(12.0)),
+        .padding(Padding::new(8.0).left(12.0).right(12.0))
+        .width(Fill),
     )
     .style(move |_theme| container::Style {
         background: Some(theme.surface.into()),
@@ -550,7 +551,8 @@ pub fn pane_file_entry_row(
             .width(Length::FillPortion(2)),
     ]
     .spacing(8)
-    .align_y(Alignment::Center);
+    .align_y(Alignment::Center)
+    .width(Fill);
 
     let btn = button(
         container(content)

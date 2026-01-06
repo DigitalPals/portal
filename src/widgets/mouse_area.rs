@@ -4,7 +4,11 @@ use iced::advanced::layout::{self, Layout};
 use iced::advanced::renderer;
 use iced::advanced::widget::{self, Widget};
 use iced::advanced::{mouse, Clipboard, Shell};
-use iced::{Element, Event, Length, Rectangle, Size};
+use iced::{Element, Event, Length, Rectangle, Size, Vector};
+
+/// Local state of the [`MouseArea`].
+#[derive(Default)]
+struct State;
 
 /// A wrapper widget that detects mouse clicks and modifier keys
 pub struct MouseArea<'a, Message, Theme = iced::Theme, Renderer = iced::Renderer>
@@ -34,7 +38,7 @@ where
             on_ctrl_press: None,
             on_shift_press: None,
             capture_all_events: false,
-            width: Length::Shrink,
+            width: Length::Fill,
             height: Length::Shrink,
         }
     }
@@ -92,23 +96,23 @@ where
     Renderer: renderer::Renderer,
 {
     fn tag(&self) -> widget::tree::Tag {
-        self.content.as_widget().tag()
+        widget::tree::Tag::of::<State>()
     }
 
     fn state(&self) -> widget::tree::State {
-        self.content.as_widget().state()
+        widget::tree::State::new(State::default())
     }
 
     fn children(&self) -> Vec<widget::Tree> {
-        self.content.as_widget().children()
+        vec![widget::Tree::new(&self.content)]
     }
 
     fn diff(&self, tree: &mut widget::Tree) {
-        self.content.as_widget().diff(tree);
+        tree.diff_children(std::slice::from_ref(&self.content));
     }
 
     fn size(&self) -> Size<Length> {
-        Size::new(self.width, self.height)
+        self.content.as_widget().size()
     }
 
     fn layout(
@@ -117,8 +121,9 @@ where
         renderer: &Renderer,
         limits: &layout::Limits,
     ) -> layout::Node {
-        let limits = limits.width(self.width).height(self.height);
-        self.content.as_widget_mut().layout(tree, renderer, &limits)
+        self.content
+            .as_widget_mut()
+            .layout(&mut tree.children[0], renderer, limits)
     }
 
     fn draw(
@@ -131,9 +136,15 @@ where
         cursor: mouse::Cursor,
         viewport: &Rectangle,
     ) {
-        self.content
-            .as_widget()
-            .draw(tree, renderer, theme, style, layout, cursor, viewport);
+        self.content.as_widget().draw(
+            &tree.children[0],
+            renderer,
+            theme,
+            style,
+            layout,
+            cursor,
+            viewport,
+        );
     }
 
     fn update(
@@ -147,36 +158,47 @@ where
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
-        // Handle right-click BEFORE passing to content, since buttons capture all clicks
-        if let Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Right)) = event {
+        // First, let the content handle the event
+        self.content.as_widget_mut().update(
+            &mut tree.children[0],
+            event,
+            layout,
+            cursor,
+            renderer,
+            clipboard,
+            shell,
+            viewport,
+        );
+
+        // If the content captured the event, don't process further
+        if shell.is_event_captured() {
+            return;
+        }
+
+        // Handle right-click with position callback
+        if let Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) = event {
             if cursor.is_over(layout.bounds()) {
                 if let Some(ref on_right_press) = self.on_right_press {
-                    // Use cursor position in window coordinates
                     if let Some(pos) = cursor.position() {
                         shell.publish(on_right_press(pos.x, pos.y));
+                        shell.capture_event();
                         return;
                     }
                 }
             }
         }
 
-        // Let the content handle other events
-        self.content.as_widget_mut().update(
-            tree, event, layout, cursor, renderer, clipboard, shell, viewport,
-        );
-
-        // Prevent event propagation if requested and cursor is over this area.
-        if self.capture_all_events {
-            if cursor.is_over(layout.bounds()) {
-                if matches!(event, Event::Mouse(_)) {
-                    return;
-                }
+        // Capture all events if requested
+        if self.capture_all_events && cursor.is_over(layout.bounds()) {
+            if matches!(event, Event::Mouse(_)) {
+                shell.capture_event();
+                return;
             }
         }
 
-        // Handle left-click if content didn't handle it
+        // Handle left-click
         if let Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) = event {
-            if let Some(_position) = cursor.position_over(layout.bounds()) {
+            if cursor.is_over(layout.bounds()) {
                 if let Some(ref message) = self.on_press {
                     shell.publish(message.clone());
                 }
@@ -192,9 +214,13 @@ where
         viewport: &Rectangle,
         renderer: &Renderer,
     ) -> mouse::Interaction {
-        self.content
-            .as_widget()
-            .mouse_interaction(tree, layout, cursor, viewport, renderer)
+        self.content.as_widget().mouse_interaction(
+            &tree.children[0],
+            layout,
+            cursor,
+            viewport,
+            renderer,
+        )
     }
 
     fn operate(
@@ -206,7 +232,24 @@ where
     ) {
         self.content
             .as_widget_mut()
-            .operate(tree, layout, renderer, operation);
+            .operate(&mut tree.children[0], layout, renderer, operation);
+    }
+
+    fn overlay<'b>(
+        &'b mut self,
+        tree: &'b mut widget::Tree,
+        layout: Layout<'b>,
+        renderer: &Renderer,
+        viewport: &Rectangle,
+        translation: Vector,
+    ) -> Option<iced::advanced::overlay::Element<'b, Message, Theme, Renderer>> {
+        self.content.as_widget_mut().overlay(
+            &mut tree.children[0],
+            layout,
+            renderer,
+            viewport,
+            translation,
+        )
     }
 }
 

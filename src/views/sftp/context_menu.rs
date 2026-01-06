@@ -65,18 +65,6 @@ fn context_menu_item<'a>(
     }
 }
 
-/// Build a divider for context menu
-fn context_menu_divider<'a>(theme: Theme) -> Element<'a, Message> {
-    container(Space::new().height(1))
-        .width(Fill)
-        .style(move |_| container::Style {
-            background: Some(theme.border.into()),
-            ..Default::default()
-        })
-        .padding([6, 12])
-        .into()
-}
-
 /// Build the context menu overlay
 pub fn context_menu_view(state: &DualPaneSftpState, theme: Theme) -> Element<'_, Message> {
     if !state.context_menu.visible {
@@ -117,7 +105,6 @@ pub fn context_menu_view(state: &DualPaneSftpState, theme: Theme) -> Element<'_,
             false,
             theme,
         ));
-        items.push(context_menu_divider(theme));
     }
 
     // Copy to target directory (for any selection except parent directory)
@@ -156,10 +143,6 @@ pub fn context_menu_view(state: &DualPaneSftpState, theme: Theme) -> Element<'_,
         ));
     }
 
-    if has_selection && !has_parent {
-        items.push(context_menu_divider(theme));
-    }
-
     // Always available actions
     items.push(context_menu_item(
         "Refresh",
@@ -180,7 +163,6 @@ pub fn context_menu_view(state: &DualPaneSftpState, theme: Theme) -> Element<'_,
 
     // Edit Permissions (only for single file/folder selection, not parent)
     if is_single && !has_parent {
-        items.push(context_menu_divider(theme));
         items.push(context_menu_item(
             "Edit Permissions",
             ContextMenuAction::EditPermissions,
