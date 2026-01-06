@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use uuid::Uuid;
 
+use crate::app::FocusSection;
 use crate::config::DetectedOs;
 use crate::sftp::{FileEntry, SharedSftpSession};
 use crate::ssh::host_key_verification::HostKeyVerificationRequest;
@@ -228,6 +229,10 @@ pub enum UiMessage {
     ToastTick,
     /// Keyboard event
     KeyboardEvent(iced::keyboard::Key, iced::keyboard::Modifiers),
+    /// Focus section changed (F1/F2/F3)
+    FocusSectionChange(FocusSection),
+    /// Terminal keyboard capture state changed
+    TerminalCaptureChange(bool),
 }
 
 // ============================================================================

@@ -43,6 +43,15 @@ pub enum View {
     DualSftp(SessionId),  // Dual-pane SFTP browser
 }
 
+/// Major UI sections that can receive keyboard focus
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FocusSection {
+    #[default]
+    Content,   // Main content area (host grid, SFTP, history)
+    Sidebar,   // Sidebar menu
+    TabBar,    // Tab navigation bar
+}
+
 /// Main application state
 pub struct Portal {
     // UI state
@@ -79,6 +88,14 @@ pub struct Portal {
     // Responsive layout
     window_size: iced::Size,
     sidebar_manually_collapsed: bool,
+
+    // Keyboard navigation focus state
+    focus_section: FocusSection,
+    sidebar_focus_index: usize,
+    tab_focus_index: usize,
+    host_grid_focus_index: Option<usize>,
+    history_focus_index: Option<usize>,
+    terminal_captured: bool,
 }
 
 impl Portal {
@@ -150,6 +167,13 @@ impl Portal {
             toast_manager: ToastManager::new(),
             window_size: iced::Size::new(1200.0, 800.0),
             sidebar_manually_collapsed: false,
+            // Focus navigation state
+            focus_section: FocusSection::Content,
+            sidebar_focus_index: 0,
+            tab_focus_index: 0,
+            host_grid_focus_index: None,
+            history_focus_index: None,
+            terminal_captured: false,
         };
 
         // Focus the search input on startup
@@ -188,6 +212,8 @@ impl Portal {
             theme,
             self.sidebar_collapsed,
             self.sidebar_selection,
+            self.focus_section,
+            self.sidebar_focus_index,
         );
 
         // Main content - prioritize active sessions over sidebar selection
@@ -234,14 +260,14 @@ impl Portal {
                 match self.sidebar_selection {
                     SidebarMenuItem::Hosts | SidebarMenuItem::Sftp => {
                         // SFTP now opens directly into dual-pane view, so show hosts grid as fallback
-                        host_grid_view(&self.search_query, filtered_groups, filtered_cards, column_count, theme)
+                        host_grid_view(&self.search_query, filtered_groups, filtered_cards, column_count, theme, self.focus_section, self.host_grid_focus_index)
                     }
                     SidebarMenuItem::History => {
-                        history_view(&self.history_config, theme)
+                        history_view(&self.history_config, theme, self.focus_section, self.history_focus_index)
                     }
                     SidebarMenuItem::Snippets | SidebarMenuItem::Settings => {
                         // These open dialogs, show hosts grid as fallback
-                        host_grid_view(&self.search_query, filtered_groups, filtered_cards, column_count, theme)
+                        host_grid_view(&self.search_query, filtered_groups, filtered_cards, column_count, theme, self.focus_section, self.host_grid_focus_index)
                     }
                 }
             }
@@ -249,7 +275,7 @@ impl Portal {
 
         // Tab bar - only show when there are tabs
         let header: Element<'_, Message> = if !self.tabs.is_empty() {
-            tab_bar_view(&self.tabs, self.active_tab, theme)
+            tab_bar_view(&self.tabs, self.active_tab, theme, self.focus_section, self.tab_focus_index)
         } else {
             Space::with_height(0).into()
         };

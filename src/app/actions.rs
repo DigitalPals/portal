@@ -74,6 +74,9 @@ impl Portal {
                 self.active_tab = None;
                 self.active_view = View::HostGrid;
                 self.sidebar_selection = crate::message::SidebarMenuItem::Hosts;
+                // Reset keyboard navigation state when returning to host grid
+                self.terminal_captured = false;
+                self.focus_section = crate::app::FocusSection::Content;
             }
         }
     }

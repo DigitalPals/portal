@@ -1,13 +1,19 @@
 use iced::widget::{button, column, container, row, scrollable, text, Column, Space};
 use iced::{Alignment, Element, Fill, Length};
 
+use crate::app::FocusSection;
 use crate::config::{HistoryConfig, SessionType};
 use crate::icons::{self, icon_with_color};
 use crate::message::{HistoryMessage, Message};
 use crate::theme::{Theme, BORDER_RADIUS, CARD_BORDER_RADIUS};
 
 /// Build the history view showing recent connections
-pub fn history_view(history: &HistoryConfig, theme: Theme) -> Element<'static, Message> {
+pub fn history_view(
+    history: &HistoryConfig,
+    theme: Theme,
+    focus_section: FocusSection,
+    focus_index: Option<usize>,
+) -> Element<'static, Message> {
     // Header
     let header = row![
         text("Connection History")
@@ -47,8 +53,9 @@ pub fn history_view(history: &HistoryConfig, theme: Theme) -> Element<'static, M
     } else {
         let mut entries_column = Column::new().spacing(8).padding(iced::Padding::new(24.0).top(0.0));
 
-        for entry in &history.entries {
-            entries_column = entries_column.push(history_entry_row(entry, theme));
+        for (idx, entry) in history.entries.iter().enumerate() {
+            let is_focused = focus_section == FocusSection::Content && focus_index == Some(idx);
+            entries_column = entries_column.push(history_entry_row(entry, theme, is_focused));
         }
 
         scrollable(entries_column)
@@ -70,7 +77,7 @@ pub fn history_view(history: &HistoryConfig, theme: Theme) -> Element<'static, M
 }
 
 /// Single history entry row
-fn history_entry_row(entry: &crate::config::HistoryEntry, theme: Theme) -> Element<'static, Message> {
+fn history_entry_row(entry: &crate::config::HistoryEntry, theme: Theme, is_focused: bool) -> Element<'static, Message> {
     let entry_id = entry.id;
 
     // Session type icon
@@ -176,15 +183,26 @@ fn history_entry_row(entry: &crate::config::HistoryEntry, theme: Theme) -> Eleme
     .spacing(12)
     .align_y(Alignment::Center);
 
+    let bg = if is_focused { theme.hover } else { theme.surface };
+    let border = if is_focused {
+        iced::Border {
+            color: theme.focus_ring,
+            width: 2.0,
+            radius: CARD_BORDER_RADIUS.into(),
+        }
+    } else {
+        iced::Border {
+            radius: CARD_BORDER_RADIUS.into(),
+            ..Default::default()
+        }
+    };
+
     container(card_content)
         .padding(12)
         .width(Fill)
         .style(move |_theme| container::Style {
-            background: Some(theme.surface.into()),
-            border: iced::Border {
-                radius: CARD_BORDER_RADIUS.into(),
-                ..Default::default()
-            },
+            background: Some(bg.into()),
+            border,
             shadow: iced::Shadow {
                 color: iced::Color::from_rgba8(0, 0, 0, 0.1),
                 offset: iced::Vector::new(0.0, 1.0),

@@ -4,6 +4,7 @@ use iced::widget::{button, container, row, text, Row};
 use iced::{Alignment, Element, Length, Padding};
 use uuid::Uuid;
 
+use crate::app::FocusSection;
 use crate::message::{Message, TabMessage};
 use crate::theme::Theme;
 
@@ -45,12 +46,15 @@ pub fn tab_bar_view<'a>(
     tabs: &'a [Tab],
     active_tab: Option<Uuid>,
     theme: Theme,
+    focus_section: FocusSection,
+    focus_index: usize,
 ) -> Element<'a, Message> {
     let mut tab_elements: Vec<Element<'a, Message>> = Vec::new();
 
-    for tab in tabs {
+    for (idx, tab) in tabs.iter().enumerate() {
         let is_active = active_tab == Some(tab.id);
-        tab_elements.push(tab_button(tab, is_active, theme));
+        let is_focused = focus_section == FocusSection::TabBar && idx == focus_index;
+        tab_elements.push(tab_button(tab, is_active, is_focused, theme));
     }
 
     // Add "+" button for new connection
@@ -84,7 +88,7 @@ pub fn tab_bar_view<'a>(
 }
 
 /// Single tab button
-fn tab_button(tab: &Tab, is_active: bool, theme: Theme) -> Element<'_, Message> {
+fn tab_button(tab: &Tab, is_active: bool, is_focused: bool, theme: Theme) -> Element<'_, Message> {
     let tab_id = tab.id;
 
     // Tab icon based on type
@@ -102,7 +106,7 @@ fn tab_button(tab: &Tab, is_active: bool, theme: Theme) -> Element<'_, Message> 
 
     let content = row![
         text(icon).size(11),
-        text(title).size(13).color(if is_active {
+        text(title).size(13).color(if is_active || is_focused {
             theme.text_primary
         } else {
             theme.text_secondary
@@ -128,6 +132,8 @@ fn tab_button(tab: &Tab, is_active: bool, theme: Theme) -> Element<'_, Message> 
 
     let bg_color = if is_active {
         theme.background
+    } else if is_focused {
+        theme.hover
     } else {
         theme.surface
     };
@@ -138,12 +144,21 @@ fn tab_button(tab: &Tab, is_active: bool, theme: Theme) -> Element<'_, Message> 
                 iced::widget::button::Status::Hovered if !is_active => theme.hover,
                 _ => bg_color,
             };
+            // Focus ring border
+            let border_color = if is_focused {
+                theme.focus_ring
+            } else if is_active {
+                theme.accent
+            } else {
+                theme.border
+            };
+            let border_width = if is_focused { 2.0 } else { 0.0 };
             iced::widget::button::Style {
                 background: Some(background.into()),
                 text_color: theme.text_primary,
                 border: iced::Border {
-                    color: if is_active { theme.accent } else { theme.border },
-                    width: 0.0,
+                    color: border_color,
+                    width: border_width,
                     radius: iced::border::Radius {
                         top_left: 4.0,
                         top_right: 4.0,

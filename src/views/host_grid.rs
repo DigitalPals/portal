@@ -7,6 +7,7 @@ pub fn search_input_id() -> text_input::Id {
     text_input::Id::new("hosts_search")
 }
 
+use crate::app::FocusSection;
 use crate::config::DetectedOs;
 use crate::icons::{self, icon_with_color};
 use crate::message::{HostMessage, Message, UiMessage};
@@ -205,6 +206,8 @@ pub fn host_grid_view(
     hosts: Vec<HostCard>,
     column_count: usize,
     theme: Theme,
+    focus_section: FocusSection,
+    focus_index: Option<usize>,
 ) -> Element<'static, Message> {
     // ASCII Logo with version on last line (right-aligned)
     let version = format!("v{}", env!("CARGO_PKG_VERSION"));
@@ -236,12 +239,13 @@ pub fn host_grid_view(
         .padding(Padding::new(24.0).top(16.0).bottom(24.0));
 
     // Check emptiness before moving
+    let groups_len = groups.len();
     let groups_empty = groups.is_empty();
     let hosts_empty = hosts.is_empty();
 
     // Groups section (if any groups exist)
     if !groups_empty {
-        let groups_section = build_groups_section(groups, column_count, theme);
+        let groups_section = build_groups_section(groups, column_count, theme, focus_section, focus_index);
         content = content.push(groups_section);
     }
 
@@ -249,7 +253,13 @@ pub fn host_grid_view(
     if hosts_empty && groups_empty {
         content = content.push(empty_state(theme));
     } else if !hosts_empty {
-        let hosts_section = build_hosts_section(hosts, column_count, theme);
+        // Adjust focus index for hosts (groups come first)
+        let host_focus_index = if focus_section == FocusSection::Content {
+            focus_index.and_then(|idx| idx.checked_sub(groups_len))
+        } else {
+            None
+        };
+        let hosts_section = build_hosts_section(hosts, column_count, theme, focus_section, host_focus_index);
         content = content.push(hosts_section);
     }
 
@@ -281,6 +291,8 @@ fn build_groups_section(
     groups: Vec<GroupCard>,
     column_count: usize,
     theme: Theme,
+    focus_section: FocusSection,
+    focus_index: Option<usize>,
 ) -> Element<'static, Message> {
     let section_header = text("Groups")
         .size(16)
@@ -290,8 +302,9 @@ fn build_groups_section(
     let mut rows: Vec<Element<'static, Message>> = Vec::new();
     let mut current_row: Vec<Element<'static, Message>> = Vec::new();
 
-    for group in groups {
-        current_row.push(group_card(group, theme));
+    for (idx, group) in groups.into_iter().enumerate() {
+        let is_focused = focus_section == FocusSection::Content && focus_index == Some(idx);
+        current_row.push(group_card(group, theme, is_focused));
 
         if current_row.len() >= column_count {
             rows.push(
@@ -326,6 +339,8 @@ fn build_hosts_section(
     hosts: Vec<HostCard>,
     column_count: usize,
     theme: Theme,
+    focus_section: FocusSection,
+    focus_index: Option<usize>,
 ) -> Element<'static, Message> {
     let section_header = text("Hosts")
         .size(16)
@@ -335,8 +350,9 @@ fn build_hosts_section(
     let mut rows: Vec<Element<'static, Message>> = Vec::new();
     let mut current_row: Vec<Element<'static, Message>> = Vec::new();
 
-    for host in hosts {
-        current_row.push(host_card(host, theme));
+    for (idx, host) in hosts.into_iter().enumerate() {
+        let is_focused = focus_section == FocusSection::Content && focus_index == Some(idx);
+        current_row.push(host_card(host, theme, is_focused));
 
         if current_row.len() >= column_count {
             rows.push(
@@ -367,7 +383,7 @@ fn build_hosts_section(
 }
 
 /// Single group card
-fn group_card(group: GroupCard, theme: Theme) -> Element<'static, Message> {
+fn group_card(group: GroupCard, theme: Theme, is_focused: bool) -> Element<'static, Message> {
     let group_id = group.id;
 
     // Folder icon with vibrant accent background
@@ -412,17 +428,27 @@ fn group_card(group: GroupCard, theme: Theme) -> Element<'static, Message> {
             .align_y(Alignment::Center),
     )
     .style(move |_theme, status| {
-        let bg = match status {
-            button::Status::Hovered => theme.hover,
+        let bg = match (status, is_focused) {
+            (_, true) => theme.hover,
+            (button::Status::Hovered, _) => theme.hover,
             _ => theme.surface,
+        };
+        let border = if is_focused {
+            iced::Border {
+                color: theme.focus_ring,
+                width: 2.0,
+                radius: CARD_BORDER_RADIUS.into(),
+            }
+        } else {
+            iced::Border {
+                radius: CARD_BORDER_RADIUS.into(),
+                ..Default::default()
+            }
         };
         button::Style {
             background: Some(bg.into()),
             text_color: theme.text_primary,
-            border: iced::Border {
-                radius: CARD_BORDER_RADIUS.into(),
-                ..Default::default()
-            },
+            border,
             shadow: iced::Shadow {
                 color: iced::Color::from_rgba8(0, 0, 0, 0.15),
                 offset: iced::Vector::new(0.0, 2.0),
@@ -485,7 +511,7 @@ fn os_icon_color(os: &Option<DetectedOs>) -> iced::Color {
 }
 
 /// Single host card
-fn host_card(host: HostCard, theme: Theme) -> Element<'static, Message> {
+fn host_card(host: HostCard, theme: Theme, is_focused: bool) -> Element<'static, Message> {
     let host_id = host.id;
 
     // Get OS icon and color
@@ -533,17 +559,27 @@ fn host_card(host: HostCard, theme: Theme) -> Element<'static, Message> {
             .align_y(Alignment::Center),
     )
     .style(move |_theme, status| {
-        let (bg, shadow_alpha) = match status {
-            button::Status::Hovered => (theme.hover, 0.25),
+        let (bg, shadow_alpha) = match (status, is_focused) {
+            (_, true) => (theme.hover, 0.25),
+            (button::Status::Hovered, _) => (theme.hover, 0.25),
             _ => (theme.surface, 0.15),
+        };
+        let border = if is_focused {
+            iced::Border {
+                color: theme.focus_ring,
+                width: 2.0,
+                radius: 12.0.into(),
+            }
+        } else {
+            iced::Border {
+                radius: 12.0.into(),
+                ..Default::default()
+            }
         };
         button::Style {
             background: Some(bg.into()),
             text_color: theme.text_primary,
-            border: iced::Border {
-                radius: 12.0.into(),
-                ..Default::default()
-            },
+            border,
             shadow: iced::Shadow {
                 color: iced::Color::from_rgba8(0, 0, 0, shadow_alpha),
                 offset: iced::Vector::new(0.0, 3.0),

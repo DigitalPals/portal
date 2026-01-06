@@ -1,6 +1,7 @@
 use iced::widget::{button, column, container, row, text, tooltip, Column, Space};
 use iced::{Alignment, Element, Fill, Length};
 
+use crate::app::FocusSection;
 use crate::icons::{self, icon_with_color};
 use crate::message::{Message, SidebarMenuItem, UiMessage};
 use crate::theme::{Theme, BORDER_RADIUS, SIDEBAR_WIDTH, SIDEBAR_WIDTH_COLLAPSED};
@@ -45,6 +46,8 @@ pub fn sidebar_view(
     theme: Theme,
     collapsed: bool,
     selected: SidebarMenuItem,
+    focus_section: FocusSection,
+    focus_index: usize,
 ) -> Element<'static, Message> {
     let sidebar_width = if collapsed {
         SIDEBAR_WIDTH_COLLAPSED
@@ -55,9 +58,10 @@ pub fn sidebar_view(
     // Build menu items
     let mut menu_items = Column::new().spacing(4).padding([32, 8]);
 
-    for menu_item in MENU_ITEMS {
+    for (idx, menu_item) in MENU_ITEMS.iter().enumerate() {
         let is_selected = selected == menu_item.item;
-        let item_element = menu_item_button(menu_item, is_selected, collapsed, theme);
+        let is_focused = focus_section == FocusSection::Sidebar && idx == focus_index;
+        let item_element = menu_item_button(menu_item, is_selected, is_focused, collapsed, theme);
         menu_items = menu_items.push(item_element);
     }
 
@@ -122,10 +126,11 @@ pub fn sidebar_view(
 fn menu_item_button(
     menu_item: &MenuItem,
     is_selected: bool,
+    is_focused: bool,
     collapsed: bool,
     theme: Theme,
 ) -> Element<'static, Message> {
-    let icon_color = if is_selected {
+    let icon_color = if is_selected || is_focused {
         theme.accent
     } else {
         theme.text_secondary
@@ -145,7 +150,7 @@ fn menu_item_button(
             container(icon_widget).width(32).align_x(Alignment::Center),
             text(menu_item.label)
                 .size(16)
-                .color(if is_selected {
+                .color(if is_selected || is_focused {
                     theme.text_primary
                 } else {
                     theme.text_secondary
@@ -158,6 +163,8 @@ fn menu_item_button(
 
     let bg_color = if is_selected {
         Some(theme.selected.into())
+    } else if is_focused {
+        Some(theme.hover.into())
     } else {
         None
     };
@@ -168,13 +175,23 @@ fn menu_item_button(
                 button::Status::Hovered if !is_selected => Some(theme.hover.into()),
                 _ => bg_color,
             };
+            // Focus ring border
+            let border = if is_focused {
+                iced::Border {
+                    color: theme.focus_ring,
+                    width: 2.0,
+                    radius: BORDER_RADIUS.into(),
+                }
+            } else {
+                iced::Border {
+                    radius: BORDER_RADIUS.into(),
+                    ..Default::default()
+                }
+            };
             button::Style {
                 background,
                 text_color: theme.text_primary,
-                border: iced::Border {
-                    radius: BORDER_RADIUS.into(),
-                    ..Default::default()
-                },
+                border,
                 ..Default::default()
             }
         })

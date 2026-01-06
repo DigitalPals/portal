@@ -13,6 +13,7 @@ pub struct Theme {
     pub border: Color,
     pub hover: Color,
     pub selected: Color,
+    pub focus_ring: Color,
 }
 
 impl Theme {
@@ -29,6 +30,7 @@ impl Theme {
             border: Color::from_rgb8(0x3a, 0x40, 0x55),        // #3a4055 - navy border
             hover: Color::from_rgb8(0x35, 0x3d, 0x50),         // #353d50 - hover blue-gray
             selected: Color::from_rgb8(0x2a, 0x4a, 0x6d),      // #2a4a6d - selected blue
+            focus_ring: Color::from_rgb8(0x58, 0x9c, 0xff),    // #589cff - bright blue focus
         }
     }
 
@@ -45,6 +47,7 @@ impl Theme {
             border: Color::from_rgb8(0xd0, 0xd0, 0xd0),        // #d0d0d0
             hover: Color::from_rgb8(0xe8, 0xe8, 0xe8),         // #e8e8e8
             selected: Color::from_rgb8(0xcc, 0xe4, 0xf7),      // #cce4f7
+            focus_ring: Color::from_rgb8(0x00, 0x5a, 0x9e),    // #005a9e - darker blue focus
         }
     }
 }
