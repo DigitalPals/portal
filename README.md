@@ -1,16 +1,6 @@
-```
-                                  .             oooo
-                                .o8             `888
-oo.ooooo.   .ooooo.  oooo d8b .o888oo  .oooo.    888
- 888' `88b d88' `88b `888""8P   888   `P  )88b   888
- 888   888 888   888  888       888    .oP"888   888
- 888   888 888   888  888       888 . d8(  888   888
- 888bod8P' `Y8bod8P' d888b      "888" `Y888""8o o888o
- 888
-o888o
-```
-
 <div align="center">
+
+<img src="assets/logo.png" alt="portal" />
 
 # Portal
 
