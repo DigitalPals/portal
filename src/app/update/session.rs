@@ -225,6 +225,9 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
             TerminalEvent::ClipboardLoad => clipboard::read().map(move |contents| {
                 Message::Session(SessionMessage::ClipboardLoaded(session_id, contents))
             }),
+            TerminalEvent::PtyWrite(bytes) => {
+                handle_session(portal, SessionMessage::Input(session_id, bytes))
+            }
             TerminalEvent::Exit => handle_session(portal, SessionMessage::Disconnected(session_id)),
             TerminalEvent::Wakeup => Task::none(),
         },

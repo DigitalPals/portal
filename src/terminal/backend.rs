@@ -24,6 +24,8 @@ pub enum TerminalEvent {
     ClipboardStore(String),
     /// Clipboard request (paste)
     ClipboardLoad,
+    /// Write response back to the PTY (e.g. device attribute queries)
+    PtyWrite(Vec<u8>),
     /// Terminal exited
     Exit,
     /// Wakeup (content changed)
@@ -51,6 +53,7 @@ impl EventListener for EventProxy {
             Event::Title(title) => TerminalEvent::Title(title),
             Event::ClipboardStore(_, data) => TerminalEvent::ClipboardStore(data),
             Event::ClipboardLoad(_, _) => TerminalEvent::ClipboardLoad,
+            Event::PtyWrite(text) => TerminalEvent::PtyWrite(text.into_bytes()),
             _ => return, // Ignore other events for now
         };
         if let Err(error) = self.sender.try_send(terminal_event) {
