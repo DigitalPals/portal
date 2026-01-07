@@ -9,8 +9,11 @@ use tokio::time::timeout;
 
 use crate::config::Host;
 use crate::error::SshError;
+use crate::security_log;
 
 use crate::config::DetectedOs;
+
+use secrecy::{ExposeSecret, SecretString};
 
 use super::SshEvent;
 use super::auth::ResolvedAuth;
@@ -79,7 +82,7 @@ impl SshClient {
         terminal_size: (u16, u16),
         event_tx: mpsc::Sender<SshEvent>,
         connection_timeout: Duration,
-        password: Option<&str>,
+        password: Option<SecretString>,
         detect_os_on_connect: bool,
     ) -> Result<(Arc<SshSession>, Option<DetectedOs>), SshError> {
         let addr = format!("{}:{}", host.hostname, host.port);
@@ -118,7 +121,7 @@ impl SshClient {
         terminal_size: (u16, u16),
         event_tx: mpsc::Sender<SshEvent>,
         stream: TcpStream,
-        password: Option<&str>,
+        password: Option<SecretString>,
         detect_os_on_connect: bool,
     ) -> Result<(Arc<SshSession>, Option<DetectedOs>), SshError> {
         let handler = ClientHandler::new(
@@ -138,7 +141,8 @@ impl SshClient {
 
         // Authenticate
         let auth = ResolvedAuth::resolve(&host.auth, password).await?;
-        self.authenticate(&mut handle, &host.username, auth).await?;
+        self.authenticate(&mut handle, &host.username, auth, &host.hostname, host.port)
+            .await?;
 
         // Detect OS if requested (before opening the shell channel)
         let detected_os = if detect_os_on_connect {
@@ -192,38 +196,73 @@ impl SshClient {
         handle: &mut client::Handle<ClientHandler>,
         username: &str,
         auth: ResolvedAuth,
+        hostname: &str,
+        port: u16,
     ) -> Result<(), SshError> {
-        let auth_result = match auth {
-            ResolvedAuth::Password(password) => handle
-                .authenticate_password(username, &password)
-                .await
-                .map_err(|e| SshError::AuthenticationFailed(e.to_string()))?,
+        // Determine auth method name for logging
+        let method_name = match &auth {
+            ResolvedAuth::Password(_) => "password",
+            ResolvedAuth::PublicKey(_) => "publickey",
+            ResolvedAuth::Agent => "agent",
+        };
 
-            ResolvedAuth::PublicKey(key) => handle
-                .authenticate_publickey(username, key)
-                .await
-                .map_err(|e| SshError::AuthenticationFailed(e.to_string()))?,
+        // Log authentication attempt
+        security_log::log_auth_attempt(hostname, port, username, method_name);
+
+        let auth_result = match auth {
+            ResolvedAuth::Password(password) => {
+                // Use expose_secret() only at the point of authentication
+                match handle
+                    .authenticate_password(username, password.expose_secret())
+                    .await
+                {
+                    Ok(result) => result,
+                    Err(e) => {
+                        let reason = e.to_string();
+                        security_log::log_auth_failure(hostname, port, username, method_name, &reason);
+                        return Err(SshError::AuthenticationFailed(reason));
+                    }
+                }
+            }
+
+            ResolvedAuth::PublicKey(key) => {
+                match handle.authenticate_publickey(username, key).await {
+                    Ok(result) => result,
+                    Err(e) => {
+                        let reason = e.to_string();
+                        security_log::log_auth_failure(hostname, port, username, method_name, &reason);
+                        return Err(SshError::AuthenticationFailed(reason));
+                    }
+                }
+            }
 
             ResolvedAuth::Agent => {
                 // Try to use SSH agent
                 match self.authenticate_with_agent(handle, username).await {
-                    Ok(result) if result.success() => return Ok(()),
-                    Ok(_) => {
-                        return Err(SshError::Agent(
-                            "Agent authentication failed - no suitable key found".to_string(),
-                        ));
+                    Ok(result) if result.success() => {
+                        security_log::log_auth_success(hostname, port, username, method_name);
+                        return Ok(());
                     }
-                    Err(e) => return Err(e),
+                    Ok(_) => {
+                        let reason = "Agent authentication failed - no suitable key found";
+                        security_log::log_auth_failure(hostname, port, username, method_name, reason);
+                        return Err(SshError::Agent(reason.to_string()));
+                    }
+                    Err(e) => {
+                        security_log::log_auth_failure(hostname, port, username, method_name, &e.to_string());
+                        return Err(e);
+                    }
                 }
             }
         };
 
         if !auth_result.success() {
-            return Err(SshError::AuthenticationFailed(
-                "Authentication rejected by server".to_string(),
-            ));
+            let reason = "Authentication rejected by server";
+            security_log::log_auth_failure(hostname, port, username, method_name, reason);
+            return Err(SshError::AuthenticationFailed(reason.to_string()));
         }
 
+        security_log::log_auth_success(hostname, port, username, method_name);
         Ok(())
     }
 

@@ -105,23 +105,33 @@ pub fn secondary_button_style(
     }
 }
 
-/// Styled text input for dialogs - rounded with border that highlights on focus
+/// Error color for validation errors
+pub const ERROR_COLOR: iced::Color = iced::Color::from_rgb(0.86, 0.31, 0.31);
+
+/// Styled text input for dialogs - rounded with border that highlights on focus.
+/// When `has_error` is true, displays a red error border instead of the normal border.
 ///
 /// Returns a closure suitable for use with `text_input.style(...)`.
-pub fn dialog_input_style(
+pub fn dialog_input_style_with_error(
     theme: Theme,
+    has_error: bool,
 ) -> impl Fn(&iced::Theme, text_input::Status) -> text_input::Style {
     move |_iced_theme, status| {
-        let border_color = match status {
-            text_input::Status::Focused { .. } => theme.accent,
-            text_input::Status::Hovered => theme.text_muted,
-            _ => theme.border,
+        let border_color = if has_error {
+            ERROR_COLOR
+        } else {
+            match status {
+                text_input::Status::Focused { .. } => theme.accent,
+                text_input::Status::Hovered => theme.text_muted,
+                _ => theme.border,
+            }
         };
+        let border_width = if has_error { 1.5 } else { 1.0 };
         text_input::Style {
             background: theme.surface.into(),
             border: iced::Border {
                 color: border_color,
-                width: 1.0,
+                width: border_width,
                 radius: BORDER_RADIUS.into(),
             },
             icon: theme.text_muted,
@@ -130,6 +140,15 @@ pub fn dialog_input_style(
             selection: theme.selected,
         }
     }
+}
+
+/// Styled text input for dialogs - rounded with border that highlights on focus
+///
+/// Returns a closure suitable for use with `text_input.style(...)`.
+pub fn dialog_input_style(
+    theme: Theme,
+) -> impl Fn(&iced::Theme, text_input::Status) -> text_input::Style {
+    dialog_input_style_with_error(theme, false)
 }
 
 /// Styled pick list for dialogs - rounded with border that highlights on hover/open

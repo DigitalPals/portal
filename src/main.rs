@@ -7,10 +7,12 @@ mod icons;
 mod local;
 mod local_fs;
 mod message;
+mod security_log;
 mod sftp;
 mod ssh;
 mod terminal;
 mod theme;
+mod validation;
 mod views;
 mod widgets;
 

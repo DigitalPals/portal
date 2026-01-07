@@ -12,8 +12,11 @@ use tokio::sync::Mutex;
 use tokio::sync::mpsc;
 use tokio::time::timeout;
 
+use secrecy::{ExposeSecret, SecretString};
+
 use crate::config::Host;
 use crate::error::SftpError;
+use crate::security_log;
 use crate::ssh::SshEvent;
 use crate::ssh::auth::ResolvedAuth;
 use crate::ssh::handler::ClientHandler;
@@ -71,7 +74,7 @@ impl SftpClient {
         host: &Host,
         event_tx: mpsc::Sender<SshEvent>,
         connection_timeout: Duration,
-        password: Option<&str>,
+        password: Option<SecretString>,
     ) -> Result<SharedSftpSession, SftpError> {
         let addr = format!("{}:{}", host.hostname, host.port);
 
@@ -107,7 +110,7 @@ impl SftpClient {
         host: &Host,
         event_tx: mpsc::Sender<SshEvent>,
         stream: TcpStream,
-        password: Option<&str>,
+        password: Option<SecretString>,
     ) -> Result<SharedSftpSession, SftpError> {
         let handler = ClientHandler::new(
             host.hostname.clone(),
@@ -129,7 +132,8 @@ impl SftpClient {
         let auth = ResolvedAuth::resolve(&host.auth, password)
             .await
             .map_err(|e| SftpError::ConnectionFailed(format!("Authentication failed: {}", e)))?;
-        self.authenticate(&mut handle, &host.username, auth).await?;
+        self.authenticate(&mut handle, &host.username, auth, &host.hostname, host.port)
+            .await?;
 
         // Open channel and request SFTP subsystem
         let channel = handle
@@ -154,6 +158,9 @@ impl SftpClient {
         // Get the remote home directory
         let home_dir = self.get_home_dir(&sftp).await?;
 
+        // Log successful SFTP connection
+        security_log::log_sftp_connect(&host.hostname, host.port, &host.username);
+
         let session = Arc::new(SftpSession::new(sftp, home_dir));
         Ok(session)
     }
@@ -175,37 +182,78 @@ impl SftpClient {
         handle: &mut client::Handle<ClientHandler>,
         username: &str,
         auth: ResolvedAuth,
+        hostname: &str,
+        port: u16,
     ) -> Result<(), SftpError> {
+        // Determine auth method name for logging
+        let method_name = match &auth {
+            ResolvedAuth::Password(_) => "password",
+            ResolvedAuth::PublicKey(_) => "publickey",
+            ResolvedAuth::Agent => "agent",
+        };
+
+        // Log authentication attempt
+        security_log::log_auth_attempt(hostname, port, username, method_name);
+
         let auth_result = match auth {
-            ResolvedAuth::Password(password) => handle
-                .authenticate_password(username, &password)
-                .await
-                .map_err(|e| SftpError::ConnectionFailed(format!("Password auth failed: {}", e)))?,
-
-            ResolvedAuth::PublicKey(key) => handle
-                .authenticate_publickey(username, key)
-                .await
-                .map_err(|e| {
-                    SftpError::ConnectionFailed(format!("Public key auth failed: {}", e))
-                })?,
-
-            ResolvedAuth::Agent => match self.authenticate_with_agent(handle, username).await {
-                Ok(result) if result.success() => return Ok(()),
-                Ok(_) => {
-                    return Err(SftpError::ConnectionFailed(
-                        "Agent authentication failed - no suitable key found".to_string(),
-                    ));
+            ResolvedAuth::Password(password) => {
+                // Use expose_secret() only at the point of authentication
+                match handle
+                    .authenticate_password(username, password.expose_secret())
+                    .await
+                {
+                    Ok(result) => result,
+                    Err(e) => {
+                        let reason = format!("Password auth failed: {}", e);
+                        security_log::log_auth_failure(hostname, port, username, method_name, &reason);
+                        return Err(SftpError::ConnectionFailed(reason));
+                    }
                 }
-                Err(e) => return Err(e),
-            },
+            }
+
+            ResolvedAuth::PublicKey(key) => {
+                match handle.authenticate_publickey(username, key).await {
+                    Ok(result) => result,
+                    Err(e) => {
+                        let reason = format!("Public key auth failed: {}", e);
+                        security_log::log_auth_failure(hostname, port, username, method_name, &reason);
+                        return Err(SftpError::ConnectionFailed(reason));
+                    }
+                }
+            }
+
+            ResolvedAuth::Agent => {
+                match self.authenticate_with_agent(handle, username).await {
+                    Ok(result) if result.success() => {
+                        security_log::log_auth_success(hostname, port, username, method_name);
+                        return Ok(());
+                    }
+                    Ok(_) => {
+                        let reason = "Agent authentication failed - no suitable key found";
+                        security_log::log_auth_failure(hostname, port, username, method_name, reason);
+                        return Err(SftpError::ConnectionFailed(reason.to_string()));
+                    }
+                    Err(e) => {
+                        security_log::log_auth_failure(
+                            hostname,
+                            port,
+                            username,
+                            method_name,
+                            &e.to_string(),
+                        );
+                        return Err(e);
+                    }
+                }
+            }
         };
 
         if !auth_result.success() {
-            return Err(SftpError::ConnectionFailed(
-                "Authentication rejected by server".to_string(),
-            ));
+            let reason = "Authentication rejected by server";
+            security_log::log_auth_failure(hostname, port, username, method_name, reason);
+            return Err(SftpError::ConnectionFailed(reason.to_string()));
         }
 
+        security_log::log_auth_success(hostname, port, username, method_name);
         Ok(())
     }
 

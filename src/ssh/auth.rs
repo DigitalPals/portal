@@ -2,14 +2,15 @@ use std::path::Path;
 use std::sync::Arc;
 
 use russh::keys::{HashAlg, PrivateKeyWithHashAlg};
+use secrecy::{ExposeSecret, SecretString};
 
 use crate::config::{AuthMethod, paths};
 use crate::error::SshError;
 
 /// Resolved authentication for an SSH connection
 pub enum ResolvedAuth {
-    /// Password authentication
-    Password(String),
+    /// Password authentication with zeroized secret string
+    Password(SecretString),
     /// Public key authentication with loaded key
     PublicKey(PrivateKeyWithHashAlg),
     /// SSH agent authentication (keys managed by agent)
@@ -17,11 +18,16 @@ pub enum ResolvedAuth {
 }
 
 impl ResolvedAuth {
-    /// Resolve authentication method
-    pub async fn resolve(method: &AuthMethod, password: Option<&str>) -> Result<Self, SshError> {
+    /// Resolve authentication method.
+    ///
+    /// Password should be passed as a SecretString for secure handling.
+    pub async fn resolve(
+        method: &AuthMethod,
+        password: Option<SecretString>,
+    ) -> Result<Self, SshError> {
         match method {
             AuthMethod::Password => match password {
-                Some(pwd) => Ok(ResolvedAuth::Password(pwd.to_string())),
+                Some(pwd) => Ok(ResolvedAuth::Password(pwd)),
                 None => Err(SshError::AuthenticationFailed(
                     "Password required".to_string(),
                 )),
@@ -36,6 +42,14 @@ impl ResolvedAuth {
                 load_key_file(&expanded_path, None).await
             }
             AuthMethod::Agent => Ok(ResolvedAuth::Agent),
+        }
+    }
+
+    /// Expose the password for authentication (use sparingly)
+    pub fn expose_password(&self) -> Option<&str> {
+        match self {
+            ResolvedAuth::Password(pwd) => Some(pwd.expose_secret()),
+            _ => None,
         }
     }
 }

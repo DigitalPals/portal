@@ -6,11 +6,12 @@ use std::time::Instant;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-use crate::config::Host;
+use crate::config::{AuthMethod, Host};
 use crate::fs_utils::{cleanup_temp_dir, copy_dir_recursive, count_items_in_dir};
 use crate::local::{LocalEvent, LocalSession};
 use crate::local_fs::list_local_dir;
 use crate::message::{Message, SessionId, SessionMessage, SftpMessage};
+use crate::views::dialogs::password_dialog::PasswordDialogState;
 use crate::views::file_viewer::{FileSource, FileType};
 use crate::views::sftp::{ContextMenuAction, PaneId, PaneSource, PermissionBits, SftpDialogType};
 use crate::views::tabs::Tab;
@@ -125,6 +126,20 @@ impl Portal {
     }
 
     pub(super) fn connect_to_host(&mut self, host: &Host) -> Task<Message> {
+        // Check if password authentication is configured
+        if matches!(host.auth, AuthMethod::Password) {
+            // Show password dialog
+            let password_dialog = PasswordDialogState::new_ssh(
+                host.name.clone(),
+                host.hostname.clone(),
+                host.port,
+                host.username.clone(),
+                host.id,
+            );
+            self.dialogs.open_password(password_dialog);
+            return Task::none();
+        }
+
         // Use Arc to avoid multiple deep clones of Host data
         let host = Arc::new(host.clone());
         let session_id = Uuid::new_v4();
@@ -223,6 +238,22 @@ impl Portal {
         pane_id: PaneId,
         host: &Host,
     ) -> Task<Message> {
+        // Check if password authentication is configured
+        if matches!(host.auth, AuthMethod::Password) {
+            // Show password dialog for SFTP
+            let password_dialog = PasswordDialogState::new_sftp(
+                host.name.clone(),
+                host.hostname.clone(),
+                host.port,
+                host.username.clone(),
+                host.id,
+                tab_id,
+                pane_id,
+            );
+            self.dialogs.open_password(password_dialog);
+            return Task::none();
+        }
+
         // Use Arc to avoid multiple deep clones of Host data
         let host = Arc::new(host.clone());
         let sftp_session_id = Uuid::new_v4();

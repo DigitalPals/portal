@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use iced::widget::{Space, button, column, pick_list, row, text, text_input};
 use iced::{Alignment, Element, Length};
 use uuid::Uuid;
@@ -5,10 +7,12 @@ use uuid::Uuid;
 use crate::config::{AuthMethod, Host};
 use crate::message::{DialogMessage, HostDialogField, Message};
 use crate::theme::Theme;
+use crate::validation::{validate_hostname, validate_port, validate_username};
 
 use super::common::{
-    dialog_backdrop, dialog_input_style, dialog_pick_list_menu_style, dialog_pick_list_style,
-    primary_button_style, secondary_button_style,
+    dialog_backdrop, dialog_input_style, dialog_input_style_with_error,
+    dialog_pick_list_menu_style, dialog_pick_list_style, primary_button_style,
+    secondary_button_style, ERROR_COLOR,
 };
 
 /// Widget ID for host dialog fields (for keyboard navigation)
@@ -39,6 +43,8 @@ pub struct HostDialogState {
     pub key_path: String,
     pub tags: String,
     pub notes: String,
+    /// Validation errors by field name
+    pub validation_errors: HashMap<String, String>,
 }
 
 /// Simplified auth method for the dropdown
@@ -81,6 +87,7 @@ impl HostDialogState {
             key_path: String::new(),
             tags: String::new(),
             notes: String::new(),
+            validation_errors: HashMap::new(),
         }
     }
 
@@ -106,17 +113,53 @@ impl HostDialogState {
             },
             tags: host.tags.join(", "),
             notes: host.notes.clone().unwrap_or_default(),
+            validation_errors: HashMap::new(),
         }
     }
 
-    /// Convert dialog state to a Host struct
-    pub fn to_host(&self) -> Option<Host> {
-        // Validate required fields
-        if self.name.trim().is_empty() || self.hostname.trim().is_empty() {
+    /// Validate all fields and return errors.
+    /// Also updates self.validation_errors with results.
+    pub fn validate(&mut self) -> bool {
+        self.validation_errors.clear();
+
+        // Name is required
+        if self.name.trim().is_empty() {
+            self.validation_errors
+                .insert("name".to_string(), "Name is required".to_string());
+        }
+
+        // Validate hostname
+        if let Err(e) = validate_hostname(&self.hostname) {
+            self.validation_errors.insert("hostname".to_string(), e.message);
+        }
+
+        // Validate port
+        if let Err(e) = validate_port(&self.port) {
+            self.validation_errors.insert("port".to_string(), e.message);
+        }
+
+        // Validate username (empty is allowed)
+        if let Err(e) = validate_username(&self.username) {
+            self.validation_errors.insert("username".to_string(), e.message);
+        }
+
+        self.validation_errors.is_empty()
+    }
+
+    /// Convert dialog state to a Host struct.
+    /// Returns None if validation fails.
+    pub fn to_host(&mut self) -> Option<Host> {
+        // Run validation
+        if !self.validate() {
             return None;
         }
 
-        let port: u16 = self.port.parse().unwrap_or(22);
+        // Port is validated, safe to parse
+        let port: u16 = validate_port(&self.port).unwrap_or_else(|_| {
+            tracing::warn!("Invalid port '{}', using default 22", self.port);
+            22
+        });
+
         let username = if self.username.trim().is_empty() {
             std::env::var("USER").unwrap_or_else(|_| "root".to_string())
         } else {
@@ -172,9 +215,20 @@ impl HostDialogState {
         })
     }
 
-    /// Check if the form is valid
+    /// Check if the form has no validation errors.
+    /// Does not run validation; use validate() first for accurate results.
     pub fn is_valid(&self) -> bool {
-        !self.name.trim().is_empty() && !self.hostname.trim().is_empty()
+        // Quick check - name and hostname must not be empty
+        if self.name.trim().is_empty() || self.hostname.trim().is_empty() {
+            return false;
+        }
+        // If we've run validation, check for errors
+        self.validation_errors.is_empty()
+    }
+
+    /// Get validation error for a specific field
+    pub fn get_error(&self, field: &str) -> Option<&String> {
+        self.validation_errors.get(field)
     }
 }
 
@@ -198,60 +252,94 @@ pub fn host_dialog_view(state: &HostDialogState, theme: Theme) -> Element<'stati
     let is_valid = state.is_valid();
     let username_placeholder = std::env::var("USER").unwrap_or_default();
 
-    // Form fields using owned values
-    let name_input = column![
-        text("Name").size(12).color(theme.text_secondary),
-        text_input("my-server", &name_value)
-            .id(host_dialog_field_id(0))
-            .on_input(|s| Message::Dialog(DialogMessage::FieldChanged(HostDialogField::Name, s)))
-            .on_submit(Message::Dialog(DialogMessage::Submit))
-            .padding(8)
-            .width(Length::Fill)
-            .style(dialog_input_style(theme))
-    ]
-    .spacing(4);
+    // Get validation errors
+    let name_error = state.get_error("name").cloned();
+    let hostname_error = state.get_error("hostname").cloned();
+    let port_error = state.get_error("port").cloned();
+    let username_error = state.get_error("username").cloned();
 
-    let hostname_input = column![
-        text("Hostname / IP").size(12).color(theme.text_secondary),
-        text_input("192.168.1.100", &hostname_value)
-            .id(host_dialog_field_id(1))
-            .on_input(|s| Message::Dialog(DialogMessage::FieldChanged(
-                HostDialogField::Hostname,
-                s
-            )))
-            .on_submit(Message::Dialog(DialogMessage::Submit))
-            .padding(8)
-            .width(Length::Fill)
-            .style(dialog_input_style(theme))
-    ]
-    .spacing(4);
+    // Form fields using owned values with validation error display
+    let name_input = {
+        let has_error = name_error.is_some();
+        let mut col = column![
+            text("Name").size(12).color(theme.text_secondary),
+            text_input("my-server", &name_value)
+                .id(host_dialog_field_id(0))
+                .on_input(|s| Message::Dialog(DialogMessage::FieldChanged(HostDialogField::Name, s)))
+                .on_submit(Message::Dialog(DialogMessage::Submit))
+                .padding(8)
+                .width(Length::Fill)
+                .style(dialog_input_style_with_error(theme, has_error))
+        ]
+        .spacing(4);
+        if let Some(err) = name_error {
+            col = col.push(text(err).size(11).color(ERROR_COLOR));
+        }
+        col
+    };
 
-    let port_input = column![
-        text("Port").size(12).color(theme.text_secondary),
-        text_input("22", &port_value)
-            .id(host_dialog_field_id(2))
-            .on_input(|s| Message::Dialog(DialogMessage::FieldChanged(HostDialogField::Port, s)))
-            .on_submit(Message::Dialog(DialogMessage::Submit))
-            .padding(8)
-            .width(Length::Fill)
-            .style(dialog_input_style(theme))
-    ]
-    .spacing(4);
+    let hostname_input = {
+        let has_error = hostname_error.is_some();
+        let mut col = column![
+            text("Hostname / IP").size(12).color(theme.text_secondary),
+            text_input("192.168.1.100", &hostname_value)
+                .id(host_dialog_field_id(1))
+                .on_input(|s| Message::Dialog(DialogMessage::FieldChanged(
+                    HostDialogField::Hostname,
+                    s
+                )))
+                .on_submit(Message::Dialog(DialogMessage::Submit))
+                .padding(8)
+                .width(Length::Fill)
+                .style(dialog_input_style_with_error(theme, has_error))
+        ]
+        .spacing(4);
+        if let Some(err) = hostname_error {
+            col = col.push(text(err).size(11).color(ERROR_COLOR));
+        }
+        col
+    };
 
-    let username_input = column![
-        text("Username").size(12).color(theme.text_secondary),
-        text_input(&username_placeholder, &username_value)
-            .id(host_dialog_field_id(3))
-            .on_input(|s| Message::Dialog(DialogMessage::FieldChanged(
-                HostDialogField::Username,
-                s
-            )))
-            .on_submit(Message::Dialog(DialogMessage::Submit))
-            .padding(8)
-            .width(Length::Fill)
-            .style(dialog_input_style(theme))
-    ]
-    .spacing(4);
+    let port_input = {
+        let has_error = port_error.is_some();
+        let mut col = column![
+            text("Port").size(12).color(theme.text_secondary),
+            text_input("22", &port_value)
+                .id(host_dialog_field_id(2))
+                .on_input(|s| Message::Dialog(DialogMessage::FieldChanged(HostDialogField::Port, s)))
+                .on_submit(Message::Dialog(DialogMessage::Submit))
+                .padding(8)
+                .width(Length::Fill)
+                .style(dialog_input_style_with_error(theme, has_error))
+        ]
+        .spacing(4);
+        if let Some(err) = port_error {
+            col = col.push(text(err).size(11).color(ERROR_COLOR));
+        }
+        col
+    };
+
+    let username_input = {
+        let has_error = username_error.is_some();
+        let mut col = column![
+            text("Username").size(12).color(theme.text_secondary),
+            text_input(&username_placeholder, &username_value)
+                .id(host_dialog_field_id(3))
+                .on_input(|s| Message::Dialog(DialogMessage::FieldChanged(
+                    HostDialogField::Username,
+                    s
+                )))
+                .on_submit(Message::Dialog(DialogMessage::Submit))
+                .padding(8)
+                .width(Length::Fill)
+                .style(dialog_input_style_with_error(theme, has_error))
+        ]
+        .spacing(4);
+        if let Some(err) = username_error {
+            col = col.push(text(err).size(11).color(ERROR_COLOR));
+        }
+        col
+    };
 
     // Auth method picker
     let auth_picker = column![

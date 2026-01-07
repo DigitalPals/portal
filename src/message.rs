@@ -171,6 +171,18 @@ pub enum DialogMessage {
     HostKeyAccept,
     /// User rejected host key
     HostKeyReject,
+    /// Password dialog: password text changed
+    PasswordChanged(String),
+    /// Password dialog: user submitted password
+    PasswordSubmit,
+    /// Password dialog: user cancelled
+    PasswordCancel,
+    /// Passphrase dialog: passphrase text changed
+    PassphraseChanged(String),
+    /// Passphrase dialog: user submitted passphrase
+    PassphraseSubmit,
+    /// Passphrase dialog: user cancelled
+    PassphraseCancel,
 }
 
 /// Tab management messages

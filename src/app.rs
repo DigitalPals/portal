@@ -19,6 +19,8 @@ use crate::theme::{ThemeId, get_theme};
 use crate::views::dialogs::about_dialog::about_dialog_view;
 use crate::views::dialogs::host_dialog::host_dialog_view;
 use crate::views::dialogs::host_key_dialog::host_key_dialog_view;
+use crate::views::dialogs::passphrase_dialog::passphrase_dialog_view;
+use crate::views::dialogs::password_dialog::password_dialog_view;
 use crate::views::file_viewer::file_viewer_view;
 use crate::views::history_view::history_view;
 use crate::views::host_grid::{calculate_columns, host_grid_view, search_input_id};
@@ -523,6 +525,14 @@ impl Portal {
             }
             ActiveDialog::About(about_state) => {
                 let dialog = about_dialog_view(about_state, theme);
+                stack![main_layout, dialog].into()
+            }
+            ActiveDialog::PasswordPrompt(password_state) => {
+                let dialog = password_dialog_view(password_state, theme);
+                stack![main_layout, dialog].into()
+            }
+            ActiveDialog::PassphrasePrompt(passphrase_state) => {
+                let dialog = passphrase_dialog_view(passphrase_state, theme);
                 stack![main_layout, dialog].into()
             }
             ActiveDialog::None => main_layout,

@@ -6,6 +6,8 @@
 use crate::views::dialogs::about_dialog::AboutDialogState;
 use crate::views::dialogs::host_dialog::HostDialogState;
 use crate::views::dialogs::host_key_dialog::HostKeyDialogState;
+use crate::views::dialogs::passphrase_dialog::PassphraseDialogState;
+use crate::views::dialogs::password_dialog::PasswordDialogState;
 
 /// The currently active dialog, if any
 #[derive(Default)]
@@ -19,6 +21,10 @@ pub enum ActiveDialog {
     HostKey(HostKeyDialogState),
     /// About dialog
     About(AboutDialogState),
+    /// Password prompt dialog for SSH/SFTP password authentication
+    PasswordPrompt(PasswordDialogState),
+    /// Passphrase prompt dialog for encrypted SSH keys
+    PassphrasePrompt(PassphraseDialogState),
 }
 
 /// Manages the active dialog state
@@ -97,5 +103,51 @@ impl DialogManager {
     /// Open the About dialog
     pub fn open_about(&mut self) {
         self.active = ActiveDialog::About(AboutDialogState::new());
+    }
+
+    // ---- Password dialog operations ----
+
+    /// Open the password dialog with the given state
+    pub fn open_password(&mut self, state: PasswordDialogState) {
+        self.active = ActiveDialog::PasswordPrompt(state);
+    }
+
+    /// Get password dialog state if it's the active dialog
+    pub fn password(&self) -> Option<&PasswordDialogState> {
+        match &self.active {
+            ActiveDialog::PasswordPrompt(state) => Some(state),
+            _ => None,
+        }
+    }
+
+    /// Get mutable password dialog state if it's the active dialog
+    pub fn password_mut(&mut self) -> Option<&mut PasswordDialogState> {
+        match &mut self.active {
+            ActiveDialog::PasswordPrompt(state) => Some(state),
+            _ => None,
+        }
+    }
+
+    // ---- Passphrase dialog operations ----
+
+    /// Open the passphrase dialog with the given state
+    pub fn open_passphrase(&mut self, state: PassphraseDialogState) {
+        self.active = ActiveDialog::PassphrasePrompt(state);
+    }
+
+    /// Get passphrase dialog state if it's the active dialog
+    pub fn passphrase(&self) -> Option<&PassphraseDialogState> {
+        match &self.active {
+            ActiveDialog::PassphrasePrompt(state) => Some(state),
+            _ => None,
+        }
+    }
+
+    /// Get mutable passphrase dialog state if it's the active dialog
+    pub fn passphrase_mut(&mut self) -> Option<&mut PassphraseDialogState> {
+        match &mut self.active {
+            ActiveDialog::PassphrasePrompt(state) => Some(state),
+            _ => None,
+        }
     }
 }

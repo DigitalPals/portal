@@ -1,10 +1,13 @@
 //! Dialog message handlers
 
 use iced::Task;
+use secrecy::SecretString;
 
 use crate::app::Portal;
+use crate::app::services::connection;
 use crate::config::Host;
 use crate::message::{DialogMessage, HostDialogField, Message};
+use crate::security_log;
 use crate::ssh::host_key_verification::HostKeyVerificationResponse;
 use crate::views::dialogs::host_dialog::AuthMethodChoice;
 use crate::views::dialogs::host_key_dialog::HostKeyDialogState;
@@ -18,10 +21,13 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
             Task::none()
         }
         DialogMessage::Submit => {
-            if let Some(dialog_state) = portal.dialogs.host() {
+            if let Some(dialog_state) = portal.dialogs.host_mut() {
+                // to_host() runs validation and returns None if validation fails
+                // Validation errors are stored in dialog_state.validation_errors
+                let editing_id = dialog_state.editing_id;
                 if let Some(host) = dialog_state.to_host() {
                     // Preserve created_at for edits
-                    let host = if let Some(existing_id) = dialog_state.editing_id {
+                    let host = if let Some(existing_id) = editing_id {
                         if let Some(existing) = portal.hosts_config.find_host(existing_id) {
                             Host {
                                 created_at: existing.created_at,
@@ -34,7 +40,7 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                         host
                     };
 
-                    let is_edit = dialog_state.editing_id.is_some();
+                    let is_edit = editing_id.is_some();
                     if is_edit {
                         if let Err(e) = portal.hosts_config.update_host(host.clone()) {
                             tracing::error!("Failed to update host: {}", e);
@@ -51,6 +57,7 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                     }
                     portal.dialogs.close();
                 }
+                // If to_host() returned None, validation failed and errors are shown in the UI
             }
             Task::none()
         }
@@ -87,8 +94,16 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
         }
         DialogMessage::HostKeyAccept => {
             if let Some(dialog) = portal.dialogs.host_key_mut() {
+                let was_changed = dialog.is_changed_host;
                 dialog.respond(HostKeyVerificationResponse::Accept);
                 tracing::info!("Host key accepted for {}:{}", dialog.host, dialog.port);
+                // Log security event - warn if host key was changed (potential MITM)
+                security_log::log_host_key_accepted(
+                    &dialog.host,
+                    dialog.port,
+                    &dialog.fingerprint,
+                    was_changed,
+                );
             }
             portal.dialogs.close();
             Task::none()
@@ -97,10 +112,106 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
             if let Some(dialog) = portal.dialogs.host_key_mut() {
                 dialog.respond(HostKeyVerificationResponse::Reject);
                 tracing::info!("Host key rejected for {}:{}", dialog.host, dialog.port);
+                // Log security event
+                security_log::log_host_key_rejected(
+                    &dialog.host,
+                    dialog.port,
+                    "User rejected host key",
+                );
                 portal.toast_manager.push(Toast::error(format!(
                     "Connection rejected: host key verification failed for {}",
                     dialog.host
                 )));
+            }
+            portal.dialogs.close();
+            Task::none()
+        }
+        DialogMessage::PasswordChanged(password) => {
+            if let Some(dialog) = portal.dialogs.password_mut() {
+                dialog.password = password;
+                // Clear any previous error when user starts typing
+                dialog.error = None;
+            }
+            Task::none()
+        }
+        DialogMessage::PasswordSubmit => {
+            if let Some(dialog) = portal.dialogs.password() {
+                let password = SecretString::from(dialog.password.clone());
+                let host_id = dialog.host_id;
+                let is_ssh = dialog.is_ssh;
+                let sftp_context = dialog.sftp_context.clone();
+
+                // Find the host and start connection with password
+                if let Some(host) = portal.hosts_config.find_host(host_id) {
+                    let host = std::sync::Arc::new(host.clone());
+
+                    portal.dialogs.close();
+
+                    if is_ssh {
+                        // SSH connection with password
+                        let session_id = uuid::Uuid::new_v4();
+                        let should_detect_os =
+                            connection::should_detect_os(host.detected_os.as_ref());
+                        return connection::ssh_connect_tasks_with_password(
+                            host,
+                            session_id,
+                            host_id,
+                            should_detect_os,
+                            password,
+                        );
+                    } else if let Some(ctx) = sftp_context {
+                        // SFTP connection with password
+                        let sftp_session_id = uuid::Uuid::new_v4();
+                        return connection::sftp_connect_tasks_with_password(
+                            host,
+                            ctx.tab_id,
+                            ctx.pane_id,
+                            sftp_session_id,
+                            host_id,
+                            password,
+                        );
+                    }
+                }
+            }
+            Task::none()
+        }
+        DialogMessage::PasswordCancel => {
+            if let Some(dialog) = portal.dialogs.password_mut() {
+                // Clear password for security
+                dialog.clear_password();
+            }
+            portal.dialogs.close();
+            Task::none()
+        }
+        DialogMessage::PassphraseChanged(passphrase) => {
+            if let Some(dialog) = portal.dialogs.passphrase_mut() {
+                dialog.passphrase = passphrase;
+                // Clear any previous error when user starts typing
+                dialog.error = None;
+            }
+            Task::none()
+        }
+        DialogMessage::PassphraseSubmit => {
+            // Note: Full passphrase integration requires modifying the key loading flow
+            // to retry with the passphrase. For now, this logs and closes the dialog.
+            // TODO: Integrate with ResolvedAuth::resolve() to support encrypted keys
+            if let Some(dialog) = portal.dialogs.passphrase_mut() {
+                tracing::info!(
+                    "Passphrase submitted for key: {}",
+                    dialog.key_path.display()
+                );
+                dialog.clear_passphrase();
+            }
+            portal.dialogs.close();
+            portal.toast_manager.push(crate::views::toast::Toast::warning(
+                "Encrypted key support requires additional implementation",
+            ));
+            Task::none()
+        }
+        DialogMessage::PassphraseCancel => {
+            if let Some(dialog) = portal.dialogs.passphrase_mut() {
+                // Clear passphrase for security
+                dialog.clear_passphrase();
             }
             portal.dialogs.close();
             Task::none()

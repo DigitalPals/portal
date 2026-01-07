@@ -75,6 +75,29 @@ fn build_input_dialog(
     dialog: &SftpDialogState,
     theme: Theme,
 ) -> Element<'_, Message> {
+    // Handle unexpected dialog types by returning an error element early
+    if matches!(
+        &dialog.dialog_type,
+        SftpDialogType::Delete { .. } | SftpDialogType::EditPermissions { .. }
+    ) {
+        // These dialog types should be handled by build_delete_dialog and
+        // build_permissions_dialog respectively. If we reach here, it's a bug.
+        tracing::error!(
+            "build_input_dialog called for Delete/EditPermissions dialog type - this is a bug"
+        );
+        return column![
+            text("Internal Error")
+                .size(FONT_SIZE_HEADING)
+                .color(iced::Color::from_rgb8(220, 80, 80)),
+            text("Unexpected dialog type. Please report this issue.")
+                .size(FONT_SIZE_BODY)
+                .color(theme.text_secondary),
+        ]
+        .padding(24)
+        .width(Length::Fixed(300.0))
+        .into();
+    }
+
     let (title, placeholder, submit_label, subtitle): (
         &'static str,
         &'static str,
@@ -83,7 +106,10 @@ fn build_input_dialog(
     ) = match &dialog.dialog_type {
         SftpDialogType::NewFolder => ("New Folder", "Folder name", "Create", None),
         SftpDialogType::Rename { .. } => ("Rename", "New name", "Rename", None),
-        SftpDialogType::Delete { .. } | SftpDialogType::EditPermissions { .. } => unreachable!(),
+        // Already handled above with early return
+        SftpDialogType::Delete { .. } | SftpDialogType::EditPermissions { .. } => {
+            ("Error", "", "Close", None)
+        }
     };
 
     let title_text = text(title)
