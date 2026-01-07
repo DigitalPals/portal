@@ -19,6 +19,7 @@ use super::fixtures::SshTestEnvironment;
 #[tokio::test]
 async fn test_unknown_host_prompts_verification() {
     skip_if_no_docker!();
+    let _guard = super::fixtures::acquire_test_lock().await;
 
     let env = SshTestEnvironment::new()
         .await
@@ -97,6 +98,7 @@ async fn test_unknown_host_prompts_verification() {
 #[tokio::test]
 async fn test_known_host_no_prompt() {
     skip_if_no_docker!();
+    let _guard = super::fixtures::acquire_test_lock().await;
 
     let env = SshTestEnvironment::new()
         .await
@@ -191,6 +193,7 @@ async fn test_known_host_no_prompt() {
 #[tokio::test]
 async fn test_host_key_rejection_aborts() {
     skip_if_no_docker!();
+    let _guard = super::fixtures::acquire_test_lock().await;
 
     let env = SshTestEnvironment::new()
         .await
@@ -249,6 +252,7 @@ async fn test_host_key_rejection_aborts() {
 #[tokio::test]
 async fn test_changed_host_key_detection() {
     skip_if_no_docker!();
+    let _guard = super::fixtures::acquire_test_lock().await;
 
     let env = SshTestEnvironment::new()
         .await
@@ -333,6 +337,7 @@ async fn test_changed_host_key_detection() {
 #[tokio::test]
 async fn test_accepting_changed_key_updates_known_hosts() {
     skip_if_no_docker!();
+    let _guard = super::fixtures::acquire_test_lock().await;
 
     let env = SshTestEnvironment::new()
         .await

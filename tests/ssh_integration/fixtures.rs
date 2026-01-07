@@ -2,12 +2,14 @@
 
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::LazyLock;
 use std::sync::Once;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use tempfile::TempDir;
 use tokio::net::TcpStream;
+use tokio::sync::Mutex;
 use tokio::time::{sleep, timeout};
 
 use portal::config::{AuthMethod, Host};
@@ -16,6 +18,7 @@ use portal::ssh::known_hosts::KnownHostsManager;
 // Ensure Docker containers are started only once per test run
 static DOCKER_INIT: Once = Once::new();
 static DOCKER_AVAILABLE: AtomicBool = AtomicBool::new(false);
+static SSH_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 /// Configuration for the test SSH server
 #[derive(Debug, Clone)]
@@ -134,6 +137,11 @@ pub async fn wait_for_ssh_ready(host: &str, port: u16) -> Result<(), String> {
     }
 
     Err("SSH server not ready".to_string())
+}
+
+/// Acquire a global lock to serialize SSH integration tests.
+pub async fn acquire_test_lock() -> tokio::sync::MutexGuard<'static, ()> {
+    SSH_TEST_LOCK.lock().await
 }
 
 /// Test environment with isolated known_hosts and Docker fixtures

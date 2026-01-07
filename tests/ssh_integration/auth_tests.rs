@@ -36,6 +36,7 @@ fn spawn_auto_accept_handler(
 #[tokio::test]
 async fn test_wrong_password() {
     skip_if_no_docker!();
+    let _guard = super::fixtures::acquire_test_lock().await;
 
     let env = SshTestEnvironment::new()
         .await
@@ -73,6 +74,7 @@ async fn test_wrong_password() {
 #[tokio::test]
 async fn test_nonexistent_user() {
     skip_if_no_docker!();
+    let _guard = super::fixtures::acquire_test_lock().await;
 
     let env = SshTestEnvironment::new()
         .await
@@ -112,6 +114,7 @@ async fn test_nonexistent_user() {
 #[tokio::test]
 async fn test_invalid_key_path() {
     skip_if_no_docker!();
+    let _guard = super::fixtures::acquire_test_lock().await;
 
     let env = SshTestEnvironment::new()
         .await
@@ -151,6 +154,7 @@ async fn test_invalid_key_path() {
 #[tokio::test]
 async fn test_wrong_passphrase() {
     skip_if_no_docker!();
+    let _guard = super::fixtures::acquire_test_lock().await;
 
     let env = SshTestEnvironment::new()
         .await
@@ -197,6 +201,7 @@ async fn test_wrong_passphrase() {
 #[tokio::test]
 async fn test_connection_refused() {
     skip_if_no_docker!();
+    let _guard = super::fixtures::acquire_test_lock().await;
 
     let env = SshTestEnvironment::new()
         .await

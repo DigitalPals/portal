@@ -59,6 +59,7 @@ fn spawn_host_key_handler(
 #[tokio::test]
 async fn test_password_auth_success() {
     skip_if_no_docker!();
+    let _guard = super::fixtures::acquire_test_lock().await;
 
     let env = SshTestEnvironment::new()
         .await
@@ -103,6 +104,7 @@ async fn test_password_auth_success() {
 #[tokio::test]
 async fn test_pubkey_auth_success() {
     skip_if_no_docker!();
+    let _guard = super::fixtures::acquire_test_lock().await;
 
     let env = SshTestEnvironment::new()
         .await
@@ -147,6 +149,7 @@ async fn test_pubkey_auth_success() {
 #[tokio::test]
 async fn test_encrypted_key_with_passphrase() {
     skip_if_no_docker!();
+    let _guard = super::fixtures::acquire_test_lock().await;
 
     let env = SshTestEnvironment::new()
         .await
@@ -192,6 +195,7 @@ async fn test_encrypted_key_with_passphrase() {
 #[tokio::test]
 async fn test_encrypted_key_without_passphrase() {
     skip_if_no_docker!();
+    let _guard = super::fixtures::acquire_test_lock().await;
 
     let env = SshTestEnvironment::new()
         .await
@@ -233,6 +237,7 @@ async fn test_encrypted_key_without_passphrase() {
 #[tokio::test]
 async fn test_os_detection_on_connect() {
     skip_if_no_docker!();
+    let _guard = super::fixtures::acquire_test_lock().await;
 
     let env = SshTestEnvironment::new()
         .await
