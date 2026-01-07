@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use iced::widget::text_editor;
+use secrecy::SecretString;
 use uuid::Uuid;
 
 use crate::config::DetectedOs;
@@ -172,7 +173,7 @@ pub enum DialogMessage {
     /// User rejected host key
     HostKeyReject,
     /// Password dialog: password text changed
-    PasswordChanged(String),
+    PasswordChanged(SecretString),
     /// Password dialog: user submitted password
     PasswordSubmit,
     /// Password dialog: user cancelled
@@ -180,7 +181,7 @@ pub enum DialogMessage {
     /// Passphrase dialog: required for encrypted key
     PassphraseRequired(PassphraseRequest),
     /// Passphrase dialog: passphrase text changed
-    PassphraseChanged(String),
+    PassphraseChanged(SecretString),
     /// Passphrase dialog: user submitted passphrase
     PassphraseSubmit,
     /// Passphrase dialog: user cancelled

@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use iced::widget::{Space, button, column, container, row, text, text_input};
 use iced::{Alignment, Element, Length};
+use secrecy::{ExposeSecret, SecretString};
 use uuid::Uuid;
 
 use crate::icons::{self, icon_with_color};
@@ -28,7 +29,7 @@ pub struct PassphraseDialogState {
     /// The key path that needs a passphrase
     pub key_path: PathBuf,
     /// The passphrase being entered (sensitive - should be cleared after use)
-    pub passphrase: String,
+    pub passphrase: SecretString,
     /// Error message to display if passphrase was invalid
     pub error: Option<String>,
     /// The host ID for resuming the connection
@@ -51,7 +52,7 @@ impl PassphraseDialogState {
             port: request.port,
             username: request.username,
             key_path: request.key_path,
-            passphrase: String::new(),
+            passphrase: SecretString::from(String::new()),
             error: request.error,
             host_id: request.host_id,
             is_ssh: request.is_ssh,
@@ -63,7 +64,7 @@ impl PassphraseDialogState {
 
     /// Clear the passphrase (for security)
     pub fn clear_passphrase(&mut self) {
-        self.passphrase.clear();
+        self.passphrase = SecretString::from(String::new());
     }
 }
 
@@ -95,13 +96,13 @@ pub fn passphrase_dialog_view(
 
     let passphrase_label = text("Passphrase").size(12).color(theme.text_muted);
 
-    let passphrase_input = text_input("Enter passphrase...", &state.passphrase)
+    let passphrase_input = text_input("Enter passphrase...", state.passphrase.expose_secret())
         .size(14)
         .padding(10)
         .width(Length::Fill)
         .secure(true)
         .style(dialog_input_style(theme))
-        .on_input(|s| Message::Dialog(DialogMessage::PassphraseChanged(s)))
+        .on_input(|s| Message::Dialog(DialogMessage::PassphraseChanged(SecretString::from(s))))
         .on_submit(Message::Dialog(DialogMessage::PassphraseSubmit));
 
     // Error message if present

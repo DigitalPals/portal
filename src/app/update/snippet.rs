@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use crate::app::managers::{ExecutionStatus, SnippetExecution};
 use crate::app::{Portal, SnippetEditState};
-use crate::config::{HistoricalHostResult, Host, Snippet, SnippetExecutionEntry};
+use crate::config::{HistoricalHostResult, Host, Snippet};
 use crate::message::{HostExecutionResult, Message, SnippetField, SnippetMessage};
 use crate::ssh::SshEvent;
 use crate::views::toast::Toast;
@@ -194,15 +194,14 @@ pub fn handle_snippet(portal: &mut Portal, msg: SnippetMessage) -> Task<Message>
                         })
                         .collect();
 
-                    let history_entry = SnippetExecutionEntry::new(
-                        snippet_id,
-                        name.clone(),
-                        command,
-                        history_results,
-                    );
-                    portal.snippet_history.add_entry(history_entry);
-                    if let Err(e) = portal.snippet_history.save() {
-                        tracing::warn!("Failed to save snippet history: {}", e);
+                    if let Some(history_entry) = portal
+                        .snippet_history
+                        .build_entry(snippet_id, name.clone(), command, history_results)
+                    {
+                        portal.snippet_history.add_entry(history_entry);
+                        if let Err(e) = portal.snippet_history.save() {
+                            tracing::warn!("Failed to save snippet history: {}", e);
+                        }
                     }
 
                     portal.snippet_executions.complete_execution(snippet_id);

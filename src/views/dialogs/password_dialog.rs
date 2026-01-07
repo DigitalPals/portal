@@ -2,6 +2,7 @@
 
 use iced::widget::{Space, button, column, container, row, text, text_input};
 use iced::{Alignment, Element, Length};
+use secrecy::{ExposeSecret, SecretString};
 use uuid::Uuid;
 
 use crate::icons::{self, icon_with_color};
@@ -24,7 +25,7 @@ pub struct PasswordDialogState {
     /// The username
     pub username: String,
     /// The password being entered (sensitive - should be cleared after use)
-    pub password: String,
+    pub password: SecretString,
     /// Error message to display if authentication failed
     pub error: Option<String>,
     /// The host ID for resuming the connection
@@ -56,7 +57,7 @@ impl PasswordDialogState {
             hostname,
             port,
             username,
-            password: String::new(),
+            password: SecretString::from(String::new()),
             error: None,
             host_id,
             is_ssh: true,
@@ -79,7 +80,7 @@ impl PasswordDialogState {
             hostname,
             port,
             username,
-            password: String::new(),
+            password: SecretString::from(String::new()),
             error: None,
             host_id,
             is_ssh: false,
@@ -89,7 +90,7 @@ impl PasswordDialogState {
 
     /// Clear the password (for security)
     pub fn clear_password(&mut self) {
-        self.password.clear();
+        self.password = SecretString::from(String::new());
     }
 }
 
@@ -115,13 +116,13 @@ pub fn password_dialog_view(
 
     let password_label = text("Password").size(12).color(theme.text_muted);
 
-    let password_input = text_input("Enter password...", &state.password)
+    let password_input = text_input("Enter password...", state.password.expose_secret())
         .size(14)
         .padding(10)
         .width(Length::Fill)
         .secure(true)
         .style(dialog_input_style(theme))
-        .on_input(|s| Message::Dialog(DialogMessage::PasswordChanged(s)))
+        .on_input(|s| Message::Dialog(DialogMessage::PasswordChanged(SecretString::from(s))))
         .on_submit(Message::Dialog(DialogMessage::PasswordSubmit));
 
     // Error message if present

@@ -286,6 +286,7 @@ Portal stores configuration in your platform's config directory:
 Configuration files:
 - `hosts.toml` — Saved host definitions
 - `snippets.toml` — Command snippets
+- `snippet_history.toml` — Snippet execution history (`enabled`, `store_command`, `store_output`, `redact_output`)
 - `settings.toml` — Theme and font preferences
 - `history.toml` — Connection history
 - `known_hosts` — SSH host key storage

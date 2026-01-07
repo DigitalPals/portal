@@ -1,8 +1,6 @@
 //! Dialog message handlers
 
 use iced::Task;
-use secrecy::SecretString;
-
 use crate::app::Portal;
 use crate::app::services::connection;
 use crate::config::Host;
@@ -136,11 +134,13 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
             Task::none()
         }
         DialogMessage::PasswordSubmit => {
-            if let Some(dialog) = portal.dialogs.password() {
-                let password = SecretString::from(dialog.password.clone());
+            if let Some(dialog) = portal.dialogs.password_mut() {
+                let password = dialog.password.clone();
                 let host_id = dialog.host_id;
                 let is_ssh = dialog.is_ssh;
                 let sftp_context = dialog.sftp_context.clone();
+                dialog.clear_password();
+                dialog.error = None;
 
                 // Find the host and start connection with password
                 if let Some(host) = portal.hosts_config.find_host(host_id) {
@@ -199,13 +199,15 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
             Task::none()
         }
         DialogMessage::PassphraseSubmit => {
-            if let Some(dialog) = portal.dialogs.passphrase() {
-                let passphrase = SecretString::from(dialog.passphrase.clone());
+            if let Some(dialog) = portal.dialogs.passphrase_mut() {
+                let passphrase = dialog.passphrase.clone();
                 let host_id = dialog.host_id;
                 let is_ssh = dialog.is_ssh;
                 let session_id = dialog.session_id;
                 let should_detect_os = dialog.should_detect_os;
                 let sftp_context = dialog.sftp_context.clone();
+                dialog.clear_passphrase();
+                dialog.error = None;
 
                 // Find the host and start connection with passphrase
                 if let Some(host) = portal.hosts_config.find_host(host_id) {
