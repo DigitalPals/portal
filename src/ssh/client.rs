@@ -76,6 +76,7 @@ impl SshClient {
 
     /// Connect to a host and establish an interactive PTY session
     /// Returns the session and optionally the detected OS
+    #[allow(clippy::too_many_arguments)]
     pub async fn connect(
         &self,
         host: &Host,
@@ -117,6 +118,7 @@ impl SshClient {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn establish_session(
         &self,
         host: &Host,
