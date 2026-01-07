@@ -207,17 +207,49 @@ cd portal
 ./run.sh check   # Run cargo check and clippy
 ```
 
-### NixOS (flake)
+### NixOS / Nix Flakes
+
+Portal is available as a Nix flake with binaries cached on [Cachix](https://app.cachix.org/cache/digitalpals).
+
+**Add the Cachix cache** (optional but recommended for faster installs):
 
 ```bash
-nix develop
-cargo build --release
+nix-shell -p cachix --run "cachix use digitalpals"
 ```
 
-Or build the package directly:
+**Run directly:**
+
+```bash
+nix run github:DigitalPals/portal
+```
+
+**Install in NixOS configuration** (`flake.nix`):
+
+```nix
+{
+  inputs = {
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    portal.url = "github:DigitalPals/portal";
+  };
+
+  outputs = { nixpkgs, portal, ... }: {
+    nixosConfigurations.yourhostname = nixpkgs.lib.nixosSystem {
+      system = "x86_64-linux";
+      modules = [
+        ({ pkgs, ... }: {
+          environment.systemPackages = [ portal.packages.${pkgs.system}.default ];
+        })
+      ];
+    };
+  };
+}
+```
+
+**Build from source:**
 
 ```bash
 nix build
+./result/bin/portal
 ```
 
 ## Quick Start
