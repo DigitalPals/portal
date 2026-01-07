@@ -9,7 +9,9 @@ use std::path::PathBuf;
 
 use crate::icons::{self, icon_with_color};
 use crate::message::{Message, SessionId, SftpMessage};
-use crate::theme::Theme;
+use crate::theme::{
+    FONT_SIZE_BODY, FONT_SIZE_BUTTON_SMALL, FONT_SIZE_HEADING, FONT_SIZE_LABEL, Theme,
+};
 
 use super::state::{DualPaneSftpState, SftpDialogState};
 use super::types::{PermissionBit, PermissionBits, SftpDialogType};
@@ -84,14 +86,14 @@ fn build_input_dialog(
         SftpDialogType::Delete { .. } | SftpDialogType::EditPermissions { .. } => unreachable!(),
     };
 
-    let title_text = text(title).size(18).color(theme.text_primary);
+    let title_text = text(title).size(FONT_SIZE_HEADING).color(theme.text_primary);
 
     let input_value = dialog.input_value.clone();
     let input = text_input(placeholder, &input_value)
         .on_input(move |value| Message::Sftp(SftpMessage::DialogInputChanged(tab_id, value)))
         .on_submit(Message::Sftp(SftpMessage::DialogSubmit(tab_id)))
         .padding([10, 12])
-        .size(14)
+        .size(FONT_SIZE_BODY)
         .style(move |_theme, _status| text_input::Style {
             background: theme.background.into(),
             border: iced::Border {
@@ -108,7 +110,7 @@ fn build_input_dialog(
     // Error message if any
     let error_text: Element<'_, Message> = if let Some(ref error) = dialog.error {
         text(error)
-            .size(12)
+            .size(FONT_SIZE_LABEL)
             .color(iced::Color::from_rgb8(220, 80, 80))
             .into()
     } else {
@@ -124,7 +126,7 @@ fn build_input_dialog(
 
     // Build subtitle element if present
     let subtitle_element: Element<'_, Message> = if let Some(subtitle) = subtitle {
-        text(subtitle).size(13).color(theme.text_muted).into()
+        text(subtitle).size(FONT_SIZE_BUTTON_SMALL).color(theme.text_muted).into()
     } else {
         Space::new().into()
     };
@@ -151,7 +153,7 @@ fn build_delete_dialog<'a>(
     error: Option<&'a str>,
     theme: Theme,
 ) -> Element<'a, Message> {
-    let title_text = text("Delete").size(18).color(theme.text_primary);
+    let title_text = text("Delete").size(FONT_SIZE_HEADING).color(theme.text_primary);
 
     // Build the confirmation message
     let count = entries.len();
@@ -173,7 +175,7 @@ fn build_delete_dialog<'a>(
         format!("Delete {} items?", count)
     };
 
-    let warning_text = text(warning_msg).size(14).color(theme.text_secondary);
+    let warning_text = text(warning_msg).size(FONT_SIZE_BODY).color(theme.text_secondary);
 
     // List the items to be deleted (show up to 5)
     let items_list: Element<'_, Message> = if count <= 5 {
@@ -186,7 +188,7 @@ fn build_delete_dialog<'a>(
                     icons::files::FILE
                 };
                 let icon = icon_with_color(icon_data, 14, theme.text_muted);
-                row![icon, text(name).size(13).color(theme.text_secondary)]
+                row![icon, text(name).size(FONT_SIZE_BUTTON_SMALL).color(theme.text_secondary)]
                     .spacing(8)
                     .align_y(Alignment::Center)
                     .into()
@@ -209,7 +211,7 @@ fn build_delete_dialog<'a>(
                     icons::files::FILE
                 };
                 let icon = icon_with_color(icon_data, 14, theme.text_muted);
-                row![icon, text(name).size(13).color(theme.text_secondary)]
+                row![icon, text(name).size(FONT_SIZE_BUTTON_SMALL).color(theme.text_secondary)]
                     .spacing(8)
                     .align_y(Alignment::Center)
                     .into()
@@ -218,7 +220,7 @@ fn build_delete_dialog<'a>(
 
         items.push(
             text(format!("... and {} more", count - 3))
-                .size(13)
+                .size(FONT_SIZE_BUTTON_SMALL)
                 .color(theme.text_muted)
                 .into(),
         );
@@ -250,7 +252,7 @@ fn build_delete_dialog<'a>(
             iced::Color::from_rgb8(220, 160, 60)
         ),
         text("This action cannot be undone.")
-            .size(12)
+            .size(FONT_SIZE_LABEL)
             .color(iced::Color::from_rgb8(220, 160, 60))
     ]
     .spacing(8)
@@ -259,7 +261,7 @@ fn build_delete_dialog<'a>(
     // Error message if any
     let error_text: Element<'_, Message> = if let Some(error) = error {
         text(error)
-            .size(12)
+            .size(FONT_SIZE_LABEL)
             .color(iced::Color::from_rgb8(220, 80, 80))
             .into()
     } else {
@@ -297,34 +299,34 @@ fn build_permissions_dialog<'a>(
     error: Option<&'a str>,
     theme: Theme,
 ) -> Element<'a, Message> {
-    let title_text = text("Edit Permissions").size(18).color(theme.text_primary);
+    let title_text = text("Edit Permissions").size(FONT_SIZE_HEADING).color(theme.text_primary);
 
     // File name display
     let file_info = row![
         icon_with_color(icons::files::FILE, 16, theme.text_muted),
-        text(name).size(14).color(theme.text_secondary)
+        text(name).size(FONT_SIZE_BODY).color(theme.text_secondary)
     ]
     .spacing(8)
     .align_y(Alignment::Center);
 
     // Current mode display
     let mode_text = text(format!("Mode: {}", permissions.as_octal_string()))
-        .size(13)
+        .size(FONT_SIZE_BUTTON_SMALL)
         .color(theme.text_muted);
 
     // Permission grid headers
     let header_row = row![
         Space::new().width(Length::Fixed(80.0)),
         text("Read")
-            .size(12)
+            .size(FONT_SIZE_LABEL)
             .color(theme.text_muted)
             .width(Length::Fixed(60.0)),
         text("Write")
-            .size(12)
+            .size(FONT_SIZE_LABEL)
             .color(theme.text_muted)
             .width(Length::Fixed(60.0)),
         text("Execute")
-            .size(12)
+            .size(FONT_SIZE_LABEL)
             .color(theme.text_muted)
             .width(Length::Fixed(60.0)),
     ]
@@ -388,7 +390,7 @@ fn build_permissions_dialog<'a>(
     // Error message if any
     let error_text: Element<'_, Message> = if let Some(error) = error {
         text(error)
-            .size(12)
+            .size(FONT_SIZE_LABEL)
             .color(iced::Color::from_rgb8(220, 80, 80))
             .into()
     } else {
@@ -432,7 +434,7 @@ fn permission_row<'a>(
 ) -> Element<'a, Message> {
     row![
         text(label)
-            .size(13)
+            .size(FONT_SIZE_BUTTON_SMALL)
             .color(theme.text_primary)
             .width(Length::Fixed(80.0)),
         permission_checkbox(tab_id, read, read_bit, theme),
@@ -506,7 +508,7 @@ fn permission_checkbox(
 
 /// Create a cancel button for dialogs
 fn dialog_cancel_button(tab_id: SessionId, theme: Theme) -> iced::widget::Button<'static, Message> {
-    button(text("Cancel").size(13).color(theme.text_primary))
+    button(text("Cancel").size(FONT_SIZE_BUTTON_SMALL).color(theme.text_primary))
         .padding([8, 16])
         .style(move |_theme, status| {
             let bg = match status {
@@ -544,7 +546,7 @@ fn dialog_submit_button(
         (theme.accent, iced::Color::from_rgb8(0, 100, 180))
     };
 
-    let btn = button(text(label.to_string()).size(13).color(if is_valid {
+    let btn = button(text(label.to_string()).size(FONT_SIZE_BUTTON_SMALL).color(if is_valid {
         theme.background
     } else {
         theme.text_muted

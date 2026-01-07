@@ -7,7 +7,7 @@ use iced::widget::{Column, Space, button, container, text};
 use iced::{Color, Element, Fill, Length, Padding};
 
 use crate::message::{Message, SessionId, SftpMessage};
-use crate::theme::Theme;
+use crate::theme::{FONT_SIZE_BUTTON_SMALL, Theme};
 use crate::widgets::mouse_area;
 
 use super::state::DualPaneSftpState;
@@ -34,7 +34,7 @@ fn context_menu_item<'a>(
         theme.text_primary
     };
 
-    let btn = button(text(label).size(13).color(text_color))
+    let btn = button(text(label).size(FONT_SIZE_BUTTON_SMALL).color(text_color))
         .padding([6, 12])
         .width(Length::Fill)
         .style(move |_theme, status| {

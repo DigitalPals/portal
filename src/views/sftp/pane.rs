@@ -14,7 +14,9 @@ use uuid::Uuid;
 use crate::icons::{self, icon_with_color};
 use crate::message::{Message, SessionId, SftpMessage};
 use crate::sftp::{FileEntry, FileIcon, format_size};
-use crate::theme::Theme;
+use crate::theme::{
+    FONT_SIZE_BODY, FONT_SIZE_BUTTON_SMALL, FONT_SIZE_LABEL, FONT_SIZE_SECTION, Theme,
+};
 use crate::widgets::mouse_area;
 
 use super::state::FilePaneState;
@@ -111,7 +113,7 @@ pub fn pane_header(
         },
     )
     .width(Length::Fixed(150.0))
-    .text_size(12.0)
+    .text_size(FONT_SIZE_LABEL)
     .padding([4, 8]);
 
     // Filter input
@@ -119,7 +121,7 @@ pub fn pane_header(
     let filter_input = text_input("Filter...", &filter_value)
         .on_input(move |value| Message::Sftp(SftpMessage::FilterChanged(tab_id, pane_id, value)))
         .padding([4, 8])
-        .size(12)
+        .size(FONT_SIZE_LABEL)
         .width(Length::Fixed(120.0))
         .style(move |_theme, _status| text_input::Style {
             background: theme.background.into(),
@@ -137,7 +139,7 @@ pub fn pane_header(
     // Actions dropdown button
     let actions_btn = button(
         row![
-            text("Actions").size(12).color(theme.text_primary),
+            text("Actions").size(FONT_SIZE_LABEL).color(theme.text_primary),
             icon_with_color(icons::ui::CHEVRON_DOWN, 12, theme.text_primary)
         ]
         .spacing(4)
@@ -265,14 +267,14 @@ pub fn pane_breadcrumb_bar(
 
         // Add separator if not first
         if i > 0 {
-            breadcrumb_elements.push(text(">").size(12).color(theme.text_muted).into());
+            breadcrumb_elements.push(text(">").size(FONT_SIZE_LABEL).color(theme.text_muted).into());
         }
 
         // Folder icon + clickable segment
         let segment = button(
             row![
                 icon_with_color(icons::files::FOLDER, 14, theme.accent),
-                text(display_name).size(12).color(theme.text_primary)
+                text(display_name).size(FONT_SIZE_LABEL).color(theme.text_primary)
             ]
             .spacing(4)
             .align_y(Alignment::Center),
@@ -341,7 +343,7 @@ pub fn pane_file_list<'a>(
     theme: Theme,
 ) -> Element<'a, Message> {
     if state.loading {
-        return container(text("Loading...").size(14).color(theme.text_muted))
+        return container(text("Loading...").size(FONT_SIZE_BODY).color(theme.text_muted))
             .width(Fill)
             .height(Fill)
             .align_x(Alignment::Center)
@@ -352,8 +354,8 @@ pub fn pane_file_list<'a>(
     if let Some(ref error) = state.error {
         return container(
             column![
-                text("Error").size(16).color(theme.text_primary),
-                text(error).size(12).color(theme.text_muted),
+                text("Error").size(FONT_SIZE_SECTION).color(theme.text_primary),
+                text(error).size(FONT_SIZE_LABEL).color(theme.text_muted),
             ]
             .spacing(8)
             .align_x(Alignment::Center),
@@ -377,7 +379,7 @@ pub fn pane_file_list<'a>(
         return container(
             column![
                 icon_with_color(icons::files::FOLDER, 32, theme.text_muted),
-                text(message).size(14).color(theme.text_muted),
+                text(message).size(FONT_SIZE_BODY).color(theme.text_muted),
             ]
             .spacing(8)
             .align_x(Alignment::Center),
@@ -393,19 +395,19 @@ pub fn pane_file_list<'a>(
     let headers = container(
         row![
             text("Name")
-                .size(12)
+                .size(FONT_SIZE_LABEL)
                 .color(theme.text_muted)
                 .width(Length::FillPortion(4)),
             text("Date Modified")
-                .size(12)
+                .size(FONT_SIZE_LABEL)
                 .color(theme.text_muted)
                 .width(Length::FillPortion(2)),
             text("Size")
-                .size(12)
+                .size(FONT_SIZE_LABEL)
                 .color(theme.text_muted)
                 .width(Length::FillPortion(1)),
             text("Kind")
-                .size(12)
+                .size(FONT_SIZE_LABEL)
                 .color(theme.text_muted)
                 .width(Length::FillPortion(2)),
         ]
@@ -536,7 +538,7 @@ pub fn pane_file_entry_row(
 
     let name_row = row![
         icon_with_color(icon_data, 16, icon_color),
-        text(name).size(13).color(text_color),
+        text(name).size(FONT_SIZE_BUTTON_SMALL).color(text_color),
     ]
     .spacing(8)
     .align_y(Alignment::Center);
@@ -550,15 +552,15 @@ pub fn pane_file_entry_row(
     let content = row![
         container(name_row).width(Length::FillPortion(4)),
         text(modified)
-            .size(12)
+            .size(FONT_SIZE_LABEL)
             .color(secondary_color)
             .width(Length::FillPortion(2)),
         text(size)
-            .size(12)
+            .size(FONT_SIZE_LABEL)
             .color(secondary_color)
             .width(Length::FillPortion(1)),
         text(kind)
-            .size(12)
+            .size(FONT_SIZE_LABEL)
             .color(secondary_color)
             .width(Length::FillPortion(2)),
     ]
@@ -640,7 +642,7 @@ pub fn pane_footer<'a>(
     };
 
     container(
-        row![text(status).size(12).color(theme.text_muted),]
+        row![text(status).size(FONT_SIZE_LABEL).color(theme.text_muted),]
             .spacing(8)
             .padding(8)
             .align_y(Alignment::Center),
@@ -675,7 +677,7 @@ pub fn actions_menu_overlay(
         "Show Hidden Files"
     };
 
-    let menu_item = button(text(show_hidden_label).size(13).color(theme.text_primary))
+    let menu_item = button(text(show_hidden_label).size(FONT_SIZE_BUTTON_SMALL).color(theme.text_primary))
         .padding([8, 16])
         .width(Length::Fixed(180.0))
         .style(move |_theme, status| {
