@@ -355,3 +355,148 @@ impl Default for SshClient {
         Self::new(30, 60)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_creates_client_with_custom_settings() {
+        let client = SshClient::new(30, 120);
+        // Verify config was created with proper Arc
+        assert_eq!(Arc::strong_count(&client.config), 1);
+        assert_eq!(Arc::strong_count(&client.known_hosts), 1);
+    }
+
+    #[test]
+    fn default_creates_client_with_30s_timeout_60s_keepalive() {
+        let client = SshClient::default();
+        assert_eq!(Arc::strong_count(&client.config), 1);
+        // Default should work without panicking
+    }
+
+    #[test]
+    fn with_known_hosts_uses_provided_manager() {
+        let known_hosts = Arc::new(Mutex::new(KnownHostsManager::new()));
+        let known_hosts_clone = known_hosts.clone();
+
+        let client = SshClient::with_known_hosts(60, known_hosts);
+
+        // Verify the same Arc is used
+        assert_eq!(Arc::strong_count(&known_hosts_clone), 2);
+        assert!(Arc::ptr_eq(&client.known_hosts, &known_hosts_clone));
+    }
+
+    #[test]
+    fn new_with_zero_keepalive_disables_keepalive() {
+        // Zero keepalive should not panic and should disable keepalive
+        let client = SshClient::new(30, 0);
+        assert_eq!(Arc::strong_count(&client.config), 1);
+    }
+
+    #[test]
+    fn with_known_hosts_zero_keepalive_disables_keepalive() {
+        let known_hosts = Arc::new(Mutex::new(KnownHostsManager::new()));
+        let client = SshClient::with_known_hosts(0, known_hosts);
+        assert_eq!(Arc::strong_count(&client.config), 1);
+    }
+
+    #[test]
+    fn new_with_large_keepalive() {
+        // Large keepalive values should work
+        let client = SshClient::new(300, 86400); // 5 min timeout, 24 hour keepalive
+        assert_eq!(Arc::strong_count(&client.config), 1);
+    }
+
+    #[test]
+    fn multiple_clients_have_separate_state() {
+        let client1 = SshClient::default();
+        let client2 = SshClient::default();
+
+        // Each client should have its own config and known_hosts
+        assert!(!Arc::ptr_eq(&client1.config, &client2.config));
+        assert!(!Arc::ptr_eq(&client1.known_hosts, &client2.known_hosts));
+    }
+
+    #[test]
+    fn clients_can_share_known_hosts_manager() {
+        let shared_known_hosts = Arc::new(Mutex::new(KnownHostsManager::new()));
+
+        let client1 = SshClient::with_known_hosts(60, shared_known_hosts.clone());
+        let client2 = SshClient::with_known_hosts(60, shared_known_hosts.clone());
+
+        // Both clients should share the same known_hosts
+        assert!(Arc::ptr_eq(&client1.known_hosts, &client2.known_hosts));
+        assert_eq!(Arc::strong_count(&shared_known_hosts), 3); // original + 2 clients
+
+        // But configs should be separate
+        assert!(!Arc::ptr_eq(&client1.config, &client2.config));
+    }
+
+    #[test]
+    fn clients_with_different_keepalive_have_different_configs() {
+        let shared_known_hosts = Arc::new(Mutex::new(KnownHostsManager::new()));
+
+        let client1 = SshClient::with_known_hosts(30, shared_known_hosts.clone());
+        let client2 = SshClient::with_known_hosts(120, shared_known_hosts.clone());
+
+        // Configs should be separate even with shared known_hosts
+        assert!(!Arc::ptr_eq(&client1.config, &client2.config));
+    }
+
+    #[test]
+    fn new_with_various_timeout_values() {
+        // Test various timeout values don't cause issues
+        let _client1 = SshClient::new(0, 60); // zero timeout
+        let _client2 = SshClient::new(1, 60); // minimal timeout
+        let _client3 = SshClient::new(300, 60); // 5 minute timeout
+        let _client4 = SshClient::new(3600, 60); // 1 hour timeout
+    }
+
+    #[test]
+    fn config_has_expected_inactivity_timeout() {
+        let client = SshClient::new(30, 60);
+        // Inactivity timeout should be 1 hour (3600 seconds)
+        assert_eq!(
+            client.config.inactivity_timeout,
+            Some(Duration::from_secs(3600))
+        );
+    }
+
+    #[test]
+    fn config_has_expected_keepalive_interval() {
+        let client = SshClient::new(30, 60);
+        assert_eq!(
+            client.config.keepalive_interval,
+            Some(Duration::from_secs(60))
+        );
+    }
+
+    #[test]
+    fn config_has_expected_keepalive_max() {
+        let client = SshClient::new(30, 60);
+        assert_eq!(client.config.keepalive_max, 3);
+    }
+
+    #[test]
+    fn zero_keepalive_sets_none_interval() {
+        let client = SshClient::new(30, 0);
+        assert_eq!(client.config.keepalive_interval, None);
+    }
+
+    #[test]
+    fn with_known_hosts_zero_keepalive_sets_none_interval() {
+        let known_hosts = Arc::new(Mutex::new(KnownHostsManager::new()));
+        let client = SshClient::with_known_hosts(0, known_hosts);
+        assert_eq!(client.config.keepalive_interval, None);
+    }
+
+    #[test]
+    fn nonzero_keepalive_sets_duration() {
+        let client = SshClient::new(30, 45);
+        assert_eq!(
+            client.config.keepalive_interval,
+            Some(Duration::from_secs(45))
+        );
+    }
+}

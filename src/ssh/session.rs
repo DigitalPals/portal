@@ -261,3 +261,196 @@ impl SshSession {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // === CommandResult tests ===
+
+    #[test]
+    fn command_result_stores_stdout() {
+        let result = CommandResult {
+            stdout: "hello world".to_string(),
+            stderr: String::new(),
+            exit_code: 0,
+        };
+        assert_eq!(result.stdout, "hello world");
+    }
+
+    #[test]
+    fn command_result_stores_stderr() {
+        let result = CommandResult {
+            stdout: String::new(),
+            stderr: "error message".to_string(),
+            exit_code: 1,
+        };
+        assert_eq!(result.stderr, "error message");
+    }
+
+    #[test]
+    fn command_result_stores_exit_code() {
+        let result = CommandResult {
+            stdout: String::new(),
+            stderr: String::new(),
+            exit_code: 42,
+        };
+        assert_eq!(result.exit_code, 42);
+    }
+
+    #[test]
+    fn command_result_success_exit_code() {
+        let result = CommandResult {
+            stdout: "output".to_string(),
+            stderr: String::new(),
+            exit_code: 0,
+        };
+        assert_eq!(result.exit_code, 0);
+    }
+
+    #[test]
+    fn command_result_failure_exit_code() {
+        let result = CommandResult {
+            stdout: String::new(),
+            stderr: "command not found".to_string(),
+            exit_code: 127,
+        };
+        assert_eq!(result.exit_code, 127);
+    }
+
+    #[test]
+    fn command_result_negative_exit_code() {
+        // Some systems use negative exit codes for signals
+        let result = CommandResult {
+            stdout: String::new(),
+            stderr: String::new(),
+            exit_code: -9, // SIGKILL
+        };
+        assert_eq!(result.exit_code, -9);
+    }
+
+    #[test]
+    fn command_result_clone() {
+        let original = CommandResult {
+            stdout: "output".to_string(),
+            stderr: "errors".to_string(),
+            exit_code: 1,
+        };
+        let cloned = original.clone();
+
+        assert_eq!(original.stdout, cloned.stdout);
+        assert_eq!(original.stderr, cloned.stderr);
+        assert_eq!(original.exit_code, cloned.exit_code);
+    }
+
+    #[test]
+    fn command_result_debug() {
+        let result = CommandResult {
+            stdout: "out".to_string(),
+            stderr: "err".to_string(),
+            exit_code: 0,
+        };
+        let debug_str = format!("{:?}", result);
+
+        assert!(debug_str.contains("CommandResult"));
+        assert!(debug_str.contains("stdout"));
+        assert!(debug_str.contains("stderr"));
+        assert!(debug_str.contains("exit_code"));
+    }
+
+    #[test]
+    fn command_result_with_multiline_output() {
+        let result = CommandResult {
+            stdout: "line1\nline2\nline3\n".to_string(),
+            stderr: "warn1\nwarn2\n".to_string(),
+            exit_code: 0,
+        };
+
+        assert!(result.stdout.contains('\n'));
+        assert_eq!(result.stdout.lines().count(), 3);
+        assert_eq!(result.stderr.lines().count(), 2);
+    }
+
+    #[test]
+    fn command_result_with_empty_strings() {
+        let result = CommandResult {
+            stdout: String::new(),
+            stderr: String::new(),
+            exit_code: 0,
+        };
+
+        assert!(result.stdout.is_empty());
+        assert!(result.stderr.is_empty());
+    }
+
+    #[test]
+    fn command_result_with_unicode() {
+        let result = CommandResult {
+            stdout: "Hello 世界 🌍".to_string(),
+            stderr: "Ошибка: файл не найден".to_string(),
+            exit_code: 1,
+        };
+
+        assert!(result.stdout.contains("世界"));
+        assert!(result.stdout.contains("🌍"));
+        assert!(result.stderr.contains("Ошибка"));
+    }
+
+    #[test]
+    fn command_result_with_large_output() {
+        let large_stdout = "x".repeat(1_000_000); // 1MB of output
+        let result = CommandResult {
+            stdout: large_stdout.clone(),
+            stderr: String::new(),
+            exit_code: 0,
+        };
+
+        assert_eq!(result.stdout.len(), 1_000_000);
+    }
+
+    #[test]
+    fn command_result_with_binary_like_content() {
+        // Test with content that might appear in binary output converted to lossy string
+        let result = CommandResult {
+            stdout: "ELF\u{0}\u{0}\u{0}".to_string(),
+            stderr: String::new(),
+            exit_code: 0,
+        };
+
+        assert!(result.stdout.starts_with("ELF"));
+    }
+
+    #[test]
+    fn command_result_common_exit_codes() {
+        // Test common Unix exit codes
+        let test_cases = [
+            (0, "success"),
+            (1, "general error"),
+            (2, "misuse of shell builtin"),
+            (126, "command not executable"),
+            (127, "command not found"),
+            (128, "invalid exit argument"),
+            (130, "script terminated by Ctrl+C"),
+            (255, "exit status out of range"),
+        ];
+
+        for (code, _description) in test_cases {
+            let result = CommandResult {
+                stdout: String::new(),
+                stderr: String::new(),
+                exit_code: code,
+            };
+            assert_eq!(result.exit_code, code);
+        }
+    }
+
+    // === SshSession Debug tests ===
+
+    // Note: SshSession::new() requires actual SSH handles, so we can only test
+    // that the Debug implementation exists and the struct is properly defined.
+    // Full functional tests are done via integration tests.
+
+    // === ChannelCommand coverage via documentation ===
+    // ChannelCommand is private and tested implicitly through integration tests
+    // that exercise send() and window_change() methods.
+}

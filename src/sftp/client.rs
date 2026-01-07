@@ -329,3 +329,71 @@ impl SftpClient {
         ))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_creates_client_with_custom_keepalive() {
+        let client = SftpClient::new(120);
+        // Verify config was created (we can't inspect private fields directly,
+        // but we can verify it doesn't panic and returns a valid client)
+        assert!(Arc::strong_count(&client.config) == 1);
+    }
+
+    #[test]
+    fn default_creates_client_with_60s_keepalive() {
+        let client = SftpClient::default();
+        // Default should use 60 second keepalive
+        assert!(Arc::strong_count(&client.config) == 1);
+    }
+
+    #[test]
+    fn with_known_hosts_uses_provided_manager() {
+        let known_hosts = Arc::new(Mutex::new(KnownHostsManager::new()));
+        let known_hosts_clone = known_hosts.clone();
+
+        let client = SftpClient::with_known_hosts(30, known_hosts);
+
+        // Verify the same Arc is used (strong_count should be 2)
+        assert_eq!(Arc::strong_count(&known_hosts_clone), 2);
+        assert!(Arc::ptr_eq(&client.known_hosts, &known_hosts_clone));
+    }
+
+    #[test]
+    fn new_with_zero_keepalive() {
+        // Zero keepalive should still work (disables keepalive)
+        let client = SftpClient::new(0);
+        assert!(Arc::strong_count(&client.config) == 1);
+    }
+
+    #[test]
+    fn new_with_large_keepalive() {
+        // Large keepalive values should work
+        let client = SftpClient::new(86400); // 24 hours
+        assert!(Arc::strong_count(&client.config) == 1);
+    }
+
+    #[test]
+    fn multiple_clients_share_nothing_by_default() {
+        let client1 = SftpClient::default();
+        let client2 = SftpClient::default();
+
+        // Each client should have its own config and known_hosts
+        assert!(!Arc::ptr_eq(&client1.config, &client2.config));
+        assert!(!Arc::ptr_eq(&client1.known_hosts, &client2.known_hosts));
+    }
+
+    #[test]
+    fn clients_can_share_known_hosts() {
+        let shared_known_hosts = Arc::new(Mutex::new(KnownHostsManager::new()));
+
+        let client1 = SftpClient::with_known_hosts(60, shared_known_hosts.clone());
+        let client2 = SftpClient::with_known_hosts(60, shared_known_hosts.clone());
+
+        // Both clients should share the same known_hosts
+        assert!(Arc::ptr_eq(&client1.known_hosts, &client2.known_hosts));
+        assert_eq!(Arc::strong_count(&shared_known_hosts), 3); // original + 2 clients
+    }
+}

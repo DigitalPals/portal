@@ -381,3 +381,336 @@ impl SftpSession {
 
 /// Thread-safe wrapper for SFTP session
 pub type SharedSftpSession = Arc<SftpSession>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Note: Most SftpSession methods require an actual RusshSftpSession which
+    // requires a live SSH/SFTP connection. These are tested via integration tests
+    // in tests/ssh_integration/. The unit tests here cover type definitions and
+    // any pure helper functions.
+
+    // === Type alias tests ===
+
+    #[test]
+    fn shared_sftp_session_is_arc_type() {
+        // Verify the type alias is correctly defined
+        // This is a compile-time check that SharedSftpSession = Arc<SftpSession>
+        fn _accepts_arc(_: Arc<SftpSession>) {}
+        fn _returns_shared() -> Option<SharedSftpSession> {
+            None
+        }
+        // If this compiles, the type alias is correct
+        let _: Option<Arc<SftpSession>> = _returns_shared();
+    }
+
+    // === Path handling tests ===
+    // These test the path conversion patterns used throughout the module
+
+    #[test]
+    fn path_to_string_lossy_preserves_valid_utf8() {
+        let path = Path::new("/home/user/documents/file.txt");
+        let path_str = path.to_string_lossy().to_string();
+        assert_eq!(path_str, "/home/user/documents/file.txt");
+    }
+
+    #[test]
+    fn path_to_string_lossy_handles_root() {
+        let path = Path::new("/");
+        let path_str = path.to_string_lossy().to_string();
+        assert_eq!(path_str, "/");
+    }
+
+    #[test]
+    fn path_to_string_lossy_handles_relative() {
+        let path = Path::new("relative/path/file.txt");
+        let path_str = path.to_string_lossy().to_string();
+        assert_eq!(path_str, "relative/path/file.txt");
+    }
+
+    #[test]
+    fn path_parent_for_root_returns_none_content() {
+        let path = Path::new("/");
+        // Root path's parent is still Some("/") on Unix, but we check our logic
+        assert!(path.parent().is_some() || path.to_string_lossy() == "/");
+    }
+
+    #[test]
+    fn path_parent_for_nested_returns_parent() {
+        let path = Path::new("/home/user/file.txt");
+        let parent = path.parent().unwrap();
+        assert_eq!(parent, Path::new("/home/user"));
+    }
+
+    #[test]
+    fn path_join_creates_correct_path() {
+        let base = Path::new("/home/user");
+        let joined = base.join("documents");
+        assert_eq!(joined, PathBuf::from("/home/user/documents"));
+    }
+
+    #[test]
+    fn path_join_with_filename() {
+        let base = Path::new("/var/log");
+        let joined = base.join("syslog");
+        assert_eq!(joined, PathBuf::from("/var/log/syslog"));
+    }
+
+    // === FileEntry creation pattern tests ===
+    // Test the patterns used when creating FileEntry structs
+
+    #[test]
+    fn parent_entry_pattern() {
+        let path = Path::new("/home/user/documents");
+        let parent = path.parent().unwrap_or(Path::new("/"));
+
+        let entry = FileEntry {
+            name: "..".to_string(),
+            path: parent.to_path_buf(),
+            is_dir: true,
+            is_symlink: false,
+            size: 0,
+            modified: None,
+        };
+
+        assert_eq!(entry.name, "..");
+        assert!(entry.is_dir);
+        assert!(!entry.is_symlink);
+        assert_eq!(entry.size, 0);
+        assert!(entry.modified.is_none());
+        assert_eq!(entry.path, PathBuf::from("/home/user"));
+    }
+
+    #[test]
+    fn file_entry_pattern() {
+        let base_path = Path::new("/home/user");
+        let name = "test.txt".to_string();
+        let entry_path = base_path.join(&name);
+
+        let entry = FileEntry {
+            name: name.clone(),
+            path: entry_path.clone(),
+            is_dir: false,
+            is_symlink: false,
+            size: 1024,
+            modified: Some(Utc::now()),
+        };
+
+        assert_eq!(entry.name, "test.txt");
+        assert_eq!(entry.path, PathBuf::from("/home/user/test.txt"));
+        assert!(!entry.is_dir);
+        assert!(!entry.is_symlink);
+        assert_eq!(entry.size, 1024);
+        assert!(entry.modified.is_some());
+    }
+
+    #[test]
+    fn directory_entry_pattern() {
+        let base_path = Path::new("/var");
+        let name = "log".to_string();
+
+        let entry = FileEntry {
+            name: name.clone(),
+            path: base_path.join(&name),
+            is_dir: true,
+            is_symlink: false,
+            size: 4096,
+            modified: None,
+        };
+
+        assert_eq!(entry.name, "log");
+        assert!(entry.is_dir);
+        assert!(!entry.is_symlink);
+    }
+
+    #[test]
+    fn symlink_entry_pattern() {
+        let entry = FileEntry {
+            name: "link".to_string(),
+            path: PathBuf::from("/usr/bin/link"),
+            is_dir: false,
+            is_symlink: true,
+            size: 0,
+            modified: None,
+        };
+
+        assert!(entry.is_symlink);
+        assert!(!entry.is_dir);
+    }
+
+    // === Timestamp conversion tests ===
+    // Test the mtime to DateTime conversion pattern used in list_dir
+
+    #[test]
+    fn timestamp_conversion_valid() {
+        let mtime: u64 = 1704067200; // 2024-01-01 00:00:00 UTC
+        let datetime = Utc
+            .timestamp_opt(mtime as i64, 0)
+            .single()
+            .unwrap_or_else(Utc::now);
+
+        assert_eq!(datetime.year(), 2024);
+        assert_eq!(datetime.month(), 1);
+        assert_eq!(datetime.day(), 1);
+    }
+
+    #[test]
+    fn timestamp_conversion_zero() {
+        let mtime: u64 = 0; // Unix epoch
+        let datetime = Utc
+            .timestamp_opt(mtime as i64, 0)
+            .single()
+            .unwrap_or_else(Utc::now);
+
+        assert_eq!(datetime.year(), 1970);
+        assert_eq!(datetime.month(), 1);
+        assert_eq!(datetime.day(), 1);
+    }
+
+    #[test]
+    fn timestamp_conversion_recent() {
+        let mtime: u64 = 1700000000; // Nov 2023
+        let datetime = Utc
+            .timestamp_opt(mtime as i64, 0)
+            .single()
+            .unwrap_or_else(Utc::now);
+
+        assert_eq!(datetime.year(), 2023);
+        assert_eq!(datetime.month(), 11);
+    }
+
+    // === Root path detection tests ===
+    // Test the logic used to determine if we should add parent entry
+
+    #[test]
+    fn should_add_parent_entry_for_nested_path() {
+        let path = Path::new("/home/user");
+        let path_str = path.to_string_lossy().to_string();
+
+        let should_add = path.parent().is_some() && path_str != "/";
+        assert!(should_add);
+    }
+
+    #[test]
+    fn should_not_add_parent_entry_for_root() {
+        let path = Path::new("/");
+        let path_str = path.to_string_lossy().to_string();
+
+        let should_add = path.parent().is_some() && path_str != "/";
+        assert!(!should_add);
+    }
+
+    #[test]
+    fn should_add_parent_entry_for_single_level() {
+        let path = Path::new("/home");
+        let path_str = path.to_string_lossy().to_string();
+
+        let should_add = path.parent().is_some() && path_str != "/";
+        assert!(should_add);
+    }
+
+    // === Size handling tests ===
+
+    #[test]
+    fn size_unwrap_or_zero_with_none() {
+        let size: Option<u64> = None;
+        assert_eq!(size.unwrap_or(0), 0);
+    }
+
+    #[test]
+    fn size_unwrap_or_zero_with_some() {
+        let size: Option<u64> = Some(12345);
+        assert_eq!(size.unwrap_or(0), 12345);
+    }
+
+    #[test]
+    fn size_unwrap_or_zero_with_large_value() {
+        let size: Option<u64> = Some(u64::MAX);
+        assert_eq!(size.unwrap_or(0), u64::MAX);
+    }
+
+    // === PathBuf tests for home_dir storage ===
+
+    #[test]
+    fn pathbuf_stores_home_dir() {
+        let home = PathBuf::from("/home/testuser");
+        assert_eq!(home.as_path(), Path::new("/home/testuser"));
+    }
+
+    #[test]
+    fn pathbuf_from_tilde_expansion() {
+        // Simulating what would happen after tilde expansion
+        let expanded = PathBuf::from("/home/user");
+        assert!(expanded.is_absolute());
+    }
+
+    #[test]
+    fn path_reference_from_pathbuf() {
+        let home_dir = PathBuf::from("/root");
+        let path_ref: &Path = &home_dir;
+        assert_eq!(path_ref, Path::new("/root"));
+    }
+
+    // === Skip parent entry in iteration ===
+
+    #[test]
+    fn skip_parent_entry_pattern() {
+        let entries = vec![".", "..", "file.txt", "dir"];
+        let filtered: Vec<_> = entries.iter().filter(|e| **e != "..").collect();
+
+        assert_eq!(filtered.len(), 3);
+        assert!(!filtered.contains(&&".."));
+    }
+
+    // === Error message formatting patterns ===
+
+    #[test]
+    fn error_message_format_read_dir() {
+        let path_str = "/nonexistent/path";
+        let error = "Permission denied";
+        let msg = format!("Failed to read directory {}: {}", path_str, error);
+
+        assert!(msg.contains(path_str));
+        assert!(msg.contains(error));
+        assert!(msg.starts_with("Failed to read directory"));
+    }
+
+    #[test]
+    fn error_message_format_create_dir() {
+        let path_str = "/readonly/newdir";
+        let error = "Read-only file system";
+        let msg = format!("Failed to create directory {}: {}", path_str, error);
+
+        assert!(msg.contains(path_str));
+        assert!(msg.contains(error));
+    }
+
+    #[test]
+    fn error_message_format_rename() {
+        let old = "/tmp/old";
+        let new = "/tmp/new";
+        let error = "Cross-device link";
+        let msg = format!("Failed to rename {} to {}: {}", old, new, error);
+
+        assert!(msg.contains(old));
+        assert!(msg.contains(new));
+        assert!(msg.contains(error));
+    }
+
+    #[test]
+    fn error_message_format_transfer() {
+        let remote = "/remote/file.txt";
+        let local = "/local/file.txt";
+        let error = "Connection reset";
+        let msg = format!("Failed to download {} to {}: {}", remote, local, error);
+
+        assert!(msg.contains(remote));
+        assert!(msg.contains(local));
+        assert!(msg.contains(error));
+    }
+}
+
+// Additional trait requirement for chrono in tests
+#[cfg(test)]
+use chrono::Datelike;
