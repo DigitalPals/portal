@@ -12,17 +12,18 @@ use crate::theme::{
     FONT_SIZE_SMALL, Theme, ThemeId, get_theme,
 };
 
+pub struct SettingsPageContext {
+    pub current_theme: ThemeId,
+    pub terminal_font_size: f32,
+    pub terminal_font: TerminalFont,
+    pub snippet_history_enabled: bool,
+    pub snippet_store_command: bool,
+    pub snippet_store_output: bool,
+    pub snippet_redact_output: bool,
+}
+
 /// Build the settings page view
-pub fn settings_page_view(
-    current_theme: ThemeId,
-    terminal_font_size: f32,
-    terminal_font: TerminalFont,
-    snippet_history_enabled: bool,
-    snippet_store_command: bool,
-    snippet_store_output: bool,
-    snippet_redact_output: bool,
-    theme: Theme,
-) -> Element<'static, Message> {
+pub fn settings_page_view(context: SettingsPageContext, theme: Theme) -> Element<'static, Message> {
     let header = text("Settings")
         .size(FONT_SIZE_PAGE_TITLE)
         .color(theme.text_primary);
@@ -31,7 +32,7 @@ pub fn settings_page_view(
     let appearance_section = settings_section(
         "Appearance",
         theme,
-        vec![theme_tiles_row(current_theme, theme)],
+        vec![theme_tiles_row(context.current_theme, theme)],
     );
 
     // === Terminal Section ===
@@ -39,8 +40,8 @@ pub fn settings_page_view(
         "Terminal",
         theme,
         vec![
-            font_selector_setting(terminal_font, theme),
-            font_size_setting(terminal_font_size, theme),
+            font_selector_setting(context.terminal_font, theme),
+            font_size_setting(context.terminal_font_size, theme),
         ],
     );
 
@@ -52,28 +53,28 @@ pub fn settings_page_view(
             toggle_setting(
                 "Enable snippet history",
                 "Save snippet execution history to disk",
-                snippet_history_enabled,
+                context.snippet_history_enabled,
                 |value| Message::Ui(UiMessage::SnippetHistoryEnabled(value)),
                 theme,
             ),
             toggle_setting(
                 "Store commands",
                 "Persist executed command text in history entries",
-                snippet_store_command,
+                context.snippet_store_command,
                 |value| Message::Ui(UiMessage::SnippetHistoryStoreCommand(value)),
                 theme,
             ),
             toggle_setting(
                 "Store output",
                 "Persist stdout/stderr from snippet executions",
-                snippet_store_output,
+                context.snippet_store_output,
                 |value| Message::Ui(UiMessage::SnippetHistoryStoreOutput(value)),
                 theme,
             ),
             toggle_setting(
                 "Redact sensitive values",
                 "Redact common secrets in stored commands and output",
-                snippet_redact_output,
+                context.snippet_redact_output,
                 |value| Message::Ui(UiMessage::SnippetHistoryRedactOutput(value)),
                 theme,
             ),

@@ -24,7 +24,7 @@ use crate::views::dialogs::password_dialog::password_dialog_view;
 use crate::views::file_viewer::file_viewer_view;
 use crate::views::history_view::history_view;
 use crate::views::host_grid::{calculate_columns, host_grid_view, search_input_id};
-use crate::views::settings_page::settings_page_view;
+use crate::views::settings_page::{SettingsPageContext, settings_page_view};
 use crate::views::sftp::{dual_pane_sftp_view, sftp_context_menu_overlay};
 use crate::views::sidebar::sidebar_view;
 use crate::views::snippet_grid::{SnippetPageContext, snippet_page_view};
@@ -353,13 +353,15 @@ impl Portal {
         // Main content - prioritize active sessions over sidebar selection
         let main_content: Element<'_, Message> = match &self.active_view {
             View::Settings => settings_page_view(
-                self.theme_id,
-                self.terminal_font_size,
-                self.terminal_font,
-                self.snippet_history.enabled,
-                self.snippet_history.store_command,
-                self.snippet_history.store_output,
-                self.snippet_history.redact_output,
+                SettingsPageContext {
+                    current_theme: self.theme_id,
+                    terminal_font_size: self.terminal_font_size,
+                    terminal_font: self.terminal_font,
+                    snippet_history_enabled: self.snippet_history.enabled,
+                    snippet_store_command: self.snippet_history.store_command,
+                    snippet_store_output: self.snippet_history.store_output,
+                    snippet_redact_output: self.snippet_history.redact_output,
+                },
                 theme,
             ),
             View::Terminal(session_id) => {
