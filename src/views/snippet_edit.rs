@@ -260,7 +260,7 @@ pub fn snippet_edit_view(
                 scrollable::Scrollbar::default()
                     .width(4)
                     .scroller_width(4)
-                    .anchor(scrollable::Anchor::End),
+                    .anchor(scrollable::Anchor::Start),
             ))
             .style(move |_theme, status| {
                 let scroller_color = match status {
