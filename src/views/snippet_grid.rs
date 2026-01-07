@@ -17,9 +17,10 @@ use crate::message::{Message, SnippetMessage};
 use crate::theme::{
     BORDER_RADIUS, CARD_BORDER_RADIUS, FONT_SIZE_BODY, FONT_SIZE_BUTTON_SMALL, FONT_SIZE_HEADING,
     FONT_SIZE_LABEL, FONT_SIZE_SECTION, FONT_SIZE_SMALL, GRID_PADDING, GRID_SPACING,
-    MIN_SNIPPET_CARD_WIDTH, RESULTS_PANEL_WIDTH, SIDEBAR_WIDTH, SIDEBAR_WIDTH_COLLAPSED, Theme,
+    MIN_SNIPPET_CARD_WIDTH, RESULTS_PANEL_WIDTH, SIDEBAR_WIDTH, SIDEBAR_WIDTH_COLLAPSED,
+    STATUS_FAILURE, STATUS_SUCCESS, STATUS_SUCCESS_DARK, Theme,
 };
-use crate::views::snippet_results::execution_results_panel;
+use crate::views::snippet_results::{ResultsPanelContext, execution_results_panel};
 
 /// Search input ID for auto-focus
 pub fn snippet_search_input_id() -> iced::widget::Id {
@@ -125,21 +126,36 @@ fn build_action_bar(search_query: &str, theme: Theme) -> Element<'static, Messag
         .into()
 }
 
+/// Context for rendering the snippet page
+pub struct SnippetPageContext<'a> {
+    pub snippets: &'a [Snippet],
+    pub search_query: &'a str,
+    pub editing: Option<&'a SnippetEditState>,
+    pub hosts: &'a [(Uuid, String)],
+    pub executions: &'a SnippetExecutionManager,
+    pub snippet_history: &'a SnippetHistoryConfig,
+    pub column_count: usize,
+    pub theme: Theme,
+    pub hovered_snippet: Option<Uuid>,
+    pub selected_snippet: Option<Uuid>,
+    pub viewed_history_entry: Option<Uuid>,
+}
+
 /// Main snippet page view
-#[allow(clippy::too_many_arguments)]
-pub fn snippet_page_view(
-    snippets: &[Snippet],
-    search_query: &str,
-    editing: Option<&SnippetEditState>,
-    hosts: &[(Uuid, String)],
-    executions: &SnippetExecutionManager,
-    snippet_history: &SnippetHistoryConfig,
-    column_count: usize,
-    theme: Theme,
-    hovered_snippet: Option<Uuid>,
-    selected_snippet: Option<Uuid>,
-    viewed_history_entry: Option<Uuid>,
-) -> Element<'static, Message> {
+pub fn snippet_page_view(ctx: SnippetPageContext<'_>) -> Element<'static, Message> {
+    let SnippetPageContext {
+        snippets,
+        search_query,
+        editing,
+        hosts,
+        executions,
+        snippet_history,
+        column_count,
+        theme,
+        hovered_snippet,
+        selected_snippet,
+        viewed_history_entry,
+    } = ctx;
     // If editing, show edit form instead of grid
     if let Some(edit_state) = editing {
         return super::snippet_edit::snippet_edit_view(edit_state, hosts, theme);
@@ -203,18 +219,18 @@ pub fn snippet_page_view(
                 return None;
             }
 
-            Some(execution_results_panel(
+            Some(execution_results_panel(ResultsPanelContext {
                 snippet_id,
-                &snippet.name,
-                &snippet.command,
-                execution.map(|e| e.host_results.as_slice()),
-                execution.map(|e| e.completed).unwrap_or(true),
-                execution.map(|e| e.success_count()).unwrap_or(0),
-                execution.map(|e| e.failure_count()).unwrap_or(0),
-                &history_entries,
+                snippet_name: &snippet.name,
+                command: &snippet.command,
+                host_results: execution.map(|e| e.host_results.as_slice()),
+                completed: execution.map(|e| e.completed).unwrap_or(true),
+                success_count: execution.map(|e| e.success_count()).unwrap_or(0),
+                failure_count: execution.map(|e| e.failure_count()).unwrap_or(0),
+                history_entries: &history_entries,
                 viewed_entry,
                 theme,
-            ))
+            }))
         });
 
     // Layout with optional results panel
@@ -338,24 +354,20 @@ fn snippet_card(
             let failed = exec.failure_count();
             if failed == 0 {
                 row![
-                    icon_with_color(
-                        icons::ui::CHECK,
-                        12,
-                        iced::Color::from_rgb8(0x40, 0xa0, 0x2b)
-                    ),
+                    icon_with_color(icons::ui::CHECK, 12, STATUS_SUCCESS),
                     text(format!("{} OK", success))
                         .size(FONT_SIZE_SMALL)
-                        .color(iced::Color::from_rgb8(0x40, 0xa0, 0x2b)),
+                        .color(STATUS_SUCCESS),
                 ]
                 .spacing(4)
                 .align_y(Alignment::Center)
                 .into()
             } else {
                 row![
-                    icon_with_color(icons::ui::X, 12, iced::Color::from_rgb8(0xd2, 0x0f, 0x39)),
+                    icon_with_color(icons::ui::X, 12, STATUS_FAILURE),
                     text(format!("{} failed", failed))
                         .size(FONT_SIZE_SMALL)
-                        .color(iced::Color::from_rgb8(0xd2, 0x0f, 0x39)),
+                        .color(STATUS_FAILURE),
                 ]
                 .spacing(4)
                 .align_y(Alignment::Center)
@@ -396,8 +408,8 @@ fn snippet_card(
             )
             .style(move |_theme, status| {
                 let bg = match status {
-                    button::Status::Hovered => iced::Color::from_rgb8(0x40, 0xa0, 0x2b),
-                    _ => iced::Color::from_rgb8(0x30, 0x90, 0x20),
+                    button::Status::Hovered => STATUS_SUCCESS,
+                    _ => STATUS_SUCCESS_DARK,
                 };
                 button::Style {
                     background: Some(bg.into()),

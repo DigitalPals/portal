@@ -5,7 +5,7 @@
 
 use std::time::Duration;
 
-use iced::widget::{Column, Space, button, column, container, row, scrollable, text};
+use iced::widget::{Column, Row, Space, button, column, container, row, scrollable, text};
 use iced::{Alignment, Element, Fill, Font, Length};
 use uuid::Uuid;
 
@@ -28,33 +28,82 @@ use crate::icons::{self, icon_with_color};
 use crate::message::{Message, SnippetMessage};
 use crate::theme::{
     FONT_SIZE_BODY, FONT_SIZE_BUTTON_SMALL, FONT_SIZE_LABEL, FONT_SIZE_SECTION, FONT_SIZE_SMALL,
-    RESULTS_PANEL_WIDTH, Theme,
+    RESULTS_PANEL_WIDTH, STATUS_FAILURE, STATUS_PARTIAL, STATUS_SUCCESS, Theme,
 };
 
-/// Data for displaying a host result (cloned from HostResult)
+/// Data for displaying a host result row
 struct HostResultData {
-    host_id: Uuid,
     host_name: String,
-    status: ExecutionStatus,
+    success: bool,
+    error: Option<String>,
     stdout: String,
     duration: Duration,
     expanded: bool,
+    /// If Some, row is clickable for expand/collapse
+    click_action: Option<(Uuid, Uuid)>, // (snippet_id, host_id)
+}
+
+impl HostResultData {
+    /// Create from current execution result
+    fn from_current(result: &crate::app::managers::HostResult, snippet_id: Uuid) -> Self {
+        let (success, error) = match &result.status {
+            ExecutionStatus::Success => (true, None),
+            ExecutionStatus::Failed(err) => (false, Some(err.clone())),
+            ExecutionStatus::Pending | ExecutionStatus::Running => (true, None),
+        };
+        Self {
+            host_name: result.host_name.clone(),
+            success,
+            error,
+            stdout: result.stdout.clone(),
+            duration: result.duration,
+            expanded: result.expanded,
+            click_action: Some((snippet_id, result.host_id)),
+        }
+    }
+
+    /// Create from historical result
+    fn from_historical(result: &crate::config::HistoricalHostResult) -> Self {
+        Self {
+            host_name: result.host_name.clone(),
+            success: result.success,
+            error: result.error.clone(),
+            stdout: result.stdout.clone(),
+            duration: Duration::from_millis(result.duration_ms),
+            expanded: true, // Always expanded for historical
+            click_action: None,
+        }
+    }
+}
+
+/// Context for rendering the results panel
+pub struct ResultsPanelContext<'a> {
+    pub snippet_id: Uuid,
+    pub snippet_name: &'a str,
+    pub command: &'a str,
+    pub host_results: Option<&'a [crate::app::managers::HostResult]>,
+    pub completed: bool,
+    pub success_count: usize,
+    pub failure_count: usize,
+    pub history_entries: &'a [&'a SnippetExecutionEntry],
+    pub viewed_entry: Option<&'a SnippetExecutionEntry>,
+    pub theme: Theme,
 }
 
 /// Build the results panel for a snippet execution
-#[allow(clippy::too_many_arguments)]
-pub fn execution_results_panel(
-    snippet_id: Uuid,
-    snippet_name: &str,
-    command: &str,
-    host_results: Option<&[crate::app::managers::HostResult]>,
-    completed: bool,
-    success_count: usize,
-    failure_count: usize,
-    history_entries: &[&SnippetExecutionEntry],
-    viewed_entry: Option<&SnippetExecutionEntry>,
-    theme: Theme,
-) -> Element<'static, Message> {
+pub fn execution_results_panel(ctx: ResultsPanelContext<'_>) -> Element<'static, Message> {
+    let ResultsPanelContext {
+        snippet_id,
+        snippet_name,
+        command,
+        host_results,
+        completed,
+        success_count,
+        failure_count,
+        history_entries,
+        viewed_entry,
+        theme,
+    } = ctx;
     // Clone the data we need
     let snippet_name = snippet_name.to_string();
 
@@ -158,9 +207,9 @@ fn build_current_view(
 
     let status_color = if completed {
         if failure_count == 0 {
-            iced::Color::from_rgb8(0x40, 0xa0, 0x2b)
+            STATUS_SUCCESS
         } else {
-            iced::Color::from_rgb8(0xd2, 0x0f, 0x39)
+            STATUS_FAILURE
         }
     } else {
         theme.accent
@@ -190,23 +239,10 @@ fn build_current_view(
             ..Default::default()
         });
 
-    // Clone host results data
-    let host_data: Vec<HostResultData> = host_results
+    // Clone host results data and build result rows
+    let results: Vec<Element<'static, Message>> = host_results
         .iter()
-        .map(|r| HostResultData {
-            host_id: r.host_id,
-            host_name: r.host_name.clone(),
-            status: r.status.clone(),
-            stdout: r.stdout.clone(),
-            duration: r.duration,
-            expanded: r.expanded,
-        })
-        .collect();
-
-    // Host results list
-    let results: Vec<Element<'static, Message>> = host_data
-        .into_iter()
-        .map(|data| host_result_row(data, snippet_id, theme))
+        .map(|r| host_result_row(HostResultData::from_current(r, snippet_id), theme))
         .collect();
 
     let results_list = scrollable(Column::with_children(results).spacing(8).width(Fill))
@@ -307,9 +343,9 @@ fn build_history_view(
     };
 
     let status_color = if entry.failure_count == 0 {
-        iced::Color::from_rgb8(0x40, 0xa0, 0x2b)
+        STATUS_SUCCESS
     } else {
-        iced::Color::from_rgb8(0xd2, 0x0f, 0x39)
+        STATUS_FAILURE
     };
 
     let header = row![
@@ -376,7 +412,7 @@ fn build_history_view(
     let results: Vec<Element<'static, Message>> = entry
         .host_results
         .iter()
-        .map(|r| historical_host_result_row(r, theme))
+        .map(|r| host_result_row(HostResultData::from_historical(r), theme))
         .collect();
 
     let results_list = scrollable(Column::with_children(results).spacing(8).width(Fill))
@@ -457,20 +493,13 @@ fn build_history_only_view(
     column![header, Space::new().height(16), history_section,].padding(16)
 }
 
-/// Single host result row
-fn host_result_row(
-    data: HostResultData,
-    snippet_id: Uuid,
-    theme: Theme,
-) -> Element<'static, Message> {
-    let host_id = data.host_id;
-
+/// Single host result row (unified for both current and historical results)
+fn host_result_row(data: HostResultData, theme: Theme) -> Element<'static, Message> {
     // Status icon
-    let (status_icon, status_color) = match &data.status {
-        ExecutionStatus::Pending => (icons::ui::REFRESH, theme.text_muted),
-        ExecutionStatus::Running => (icons::ui::REFRESH, theme.accent),
-        ExecutionStatus::Success => (icons::ui::CHECK, iced::Color::from_rgb8(0x40, 0xa0, 0x2b)),
-        ExecutionStatus::Failed(_) => (icons::ui::X, iced::Color::from_rgb8(0xd2, 0x0f, 0x39)),
+    let (status_icon, status_color) = if data.success {
+        (icons::ui::CHECK, STATUS_SUCCESS)
+    } else {
+        (icons::ui::X, STATUS_FAILURE)
     };
 
     let icon = icon_with_color(status_icon, 14, status_color);
@@ -483,34 +512,52 @@ fn host_result_row(
     };
 
     // Error message if failed
-    let error_text: Element<'static, Message> = match &data.status {
-        ExecutionStatus::Failed(err) => text(err.clone())
-            .size(FONT_SIZE_SMALL)
-            .color(iced::Color::from_rgb8(0xd2, 0x0f, 0x39))
-            .into(),
-        _ => Space::new().into(),
+    let error_section: Element<'static, Message> = if let Some(err) = &data.error {
+        column![
+            Space::new().height(4),
+            text(err.clone()).size(FONT_SIZE_SMALL).color(STATUS_FAILURE),
+        ]
+        .into()
+    } else {
+        Space::new().height(0).into()
     };
 
-    // Header row
-    let header_row = row![
-        icon,
-        Space::new().width(8),
-        text(data.host_name).size(FONT_SIZE_BODY).color(theme.text_primary),
-        Space::new().width(Length::Fill),
-        text(duration_text).size(FONT_SIZE_LABEL).color(theme.text_muted),
-        Space::new().width(8),
-        if data.expanded {
-            icon_with_color(icons::ui::CHEVRON_DOWN, 12, theme.text_muted)
-        } else {
-            icon_with_color(icons::ui::CHEVRON_RIGHT, 12, theme.text_muted)
-        },
-    ]
-    .align_y(Alignment::Center);
+    // Header row - include expand/collapse chevron only for clickable rows
+    let is_clickable = data.click_action.is_some();
+    let header_row: Row<'static, Message> = if is_clickable {
+        row![
+            icon,
+            Space::new().width(8),
+            text(data.host_name.clone())
+                .size(FONT_SIZE_BODY)
+                .color(theme.text_primary),
+            Space::new().width(Length::Fill),
+            text(duration_text).size(FONT_SIZE_LABEL).color(theme.text_muted),
+            Space::new().width(8),
+            if data.expanded {
+                icon_with_color(icons::ui::CHEVRON_DOWN, 12, theme.text_muted)
+            } else {
+                icon_with_color(icons::ui::CHEVRON_RIGHT, 12, theme.text_muted)
+            },
+        ]
+        .align_y(Alignment::Center)
+    } else {
+        row![
+            icon,
+            Space::new().width(8),
+            text(data.host_name.clone())
+                .size(FONT_SIZE_BODY)
+                .color(theme.text_primary),
+            Space::new().width(Length::Fill),
+            text(duration_text).size(FONT_SIZE_LABEL).color(theme.text_muted),
+        ]
+        .align_y(Alignment::Center)
+    };
 
     // Output section (if expanded)
     let output_section: Element<'static, Message> = if data.expanded && !data.stdout.is_empty() {
-        // Sanitize output: replace tabs with spaces, remove control chars
         let sanitized_output = sanitize_output(&data.stdout);
+        let output_height = if is_clickable { 150.0 } else { 100.0 };
 
         let output = container(
             scrollable(
@@ -523,7 +570,7 @@ fn host_result_row(
                 vertical: scrollable::Scrollbar::default(),
                 horizontal: scrollable::Scrollbar::default(),
             })
-            .height(Length::Fixed(150.0))
+            .height(Length::Fixed(output_height))
             .width(Fill),
         )
         .padding(10)
@@ -537,38 +584,54 @@ fn host_result_row(
             ..Default::default()
         });
 
-        column![Space::new().height(8), output, error_text,].into()
+        column![Space::new().height(8), output, error_section,].into()
     } else if data.expanded {
-        column![error_text,].into()
+        error_section
     } else {
         Space::new().height(0).into()
     };
 
-    // Clickable row container
+    // Row content
     let row_content = column![header_row, output_section,];
 
-    button(container(row_content).padding(8).width(Fill))
-        .style(move |_theme, status| {
-            let bg = match status {
-                button::Status::Hovered => theme.hover,
-                _ => iced::Color::TRANSPARENT,
-            };
-            button::Style {
-                background: Some(bg.into()),
-                text_color: theme.text_primary,
+    // Return clickable button or static container based on click_action
+    if let Some((snippet_id, host_id)) = data.click_action {
+        button(container(row_content).padding(8).width(Fill))
+            .style(move |_theme, status| {
+                let bg = match status {
+                    button::Status::Hovered => theme.hover,
+                    _ => iced::Color::TRANSPARENT,
+                };
+                button::Style {
+                    background: Some(bg.into()),
+                    text_color: theme.text_primary,
+                    border: iced::Border {
+                        radius: 6.0.into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }
+            })
+            .padding(0)
+            .width(Fill)
+            .on_press(Message::Snippet(SnippetMessage::ToggleResultExpand(
+                snippet_id, host_id,
+            )))
+            .into()
+    } else {
+        container(row_content)
+            .padding(8)
+            .width(Fill)
+            .style(move |_theme| container::Style {
+                background: Some(iced::Color::TRANSPARENT.into()),
                 border: iced::Border {
                     radius: 6.0.into(),
                     ..Default::default()
                 },
                 ..Default::default()
-            }
-        })
-        .padding(0)
-        .width(Fill)
-        .on_press(Message::Snippet(SnippetMessage::ToggleResultExpand(
-            snippet_id, host_id,
-        )))
-        .into()
+            })
+            .into()
+    }
 }
 
 /// History entry row showing a past execution (clickable)
@@ -585,11 +648,11 @@ fn history_entry_row(
 
     // Status icon
     let (icon, color) = if failed == 0 {
-        (icons::ui::CHECK, iced::Color::from_rgb8(0x40, 0xa0, 0x2b))
+        (icons::ui::CHECK, STATUS_SUCCESS)
     } else if success == 0 {
-        (icons::ui::X, iced::Color::from_rgb8(0xd2, 0x0f, 0x39))
+        (icons::ui::X, STATUS_FAILURE)
     } else {
-        (icons::ui::X, iced::Color::from_rgb8(0xd2, 0x8f, 0x39)) // Orange for partial
+        (icons::ui::X, STATUS_PARTIAL)
     };
 
     // Status text
@@ -639,98 +702,5 @@ fn history_entry_row(
         .padding(0)
         .width(Fill)
         .on_press(Message::Snippet(SnippetMessage::ViewHistoryEntry(entry_id)))
-        .into()
-}
-
-/// Historical host result row (read-only, no expand/collapse)
-fn historical_host_result_row(
-    result: &crate::config::HistoricalHostResult,
-    theme: Theme,
-) -> Element<'static, Message> {
-    // Status icon
-    let (status_icon, status_color) = if result.success {
-        (icons::ui::CHECK, iced::Color::from_rgb8(0x40, 0xa0, 0x2b))
-    } else {
-        (icons::ui::X, iced::Color::from_rgb8(0xd2, 0x0f, 0x39))
-    };
-
-    let icon = icon_with_color(status_icon, 14, status_color);
-
-    // Duration text
-    let duration_text = format!("{:.1}s", result.duration_ms as f64 / 1000.0);
-
-    // Error message if failed
-    let error_section: Element<'static, Message> = if let Some(err) = &result.error {
-        column![
-            Space::new().height(4),
-            text(err.clone())
-                .size(FONT_SIZE_SMALL)
-                .color(iced::Color::from_rgb8(0xd2, 0x0f, 0x39)),
-        ]
-        .into()
-    } else {
-        Space::new().height(0).into()
-    };
-
-    // Output section (always show if available)
-    let output_section: Element<'static, Message> = if !result.stdout.is_empty() {
-        let sanitized_output = sanitize_output(&result.stdout);
-        column![
-            Space::new().height(8),
-            container(
-                scrollable(
-                    text(sanitized_output)
-                        .size(FONT_SIZE_LABEL)
-                        .font(MONOSPACE_FONT)
-                        .color(theme.text_secondary),
-                )
-                .direction(scrollable::Direction::Both {
-                    vertical: scrollable::Scrollbar::default(),
-                    horizontal: scrollable::Scrollbar::default(),
-                })
-                .height(Length::Fixed(100.0))
-                .width(Fill),
-            )
-            .padding(10)
-            .width(Fill)
-            .style(move |_theme| container::Style {
-                background: Some(theme.background.into()),
-                border: iced::Border {
-                    radius: 4.0.into(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            }),
-        ]
-        .into()
-    } else {
-        Space::new().height(0).into()
-    };
-
-    // Header row
-    let header_row = row![
-        icon,
-        Space::new().width(8),
-        text(result.host_name.clone())
-            .size(FONT_SIZE_BODY)
-            .color(theme.text_primary),
-        Space::new().width(Length::Fill),
-        text(duration_text).size(FONT_SIZE_LABEL).color(theme.text_muted),
-    ]
-    .align_y(Alignment::Center);
-
-    let row_content = column![header_row, error_section, output_section,];
-
-    container(row_content)
-        .padding(8)
-        .width(Fill)
-        .style(move |_theme| container::Style {
-            background: Some(iced::Color::TRANSPARENT.into()),
-            border: iced::Border {
-                radius: 6.0.into(),
-                ..Default::default()
-            },
-            ..Default::default()
-        })
         .into()
 }

@@ -348,6 +348,32 @@ pub const RESULTS_PANEL_WIDTH: f32 = 500.0;
 /// Minimum card width for snippet grid (wider due to more content)
 pub const MIN_SNIPPET_CARD_WIDTH: f32 = 380.0;
 
+// Status colors for execution results
+/// Success status color (green)
+pub const STATUS_SUCCESS: Color = Color::from_rgb(
+    0x40 as f32 / 255.0,
+    0xa0 as f32 / 255.0,
+    0x2b as f32 / 255.0,
+);
+/// Success status color darker variant (for hover states)
+pub const STATUS_SUCCESS_DARK: Color = Color::from_rgb(
+    0x30 as f32 / 255.0,
+    0x90 as f32 / 255.0,
+    0x20 as f32 / 255.0,
+);
+/// Failure status color (red)
+pub const STATUS_FAILURE: Color = Color::from_rgb(
+    0xd2 as f32 / 255.0,
+    0x0f as f32 / 255.0,
+    0x39 as f32 / 255.0,
+);
+/// Partial success status color (orange)
+pub const STATUS_PARTIAL: Color = Color::from_rgb(
+    0xd2 as f32 / 255.0,
+    0x8f as f32 / 255.0,
+    0x39 as f32 / 255.0,
+);
+
 // Typography constants - Font sizes for consistent UI text
 
 /// Page headers (Settings, About page titles)
@@ -361,9 +387,6 @@ pub const FONT_SIZE_HEADING: f32 = 18.0;
 
 /// Section headers (Groups, Hosts, Snippets, History, Results)
 pub const FONT_SIZE_SECTION: f32 = 16.0;
-
-/// Card titles, primary item names (host names, snippet names, etc.)
-pub const FONT_SIZE_CARD_TITLE: f32 = 16.0;
 
 /// Body text, primary readable content
 pub const FONT_SIZE_BODY: f32 = 14.0;

@@ -25,7 +25,7 @@ use crate::views::host_grid::{calculate_columns, host_grid_view, search_input_id
 use crate::views::settings_page::settings_page_view;
 use crate::views::sftp::{dual_pane_sftp_view, sftp_context_menu_overlay};
 use crate::views::sidebar::sidebar_view;
-use crate::views::snippet_grid::snippet_page_view;
+use crate::views::snippet_grid::{SnippetPageContext, snippet_page_view};
 use crate::views::tabs::{Tab, tab_bar_view};
 use crate::views::terminal_view::terminal_view_with_status;
 use crate::views::toast::{ToastManager, toast_overlay_view};
@@ -432,19 +432,19 @@ impl Portal {
                     .map(|h| (h.id, h.name.clone()))
                     .collect();
 
-                snippet_page_view(
-                    &self.snippets_config.snippets,
-                    &self.snippet_search_query,
-                    self.snippet_editing.as_ref(),
-                    &hosts,
-                    &self.snippet_executions,
-                    &self.snippet_history,
+                snippet_page_view(SnippetPageContext {
+                    snippets: &self.snippets_config.snippets,
+                    search_query: &self.snippet_search_query,
+                    editing: self.snippet_editing.as_ref(),
+                    hosts: &hosts,
+                    executions: &self.snippet_executions,
+                    snippet_history: &self.snippet_history,
                     column_count,
                     theme,
-                    self.hovered_snippet,
-                    self.selected_snippet,
-                    self.viewed_history_entry,
-                )
+                    hovered_snippet: self.hovered_snippet,
+                    selected_snippet: self.selected_snippet,
+                    viewed_history_entry: self.viewed_history_entry,
+                })
             }
             View::HostGrid => {
                 // Calculate responsive column count
