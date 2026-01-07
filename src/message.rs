@@ -354,6 +354,14 @@ pub enum UiMessage {
     FontChange(crate::fonts::TerminalFont),
     /// Terminal font size changed
     FontSizeChange(f32),
+    /// Snippet history enabled/disabled
+    SnippetHistoryEnabled(bool),
+    /// Store snippet command in history
+    SnippetHistoryStoreCommand(bool),
+    /// Store snippet output in history
+    SnippetHistoryStoreOutput(bool),
+    /// Redact sensitive values in snippet history
+    SnippetHistoryRedactOutput(bool),
     /// Window resized
     WindowResized(iced::Size),
     /// Dismiss toast notification

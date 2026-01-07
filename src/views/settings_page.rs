@@ -1,7 +1,7 @@
 //! Settings page view (full page, not dialog)
 
 use iced::widget::{
-    Column, Row, Space, column, container, mouse_area, row, scrollable, slider, text,
+    Column, Row, Space, button, column, container, mouse_area, row, scrollable, slider, text,
 };
 use iced::{Alignment, Element, Fill, Length};
 
@@ -17,6 +17,10 @@ pub fn settings_page_view(
     current_theme: ThemeId,
     terminal_font_size: f32,
     terminal_font: TerminalFont,
+    snippet_history_enabled: bool,
+    snippet_store_command: bool,
+    snippet_store_output: bool,
+    snippet_redact_output: bool,
     theme: Theme,
 ) -> Element<'static, Message> {
     let header = text("Settings")
@@ -40,12 +44,50 @@ pub fn settings_page_view(
         ],
     );
 
+    // === Snippet History Section ===
+    let snippet_history_section = settings_section(
+        "Snippet History",
+        theme,
+        vec![
+            toggle_setting(
+                "Enable snippet history",
+                "Save snippet execution history to disk",
+                snippet_history_enabled,
+                |value| Message::Ui(UiMessage::SnippetHistoryEnabled(value)),
+                theme,
+            ),
+            toggle_setting(
+                "Store commands",
+                "Persist executed command text in history entries",
+                snippet_store_command,
+                |value| Message::Ui(UiMessage::SnippetHistoryStoreCommand(value)),
+                theme,
+            ),
+            toggle_setting(
+                "Store output",
+                "Persist stdout/stderr from snippet executions",
+                snippet_store_output,
+                |value| Message::Ui(UiMessage::SnippetHistoryStoreOutput(value)),
+                theme,
+            ),
+            toggle_setting(
+                "Redact sensitive values",
+                "Redact common secrets in stored commands and output",
+                snippet_redact_output,
+                |value| Message::Ui(UiMessage::SnippetHistoryRedactOutput(value)),
+                theme,
+            ),
+        ],
+    );
+
     let content = column![
         header,
         Space::new().height(24),
         appearance_section,
         Space::new().height(16),
         terminal_section,
+        Space::new().height(16),
+        snippet_history_section,
     ]
     .padding(32)
     .max_width(700);
@@ -340,6 +382,59 @@ fn font_size_setting(current_size: f32, theme: Theme) -> Element<'static, Messag
         .align_y(Alignment::Center),
         Space::new().height(4),
         description,
+    ]
+    .spacing(0)
+    .into()
+}
+
+fn toggle_setting<F>(
+    label: &str,
+    description: &str,
+    enabled: bool,
+    on_toggle: F,
+    theme: Theme,
+) -> Element<'static, Message>
+where
+    F: Fn(bool) -> Message + 'static,
+{
+    let label_text = text(label).size(FONT_SIZE_BODY).color(theme.text_primary);
+
+    let description_text = text(description)
+        .size(FONT_SIZE_LABEL)
+        .color(theme.text_muted);
+
+    let toggle_label = if enabled { "On" } else { "Off" };
+    let toggle_color = if enabled {
+        theme.accent
+    } else {
+        theme.text_muted
+    };
+
+    let toggle_button = button(
+        container(text(toggle_label).size(FONT_SIZE_LABEL).color(toggle_color))
+            .padding([6, 12])
+            .align_x(Alignment::Center)
+            .align_y(Alignment::Center),
+    )
+    .padding(0)
+    .style(move |_theme, _status| iced::widget::button::Style {
+        background: Some(theme.surface.into()),
+        border: iced::Border {
+            radius: BORDER_RADIUS.into(),
+            width: 1.0,
+            color: theme.border,
+        },
+        ..Default::default()
+    })
+    .on_press(on_toggle(!enabled));
+
+    column![
+        row![
+            column![label_text, Space::new().height(4), description_text].spacing(0),
+            Space::new().width(Length::Fill),
+            toggle_button,
+        ]
+        .align_y(Alignment::Center),
     ]
     .spacing(0)
     .into()

@@ -111,6 +111,26 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
             portal.save_settings();
             Task::none()
         }
+        UiMessage::SnippetHistoryEnabled(enabled) => {
+            portal.snippet_history.enabled = enabled;
+            portal.save_snippet_history();
+            Task::none()
+        }
+        UiMessage::SnippetHistoryStoreCommand(store_command) => {
+            portal.snippet_history.store_command = store_command;
+            portal.save_snippet_history();
+            Task::none()
+        }
+        UiMessage::SnippetHistoryStoreOutput(store_output) => {
+            portal.snippet_history.store_output = store_output;
+            portal.save_snippet_history();
+            Task::none()
+        }
+        UiMessage::SnippetHistoryRedactOutput(redact_output) => {
+            portal.snippet_history.redact_output = redact_output;
+            portal.save_snippet_history();
+            Task::none()
+        }
         UiMessage::WindowResized(size) => {
             portal.window_size = size;
             if !portal.sidebar_manually_set {

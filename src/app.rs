@@ -356,6 +356,10 @@ impl Portal {
                 self.theme_id,
                 self.terminal_font_size,
                 self.terminal_font,
+                self.snippet_history.enabled,
+                self.snippet_history.store_command,
+                self.snippet_history.store_output,
+                self.snippet_history.redact_output,
                 theme,
             ),
             View::Terminal(session_id) => {
@@ -582,6 +586,12 @@ impl Portal {
         settings.theme = self.theme_id;
         if let Err(e) = settings.save() {
             tracing::error!("Failed to save settings: {}", e);
+        }
+    }
+
+    pub(crate) fn save_snippet_history(&self) {
+        if let Err(e) = self.snippet_history.save() {
+            tracing::error!("Failed to save snippet history: {}", e);
         }
     }
 
