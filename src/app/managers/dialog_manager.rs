@@ -143,3 +143,51 @@ impl DialogManager {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_new_manager_has_no_dialog() {
+        let manager = DialogManager::new();
+        assert!(!manager.is_open());
+        assert!(matches!(manager.active(), ActiveDialog::None));
+    }
+
+    #[test]
+    fn test_open_about_dialog() {
+        let mut manager = DialogManager::new();
+        manager.open_about();
+        assert!(manager.is_open());
+        assert!(matches!(manager.active(), ActiveDialog::About(_)));
+    }
+
+    #[test]
+    fn test_close_clears_dialog() {
+        let mut manager = DialogManager::new();
+        manager.open_about();
+        assert!(manager.is_open());
+
+        manager.close();
+        assert!(!manager.is_open());
+        assert!(matches!(manager.active(), ActiveDialog::None));
+    }
+
+    #[test]
+    fn test_single_dialog_constraint() {
+        let mut manager = DialogManager::new();
+
+        // Open about dialog
+        manager.open_about();
+        assert!(matches!(manager.active(), ActiveDialog::About(_)));
+
+        // Opening another dialog replaces the first
+        manager.open_about();
+        assert!(matches!(manager.active(), ActiveDialog::About(_)));
+
+        // Close and verify
+        manager.close();
+        assert!(!manager.is_open());
+    }
+}

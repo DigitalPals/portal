@@ -4,12 +4,9 @@ use portal::fonts;
 use iced::Size;
 
 fn main() -> iced::Result {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive(tracing::Level::INFO.into()),
-        )
-        .init();
+    // Initialize logging with file output
+    let log_dir = portal::config::paths::ensure_log_dir().ok();
+    let _guard = portal::logging::init_logging(log_dir);
 
     tracing::info!("Starting Portal SSH Client");
 

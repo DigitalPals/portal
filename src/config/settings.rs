@@ -69,7 +69,9 @@ impl SettingsConfig {
                 ThemeId::CatppuccinLatte
             };
             // Save migrated config to persist the change
-            let _ = config.save();
+            if let Err(e) = config.save() {
+                tracing::warn!("Failed to save migrated settings: {}", e);
+            }
         }
 
         Ok(config)

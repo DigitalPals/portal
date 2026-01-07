@@ -118,3 +118,58 @@ impl SnippetsConfig {
         super::write_atomic(&path, &content).map_err(|e| ConfigError::WriteFile { path, source: e })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_add_snippet() {
+        let mut config = SnippetsConfig::default();
+        let snippet = Snippet::new("test".to_string(), "echo hello".to_string());
+        let id = snippet.id;
+
+        config.add_snippet(snippet);
+
+        assert_eq!(config.snippets.len(), 1);
+        assert!(config.find_snippet(id).is_some());
+    }
+
+    #[test]
+    fn test_delete_snippet() {
+        let mut config = SnippetsConfig::default();
+        let snippet = Snippet::new("test".to_string(), "echo hello".to_string());
+        let id = snippet.id;
+
+        config.add_snippet(snippet);
+        assert!(config.find_snippet(id).is_some());
+
+        let deleted = config.delete_snippet(id).unwrap();
+        assert_eq!(deleted.id, id);
+        assert!(config.find_snippet(id).is_none());
+    }
+
+    #[test]
+    fn test_delete_snippet_not_found() {
+        let mut config = SnippetsConfig::default();
+        let random_id = Uuid::new_v4();
+
+        let result = config.delete_snippet(random_id);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_find_snippet_mut() {
+        let mut config = SnippetsConfig::default();
+        let snippet = Snippet::new("original".to_string(), "echo 1".to_string());
+        let id = snippet.id;
+
+        config.add_snippet(snippet);
+
+        if let Some(s) = config.find_snippet_mut(id) {
+            s.name = "updated".to_string();
+        }
+
+        assert_eq!(config.find_snippet(id).unwrap().name, "updated");
+    }
+}

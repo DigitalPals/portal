@@ -41,7 +41,9 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                 if let Some(host) = portal.hosts_config.find_host_mut(host_id) {
                     host.last_connected = Some(chrono::Utc::now());
                     host.updated_at = chrono::Utc::now();
-                    let _ = portal.hosts_config.save();
+                    if let Err(e) = portal.hosts_config.save() {
+                        tracing::error!("Failed to save host connection time: {}", e);
+                    }
                 }
             }
 

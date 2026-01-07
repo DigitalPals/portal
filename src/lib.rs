@@ -18,6 +18,7 @@ pub(crate) mod fs_utils;
 pub(crate) mod icons;
 pub(crate) mod local;
 pub(crate) mod local_fs;
+pub mod logging;
 pub(crate) mod message;
 pub(crate) mod security_log;
 pub(crate) mod sftp;

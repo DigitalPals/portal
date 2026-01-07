@@ -95,3 +95,35 @@ impl Default for SessionManager {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_new_manager_is_empty() {
+        let manager = SessionManager::new();
+        assert!(manager.is_empty());
+    }
+
+    #[test]
+    fn test_contains_returns_false_for_unknown_id() {
+        let manager = SessionManager::new();
+        let random_id = Uuid::new_v4();
+        assert!(!manager.contains(random_id));
+    }
+
+    #[test]
+    fn test_get_returns_none_for_unknown_id() {
+        let manager = SessionManager::new();
+        let random_id = Uuid::new_v4();
+        assert!(manager.get(random_id).is_none());
+    }
+
+    #[test]
+    fn test_default_creates_empty_manager() {
+        let manager = SessionManager::default();
+        assert!(manager.is_empty());
+        assert!(!manager.has_pending_output());
+    }
+}

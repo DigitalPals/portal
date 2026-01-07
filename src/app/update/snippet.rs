@@ -52,8 +52,17 @@ pub fn handle_snippet(portal: &mut Portal, msg: SnippetMessage) -> Task<Message>
         }
 
         SnippetMessage::Delete(id) => {
-            let _ = portal.snippets_config.delete_snippet(id);
-            let _ = portal.snippets_config.save();
+            if portal.snippets_config.delete_snippet(id).is_err() {
+                portal
+                    .toast_manager
+                    .push(Toast::warning("Snippet not found"));
+            }
+            if let Err(e) = portal.snippets_config.save() {
+                tracing::error!("Failed to save snippets config: {}", e);
+                portal
+                    .toast_manager
+                    .push(Toast::error("Failed to save changes"));
+            }
             portal.snippet_editing = None;
             portal.selected_snippet = None;
             portal.snippet_executions.clear_results(id);
@@ -118,7 +127,12 @@ pub fn handle_snippet(portal: &mut Portal, msg: SnippetMessage) -> Task<Message>
                         snippet.host_ids = host_ids;
                         portal.snippets_config.add_snippet(snippet);
                     }
-                    let _ = portal.snippets_config.save();
+                    if let Err(e) = portal.snippets_config.save() {
+                        tracing::error!("Failed to save snippets config: {}", e);
+                        portal
+                            .toast_manager
+                            .push(Toast::error("Failed to save snippet"));
+                    }
                 }
             }
             Task::none()
