@@ -3,6 +3,19 @@ use image::{GenericImageView, ImageEncoder};
 use pdfium_render::prelude::{PdfRenderConfig, Pdfium};
 use std::path::Path;
 
+const MAX_TEXT_BYTES: u64 = 2 * 1024 * 1024;
+const MAX_IMAGE_BYTES: u64 = 20 * 1024 * 1024;
+const MAX_PDF_BYTES: u64 = 50 * 1024 * 1024;
+
+fn file_type_limit(file_type: &FileType) -> u64 {
+    match file_type {
+        FileType::Text { .. } | FileType::Markdown => MAX_TEXT_BYTES,
+        FileType::Image => MAX_IMAGE_BYTES,
+        FileType::Pdf => MAX_PDF_BYTES,
+        FileType::Binary => 0,
+    }
+}
+
 use crate::message::{FileViewerMessage, Message, SessionId};
 use crate::sftp::SharedSftpSession;
 use crate::views::file_viewer::{FileSource, FileType, FileViewerState, ViewerContent};
@@ -14,6 +27,7 @@ pub async fn load_local_file(
 ) -> Result<ViewerContent, String> {
     match file_type {
         FileType::Text { .. } => {
+            enforce_local_size(&path, MAX_TEXT_BYTES, "Text").await?;
             let text = tokio::fs::read_to_string(&path)
                 .await
                 .map_err(|e| format!("Failed to read file: {}", e))?;
@@ -22,6 +36,7 @@ pub async fn load_local_file(
             })
         }
         FileType::Markdown => {
+            enforce_local_size(&path, MAX_TEXT_BYTES, "Markdown").await?;
             let text = tokio::fs::read_to_string(&path)
                 .await
                 .map_err(|e| format!("Failed to read file: {}", e))?;
@@ -32,6 +47,7 @@ pub async fn load_local_file(
             })
         }
         FileType::Image => {
+            enforce_local_size(&path, MAX_IMAGE_BYTES, "Image").await?;
             let data = tokio::fs::read(&path)
                 .await
                 .map_err(|e| format!("Failed to read image: {}", e))?;
@@ -51,6 +67,7 @@ pub async fn load_local_file(
             })
         }
         FileType::Pdf => {
+            enforce_local_size(&path, MAX_PDF_BYTES, "PDF").await?;
             let path_for_inspect = path.clone();
             tokio::task::spawn_blocking(move || inspect_pdf(&path_for_inspect))
                 .await
@@ -99,6 +116,31 @@ fn inspect_pdf(path: &Path) -> Result<ViewerContent, String> {
         current_page: 0,
         total_pages,
     })
+}
+
+async fn enforce_local_size(path: &Path, limit: u64, label: &str) -> Result<(), String> {
+    let metadata = tokio::fs::metadata(path)
+        .await
+        .map_err(|e| format!("Failed to stat {} file: {}", label, e))?;
+    let size = metadata.len();
+    if size > limit {
+        return Err(format!(
+            "{} file too large ({} bytes, limit {})",
+            label, size, limit
+        ));
+    }
+    Ok(())
+}
+
+async fn ensure_private_dir(path: &Path) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        tokio::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
+            .await
+            .map_err(|e| format!("Failed to set temp directory permissions: {}", e))?;
+    }
+    Ok(())
 }
 
 pub async fn render_pdf_page(source: FileSource, page_index: usize) -> Result<Vec<u8>, String> {
@@ -196,6 +238,20 @@ pub fn build_remote_viewer(
             tokio::fs::create_dir_all(temp_dir)
                 .await
                 .map_err(|e| format!("Failed to create temp directory: {}", e))?;
+            ensure_private_dir(&temp_dir).await?;
+            let limit = file_type_limit(&ftype);
+            if limit > 0 {
+                let size = sftp
+                    .file_size(&remote_path)
+                    .await
+                    .map_err(|e| format!("Failed to stat remote file: {}", e))?;
+                if size > limit {
+                    return Err(format!(
+                        "Remote file too large ({} bytes, limit {})",
+                        size, limit
+                    ));
+                }
+            }
             sftp.download(&remote_path, &temp_path)
                 .await
                 .map_err(|e| format!("Failed to download file: {}", e))?;

@@ -6,7 +6,11 @@ use std::sync::Arc;
 use chrono::{TimeZone, Utc};
 use russh_sftp::client::SftpSession as RusshSftpSession;
 use russh_sftp::protocol::OpenFlags;
+use tokio::fs::OpenOptions;
 use tokio::io;
+
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 use tokio::sync::Mutex;
 
 use crate::error::SftpError;
@@ -91,6 +95,16 @@ impl SftpSession {
         }
 
         Ok(result)
+    }
+
+    /// Get file size for a remote path.
+    pub async fn file_size(&self, path: &Path) -> Result<u64, SftpError> {
+        let sftp = self.sftp.lock().await;
+        let path_str = path.to_string_lossy().to_string();
+        let metadata = sftp.symlink_metadata(path_str.clone()).await.map_err(|e| {
+            SftpError::FileOperation(format!("Failed to get metadata for {}: {}", path_str, e))
+        })?;
+        Ok(metadata.size.unwrap_or(0))
     }
 
     /// Create a directory
@@ -205,6 +219,16 @@ impl SftpSession {
 
     /// Download a file from remote to local
     pub async fn download(&self, remote_path: &Path, local_path: &Path) -> Result<u64, SftpError> {
+        if let Some(parent) = local_path.parent() {
+            tokio::fs::create_dir_all(parent).await.map_err(|e| {
+                SftpError::LocalIo(format!(
+                    "Failed to create local directory {}: {}",
+                    parent.display(),
+                    e
+                ))
+            })?;
+        }
+
         let sftp = self.sftp.lock().await;
         let remote_str = remote_path.to_string_lossy().to_string();
 
@@ -212,13 +236,21 @@ impl SftpSession {
             SftpError::Transfer(format!("Failed to open remote file {}: {}", remote_str, e))
         })?;
 
-        let mut local = tokio::fs::File::create(local_path).await.map_err(|e| {
-            SftpError::LocalIo(format!(
-                "Failed to write local file {}: {}",
-                local_path.display(),
-                e
-            ))
-        })?;
+        let mut local = {
+            let mut options = OpenOptions::new();
+            options.create(true).write(true).truncate(true);
+            #[cfg(unix)]
+            {
+                options.mode(0o600);
+            }
+            options.open(local_path).await.map_err(|e| {
+                SftpError::LocalIo(format!(
+                    "Failed to write local file {}: {}",
+                    local_path.display(),
+                    e
+                ))
+            })?
+        };
 
         let bytes = io::copy(&mut remote, &mut local).await.map_err(|e| {
             SftpError::Transfer(format!(

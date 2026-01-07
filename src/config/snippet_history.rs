@@ -176,11 +176,11 @@ fn default_history_enabled() -> bool {
 }
 
 fn default_store_command() -> bool {
-    true
+    false
 }
 
 fn default_store_output() -> bool {
-    true
+    false
 }
 
 fn default_redact_output() -> bool {
