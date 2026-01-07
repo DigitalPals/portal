@@ -359,13 +359,22 @@ mod tests {
 
     #[test]
     fn from_uname_windows_mingw() {
-        assert_eq!(DetectedOs::from_uname("MINGW64_NT-10.0"), DetectedOs::Windows);
-        assert_eq!(DetectedOs::from_uname("MINGW32_NT-6.2"), DetectedOs::Windows);
+        assert_eq!(
+            DetectedOs::from_uname("MINGW64_NT-10.0"),
+            DetectedOs::Windows
+        );
+        assert_eq!(
+            DetectedOs::from_uname("MINGW32_NT-6.2"),
+            DetectedOs::Windows
+        );
     }
 
     #[test]
     fn from_uname_windows_cygwin() {
-        assert_eq!(DetectedOs::from_uname("CYGWIN_NT-10.0"), DetectedOs::Windows);
+        assert_eq!(
+            DetectedOs::from_uname("CYGWIN_NT-10.0"),
+            DetectedOs::Windows
+        );
         assert_eq!(DetectedOs::from_uname("cygwin_nt-6.1"), DetectedOs::Windows);
     }
 
@@ -408,7 +417,10 @@ ID_LIKE=debian
 PRETTY_NAME="Ubuntu 22.04.3 LTS"
 VERSION_ID="22.04"
 "#;
-        assert_eq!(DetectedOs::from_os_release(content), Some(DetectedOs::Ubuntu));
+        assert_eq!(
+            DetectedOs::from_os_release(content),
+            Some(DetectedOs::Ubuntu)
+        );
     }
 
     #[test]
@@ -419,7 +431,10 @@ NAME="Debian GNU/Linux"
 VERSION_ID="12"
 ID=debian
 "#;
-        assert_eq!(DetectedOs::from_os_release(content), Some(DetectedOs::Debian));
+        assert_eq!(
+            DetectedOs::from_os_release(content),
+            Some(DetectedOs::Debian)
+        );
     }
 
     #[test]
@@ -430,7 +445,10 @@ VERSION="39 (Workstation Edition)"
 ID=fedora
 VERSION_ID=39
 "#;
-        assert_eq!(DetectedOs::from_os_release(content), Some(DetectedOs::Fedora));
+        assert_eq!(
+            DetectedOs::from_os_release(content),
+            Some(DetectedOs::Fedora)
+        );
     }
 
     #[test]
@@ -439,7 +457,10 @@ VERSION_ID=39
         assert_eq!(DetectedOs::from_os_release(content), Some(DetectedOs::Arch));
 
         let content2 = "ID=archlinux\n";
-        assert_eq!(DetectedOs::from_os_release(content2), Some(DetectedOs::Arch));
+        assert_eq!(
+            DetectedOs::from_os_release(content2),
+            Some(DetectedOs::Arch)
+        );
     }
 
     #[test]
@@ -449,28 +470,46 @@ NAME="CentOS Stream"
 VERSION="9"
 ID="centos"
 "#;
-        assert_eq!(DetectedOs::from_os_release(content), Some(DetectedOs::CentOS));
+        assert_eq!(
+            DetectedOs::from_os_release(content),
+            Some(DetectedOs::CentOS)
+        );
     }
 
     #[test]
     fn from_os_release_redhat() {
         let content = "ID=rhel\nNAME=\"Red Hat Enterprise Linux\"\n";
-        assert_eq!(DetectedOs::from_os_release(content), Some(DetectedOs::RedHat));
+        assert_eq!(
+            DetectedOs::from_os_release(content),
+            Some(DetectedOs::RedHat)
+        );
 
         let content2 = "ID=redhat\n";
-        assert_eq!(DetectedOs::from_os_release(content2), Some(DetectedOs::RedHat));
+        assert_eq!(
+            DetectedOs::from_os_release(content2),
+            Some(DetectedOs::RedHat)
+        );
     }
 
     #[test]
     fn from_os_release_opensuse() {
         let content = "ID=opensuse-leap\nNAME=\"openSUSE Leap\"\n";
-        assert_eq!(DetectedOs::from_os_release(content), Some(DetectedOs::OpenSUSE));
+        assert_eq!(
+            DetectedOs::from_os_release(content),
+            Some(DetectedOs::OpenSUSE)
+        );
 
         let content2 = "ID=opensuse-tumbleweed\n";
-        assert_eq!(DetectedOs::from_os_release(content2), Some(DetectedOs::OpenSUSE));
+        assert_eq!(
+            DetectedOs::from_os_release(content2),
+            Some(DetectedOs::OpenSUSE)
+        );
 
         let content3 = "ID=opensuse\n";
-        assert_eq!(DetectedOs::from_os_release(content3), Some(DetectedOs::OpenSUSE));
+        assert_eq!(
+            DetectedOs::from_os_release(content3),
+            Some(DetectedOs::OpenSUSE)
+        );
     }
 
     #[test]
@@ -480,13 +519,19 @@ ID=nixos
 NAME=NixOS
 VERSION="24.05 (Uakari)"
 "#;
-        assert_eq!(DetectedOs::from_os_release(content), Some(DetectedOs::NixOS));
+        assert_eq!(
+            DetectedOs::from_os_release(content),
+            Some(DetectedOs::NixOS)
+        );
     }
 
     #[test]
     fn from_os_release_manjaro() {
         let content = "ID=manjaro\nNAME=\"Manjaro Linux\"\n";
-        assert_eq!(DetectedOs::from_os_release(content), Some(DetectedOs::Manjaro));
+        assert_eq!(
+            DetectedOs::from_os_release(content),
+            Some(DetectedOs::Manjaro)
+        );
     }
 
     #[test]
@@ -498,19 +543,28 @@ VERSION="24.05 (Uakari)"
     #[test]
     fn from_os_release_popos() {
         let content = "ID=pop\nNAME=\"Pop!_OS\"\n";
-        assert_eq!(DetectedOs::from_os_release(content), Some(DetectedOs::PopOS));
+        assert_eq!(
+            DetectedOs::from_os_release(content),
+            Some(DetectedOs::PopOS)
+        );
     }
 
     #[test]
     fn from_os_release_gentoo() {
         let content = "ID=gentoo\nNAME=\"Gentoo\"\n";
-        assert_eq!(DetectedOs::from_os_release(content), Some(DetectedOs::Gentoo));
+        assert_eq!(
+            DetectedOs::from_os_release(content),
+            Some(DetectedOs::Gentoo)
+        );
     }
 
     #[test]
     fn from_os_release_alpine() {
         let content = "ID=alpine\nNAME=\"Alpine Linux\"\n";
-        assert_eq!(DetectedOs::from_os_release(content), Some(DetectedOs::Alpine));
+        assert_eq!(
+            DetectedOs::from_os_release(content),
+            Some(DetectedOs::Alpine)
+        );
     }
 
     #[test]
@@ -522,7 +576,10 @@ VERSION="24.05 (Uakari)"
     #[test]
     fn from_os_release_rocky() {
         let content = "ID=rocky\nNAME=\"Rocky Linux\"\n";
-        assert_eq!(DetectedOs::from_os_release(content), Some(DetectedOs::Rocky));
+        assert_eq!(
+            DetectedOs::from_os_release(content),
+            Some(DetectedOs::Rocky)
+        );
     }
 
     #[test]
@@ -534,16 +591,25 @@ VERSION="24.05 (Uakari)"
     #[test]
     fn from_os_release_unknown_distro() {
         let content = "ID=someunknowndistro\nNAME=\"Unknown\"\n";
-        assert_eq!(DetectedOs::from_os_release(content), Some(DetectedOs::Linux));
+        assert_eq!(
+            DetectedOs::from_os_release(content),
+            Some(DetectedOs::Linux)
+        );
     }
 
     #[test]
     fn from_os_release_quoted_id() {
         let content = "ID=\"ubuntu\"\n";
-        assert_eq!(DetectedOs::from_os_release(content), Some(DetectedOs::Ubuntu));
+        assert_eq!(
+            DetectedOs::from_os_release(content),
+            Some(DetectedOs::Ubuntu)
+        );
 
         let content2 = "ID='debian'\n";
-        assert_eq!(DetectedOs::from_os_release(content2), Some(DetectedOs::Debian));
+        assert_eq!(
+            DetectedOs::from_os_release(content2),
+            Some(DetectedOs::Debian)
+        );
     }
 
     #[test]
@@ -560,10 +626,16 @@ VERSION="24.05 (Uakari)"
     #[test]
     fn from_os_release_case_insensitive_id() {
         let content = "ID=UBUNTU\n";
-        assert_eq!(DetectedOs::from_os_release(content), Some(DetectedOs::Ubuntu));
+        assert_eq!(
+            DetectedOs::from_os_release(content),
+            Some(DetectedOs::Ubuntu)
+        );
 
         let content2 = "ID=FeDora\n";
-        assert_eq!(DetectedOs::from_os_release(content2), Some(DetectedOs::Fedora));
+        assert_eq!(
+            DetectedOs::from_os_release(content2),
+            Some(DetectedOs::Fedora)
+        );
     }
 
     // === DetectedOs::is_linux tests ===
@@ -637,7 +709,10 @@ VERSION="24.05 (Uakari)"
 
     #[test]
     fn display_name_unknown() {
-        assert_eq!(DetectedOs::Unknown("SunOS".to_string()).display_name(), "SunOS");
+        assert_eq!(
+            DetectedOs::Unknown("SunOS".to_string()).display_name(),
+            "SunOS"
+        );
         assert_eq!(DetectedOs::Unknown("AIX".to_string()).display_name(), "AIX");
     }
 
@@ -685,7 +760,10 @@ VERSION="24.05 (Uakari)"
         assert_eq!(DetectedOs::Ubuntu.icon_color(), (0xE9, 0x54, 0x20));
         assert_eq!(DetectedOs::Fedora.icon_color(), (0x51, 0xA2, 0xDA));
         assert_eq!(DetectedOs::Windows.icon_color(), (0x00, 0x78, 0xD4));
-        assert_eq!(DetectedOs::Unknown("x".to_string()).icon_color(), (0x70, 0x70, 0x70));
+        assert_eq!(
+            DetectedOs::Unknown("x".to_string()).icon_color(),
+            (0x70, 0x70, 0x70)
+        );
     }
 
     // === DetectedOs trait tests ===
@@ -766,9 +844,15 @@ VERSION="24.05 (Uakari)"
         assert_eq!(AuthMethod::Agent, AuthMethod::Agent);
         assert_ne!(AuthMethod::Password, AuthMethod::Agent);
 
-        let pk1 = AuthMethod::PublicKey { key_path: Some(PathBuf::from("/a")) };
-        let pk2 = AuthMethod::PublicKey { key_path: Some(PathBuf::from("/a")) };
-        let pk3 = AuthMethod::PublicKey { key_path: Some(PathBuf::from("/b")) };
+        let pk1 = AuthMethod::PublicKey {
+            key_path: Some(PathBuf::from("/a")),
+        };
+        let pk2 = AuthMethod::PublicKey {
+            key_path: Some(PathBuf::from("/a")),
+        };
+        let pk3 = AuthMethod::PublicKey {
+            key_path: Some(PathBuf::from("/b")),
+        };
         assert_eq!(pk1, pk2);
         assert_ne!(pk1, pk3);
     }

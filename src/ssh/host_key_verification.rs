@@ -165,7 +165,12 @@ mod tests {
 
     #[test]
     fn host_key_info_various_key_types() {
-        let key_types = ["ssh-ed25519", "ssh-rsa", "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384"];
+        let key_types = [
+            "ssh-ed25519",
+            "ssh-rsa",
+            "ecdsa-sha2-nistp256",
+            "ecdsa-sha2-nistp384",
+        ];
 
         for key_type in key_types {
             let info = HostKeyInfo {
@@ -194,9 +199,18 @@ mod tests {
 
     #[test]
     fn response_equality() {
-        assert_eq!(HostKeyVerificationResponse::Accept, HostKeyVerificationResponse::Accept);
-        assert_eq!(HostKeyVerificationResponse::Reject, HostKeyVerificationResponse::Reject);
-        assert_ne!(HostKeyVerificationResponse::Accept, HostKeyVerificationResponse::Reject);
+        assert_eq!(
+            HostKeyVerificationResponse::Accept,
+            HostKeyVerificationResponse::Accept
+        );
+        assert_eq!(
+            HostKeyVerificationResponse::Reject,
+            HostKeyVerificationResponse::Reject
+        );
+        assert_ne!(
+            HostKeyVerificationResponse::Accept,
+            HostKeyVerificationResponse::Reject
+        );
     }
 
     #[test]

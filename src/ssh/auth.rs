@@ -338,8 +338,11 @@ mod tests {
         let dir = tempdir().expect("temp dir");
         let key_path = dir.path().join("not_a_key");
 
-        fs::write(&key_path, "This is not a valid SSH key file\nJust some text\n")
-            .expect("write invalid content");
+        fs::write(
+            &key_path,
+            "This is not a valid SSH key file\nJust some text\n",
+        )
+        .expect("write invalid content");
 
         let method = AuthMethod::PublicKey {
             key_path: Some(key_path),
@@ -350,7 +353,10 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(matches!(err, SshError::KeyFile(_)));
-        assert!(err.to_string().contains("does not appear to be a valid SSH private key"));
+        assert!(
+            err.to_string()
+                .contains("does not appear to be a valid SSH private key")
+        );
     }
 
     /// Test public key with no key_path and no default keys fails
@@ -366,8 +372,7 @@ mod tests {
         let result = ResolvedAuth::resolve(&method, None, None).await;
 
         // Either succeeds (if user has default keys) or fails with appropriate error
-        if result.is_err() {
-            let err = result.unwrap_err();
+        if let Err(err) = result {
             // Should fail with "No SSH key found" or a key loading error
             let err_str = err.to_string();
             assert!(

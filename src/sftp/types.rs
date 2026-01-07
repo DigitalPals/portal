@@ -371,7 +371,10 @@ mod tests {
     fn icon_type_config_files() {
         assert_eq!(make_file("config.json").icon_type(), FileIcon::Config);
         assert_eq!(make_file("Cargo.toml").icon_type(), FileIcon::Config);
-        assert_eq!(make_file("docker-compose.yaml").icon_type(), FileIcon::Config);
+        assert_eq!(
+            make_file("docker-compose.yaml").icon_type(),
+            FileIcon::Config
+        );
         assert_eq!(make_file("settings.yml").icon_type(), FileIcon::Config);
         assert_eq!(make_file("pom.xml").icon_type(), FileIcon::Config);
     }
@@ -611,7 +614,10 @@ mod tests {
     #[test]
     fn format_size_gigabytes() {
         assert_eq!(format_size(1024 * 1024 * 1024), "1.0 GB");
-        assert_eq!(format_size(2 * 1024 * 1024 * 1024 + 512 * 1024 * 1024), "2.5 GB");
+        assert_eq!(
+            format_size(2 * 1024 * 1024 * 1024 + 512 * 1024 * 1024),
+            "2.5 GB"
+        );
         assert_eq!(format_size(100 * 1024 * 1024 * 1024), "100.0 GB");
     }
 

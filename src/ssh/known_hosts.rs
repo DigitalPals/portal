@@ -447,7 +447,7 @@ impl Default for KnownHostsManager {
 
 #[cfg(test)]
 mod tests {
-    use super::{glob_match, HostKeyStatus, KnownHostsManager};
+    use super::{HostKeyStatus, KnownHostsManager, glob_match};
     use russh::keys;
     use std::fs;
     use std::path::PathBuf;
@@ -822,9 +822,7 @@ mod tests {
         let path = dir.path().join("known_hosts");
         fs::write(
             &path,
-            format!(
-                "# This is a comment\nexample.com ssh-ed25519 {KEY1}\n# Another comment\n"
-            ),
+            format!("# This is a comment\nexample.com ssh-ed25519 {KEY1}\n# Another comment\n"),
         )
         .expect("write known_hosts");
 
@@ -839,11 +837,8 @@ mod tests {
     fn scan_ignores_empty_lines() {
         let dir = tempdir().expect("temp dir");
         let path = dir.path().join("known_hosts");
-        fs::write(
-            &path,
-            format!("\n\nexample.com ssh-ed25519 {KEY1}\n\n"),
-        )
-        .expect("write known_hosts");
+        fs::write(&path, format!("\n\nexample.com ssh-ed25519 {KEY1}\n\n"))
+            .expect("write known_hosts");
 
         let manager = KnownHostsManager::with_paths(Some(path), None);
         let key = keys::parse_public_key_base64(KEY1).expect("parse key");
@@ -1009,9 +1004,17 @@ mod tests {
     fn host_matches_negation() {
         let manager = KnownHostsManager::with_paths(None, None);
         // bad.example.com is negated, so should not match
-        assert!(!manager.host_matches("bad.example.com", "bad.example.com", "!bad.example.com,*.example.com"));
+        assert!(!manager.host_matches(
+            "bad.example.com",
+            "bad.example.com",
+            "!bad.example.com,*.example.com"
+        ));
         // good.example.com matches the wildcard
-        assert!(manager.host_matches("good.example.com", "good.example.com", "!bad.example.com,*.example.com"));
+        assert!(manager.host_matches(
+            "good.example.com",
+            "good.example.com",
+            "!bad.example.com,*.example.com"
+        ));
     }
 
     #[test]
@@ -1030,7 +1033,9 @@ mod tests {
         let mut manager = KnownHostsManager::with_paths(Some(path.clone()), None);
         let key = keys::parse_public_key_base64(KEY1).expect("parse key");
 
-        manager.add_host_key("newhost.com", 22, &key).expect("add key");
+        manager
+            .add_host_key("newhost.com", 22, &key)
+            .expect("add key");
 
         // Verify the file was created and contains the host
         let content = fs::read_to_string(&path).expect("read file");

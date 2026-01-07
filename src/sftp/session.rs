@@ -385,6 +385,7 @@ pub type SharedSftpSession = Arc<SftpSession>;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Datelike;
 
     // Note: Most SftpSession methods require an actual RusshSftpSession which
     // requires a live SSH/SFTP connection. These are tested via integration tests
@@ -612,21 +613,25 @@ mod tests {
 
     // === Size handling tests ===
 
+    fn get_size(has_size: bool, value: u64) -> Option<u64> {
+        if has_size { Some(value) } else { None }
+    }
+
     #[test]
     fn size_unwrap_or_zero_with_none() {
-        let size: Option<u64> = None;
+        let size = get_size(false, 0);
         assert_eq!(size.unwrap_or(0), 0);
     }
 
     #[test]
     fn size_unwrap_or_zero_with_some() {
-        let size: Option<u64> = Some(12345);
+        let size = get_size(true, 12345);
         assert_eq!(size.unwrap_or(0), 12345);
     }
 
     #[test]
     fn size_unwrap_or_zero_with_large_value() {
-        let size: Option<u64> = Some(u64::MAX);
+        let size = get_size(true, u64::MAX);
         assert_eq!(size.unwrap_or(0), u64::MAX);
     }
 
@@ -656,7 +661,7 @@ mod tests {
 
     #[test]
     fn skip_parent_entry_pattern() {
-        let entries = vec![".", "..", "file.txt", "dir"];
+        let entries = [".", "..", "file.txt", "dir"];
         let filtered: Vec<_> = entries.iter().filter(|e| **e != "..").collect();
 
         assert_eq!(filtered.len(), 3);
@@ -710,7 +715,3 @@ mod tests {
         assert!(msg.contains(error));
     }
 }
-
-// Additional trait requirement for chrono in tests
-#[cfg(test)]
-use chrono::Datelike;

@@ -785,8 +785,10 @@ mod tests {
 
     #[test]
     fn add_entry_trims_to_max() {
-        let mut config = HistoryConfig::default();
-        config.max_entries = 3;
+        let mut config = HistoryConfig {
+            max_entries: 3,
+            ..Default::default()
+        };
 
         for i in 0..5 {
             config.add_entry(HistoryEntry::new(
@@ -807,8 +809,10 @@ mod tests {
 
     #[test]
     fn add_entry_max_entries_zero() {
-        let mut config = HistoryConfig::default();
-        config.max_entries = 0;
+        let mut config = HistoryConfig {
+            max_entries: 0,
+            ..Default::default()
+        };
 
         config.add_entry(HistoryEntry::new(
             Uuid::new_v4(),
@@ -1047,8 +1051,10 @@ mod tests {
 
     #[test]
     fn history_config_roundtrip() {
-        let mut config = HistoryConfig::default();
-        config.max_entries = 50;
+        let mut config = HistoryConfig {
+            max_entries: 50,
+            ..Default::default()
+        };
         let entry = HistoryEntry::new(
             Uuid::new_v4(),
             "Server".to_string(),
