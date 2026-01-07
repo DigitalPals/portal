@@ -4,8 +4,10 @@
 //! - `dialog_backdrop` - Modal backdrop with centered content
 //! - `primary_button_style` - Accent-colored action button
 //! - `secondary_button_style` - Outlined cancel/secondary button
+//! - `dialog_input_style` - Styled text input for dialogs
+//! - `dialog_pick_list_style` - Styled pick list for dialogs
 
-use iced::widget::{button, container, mouse_area};
+use iced::widget::{button, container, mouse_area, pick_list, text_input};
 use iced::{Alignment, Element, Length};
 
 use crate::message::Message;
@@ -100,5 +102,78 @@ pub fn secondary_button_style(
             },
             ..Default::default()
         }
+    }
+}
+
+/// Styled text input for dialogs - rounded with border that highlights on focus
+///
+/// Returns a closure suitable for use with `text_input.style(...)`.
+pub fn dialog_input_style(
+    theme: Theme,
+) -> impl Fn(&iced::Theme, text_input::Status) -> text_input::Style {
+    move |_iced_theme, status| {
+        let border_color = match status {
+            text_input::Status::Focused { .. } => theme.accent,
+            text_input::Status::Hovered => theme.text_muted,
+            _ => theme.border,
+        };
+        text_input::Style {
+            background: theme.surface.into(),
+            border: iced::Border {
+                color: border_color,
+                width: 1.0,
+                radius: BORDER_RADIUS.into(),
+            },
+            icon: theme.text_muted,
+            placeholder: theme.text_muted,
+            value: theme.text_primary,
+            selection: theme.selected,
+        }
+    }
+}
+
+/// Styled pick list for dialogs - rounded with border that highlights on hover/open
+///
+/// Returns a closure suitable for use with `pick_list.style(...)`.
+pub fn dialog_pick_list_style(
+    theme: Theme,
+) -> impl Fn(&iced::Theme, pick_list::Status) -> pick_list::Style {
+    move |_iced_theme, status| {
+        let border_color = match status {
+            pick_list::Status::Opened { .. } => theme.accent,
+            pick_list::Status::Hovered => theme.text_muted,
+            _ => theme.border,
+        };
+        pick_list::Style {
+            background: theme.surface.into(),
+            border: iced::Border {
+                color: border_color,
+                width: 1.0,
+                radius: BORDER_RADIUS.into(),
+            },
+            text_color: theme.text_primary,
+            placeholder_color: theme.text_muted,
+            handle_color: theme.text_secondary,
+        }
+    }
+}
+
+/// Styled menu for pick list dropdown
+///
+/// Returns a closure suitable for use with `pick_list.menu_style(...)`.
+pub fn dialog_pick_list_menu_style(
+    theme: Theme,
+) -> impl Fn(&iced::Theme) -> iced::overlay::menu::Style {
+    move |_iced_theme| iced::overlay::menu::Style {
+        background: theme.surface.into(),
+        border: iced::Border {
+            color: theme.border,
+            width: 1.0,
+            radius: BORDER_RADIUS.into(),
+        },
+        text_color: theme.text_primary,
+        selected_background: theme.selected.into(),
+        selected_text_color: theme.text_primary,
+        shadow: iced::Shadow::default(),
     }
 }

@@ -28,6 +28,8 @@ pub enum ActiveDialog {
 #[derive(Default)]
 pub struct DialogManager {
     active: ActiveDialog,
+    /// Current focused field index in host dialog (for Tab navigation)
+    pub host_dialog_focus: usize,
 }
 
 impl DialogManager {
@@ -35,6 +37,7 @@ impl DialogManager {
     pub fn new() -> Self {
         Self {
             active: ActiveDialog::None,
+            host_dialog_focus: 0,
         }
     }
 
@@ -58,6 +61,7 @@ impl DialogManager {
     /// Open the host dialog with the given state
     pub fn open_host(&mut self, state: HostDialogState) {
         self.active = ActiveDialog::Host(state);
+        self.host_dialog_focus = 0; // Reset focus to first field
     }
 
     /// Get host dialog state if it's the active dialog

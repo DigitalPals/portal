@@ -6,7 +6,24 @@ use crate::config::{AuthMethod, Host};
 use crate::message::{DialogMessage, HostDialogField, Message};
 use crate::theme::Theme;
 
-use super::common::{dialog_backdrop, primary_button_style, secondary_button_style};
+use super::common::{
+    dialog_backdrop, dialog_input_style, dialog_pick_list_menu_style, dialog_pick_list_style,
+    primary_button_style, secondary_button_style,
+};
+
+/// Widget ID for host dialog fields (for keyboard navigation)
+pub fn host_dialog_field_id(index: usize) -> iced::widget::Id {
+    match index {
+        0 => iced::widget::Id::new("host_dialog_field_0"),
+        1 => iced::widget::Id::new("host_dialog_field_1"),
+        2 => iced::widget::Id::new("host_dialog_field_2"),
+        3 => iced::widget::Id::new("host_dialog_field_3"),
+        5 => iced::widget::Id::new("host_dialog_field_5"),
+        6 => iced::widget::Id::new("host_dialog_field_6"),
+        7 => iced::widget::Id::new("host_dialog_field_7"),
+        _ => iced::widget::Id::new("host_dialog_field_0"),
+    }
+}
 
 /// State for the host dialog (add or edit)
 #[derive(Debug, Clone)]
@@ -185,42 +202,54 @@ pub fn host_dialog_view(state: &HostDialogState, theme: Theme) -> Element<'stati
     let name_input = column![
         text("Name").size(12).color(theme.text_secondary),
         text_input("my-server", &name_value)
+            .id(host_dialog_field_id(0))
             .on_input(|s| Message::Dialog(DialogMessage::FieldChanged(HostDialogField::Name, s)))
+            .on_submit(Message::Dialog(DialogMessage::Submit))
             .padding(8)
             .width(Length::Fill)
+            .style(dialog_input_style(theme))
     ]
     .spacing(4);
 
     let hostname_input = column![
         text("Hostname / IP").size(12).color(theme.text_secondary),
         text_input("192.168.1.100", &hostname_value)
+            .id(host_dialog_field_id(1))
             .on_input(|s| Message::Dialog(DialogMessage::FieldChanged(
                 HostDialogField::Hostname,
                 s
             )))
+            .on_submit(Message::Dialog(DialogMessage::Submit))
             .padding(8)
             .width(Length::Fill)
+            .style(dialog_input_style(theme))
     ]
     .spacing(4);
 
     let port_input = column![
         text("Port").size(12).color(theme.text_secondary),
         text_input("22", &port_value)
+            .id(host_dialog_field_id(2))
             .on_input(|s| Message::Dialog(DialogMessage::FieldChanged(HostDialogField::Port, s)))
+            .on_submit(Message::Dialog(DialogMessage::Submit))
             .padding(8)
             .width(Length::Fill)
+            .style(dialog_input_style(theme))
     ]
     .spacing(4);
 
     let username_input = column![
         text("Username").size(12).color(theme.text_secondary),
         text_input(&username_placeholder, &username_value)
+            .id(host_dialog_field_id(3))
             .on_input(|s| Message::Dialog(DialogMessage::FieldChanged(
                 HostDialogField::Username,
                 s
             )))
+            .on_submit(Message::Dialog(DialogMessage::Submit))
             .padding(8)
             .width(Length::Fill)
+            .style(dialog_input_style(theme))
     ]
     .spacing(4);
 
@@ -237,6 +266,8 @@ pub fn host_dialog_view(state: &HostDialogState, theme: Theme) -> Element<'stati
         )
         .width(Length::Fill)
         .padding(8)
+        .style(dialog_pick_list_style(theme))
+        .menu_style(dialog_pick_list_menu_style(theme))
     ]
     .spacing(4);
 
@@ -246,12 +277,15 @@ pub fn host_dialog_view(state: &HostDialogState, theme: Theme) -> Element<'stati
         column![
             text("Key Path").size(12).color(theme.text_secondary),
             text_input("~/.ssh/id_ed25519", &key_path_value)
+                .id(host_dialog_field_id(5))
                 .on_input(|s| Message::Dialog(DialogMessage::FieldChanged(
                     HostDialogField::KeyPath,
                     s
                 )))
+                .on_submit(Message::Dialog(DialogMessage::Submit))
                 .padding(8)
                 .width(Length::Fill)
+                .style(dialog_input_style(theme))
         ]
         .spacing(4)
         .into()
@@ -262,18 +296,24 @@ pub fn host_dialog_view(state: &HostDialogState, theme: Theme) -> Element<'stati
     let tags_input = column![
         text("Tags").size(12).color(theme.text_secondary),
         text_input("web, production", &tags_value)
+            .id(host_dialog_field_id(6))
             .on_input(|s| Message::Dialog(DialogMessage::FieldChanged(HostDialogField::Tags, s)))
+            .on_submit(Message::Dialog(DialogMessage::Submit))
             .padding(8)
             .width(Length::Fill)
+            .style(dialog_input_style(theme))
     ]
     .spacing(4);
 
     let notes_input = column![
         text("Notes").size(12).color(theme.text_secondary),
         text_input("Optional notes...", &notes_value)
+            .id(host_dialog_field_id(7))
             .on_input(|s| Message::Dialog(DialogMessage::FieldChanged(HostDialogField::Notes, s)))
+            .on_submit(Message::Dialog(DialogMessage::Submit))
             .padding(8)
             .width(Length::Fill)
+            .style(dialog_input_style(theme))
     ]
     .spacing(4);
 

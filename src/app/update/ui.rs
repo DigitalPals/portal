@@ -3,12 +3,14 @@
 use iced::Task;
 use iced::keyboard::{self, Key};
 
+use crate::app::ActiveDialog;
 use crate::app::{FocusSection, Portal, SIDEBAR_AUTO_COLLAPSE_THRESHOLD, View};
 use crate::message::{
-    HistoryMessage, HostMessage, Message, SessionMessage, SftpMessage, SidebarMenuItem, TabMessage,
-    UiMessage,
+    DialogMessage, HistoryMessage, HostMessage, Message, SessionMessage, SftpMessage,
+    SidebarMenuItem, TabMessage, UiMessage,
 };
 use crate::ssh::host_key_verification::HostKeyVerificationResponse;
+use crate::views::dialogs::host_dialog::host_dialog_field_id;
 use crate::views::dialogs::snippets_dialog::SnippetsDialogState;
 use crate::views::sftp::PaneId;
 use crate::views::toast::Toast;
@@ -145,18 +147,9 @@ fn handle_keyboard_event(
     key: Key,
     modifiers: keyboard::Modifiers,
 ) -> Task<Message> {
-    // Priority 1: Dialog open - only handle Escape to close
+    // Priority 1: Dialog open - handle dialog-specific keyboard navigation
     if portal.dialogs.is_open() {
-        if let Key::Named(keyboard::key::Named::Escape) = key {
-            if let Some(dialog) = portal.dialogs.host_key_mut() {
-                dialog.respond(HostKeyVerificationResponse::Reject);
-                portal
-                    .toast_manager
-                    .push(Toast::warning("Connection cancelled"));
-            }
-            portal.dialogs.close();
-        }
-        return Task::none();
+        return handle_dialog_keyboard(portal, &key, &modifiers);
     }
 
     // Priority 2: Terminal captured - only Ctrl+Escape exits
@@ -240,6 +233,85 @@ fn handle_keyboard_event(
         FocusSection::Sidebar => handle_sidebar_keyboard(portal, &key, &modifiers),
         FocusSection::TabBar => handle_tabbar_keyboard(portal, &key, &modifiers),
         FocusSection::Content => handle_content_keyboard(portal, &key, &modifiers),
+    }
+}
+
+/// Handle keyboard navigation in dialogs
+fn handle_dialog_keyboard(
+    portal: &mut Portal,
+    key: &Key,
+    modifiers: &keyboard::Modifiers,
+) -> Task<Message> {
+    match portal.dialogs.active() {
+        ActiveDialog::Host(state) => {
+            let is_valid = state.is_valid();
+            let has_key_path = state.auth_method
+                == crate::views::dialogs::host_dialog::AuthMethodChoice::PublicKey;
+
+            // Build list of focusable fields based on current state
+            let focusable: Vec<usize> = if has_key_path {
+                vec![0, 1, 2, 3, 5, 6, 7] // Include key path field
+            } else {
+                vec![0, 1, 2, 3, 6, 7] // Skip key path field
+            };
+
+            match key {
+                Key::Named(keyboard::key::Named::Escape) => {
+                    portal.dialogs.close();
+                    Task::none()
+                }
+                Key::Named(keyboard::key::Named::Tab) => {
+                    // Find current position in focusable list
+                    let current = portal.dialogs.host_dialog_focus;
+                    let current_pos = focusable.iter().position(|&f| f == current).unwrap_or(0);
+
+                    let next_pos = if modifiers.shift() {
+                        // Shift+Tab: go backwards
+                        if current_pos == 0 {
+                            focusable.len() - 1
+                        } else {
+                            current_pos - 1
+                        }
+                    } else {
+                        // Tab: go forwards
+                        (current_pos + 1) % focusable.len()
+                    };
+
+                    let next_field = focusable[next_pos];
+                    portal.dialogs.host_dialog_focus = next_field;
+                    iced::widget::operation::focus(host_dialog_field_id(next_field))
+                }
+                Key::Named(keyboard::key::Named::Enter) => {
+                    // Submit form if valid
+                    if is_valid {
+                        portal.update(Message::Dialog(DialogMessage::Submit))
+                    } else {
+                        Task::none()
+                    }
+                }
+                _ => Task::none(),
+            }
+        }
+        ActiveDialog::HostKey(_) => {
+            // Host key dialog: Escape to reject
+            if let Key::Named(keyboard::key::Named::Escape) = key {
+                if let Some(dialog) = portal.dialogs.host_key_mut() {
+                    dialog.respond(HostKeyVerificationResponse::Reject);
+                    portal
+                        .toast_manager
+                        .push(Toast::warning("Connection cancelled"));
+                }
+                portal.dialogs.close();
+            }
+            Task::none()
+        }
+        _ => {
+            // Other dialogs: just handle Escape
+            if let Key::Named(keyboard::key::Named::Escape) = key {
+                portal.dialogs.close();
+            }
+            Task::none()
+        }
     }
 }
 
