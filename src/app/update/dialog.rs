@@ -1,6 +1,5 @@
 //! Dialog message handlers
 
-use iced::Task;
 use crate::app::Portal;
 use crate::app::services::connection;
 use crate::config::Host;
@@ -11,6 +10,7 @@ use crate::views::dialogs::host_dialog::AuthMethodChoice;
 use crate::views::dialogs::host_key_dialog::HostKeyDialogState;
 use crate::views::dialogs::passphrase_dialog::PassphraseDialogState;
 use crate::views::toast::Toast;
+use iced::Task;
 
 /// Handle dialog messages
 pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {

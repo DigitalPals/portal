@@ -240,8 +240,10 @@ impl SnippetHistoryConfig {
                 result.host_name =
                     sanitize_field(&result.host_name, MAX_HOST_NAME_LEN, self.redact_output);
                 if self.store_output {
-                    result.stdout = sanitize_field(&result.stdout, MAX_OUTPUT_LEN, self.redact_output);
-                    result.stderr = sanitize_field(&result.stderr, MAX_OUTPUT_LEN, self.redact_output);
+                    result.stdout =
+                        sanitize_field(&result.stdout, MAX_OUTPUT_LEN, self.redact_output);
+                    result.stderr =
+                        sanitize_field(&result.stderr, MAX_OUTPUT_LEN, self.redact_output);
                     result.error = result
                         .error
                         .as_ref()

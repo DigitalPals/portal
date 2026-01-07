@@ -194,10 +194,12 @@ pub fn handle_snippet(portal: &mut Portal, msg: SnippetMessage) -> Task<Message>
                         })
                         .collect();
 
-                    if let Some(history_entry) = portal
-                        .snippet_history
-                        .build_entry(snippet_id, name.clone(), command, history_results)
-                    {
+                    if let Some(history_entry) = portal.snippet_history.build_entry(
+                        snippet_id,
+                        name.clone(),
+                        command,
+                        history_results,
+                    ) {
                         portal.snippet_history.add_entry(history_entry);
                         if let Err(e) = portal.snippet_history.save() {
                             tracing::warn!("Failed to save snippet history: {}", e);
