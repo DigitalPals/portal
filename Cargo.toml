@@ -1,6 +1,6 @@
 [package]
 name = "portal"
-version = "0.5.4"
+version = "0.5.5"
 edition = "2024"
 description = "A modern SSH client with GUI"
 authors = ["John"]
