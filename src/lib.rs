@@ -3,6 +3,8 @@
 //! This module exposes the core functionality for use in integration tests
 //! and the main binary.
 
+#![allow(clippy::uninlined_format_args)]
+
 // Public modules for integration testing
 pub mod config;
 pub mod error;
