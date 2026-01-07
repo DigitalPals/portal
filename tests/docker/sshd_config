@@ -1,0 +1,34 @@
+# SSH server configuration for Portal integration tests
+Port 22
+AddressFamily any
+ListenAddress 0.0.0.0
+
+# Host keys
+HostKey /etc/ssh/ssh_host_rsa_key
+HostKey /etc/ssh/ssh_host_ed25519_key
+
+# Authentication
+PermitRootLogin no
+PasswordAuthentication yes
+PubkeyAuthentication yes
+AuthorizedKeysFile .ssh/authorized_keys
+
+# Security settings
+StrictModes yes
+MaxAuthTries 6
+MaxSessions 10
+
+# Logging
+LogLevel INFO
+SyslogFacility AUTH
+
+# SFTP subsystem
+Subsystem sftp /usr/lib/ssh/sftp-server
+
+# Keep connections alive
+TCPKeepAlive yes
+ClientAliveInterval 30
+ClientAliveCountMax 3
+
+# Disable DNS lookup for faster connections
+UseDNS no

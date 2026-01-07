@@ -1,0 +1,137 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  unit-tests:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.85"
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev libvulkan-dev
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run unit tests
+        run: cargo test --lib
+
+  ssh-integration-tests:
+    name: SSH Integration Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.85"
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev libvulkan-dev
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Generate test SSH keys
+        run: |
+          cd tests/docker/test_keys
+          chmod +x generate_keys.sh
+          ./generate_keys.sh
+
+      - name: Start SSH test containers
+        run: |
+          cd tests/docker
+          docker compose up -d --build --wait
+          docker compose ps
+
+      - name: Wait for SSH server
+        run: |
+          for i in {1..30}; do
+            nc -z localhost 2222 && break
+            echo "Waiting for SSH server... (attempt $i)"
+            sleep 1
+          done
+          nc -z localhost 2222 || exit 1
+
+      - name: Run SSH integration tests
+        run: cargo test --test ssh_integration -- --test-threads=1
+        env:
+          RUST_LOG: debug
+
+      - name: Collect Docker logs on failure
+        if: failure()
+        run: |
+          cd tests/docker
+          docker compose logs > docker-logs.txt
+
+      - name: Upload Docker logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-logs
+          path: tests/docker/docker-logs.txt
+
+      - name: Cleanup containers
+        if: always()
+        run: |
+          cd tests/docker
+          docker compose down -v
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.85"
+          components: clippy
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev libvulkan-dev
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run clippy
+        run: cargo clippy -- -D warnings
+
+  fmt:
+    name: Format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.85"
+          components: rustfmt
+
+      - name: Check formatting
+        run: cargo fmt -- --check

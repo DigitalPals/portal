@@ -1,0 +1,18 @@
+services:
+  ssh-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        TEST_USER: testuser
+        TEST_PASSWORD: testpass123
+    container_name: portal-ssh-test
+    ports:
+      - "2222:22"
+    volumes:
+      - ./test_keys/authorized_keys:/home/testuser/.ssh/authorized_keys:ro
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "22"]
+      interval: 2s
+      timeout: 3s
+      retries: 5

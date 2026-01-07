@@ -1,0 +1,6 @@
+# Generated SSH test keys - run generate_keys.sh to create
+id_ed25519
+id_ed25519.pub
+id_ed25519_encrypted
+id_ed25519_encrypted.pub
+authorized_keys

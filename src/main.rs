@@ -1,22 +1,6 @@
-mod app;
-mod config;
-mod error;
-mod fonts;
-mod fs_utils;
-mod icons;
-mod local;
-mod local_fs;
-mod message;
-mod security_log;
-mod sftp;
-mod ssh;
-mod terminal;
-mod theme;
-mod validation;
-mod views;
-mod widgets;
+use portal::app::Portal;
+use portal::fonts;
 
-use app::Portal;
 use iced::Size;
 
 fn main() -> iced::Result {
