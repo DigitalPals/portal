@@ -10,9 +10,9 @@ use crate::theme::Theme;
 use crate::validation::{validate_hostname, validate_port, validate_username};
 
 use super::common::{
-    dialog_backdrop, dialog_input_style, dialog_input_style_with_error,
+    ERROR_COLOR, dialog_backdrop, dialog_input_style, dialog_input_style_with_error,
     dialog_pick_list_menu_style, dialog_pick_list_style, primary_button_style,
-    secondary_button_style, ERROR_COLOR,
+    secondary_button_style,
 };
 
 /// Widget ID for host dialog fields (for keyboard navigation)
@@ -130,7 +130,8 @@ impl HostDialogState {
 
         // Validate hostname
         if let Err(e) = validate_hostname(&self.hostname) {
-            self.validation_errors.insert("hostname".to_string(), e.message);
+            self.validation_errors
+                .insert("hostname".to_string(), e.message);
         }
 
         // Validate port
@@ -140,7 +141,8 @@ impl HostDialogState {
 
         // Validate username (empty is allowed)
         if let Err(e) = validate_username(&self.username) {
-            self.validation_errors.insert("username".to_string(), e.message);
+            self.validation_errors
+                .insert("username".to_string(), e.message);
         }
 
         self.validation_errors.is_empty()
@@ -148,6 +150,7 @@ impl HostDialogState {
 
     /// Convert dialog state to a Host struct.
     /// Returns None if validation fails.
+    #[allow(clippy::wrong_self_convention)]
     pub fn to_host(&mut self) -> Option<Host> {
         // Run validation
         if !self.validate() {
@@ -265,7 +268,10 @@ pub fn host_dialog_view(state: &HostDialogState, theme: Theme) -> Element<'stati
             text("Name").size(12).color(theme.text_secondary),
             text_input("my-server", &name_value)
                 .id(host_dialog_field_id(0))
-                .on_input(|s| Message::Dialog(DialogMessage::FieldChanged(HostDialogField::Name, s)))
+                .on_input(|s| Message::Dialog(DialogMessage::FieldChanged(
+                    HostDialogField::Name,
+                    s
+                )))
                 .on_submit(Message::Dialog(DialogMessage::Submit))
                 .padding(8)
                 .width(Length::Fill)
@@ -306,7 +312,10 @@ pub fn host_dialog_view(state: &HostDialogState, theme: Theme) -> Element<'stati
             text("Port").size(12).color(theme.text_secondary),
             text_input("22", &port_value)
                 .id(host_dialog_field_id(2))
-                .on_input(|s| Message::Dialog(DialogMessage::FieldChanged(HostDialogField::Port, s)))
+                .on_input(|s| Message::Dialog(DialogMessage::FieldChanged(
+                    HostDialogField::Port,
+                    s
+                )))
                 .on_submit(Message::Dialog(DialogMessage::Submit))
                 .padding(8)
                 .width(Length::Fill)

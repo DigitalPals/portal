@@ -177,12 +177,6 @@ pub enum DialogMessage {
     PasswordSubmit,
     /// Password dialog: user cancelled
     PasswordCancel,
-    /// Passphrase dialog: passphrase text changed
-    PassphraseChanged(String),
-    /// Passphrase dialog: user submitted passphrase
-    PassphraseSubmit,
-    /// Passphrase dialog: user cancelled
-    PassphraseCancel,
 }
 
 /// Tab management messages

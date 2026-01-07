@@ -69,30 +69,6 @@ pub fn log_sftp_connect(host: &str, port: u16, username: &str) {
     );
 }
 
-/// Log an SFTP disconnection.
-pub fn log_sftp_disconnect(host: &str, port: u16) {
-    info!(
-        target: "security",
-        event = "sftp_disconnect",
-        host = %host,
-        port = port,
-        "SFTP connection closed"
-    );
-}
-
-/// Log host key verification result.
-pub fn log_host_key_verified(host: &str, port: u16, fingerprint: &str, is_new: bool) {
-    info!(
-        target: "security",
-        event = "host_key_verified",
-        host = %host,
-        port = port,
-        fingerprint = %fingerprint,
-        is_new = is_new,
-        "Host key verified"
-    );
-}
-
 /// Log when a user accepts a new or changed host key.
 pub fn log_host_key_accepted(host: &str, port: u16, fingerprint: &str, was_changed: bool) {
     if was_changed {
@@ -125,28 +101,5 @@ pub fn log_host_key_rejected(host: &str, port: u16, reason: &str) {
         port = port,
         reason = %reason,
         "User rejected host key"
-    );
-}
-
-/// Log a connection timeout.
-pub fn log_connection_timeout(host: &str, port: u16) {
-    warn!(
-        target: "security",
-        event = "connection_timeout",
-        host = %host,
-        port = port,
-        "Connection attempt timed out"
-    );
-}
-
-/// Log a connection error.
-pub fn log_connection_error(host: &str, port: u16, error: &str) {
-    warn!(
-        target: "security",
-        event = "connection_error",
-        host = %host,
-        port = port,
-        error = %error,
-        "Connection error"
     );
 }

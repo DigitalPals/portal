@@ -169,29 +169,6 @@ pub fn validate_username(username: &str) -> Result<(), ValidationError> {
     Ok(())
 }
 
-/// Validate a file path for SSH key.
-///
-/// Currently only checks that the path is not empty when provided.
-/// Actual file existence is checked at connection time.
-pub fn validate_key_path(path: &str) -> Result<(), ValidationError> {
-    let path = path.trim();
-
-    // Empty path is allowed (means no key file)
-    if path.is_empty() {
-        return Ok(());
-    }
-
-    // Basic sanity check - path should not be just whitespace
-    if path.is_empty() {
-        return Err(ValidationError {
-            field: "key_path".to_string(),
-            message: "Key path cannot be empty whitespace".to_string(),
-        });
-    }
-
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -325,14 +302,5 @@ mod tests {
     fn username_invalid_too_long() {
         let long_name = "a".repeat(33);
         assert!(validate_username(&long_name).is_err());
-    }
-
-    // ---- Key path validation tests ----
-
-    #[test]
-    fn key_path_valid() {
-        assert!(validate_key_path("~/.ssh/id_rsa").is_ok());
-        assert!(validate_key_path("/home/user/.ssh/id_ed25519").is_ok());
-        assert!(validate_key_path("").is_ok()); // Empty is allowed
     }
 }

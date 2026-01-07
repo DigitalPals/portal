@@ -2,7 +2,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use russh::keys::{HashAlg, PrivateKeyWithHashAlg};
-use secrecy::{ExposeSecret, SecretString};
+use secrecy::SecretString;
 
 use crate::config::{AuthMethod, paths};
 use crate::error::SshError;
@@ -42,14 +42,6 @@ impl ResolvedAuth {
                 load_key_file(&expanded_path, None).await
             }
             AuthMethod::Agent => Ok(ResolvedAuth::Agent),
-        }
-    }
-
-    /// Expose the password for authentication (use sparingly)
-    pub fn expose_password(&self) -> Option<&str> {
-        match self {
-            ResolvedAuth::Password(pwd) => Some(pwd.expose_secret()),
-            _ => None,
         }
     }
 }

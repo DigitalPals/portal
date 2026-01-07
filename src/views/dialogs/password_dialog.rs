@@ -8,7 +8,9 @@ use crate::icons::{self, icon_with_color};
 use crate::message::{DialogMessage, Message};
 use crate::theme::{BORDER_RADIUS, Theme};
 
-use super::common::{dialog_backdrop, dialog_input_style, primary_button_style, secondary_button_style};
+use super::common::{
+    dialog_backdrop, dialog_input_style, primary_button_style, secondary_button_style,
+};
 
 /// State for the password prompt dialog
 #[derive(Debug, Clone)]
@@ -85,11 +87,6 @@ impl PasswordDialogState {
         }
     }
 
-    /// Set an error message
-    pub fn set_error(&mut self, error: String) {
-        self.error = Some(error);
-    }
-
     /// Clear the password (for security)
     pub fn clear_password(&mut self) {
         self.password.clear();
@@ -97,7 +94,10 @@ impl PasswordDialogState {
 }
 
 /// Build the password dialog view
-pub fn password_dialog_view(state: &PasswordDialogState, theme: Theme) -> Element<'static, Message> {
+pub fn password_dialog_view(
+    state: &PasswordDialogState,
+    theme: Theme,
+) -> Element<'static, Message> {
     let key_icon = icon_with_color(icons::ui::SERVER, 28, theme.accent);
 
     let title = text("Password Required").size(20).color(theme.text_primary);
@@ -127,23 +127,19 @@ pub fn password_dialog_view(state: &PasswordDialogState, theme: Theme) -> Elemen
     // Error message if present
     let error_element: Element<'static, Message> = if let Some(error) = &state.error {
         let error_color = iced::Color::from_rgb8(220, 80, 80);
-        container(
-            text(error.clone())
-                .size(12)
-                .color(error_color),
-        )
-        .padding([8, 12])
-        .width(Length::Fill)
-        .style(move |_theme| container::Style {
-            background: Some(iced::Color::from_rgba8(220, 80, 80, 0.1).into()),
-            border: iced::Border {
-                color: error_color,
-                width: 1.0,
-                radius: BORDER_RADIUS.into(),
-            },
-            ..Default::default()
-        })
-        .into()
+        container(text(error.clone()).size(12).color(error_color))
+            .padding([8, 12])
+            .width(Length::Fill)
+            .style(move |_theme| container::Style {
+                background: Some(iced::Color::from_rgba8(220, 80, 80, 0.1).into()),
+                border: iced::Border {
+                    color: error_color,
+                    width: 1.0,
+                    radius: BORDER_RADIUS.into(),
+                },
+                ..Default::default()
+            })
+            .into()
     } else {
         Space::new().height(0).into()
     };

@@ -233,7 +233,12 @@ pub fn sftp_connect_tasks_with_password(
     let connect_task = Task::perform(
         async move {
             let result = sftp_client
-                .connect(&host_for_task, event_tx, Duration::from_secs(30), Some(password))
+                .connect(
+                    &host_for_task,
+                    event_tx,
+                    Duration::from_secs(30),
+                    Some(password),
+                )
                 .await;
 
             (

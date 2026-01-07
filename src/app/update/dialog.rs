@@ -183,38 +183,5 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
             portal.dialogs.close();
             Task::none()
         }
-        DialogMessage::PassphraseChanged(passphrase) => {
-            if let Some(dialog) = portal.dialogs.passphrase_mut() {
-                dialog.passphrase = passphrase;
-                // Clear any previous error when user starts typing
-                dialog.error = None;
-            }
-            Task::none()
-        }
-        DialogMessage::PassphraseSubmit => {
-            // Note: Full passphrase integration requires modifying the key loading flow
-            // to retry with the passphrase. For now, this logs and closes the dialog.
-            // TODO: Integrate with ResolvedAuth::resolve() to support encrypted keys
-            if let Some(dialog) = portal.dialogs.passphrase_mut() {
-                tracing::info!(
-                    "Passphrase submitted for key: {}",
-                    dialog.key_path.display()
-                );
-                dialog.clear_passphrase();
-            }
-            portal.dialogs.close();
-            portal.toast_manager.push(crate::views::toast::Toast::warning(
-                "Encrypted key support requires additional implementation",
-            ));
-            Task::none()
-        }
-        DialogMessage::PassphraseCancel => {
-            if let Some(dialog) = portal.dialogs.passphrase_mut() {
-                // Clear passphrase for security
-                dialog.clear_passphrase();
-            }
-            portal.dialogs.close();
-            Task::none()
-        }
     }
 }

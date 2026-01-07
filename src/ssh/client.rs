@@ -219,7 +219,13 @@ impl SshClient {
                     Ok(result) => result,
                     Err(e) => {
                         let reason = e.to_string();
-                        security_log::log_auth_failure(hostname, port, username, method_name, &reason);
+                        security_log::log_auth_failure(
+                            hostname,
+                            port,
+                            username,
+                            method_name,
+                            &reason,
+                        );
                         return Err(SshError::AuthenticationFailed(reason));
                     }
                 }
@@ -230,7 +236,13 @@ impl SshClient {
                     Ok(result) => result,
                     Err(e) => {
                         let reason = e.to_string();
-                        security_log::log_auth_failure(hostname, port, username, method_name, &reason);
+                        security_log::log_auth_failure(
+                            hostname,
+                            port,
+                            username,
+                            method_name,
+                            &reason,
+                        );
                         return Err(SshError::AuthenticationFailed(reason));
                     }
                 }
@@ -245,11 +257,23 @@ impl SshClient {
                     }
                     Ok(_) => {
                         let reason = "Agent authentication failed - no suitable key found";
-                        security_log::log_auth_failure(hostname, port, username, method_name, reason);
+                        security_log::log_auth_failure(
+                            hostname,
+                            port,
+                            username,
+                            method_name,
+                            reason,
+                        );
                         return Err(SshError::Agent(reason.to_string()));
                     }
                     Err(e) => {
-                        security_log::log_auth_failure(hostname, port, username, method_name, &e.to_string());
+                        security_log::log_auth_failure(
+                            hostname,
+                            port,
+                            username,
+                            method_name,
+                            &e.to_string(),
+                        );
                         return Err(e);
                     }
                 }

@@ -205,7 +205,13 @@ impl SftpClient {
                     Ok(result) => result,
                     Err(e) => {
                         let reason = format!("Password auth failed: {}", e);
-                        security_log::log_auth_failure(hostname, port, username, method_name, &reason);
+                        security_log::log_auth_failure(
+                            hostname,
+                            port,
+                            username,
+                            method_name,
+                            &reason,
+                        );
                         return Err(SftpError::ConnectionFailed(reason));
                     }
                 }
@@ -216,35 +222,39 @@ impl SftpClient {
                     Ok(result) => result,
                     Err(e) => {
                         let reason = format!("Public key auth failed: {}", e);
-                        security_log::log_auth_failure(hostname, port, username, method_name, &reason);
-                        return Err(SftpError::ConnectionFailed(reason));
-                    }
-                }
-            }
-
-            ResolvedAuth::Agent => {
-                match self.authenticate_with_agent(handle, username).await {
-                    Ok(result) if result.success() => {
-                        security_log::log_auth_success(hostname, port, username, method_name);
-                        return Ok(());
-                    }
-                    Ok(_) => {
-                        let reason = "Agent authentication failed - no suitable key found";
-                        security_log::log_auth_failure(hostname, port, username, method_name, reason);
-                        return Err(SftpError::ConnectionFailed(reason.to_string()));
-                    }
-                    Err(e) => {
                         security_log::log_auth_failure(
                             hostname,
                             port,
                             username,
                             method_name,
-                            &e.to_string(),
+                            &reason,
                         );
-                        return Err(e);
+                        return Err(SftpError::ConnectionFailed(reason));
                     }
                 }
             }
+
+            ResolvedAuth::Agent => match self.authenticate_with_agent(handle, username).await {
+                Ok(result) if result.success() => {
+                    security_log::log_auth_success(hostname, port, username, method_name);
+                    return Ok(());
+                }
+                Ok(_) => {
+                    let reason = "Agent authentication failed - no suitable key found";
+                    security_log::log_auth_failure(hostname, port, username, method_name, reason);
+                    return Err(SftpError::ConnectionFailed(reason.to_string()));
+                }
+                Err(e) => {
+                    security_log::log_auth_failure(
+                        hostname,
+                        port,
+                        username,
+                        method_name,
+                        &e.to_string(),
+                    );
+                    return Err(e);
+                }
+            },
         };
 
         if !auth_result.success() {
