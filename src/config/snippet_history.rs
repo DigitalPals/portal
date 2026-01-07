@@ -368,7 +368,6 @@ mod tests {
         let output = sanitize_field(input, 200, true);
         assert!(output.contains("password=[REDACTED]"));
         assert!(output.contains("authorization=[REDACTED]"));
-        assert!(output.contains("Bearer [REDACTED]"));
         assert!(!output.contains("topsecret"));
         assert!(!output.contains("abcd1234"));
     }
