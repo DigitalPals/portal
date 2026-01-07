@@ -75,6 +75,7 @@ impl SftpClient {
         event_tx: mpsc::Sender<SshEvent>,
         connection_timeout: Duration,
         password: Option<SecretString>,
+        passphrase: Option<SecretString>,
     ) -> Result<SharedSftpSession, SftpError> {
         let addr = format!("{}:{}", host.hostname, host.port);
 
@@ -92,7 +93,7 @@ impl SftpClient {
         // Wrap the rest of the connection process in a timeout
         match timeout(
             connection_timeout,
-            self.establish_sftp_session(host, event_tx, stream, password),
+            self.establish_sftp_session(host, event_tx, stream, password, passphrase),
         )
         .await
         {
@@ -111,6 +112,7 @@ impl SftpClient {
         event_tx: mpsc::Sender<SshEvent>,
         stream: TcpStream,
         password: Option<SecretString>,
+        passphrase: Option<SecretString>,
     ) -> Result<SharedSftpSession, SftpError> {
         let handler = ClientHandler::new(
             host.hostname.clone(),
@@ -129,9 +131,17 @@ impl SftpClient {
             })?;
 
         // Authenticate
-        let auth = ResolvedAuth::resolve(&host.auth, password)
+        let auth = ResolvedAuth::resolve(&host.auth, password, passphrase)
             .await
-            .map_err(|e| SftpError::ConnectionFailed(format!("Authentication failed: {}", e)))?;
+            .map_err(|e| match e {
+                crate::error::SshError::KeyFilePassphraseRequired(path) => {
+                    SftpError::KeyFilePassphraseRequired(path)
+                }
+                crate::error::SshError::KeyFilePassphraseInvalid(path) => {
+                    SftpError::KeyFilePassphraseInvalid(path)
+                }
+                _ => SftpError::ConnectionFailed(format!("Authentication failed: {}", e)),
+            })?;
         self.authenticate(&mut handle, &host.username, auth, &host.hostname, host.port)
             .await?;
 

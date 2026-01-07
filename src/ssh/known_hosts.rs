@@ -508,4 +508,19 @@ mod tests {
             HostKeyStatus::Unknown { .. }
         ));
     }
+
+    #[test]
+    fn changed_key_detected_for_same_algorithm() {
+        let dir = tempdir().expect("temp dir");
+        let path = dir.path().join("known_hosts");
+        fs::write(&path, format!("example.com ssh-ed25519 {KEY1}\n")).expect("write known_hosts");
+
+        let manager = KnownHostsManager::with_paths(Some(path), None);
+        let key = keys::parse_public_key_base64(KEY2).expect("parse key");
+
+        assert!(matches!(
+            manager.check_host_key("example.com", 22, &key),
+            HostKeyStatus::Changed { .. }
+        ));
+    }
 }

@@ -11,6 +11,7 @@ use crate::security_log;
 use crate::ssh::host_key_verification::HostKeyVerificationResponse;
 use crate::views::dialogs::host_dialog::AuthMethodChoice;
 use crate::views::dialogs::host_key_dialog::HostKeyDialogState;
+use crate::views::dialogs::passphrase_dialog::PassphraseDialogState;
 use crate::views::toast::Toast;
 
 /// Handle dialog messages
@@ -179,6 +180,66 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
             if let Some(dialog) = portal.dialogs.password_mut() {
                 // Clear password for security
                 dialog.clear_password();
+            }
+            portal.dialogs.close();
+            Task::none()
+        }
+        DialogMessage::PassphraseRequired(request) => {
+            portal
+                .dialogs
+                .open_passphrase(PassphraseDialogState::from_request(request));
+            Task::none()
+        }
+        DialogMessage::PassphraseChanged(passphrase) => {
+            if let Some(dialog) = portal.dialogs.passphrase_mut() {
+                dialog.passphrase = passphrase;
+                // Clear any previous error when user starts typing
+                dialog.error = None;
+            }
+            Task::none()
+        }
+        DialogMessage::PassphraseSubmit => {
+            if let Some(dialog) = portal.dialogs.passphrase() {
+                let passphrase = SecretString::from(dialog.passphrase.clone());
+                let host_id = dialog.host_id;
+                let is_ssh = dialog.is_ssh;
+                let session_id = dialog.session_id;
+                let should_detect_os = dialog.should_detect_os;
+                let sftp_context = dialog.sftp_context.clone();
+
+                // Find the host and start connection with passphrase
+                if let Some(host) = portal.hosts_config.find_host(host_id) {
+                    let host = std::sync::Arc::new(host.clone());
+                    portal.dialogs.close();
+
+                    if is_ssh {
+                        if let Some(session_id) = session_id {
+                            return connection::ssh_connect_tasks_with_passphrase(
+                                host,
+                                session_id,
+                                host_id,
+                                should_detect_os,
+                                passphrase,
+                            );
+                        }
+                    } else if let Some(ctx) = sftp_context {
+                        return connection::sftp_connect_tasks_with_passphrase(
+                            host,
+                            ctx.tab_id,
+                            ctx.pane_id,
+                            ctx.sftp_session_id,
+                            host_id,
+                            passphrase,
+                        );
+                    }
+                }
+            }
+            Task::none()
+        }
+        DialogMessage::PassphraseCancel => {
+            if let Some(dialog) = portal.dialogs.passphrase_mut() {
+                // Clear passphrase for security
+                dialog.clear_passphrase();
             }
             portal.dialogs.close();
             Task::none()

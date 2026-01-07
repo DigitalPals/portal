@@ -48,6 +48,12 @@ pub enum SshError {
     #[error("Key file error: {0}")]
     KeyFile(String),
 
+    #[error("Key file requires passphrase: {0}")]
+    KeyFilePassphraseRequired(PathBuf),
+
+    #[error("Key file passphrase is invalid: {0}")]
+    KeyFilePassphraseInvalid(PathBuf),
+
     #[error("Channel error: {0}")]
     Channel(String),
 
@@ -78,6 +84,12 @@ impl From<russh::Error> for SshError {
 pub enum SftpError {
     #[error("SFTP connection failed: {0}")]
     ConnectionFailed(String),
+
+    #[error("Key file requires passphrase: {0}")]
+    KeyFilePassphraseRequired(PathBuf),
+
+    #[error("Key file passphrase is invalid: {0}")]
+    KeyFilePassphraseInvalid(PathBuf),
 
     #[error("File operation failed: {0}")]
     FileOperation(String),

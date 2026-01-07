@@ -177,6 +177,38 @@ pub enum DialogMessage {
     PasswordSubmit,
     /// Password dialog: user cancelled
     PasswordCancel,
+    /// Passphrase dialog: required for encrypted key
+    PassphraseRequired(PassphraseRequest),
+    /// Passphrase dialog: passphrase text changed
+    PassphraseChanged(String),
+    /// Passphrase dialog: user submitted passphrase
+    PassphraseSubmit,
+    /// Passphrase dialog: user cancelled
+    PassphraseCancel,
+}
+
+/// Context for passphrase-based SFTP connections
+#[derive(Debug, Clone)]
+pub struct PassphraseSftpContext {
+    pub tab_id: Uuid,
+    pub pane_id: PaneId,
+    pub sftp_session_id: SessionId,
+}
+
+/// Request to prompt for an SSH key passphrase
+#[derive(Debug, Clone)]
+pub struct PassphraseRequest {
+    pub host_id: Uuid,
+    pub host_name: String,
+    pub hostname: String,
+    pub port: u16,
+    pub username: String,
+    pub key_path: PathBuf,
+    pub is_ssh: bool,
+    pub session_id: Option<SessionId>,
+    pub should_detect_os: bool,
+    pub sftp_context: Option<PassphraseSftpContext>,
+    pub error: Option<String>,
 }
 
 /// Tab management messages

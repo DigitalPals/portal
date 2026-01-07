@@ -20,6 +20,7 @@ pub fn write_atomic(path: &Path, content: &str) -> std::io::Result<()> {
     let parent = path.parent().ok_or_else(|| {
         std::io::Error::new(std::io::ErrorKind::NotFound, "Missing parent directory")
     })?;
+    let path_exists = path.exists();
     let file_name = path
         .file_name()
         .and_then(|name| name.to_str())
@@ -37,6 +38,12 @@ pub fn write_atomic(path: &Path, content: &str) -> std::io::Result<()> {
 
     if let Some(permissions) = original_permissions {
         let _ = std::fs::set_permissions(&temp_path, permissions);
+    } else if !path_exists {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&temp_path, std::fs::Permissions::from_mode(0o600));
+        }
     }
 
     let mut backup_created = false;

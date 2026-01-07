@@ -2,7 +2,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use russh::keys::{HashAlg, PrivateKeyWithHashAlg};
-use secrecy::SecretString;
+use secrecy::{ExposeSecret, SecretString};
 
 use crate::config::{AuthMethod, paths};
 use crate::error::SshError;
@@ -24,6 +24,7 @@ impl ResolvedAuth {
     pub async fn resolve(
         method: &AuthMethod,
         password: Option<SecretString>,
+        passphrase: Option<SecretString>,
     ) -> Result<Self, SshError> {
         match method {
             AuthMethod::Password => match password {
@@ -39,7 +40,8 @@ impl ResolvedAuth {
                     .ok_or_else(|| SshError::KeyFile("No SSH key found".to_string()))?;
 
                 let expanded_path = paths::expand_tilde(&path.to_string_lossy());
-                load_key_file(&expanded_path, None).await
+                let passphrase = passphrase.as_ref().map(|p| p.expose_secret());
+                load_key_file(&expanded_path, passphrase).await
             }
             AuthMethod::Agent => Ok(ResolvedAuth::Agent),
         }
@@ -81,11 +83,13 @@ async fn load_key_file(path: &Path, passphrase: Option<&str>) -> Result<Resolved
 
     let key = russh::keys::load_secret_key(path, passphrase).map_err(|e| {
         let msg = e.to_string();
-        if msg.contains("encrypted") || msg.contains("passphrase") {
-            SshError::KeyFile(format!(
-                "Key is encrypted and passphrase is required: {}",
-                path.display()
-            ))
+        let normalized = msg.to_lowercase();
+        if normalized.contains("encrypted") || normalized.contains("passphrase") {
+            if passphrase.is_some() {
+                SshError::KeyFilePassphraseInvalid(path.to_path_buf())
+            } else {
+                SshError::KeyFilePassphraseRequired(path.to_path_buf())
+            }
         } else {
             SshError::KeyFile(format!("Failed to load key {}: {}", path.display(), e))
         }

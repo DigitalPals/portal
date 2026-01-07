@@ -4,6 +4,8 @@
 //! per-host results, timing, and output.
 
 use serde::{Deserialize, Serialize};
+use regex::Regex;
+use std::sync::LazyLock;
 use uuid::Uuid;
 
 use crate::error::ConfigError;
@@ -39,6 +41,16 @@ pub struct SnippetExecutionEntry {
     pub total_duration_ms: u64,
 }
 
+const MAX_COMMAND_LEN: usize = 2048;
+const MAX_OUTPUT_LEN: usize = 16 * 1024;
+const MAX_ERROR_LEN: usize = 1024;
+const MAX_HOST_NAME_LEN: usize = 256;
+
+static REDACTION_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?i)\b(password|passphrase|token|secret|apikey|api_key)\b\s*[:=]\s*([^\s"']+)"#)
+        .unwrap()
+});
+
 impl SnippetExecutionEntry {
     /// Create a new execution entry
     pub fn new(
@@ -47,6 +59,21 @@ impl SnippetExecutionEntry {
         command: String,
         host_results: Vec<HistoricalHostResult>,
     ) -> Self {
+        let command = sanitize_field(&command, MAX_COMMAND_LEN);
+        let host_results = host_results
+            .into_iter()
+            .map(|mut result| {
+                result.host_name = sanitize_field(&result.host_name, MAX_HOST_NAME_LEN);
+                result.stdout = sanitize_field(&result.stdout, MAX_OUTPUT_LEN);
+                result.stderr = sanitize_field(&result.stderr, MAX_OUTPUT_LEN);
+                result.error = result
+                    .error
+                    .as_ref()
+                    .map(|error| sanitize_field(error, MAX_ERROR_LEN));
+                result
+            })
+            .collect::<Vec<_>>();
+
         let success_count = host_results.iter().filter(|r| r.success).count();
         let failure_count = host_results.len() - success_count;
         let total_duration_ms = host_results
@@ -84,6 +111,23 @@ impl SnippetExecutionEntry {
             format!("{}d ago", secs / 86400)
         }
     }
+}
+
+fn sanitize_field(value: &str, max_len: usize) -> String {
+    let redacted = REDACTION_REGEX
+        .replace_all(value, "$1=[REDACTED]")
+        .to_string();
+    truncate_string(&redacted, max_len)
+}
+
+fn truncate_string(value: &str, max_len: usize) -> String {
+    if value.chars().count() <= max_len {
+        return value.to_string();
+    }
+
+    let mut truncated = value.chars().take(max_len).collect::<String>();
+    truncated.push_str("...");
+    truncated
 }
 
 fn default_max_entries() -> usize {
@@ -171,5 +215,28 @@ impl SnippetHistoryConfig {
 
         let content = toml::to_string_pretty(self).map_err(ConfigError::Serialize)?;
         super::write_atomic(&path, &content).map_err(|e| ConfigError::WriteFile { path, source: e })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{sanitize_field, truncate_string};
+
+    #[test]
+    fn sanitize_redacts_common_secrets() {
+        let input = "password=secret token=abc123 api_key=xyz";
+        let output = sanitize_field(input, 200);
+        assert!(output.contains("password=[REDACTED]"));
+        assert!(output.contains("token=[REDACTED]"));
+        assert!(output.contains("api_key=[REDACTED]"));
+        assert!(!output.contains("secret"));
+        assert!(!output.contains("abc123"));
+        assert!(!output.contains("xyz"));
+    }
+
+    #[test]
+    fn truncate_string_appends_ellipsis() {
+        let output = truncate_string("abcdefghij", 5);
+        assert_eq!(output, "abcde...");
     }
 }

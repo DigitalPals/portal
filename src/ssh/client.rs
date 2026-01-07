@@ -83,6 +83,7 @@ impl SshClient {
         event_tx: mpsc::Sender<SshEvent>,
         connection_timeout: Duration,
         password: Option<SecretString>,
+        passphrase: Option<SecretString>,
         detect_os_on_connect: bool,
     ) -> Result<(Arc<SshSession>, Option<DetectedOs>), SshError> {
         let addr = format!("{}:{}", host.hostname, host.port);
@@ -105,6 +106,7 @@ impl SshClient {
                 event_tx,
                 stream,
                 password,
+                passphrase,
                 detect_os_on_connect,
             ),
         )
@@ -122,6 +124,7 @@ impl SshClient {
         event_tx: mpsc::Sender<SshEvent>,
         stream: TcpStream,
         password: Option<SecretString>,
+        passphrase: Option<SecretString>,
         detect_os_on_connect: bool,
     ) -> Result<(Arc<SshSession>, Option<DetectedOs>), SshError> {
         let handler = ClientHandler::new(
@@ -140,7 +143,7 @@ impl SshClient {
             })?;
 
         // Authenticate
-        let auth = ResolvedAuth::resolve(&host.auth, password).await?;
+        let auth = ResolvedAuth::resolve(&host.auth, password, passphrase).await?;
         self.authenticate(&mut handle, &host.username, auth, &host.hostname, host.port)
             .await?;
 

@@ -360,8 +360,7 @@ async fn execute_on_host(host: &Host, command: &str) -> Result<HostExecutionResu
     let (event_tx, mut event_rx) = mpsc::channel::<SshEvent>(16);
 
     // Spawn a task to handle SSH events
-    // For snippet execution, we auto-accept host keys for known hosts
-    // but reject unknown hosts (they should connect interactively first)
+    // Snippet execution should only run against previously trusted hosts.
     tokio::spawn(async move {
         use crate::ssh::host_key_verification::{
             HostKeyVerificationRequest, HostKeyVerificationResponse,
@@ -370,17 +369,16 @@ async fn execute_on_host(host: &Host, command: &str) -> Result<HostExecutionResu
         while let Some(event) = event_rx.recv().await {
             match event {
                 SshEvent::HostKeyVerification(request) => {
-                    // Auto-accept the key for snippet execution
-                    // The known_hosts manager will have already verified if it's known
-                    // If we get here, it means the host key needs verification
+                    // If we get here, it means the host key needs verification.
+                    // Fail closed to avoid running snippets against untrusted hosts.
                     tracing::warn!(
-                        "Host key verification required for snippet execution - auto-accepting"
+                        "Host key verification required for snippet execution - rejecting"
                     );
                     let responder = match *request {
                         HostKeyVerificationRequest::NewHost { responder, .. } => responder,
                         HostKeyVerificationRequest::ChangedHost { responder, .. } => responder,
                     };
-                    let _ = responder.send(HostKeyVerificationResponse::Accept);
+                    let _ = responder.send(HostKeyVerificationResponse::Reject);
                 }
                 SshEvent::Disconnected => {
                     tracing::debug!("SSH disconnected during snippet execution");
@@ -403,6 +401,7 @@ async fn execute_on_host(host: &Host, command: &str) -> Result<HostExecutionResu
             event_tx,
             Duration::from_secs(15),
             None,  // No password (use key auth)
+            None,  // No key passphrase
             false, // Don't detect OS
         )
         .await;
