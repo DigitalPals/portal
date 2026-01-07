@@ -131,19 +131,15 @@ Pick the file that matches your OS and CPU:
 
 | Platform | Asset name |
 |----------|------------|
-| macOS (Apple Silicon) | `portal-v0.5.1-macos-arm64.app.zip` |
-| macOS (Intel) | `portal-v0.5.1-macos-x86_64.app.zip` |
-| Linux (arm64) | `portal-v0.5.1-linux-arm64.deb` / `portal-v0.5.1-linux-arm64.rpm` / `portal-v0.5.1-linux-arm64.tar.gz` |
-| Linux (x86_64) | `portal-v0.5.1-linux-x86_64.AppImage` / `portal-v0.5.1-linux-x86_64.deb` / `portal-v0.5.1-linux-x86_64.rpm` / `portal-v0.5.1-linux-x86_64.tar.gz` |
+| macOS (Apple Silicon) | `portal-*-macos-arm64.app.zip` |
+| macOS (Intel) | `portal-*-macos-x86_64.app.zip` |
+| Linux (arm64) | `portal-*-linux-arm64.deb` / `.rpm` / `.tar.gz` |
+| Linux (x86_64) | `portal-*-linux-x86_64.AppImage` / `.deb` / `.rpm` / `.tar.gz` |
 
 ### Install on macOS
 
-1. Download the matching `portal-v0.5.1-macos-*.app.zip` from Releases.
-2. Extract it:
-   ```bash
-   unzip portal-v0.5.1-macos-*.app.zip
-   ```
-3. Move `Portal.app` to your Applications folder (or run it in place).
+1. Download the matching `.app.zip` for your architecture from Releases.
+2. Extract and move `Portal.app` to your Applications folder.
 
 If macOS blocks the app, open **System Settings > Privacy & Security** and click **Open Anyway** for Portal, then run it again.
 
@@ -152,38 +148,27 @@ If macOS blocks the app, open **System Settings > Privacy & Security** and click
 Pick one of these options:
 
 **AppImage (x86_64):**
-1. Download `portal-v0.5.1-linux-x86_64.AppImage`.
-2. Make it executable and run:
-   ```bash
-   chmod +x portal-v0.5.1-linux-x86_64.AppImage
-   ./portal-v0.5.1-linux-x86_64.AppImage
-   ```
+```bash
+chmod +x portal-*-linux-x86_64.AppImage
+./portal-*-linux-x86_64.AppImage
+```
 
 **DEB (Debian/Ubuntu):**
-1. Download `portal-v0.5.1-linux-*.deb`.
-2. Install:
-   ```bash
-   sudo dpkg -i portal-v0.5.1-linux-*.deb
-   ```
+```bash
+sudo dpkg -i portal-*-linux-*.deb
+```
 
 **RPM (Fedora/RHEL):**
-1. Download `portal-v0.5.1-linux-*.rpm`.
-2. Install:
-   ```bash
-   sudo rpm -i portal-v0.5.1-linux-*.rpm
-   ```
+```bash
+sudo rpm -i portal-*-linux-*.rpm
+```
 
 **Tarball (manual):**
-1. Download `portal-v0.5.1-linux-*.tar.gz`.
-2. Extract and move the binary into your PATH:
-   ```bash
-   tar -xzf portal-v0.5.1-linux-*.tar.gz
-   sudo mv portal /usr/local/bin/
-   ```
-3. Run it:
-   ```bash
-   portal
-   ```
+```bash
+tar -xzf portal-*-linux-*.tar.gz
+sudo mv portal /usr/local/bin/
+portal
+```
 
 Portal is built for Wayland. If it does not start, install your distro's Wayland/XKB/Vulkan runtime packages and try again.
 
@@ -211,12 +196,6 @@ cd portal
 
 Portal is available as a Nix flake with binaries cached on [Cachix](https://app.cachix.org/cache/digitalpals).
 
-**Add the Cachix cache** (optional but recommended for faster installs):
-
-```bash
-nix-shell -p cachix --run "cachix use digitalpals"
-```
-
 **Run directly:**
 
 ```bash
@@ -229,6 +208,7 @@ nix run github:DigitalPals/portal
 {
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    # Don't use inputs.nixpkgs.follows for portal - it breaks cachix
     portal.url = "github:DigitalPals/portal";
   };
 
@@ -237,6 +217,10 @@ nix run github:DigitalPals/portal
       system = "x86_64-linux";
       modules = [
         ({ pkgs, ... }: {
+          # Enable cachix for pre-built binaries
+          nix.settings.substituters = [ "https://digitalpals.cachix.org" ];
+          nix.settings.trusted-public-keys = [ "digitalpals.cachix.org-1:YWuWBw08EbEeTsIccpPfRTaqksfo4QtAVQaTRljYFm8=" ];
+
           environment.systemPackages = [ portal.packages.${pkgs.system}.default ];
         })
       ];
@@ -244,6 +228,8 @@ nix run github:DigitalPals/portal
   };
 }
 ```
+
+> **Note:** Do not add `inputs.nixpkgs.follows = "nixpkgs"` to the portal input. This changes the derivation hash and prevents cachix from providing pre-built binaries.
 
 **Build from source:**
 
