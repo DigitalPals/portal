@@ -235,16 +235,16 @@ pub fn sftp_connect_tasks(
     let connect_task = Task::perform(
         async move {
             let result = sftp_client
-                .connect(&host_for_task, event_tx, Duration::from_secs(30), None, None)
+                .connect(
+                    &host_for_task,
+                    event_tx,
+                    Duration::from_secs(30),
+                    None,
+                    None,
+                )
                 .await;
 
-            (
-                tab_id,
-                pane_id,
-                sftp_session_id,
-                host_for_task,
-                result,
-            )
+            (tab_id, pane_id, sftp_session_id, host_for_task, result)
         },
         move |(tab_id, pane_id, sftp_session_id, host, result)| match result {
             Ok(sftp_session) => Message::Sftp(SftpMessage::Connected {
@@ -300,13 +300,7 @@ pub fn sftp_connect_tasks_with_password(
                 )
                 .await;
 
-            (
-                tab_id,
-                pane_id,
-                sftp_session_id,
-                host_for_task,
-                result,
-            )
+            (tab_id, pane_id, sftp_session_id, host_for_task, result)
         },
         move |(tab_id, pane_id, sftp_session_id, host, result)| match result {
             Ok(sftp_session) => Message::Sftp(SftpMessage::Connected {
@@ -362,13 +356,7 @@ pub fn sftp_connect_tasks_with_passphrase(
                 )
                 .await;
 
-            (
-                tab_id,
-                pane_id,
-                sftp_session_id,
-                host_for_task,
-                result,
-            )
+            (tab_id, pane_id, sftp_session_id, host_for_task, result)
         },
         move |(tab_id, pane_id, sftp_session_id, host, result)| match result {
             Ok(sftp_session) => Message::Sftp(SftpMessage::Connected {
@@ -566,7 +554,8 @@ mod tests {
         let host_id = host.id;
         let error = SftpError::KeyFilePassphraseRequired(PathBuf::from("/tmp/id_ed25519"));
 
-        let message = map_sftp_connect_error(tab_id, pane_id, sftp_session_id, host_id, &host, error);
+        let message =
+            map_sftp_connect_error(tab_id, pane_id, sftp_session_id, host_id, &host, error);
         match message {
             Message::Dialog(DialogMessage::PassphraseRequired(request)) => {
                 assert!(!request.is_ssh);

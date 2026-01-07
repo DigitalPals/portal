@@ -3,8 +3,8 @@
 //! Stores persistent history of snippet executions, including
 //! per-host results, timing, and output.
 
-use serde::{Deserialize, Serialize};
 use regex::Regex;
+use serde::{Deserialize, Serialize};
 use std::sync::LazyLock;
 use uuid::Uuid;
 

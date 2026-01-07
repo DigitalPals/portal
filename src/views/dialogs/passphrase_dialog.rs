@@ -74,7 +74,9 @@ pub fn passphrase_dialog_view(
 ) -> Element<'static, Message> {
     let key_icon = icon_with_color(icons::ui::SERVER, 28, theme.accent);
 
-    let title = text("Passphrase Required").size(20).color(theme.text_primary);
+    let title = text("Passphrase Required")
+        .size(20)
+        .color(theme.text_primary);
 
     let connection_info = text(format!(
         "{}@{}:{}",
