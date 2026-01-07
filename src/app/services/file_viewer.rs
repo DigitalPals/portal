@@ -235,7 +235,7 @@ pub fn build_remote_viewer(
     let ftype = file_type.clone();
     let task = Task::perform(
         async move {
-            tokio::fs::create_dir_all(temp_dir)
+            tokio::fs::create_dir_all(&temp_dir)
                 .await
                 .map_err(|e| format!("Failed to create temp directory: {}", e))?;
             ensure_private_dir(&temp_dir).await?;

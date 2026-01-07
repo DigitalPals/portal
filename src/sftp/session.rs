@@ -9,8 +9,6 @@ use russh_sftp::protocol::OpenFlags;
 use tokio::fs::OpenOptions;
 use tokio::io;
 
-#[cfg(unix)]
-use std::os::unix::fs::OpenOptionsExt;
 use tokio::sync::Mutex;
 
 use crate::error::SftpError;
