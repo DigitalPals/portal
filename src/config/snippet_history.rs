@@ -69,8 +69,10 @@ static REDACTION_RULES: LazyLock<Vec<RedactionRule>> = LazyLock::new(|| {
             replacement: "$1=[REDACTED]",
         },
         RedactionRule {
-            regex: Regex::new(r#"(?i)\b(authorization)\b\s*[:=]\s*(".*?"|'.*?'|[^\s"']+)"#)
-                .unwrap(),
+            regex: Regex::new(
+                r#"(?i)\b(authorization)\b\s*[:=]\s*(bearer\s+[^\s"']+|".*?"|'.*?'|[^\s"']+)"#,
+            )
+            .unwrap(),
             replacement: "$1=[REDACTED]",
         },
         RedactionRule {
