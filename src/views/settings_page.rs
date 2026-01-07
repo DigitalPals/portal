@@ -19,7 +19,9 @@ pub fn settings_page_view(
     terminal_font: TerminalFont,
     theme: Theme,
 ) -> Element<'static, Message> {
-    let header = text("Settings").size(FONT_SIZE_PAGE_TITLE).color(theme.text_primary);
+    let header = text("Settings")
+        .size(FONT_SIZE_PAGE_TITLE)
+        .color(theme.text_primary);
 
     // === Appearance Section ===
     let appearance_section = settings_section(
@@ -130,11 +132,13 @@ fn theme_tile(
         ThemeId::CatppuccinMocha => "Mocha",
     };
 
-    let name = text(short_name).size(FONT_SIZE_SMALL).color(if is_selected {
-        current_theme.accent
-    } else {
-        current_theme.text_secondary
-    });
+    let name = text(short_name)
+        .size(FONT_SIZE_SMALL)
+        .color(if is_selected {
+            current_theme.accent
+        } else {
+            current_theme.text_secondary
+        });
 
     let border_width = if is_selected { 2.0 } else { 1.0 };
     let border_color = if is_selected {
@@ -268,11 +272,13 @@ fn font_tile(font: TerminalFont, is_selected: bool, theme: Theme) -> Element<'st
         .font(iced_font)
         .color(theme.text_primary);
 
-    let name = text(font.display_name()).size(FONT_SIZE_SMALL).color(if is_selected {
-        theme.accent
-    } else {
-        theme.text_secondary
-    });
+    let name = text(font.display_name())
+        .size(FONT_SIZE_SMALL)
+        .color(if is_selected {
+            theme.accent
+        } else {
+            theme.text_secondary
+        });
 
     let border_width = if is_selected { 2.0 } else { 1.0 };
     let border_color = if is_selected {
@@ -305,9 +311,13 @@ fn font_tile(font: TerminalFont, is_selected: bool, theme: Theme) -> Element<'st
 
 /// Font size slider setting
 fn font_size_setting(current_size: f32, theme: Theme) -> Element<'static, Message> {
-    let label = text("Font Size").size(FONT_SIZE_BODY).color(theme.text_primary);
+    let label = text("Font Size")
+        .size(FONT_SIZE_BODY)
+        .color(theme.text_primary);
 
-    let description = text("Terminal text size").size(FONT_SIZE_LABEL).color(theme.text_muted);
+    let description = text("Terminal text size")
+        .size(FONT_SIZE_LABEL)
+        .color(theme.text_muted);
 
     let slider_widget = slider(6.0..=20.0, current_size, |v| {
         Message::Ui(UiMessage::FontSizeChange(v))

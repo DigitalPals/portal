@@ -139,7 +139,9 @@ pub fn pane_header(
     // Actions dropdown button
     let actions_btn = button(
         row![
-            text("Actions").size(FONT_SIZE_LABEL).color(theme.text_primary),
+            text("Actions")
+                .size(FONT_SIZE_LABEL)
+                .color(theme.text_primary),
             icon_with_color(icons::ui::CHEVRON_DOWN, 12, theme.text_primary)
         ]
         .spacing(4)
@@ -267,14 +269,21 @@ pub fn pane_breadcrumb_bar(
 
         // Add separator if not first
         if i > 0 {
-            breadcrumb_elements.push(text(">").size(FONT_SIZE_LABEL).color(theme.text_muted).into());
+            breadcrumb_elements.push(
+                text(">")
+                    .size(FONT_SIZE_LABEL)
+                    .color(theme.text_muted)
+                    .into(),
+            );
         }
 
         // Folder icon + clickable segment
         let segment = button(
             row![
                 icon_with_color(icons::files::FOLDER, 14, theme.accent),
-                text(display_name).size(FONT_SIZE_LABEL).color(theme.text_primary)
+                text(display_name)
+                    .size(FONT_SIZE_LABEL)
+                    .color(theme.text_primary)
             ]
             .spacing(4)
             .align_y(Alignment::Center),
@@ -343,18 +352,24 @@ pub fn pane_file_list<'a>(
     theme: Theme,
 ) -> Element<'a, Message> {
     if state.loading {
-        return container(text("Loading...").size(FONT_SIZE_BODY).color(theme.text_muted))
-            .width(Fill)
-            .height(Fill)
-            .align_x(Alignment::Center)
-            .align_y(Alignment::Center)
-            .into();
+        return container(
+            text("Loading...")
+                .size(FONT_SIZE_BODY)
+                .color(theme.text_muted),
+        )
+        .width(Fill)
+        .height(Fill)
+        .align_x(Alignment::Center)
+        .align_y(Alignment::Center)
+        .into();
     }
 
     if let Some(ref error) = state.error {
         return container(
             column![
-                text("Error").size(FONT_SIZE_SECTION).color(theme.text_primary),
+                text("Error")
+                    .size(FONT_SIZE_SECTION)
+                    .color(theme.text_primary),
                 text(error).size(FONT_SIZE_LABEL).color(theme.text_muted),
             ]
             .spacing(8)
@@ -677,27 +692,31 @@ pub fn actions_menu_overlay(
         "Show Hidden Files"
     };
 
-    let menu_item = button(text(show_hidden_label).size(FONT_SIZE_BUTTON_SMALL).color(theme.text_primary))
-        .padding([8, 16])
-        .width(Length::Fixed(180.0))
-        .style(move |_theme, status| {
-            let bg = match status {
-                iced::widget::button::Status::Hovered => Some(theme.hover.into()),
-                _ => None,
-            };
-            iced::widget::button::Style {
-                background: bg,
-                text_color: theme.text_primary,
-                border: iced::Border {
-                    radius: 4.0.into(),
-                    ..Default::default()
-                },
+    let menu_item = button(
+        text(show_hidden_label)
+            .size(FONT_SIZE_BUTTON_SMALL)
+            .color(theme.text_primary),
+    )
+    .padding([8, 16])
+    .width(Length::Fixed(180.0))
+    .style(move |_theme, status| {
+        let bg = match status {
+            iced::widget::button::Status::Hovered => Some(theme.hover.into()),
+            _ => None,
+        };
+        iced::widget::button::Style {
+            background: bg,
+            text_color: theme.text_primary,
+            border: iced::Border {
+                radius: 4.0.into(),
                 ..Default::default()
-            }
-        })
-        .on_press(Message::Sftp(SftpMessage::ToggleShowHidden(
-            tab_id, pane_id,
-        )));
+            },
+            ..Default::default()
+        }
+    })
+    .on_press(Message::Sftp(SftpMessage::ToggleShowHidden(
+        tab_id, pane_id,
+    )));
 
     let menu_bg = Color::from_rgb(0.98, 0.98, 0.98);
     let menu = container(column![menu_item])

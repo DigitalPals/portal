@@ -264,8 +264,6 @@ pub enum SnippetMessage {
     Deselect,
     /// Toggle expand/collapse of host result output
     ToggleResultExpand(Uuid, Uuid),
-    /// Clear results for a snippet
-    ClearResults(Uuid),
     /// View a historical execution entry
     ViewHistoryEntry(Uuid),
     /// Return to current results from history view

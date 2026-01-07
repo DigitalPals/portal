@@ -5,8 +5,8 @@ use iced::{Alignment, Element, Font, Length};
 
 use crate::message::{DialogMessage, Message};
 use crate::theme::{
-    FONT_SIZE_BODY, FONT_SIZE_BUTTON_SMALL, FONT_SIZE_LABEL, FONT_SIZE_MONO_TINY, FONT_SIZE_SECTION,
-    Theme,
+    FONT_SIZE_BODY, FONT_SIZE_BUTTON_SMALL, FONT_SIZE_LABEL, FONT_SIZE_MONO_TINY,
+    FONT_SIZE_SECTION, Theme,
 };
 
 use super::common::{dialog_backdrop, secondary_button_style};
@@ -67,7 +67,9 @@ pub fn about_dialog_view(_state: &AboutDialogState, theme: Theme) -> Element<'st
         text("Proudly vibe coded with ")
             .size(FONT_SIZE_LABEL)
             .color(theme.text_muted),
-        text("Claude Code").size(FONT_SIZE_LABEL).color(theme.accent),
+        text("Claude Code")
+            .size(FONT_SIZE_LABEL)
+            .color(theme.accent),
         text(" & ").size(FONT_SIZE_LABEL).color(theme.text_muted),
         text("Codex CLI").size(FONT_SIZE_LABEL).color(theme.accent),
     ];
@@ -80,7 +82,9 @@ pub fn about_dialog_view(_state: &AboutDialogState, theme: Theme) -> Element<'st
     ];
 
     // Credits section
-    let credits_title = text("Built with").size(FONT_SIZE_BODY).color(theme.text_primary);
+    let credits_title = text("Built with")
+        .size(FONT_SIZE_BODY)
+        .color(theme.text_primary);
 
     let credits_list = vec![
         ("Iced", "Cross-platform GUI framework"),
@@ -94,8 +98,12 @@ pub fn about_dialog_view(_state: &AboutDialogState, theme: Theme) -> Element<'st
         .map(|(name, desc)| {
             row![
                 text(name).size(FONT_SIZE_BUTTON_SMALL).color(theme.accent),
-                text(" - ").size(FONT_SIZE_BUTTON_SMALL).color(theme.text_muted),
-                text(desc).size(FONT_SIZE_BUTTON_SMALL).color(theme.text_secondary),
+                text(" - ")
+                    .size(FONT_SIZE_BUTTON_SMALL)
+                    .color(theme.text_muted),
+                text(desc)
+                    .size(FONT_SIZE_BUTTON_SMALL)
+                    .color(theme.text_secondary),
             ]
             .into()
         })

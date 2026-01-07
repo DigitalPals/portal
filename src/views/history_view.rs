@@ -23,25 +23,29 @@ pub fn history_view(
             .size(FONT_SIZE_HEADING)
             .color(theme.text_primary),
         Space::new().width(Length::Fill),
-        button(text("Clear History").size(FONT_SIZE_LABEL).color(theme.text_secondary),)
-            .style(move |_theme, status| {
-                let bg = match status {
-                    button::Status::Hovered => Some(theme.hover.into()),
-                    _ => None,
-                };
-                button::Style {
-                    background: bg,
-                    text_color: theme.text_secondary,
-                    border: iced::Border {
-                        color: theme.border,
-                        width: 1.0,
-                        radius: BORDER_RADIUS.into(),
-                    },
-                    ..Default::default()
-                }
-            })
-            .padding([6, 12])
-            .on_press(Message::History(HistoryMessage::Clear)),
+        button(
+            text("Clear History")
+                .size(FONT_SIZE_LABEL)
+                .color(theme.text_secondary),
+        )
+        .style(move |_theme, status| {
+            let bg = match status {
+                button::Status::Hovered => Some(theme.hover.into()),
+                _ => None,
+            };
+            button::Style {
+                background: bg,
+                text_color: theme.text_secondary,
+                border: iced::Border {
+                    color: theme.border,
+                    width: 1.0,
+                    radius: BORDER_RADIUS.into(),
+                },
+                ..Default::default()
+            }
+        })
+        .padding([6, 12])
+        .on_press(Message::History(HistoryMessage::Clear)),
     ]
     .align_y(Alignment::Center)
     .padding(iced::Padding::new(24.0).bottom(16.0));
@@ -104,18 +108,24 @@ fn history_entry_row(
 
     let info = column![
         row![
-            text(host_name).size(FONT_SIZE_BODY).color(theme.text_primary),
+            text(host_name)
+                .size(FONT_SIZE_BODY)
+                .color(theme.text_primary),
             Space::new().width(8),
-            container(text(type_text).size(FONT_SIZE_MONO_TINY).color(theme.text_secondary),)
-                .padding([2, 6])
-                .style(move |_theme| container::Style {
-                    background: Some(theme.surface.into()),
-                    border: iced::Border {
-                        radius: 2.0.into(),
-                        ..Default::default()
-                    },
+            container(
+                text(type_text)
+                    .size(FONT_SIZE_MONO_TINY)
+                    .color(theme.text_secondary),
+            )
+            .padding([2, 6])
+            .style(move |_theme| container::Style {
+                background: Some(theme.surface.into()),
+                border: iced::Border {
+                    radius: 2.0.into(),
                     ..Default::default()
-                }),
+                },
+                ..Default::default()
+            }),
         ]
         .align_y(Alignment::Center),
         text(format!(
@@ -144,7 +154,9 @@ fn history_entry_row(
     let reconnect_btn = button(
         row![
             icon_with_color(icons::ui::REFRESH, 12, theme.text_primary),
-            text("Reconnect").size(FONT_SIZE_LABEL).color(theme.text_primary),
+            text("Reconnect")
+                .size(FONT_SIZE_LABEL)
+                .color(theme.text_primary),
         ]
         .spacing(4)
         .align_y(Alignment::Center),

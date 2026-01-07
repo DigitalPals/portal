@@ -86,7 +86,9 @@ fn build_input_dialog(
         SftpDialogType::Delete { .. } | SftpDialogType::EditPermissions { .. } => unreachable!(),
     };
 
-    let title_text = text(title).size(FONT_SIZE_HEADING).color(theme.text_primary);
+    let title_text = text(title)
+        .size(FONT_SIZE_HEADING)
+        .color(theme.text_primary);
 
     let input_value = dialog.input_value.clone();
     let input = text_input(placeholder, &input_value)
@@ -126,7 +128,10 @@ fn build_input_dialog(
 
     // Build subtitle element if present
     let subtitle_element: Element<'_, Message> = if let Some(subtitle) = subtitle {
-        text(subtitle).size(FONT_SIZE_BUTTON_SMALL).color(theme.text_muted).into()
+        text(subtitle)
+            .size(FONT_SIZE_BUTTON_SMALL)
+            .color(theme.text_muted)
+            .into()
     } else {
         Space::new().into()
     };
@@ -153,7 +158,9 @@ fn build_delete_dialog<'a>(
     error: Option<&'a str>,
     theme: Theme,
 ) -> Element<'a, Message> {
-    let title_text = text("Delete").size(FONT_SIZE_HEADING).color(theme.text_primary);
+    let title_text = text("Delete")
+        .size(FONT_SIZE_HEADING)
+        .color(theme.text_primary);
 
     // Build the confirmation message
     let count = entries.len();
@@ -175,7 +182,9 @@ fn build_delete_dialog<'a>(
         format!("Delete {} items?", count)
     };
 
-    let warning_text = text(warning_msg).size(FONT_SIZE_BODY).color(theme.text_secondary);
+    let warning_text = text(warning_msg)
+        .size(FONT_SIZE_BODY)
+        .color(theme.text_secondary);
 
     // List the items to be deleted (show up to 5)
     let items_list: Element<'_, Message> = if count <= 5 {
@@ -188,10 +197,15 @@ fn build_delete_dialog<'a>(
                     icons::files::FILE
                 };
                 let icon = icon_with_color(icon_data, 14, theme.text_muted);
-                row![icon, text(name).size(FONT_SIZE_BUTTON_SMALL).color(theme.text_secondary)]
-                    .spacing(8)
-                    .align_y(Alignment::Center)
-                    .into()
+                row![
+                    icon,
+                    text(name)
+                        .size(FONT_SIZE_BUTTON_SMALL)
+                        .color(theme.text_secondary)
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center)
+                .into()
             })
             .collect();
 
@@ -211,10 +225,15 @@ fn build_delete_dialog<'a>(
                     icons::files::FILE
                 };
                 let icon = icon_with_color(icon_data, 14, theme.text_muted);
-                row![icon, text(name).size(FONT_SIZE_BUTTON_SMALL).color(theme.text_secondary)]
-                    .spacing(8)
-                    .align_y(Alignment::Center)
-                    .into()
+                row![
+                    icon,
+                    text(name)
+                        .size(FONT_SIZE_BUTTON_SMALL)
+                        .color(theme.text_secondary)
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center)
+                .into()
             })
             .collect();
 
@@ -299,7 +318,9 @@ fn build_permissions_dialog<'a>(
     error: Option<&'a str>,
     theme: Theme,
 ) -> Element<'a, Message> {
-    let title_text = text("Edit Permissions").size(FONT_SIZE_HEADING).color(theme.text_primary);
+    let title_text = text("Edit Permissions")
+        .size(FONT_SIZE_HEADING)
+        .color(theme.text_primary);
 
     // File name display
     let file_info = row![
@@ -508,25 +529,29 @@ fn permission_checkbox(
 
 /// Create a cancel button for dialogs
 fn dialog_cancel_button(tab_id: SessionId, theme: Theme) -> iced::widget::Button<'static, Message> {
-    button(text("Cancel").size(FONT_SIZE_BUTTON_SMALL).color(theme.text_primary))
-        .padding([8, 16])
-        .style(move |_theme, status| {
-            let bg = match status {
-                iced::widget::button::Status::Hovered => theme.hover,
-                _ => theme.surface,
-            };
-            iced::widget::button::Style {
-                background: Some(bg.into()),
-                text_color: theme.text_primary,
-                border: iced::Border {
-                    color: theme.border,
-                    width: 1.0,
-                    radius: 4.0.into(),
-                },
-                ..Default::default()
-            }
-        })
-        .on_press(Message::Sftp(SftpMessage::DialogCancel(tab_id)))
+    button(
+        text("Cancel")
+            .size(FONT_SIZE_BUTTON_SMALL)
+            .color(theme.text_primary),
+    )
+    .padding([8, 16])
+    .style(move |_theme, status| {
+        let bg = match status {
+            iced::widget::button::Status::Hovered => theme.hover,
+            _ => theme.surface,
+        };
+        iced::widget::button::Style {
+            background: Some(bg.into()),
+            text_color: theme.text_primary,
+            border: iced::Border {
+                color: theme.border,
+                width: 1.0,
+                radius: 4.0.into(),
+            },
+            ..Default::default()
+        }
+    })
+    .on_press(Message::Sftp(SftpMessage::DialogCancel(tab_id)))
 }
 
 /// Create a submit button for dialogs
@@ -546,11 +571,15 @@ fn dialog_submit_button(
         (theme.accent, iced::Color::from_rgb8(0, 100, 180))
     };
 
-    let btn = button(text(label.to_string()).size(FONT_SIZE_BUTTON_SMALL).color(if is_valid {
-        theme.background
-    } else {
-        theme.text_muted
-    }))
+    let btn = button(
+        text(label.to_string())
+            .size(FONT_SIZE_BUTTON_SMALL)
+            .color(if is_valid {
+                theme.background
+            } else {
+                theme.text_muted
+            }),
+    )
     .padding([8, 16])
     .style(move |_theme, status| {
         let bg = if is_valid {

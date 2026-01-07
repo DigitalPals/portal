@@ -151,11 +151,8 @@ pub fn handle_snippet(portal: &mut Portal, msg: SnippetMessage) -> Task<Message>
                                     format!("Command exited with code {}", success.exit_code)
                                 } else {
                                     // Use first line of stderr as error message
-                                    let first_line = success
-                                        .stderr
-                                        .lines()
-                                        .next()
-                                        .unwrap_or("Unknown error");
+                                    let first_line =
+                                        success.stderr.lines().next().unwrap_or("Unknown error");
                                     format!("Exit code {}: {}", success.exit_code, first_line)
                                 };
                                 host_result.status = ExecutionStatus::Failed(error_msg);
@@ -230,37 +227,25 @@ pub fn handle_snippet(portal: &mut Portal, msg: SnippetMessage) -> Task<Message>
         // Results panel
         SnippetMessage::ToggleResultExpand(snippet_id, host_id) => {
             // Check active execution first, then fall back to last result
-            let toggled = if let Some(execution) =
-                portal.snippet_executions.get_active_mut(snippet_id)
-            {
-                if let Some(result) = execution.get_host_result_mut(host_id) {
-                    result.expanded = !result.expanded;
-                    true
+            let toggled =
+                if let Some(execution) = portal.snippet_executions.get_active_mut(snippet_id) {
+                    if let Some(result) = execution.get_host_result_mut(host_id) {
+                        result.expanded = !result.expanded;
+                        true
+                    } else {
+                        false
+                    }
                 } else {
                     false
-                }
-            } else {
-                false
-            };
+                };
 
             // If not found in active, try last result
             if !toggled {
-                if let Some(execution) =
-                    portal.snippet_executions.get_last_result_mut(snippet_id)
-                {
+                if let Some(execution) = portal.snippet_executions.get_last_result_mut(snippet_id) {
                     if let Some(result) = execution.get_host_result_mut(host_id) {
                         result.expanded = !result.expanded;
                     }
                 }
-            }
-            Task::none()
-        }
-
-        SnippetMessage::ClearResults(snippet_id) => {
-            portal.snippet_executions.clear_results(snippet_id);
-            // Deselect the snippet to hide the panel
-            if portal.selected_snippet == Some(snippet_id) {
-                portal.selected_snippet = None;
             }
             Task::none()
         }

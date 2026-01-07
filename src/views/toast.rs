@@ -183,7 +183,9 @@ fn toast_item_view(toast: &Toast, theme: Theme) -> Element<'static, Message> {
 
     let content = row![
         container(type_icon).padding(Padding::from([0, 8])),
-        text(message).size(FONT_SIZE_BUTTON_SMALL).color(theme.text_primary),
+        text(message)
+            .size(FONT_SIZE_BUTTON_SMALL)
+            .color(theme.text_primary),
         Space::new().width(Length::Fill),
         dismiss_btn,
     ]

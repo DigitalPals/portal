@@ -37,9 +37,13 @@ pub fn terminal_status_bar<'a>(
 
     // Left side: hostname and duration
     let left = row![
-        text(host_name).size(FONT_SIZE_CAPTION).color(theme.text_secondary),
+        text(host_name)
+            .size(FONT_SIZE_CAPTION)
+            .color(theme.text_secondary),
         text(" | ").size(FONT_SIZE_CAPTION).color(theme.text_muted),
-        text(duration).size(FONT_SIZE_CAPTION).color(theme.text_secondary),
+        text(duration)
+            .size(FONT_SIZE_CAPTION)
+            .color(theme.text_secondary),
     ]
     .align_y(Alignment::Center);
 
@@ -52,7 +56,9 @@ pub fn terminal_status_bar<'a>(
 
     // Right side: shortcut hint
     let right = row![
-        text("Ctrl+Shift+K").size(FONT_SIZE_SMALL).color(theme.text_muted),
+        text("Ctrl+Shift+K")
+            .size(FONT_SIZE_SMALL)
+            .color(theme.text_muted),
         text(" Install SSH Key")
             .size(FONT_SIZE_SMALL)
             .color(theme.text_secondary),

@@ -429,7 +429,7 @@ impl Portal {
                     .hosts_config
                     .hosts
                     .iter()
-                    .map(|h| (h.id, h.name.clone()))
+                    .map(|h| (h.id, h.name.clone(), h.detected_os.clone()))
                     .collect();
 
                 snippet_page_view(SnippetPageContext {

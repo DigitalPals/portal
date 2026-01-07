@@ -217,8 +217,12 @@ fn build_current_view(
 
     let header = row![
         column![
-            text(snippet_name).size(FONT_SIZE_SECTION).color(theme.text_primary),
-            text(status_text).size(FONT_SIZE_BUTTON_SMALL).color(status_color),
+            text(snippet_name)
+                .size(FONT_SIZE_SECTION)
+                .color(theme.text_primary),
+            text(status_text)
+                .size(FONT_SIZE_BUTTON_SMALL)
+                .color(status_color),
         ]
         .spacing(4),
         Space::new().width(Length::Fill),
@@ -227,17 +231,21 @@ fn build_current_view(
     .align_y(Alignment::Center);
 
     // Command display
-    let command_display = container(text(command).size(FONT_SIZE_LABEL).color(theme.text_secondary))
-        .padding(12)
-        .width(Fill)
-        .style(move |_theme| container::Style {
-            background: Some(theme.surface.into()),
-            border: iced::Border {
-                radius: 6.0.into(),
-                ..Default::default()
-            },
+    let command_display = container(
+        text(command)
+            .size(FONT_SIZE_LABEL)
+            .color(theme.text_secondary),
+    )
+    .padding(12)
+    .width(Fill)
+    .style(move |_theme| container::Style {
+        background: Some(theme.surface.into()),
+        border: iced::Border {
+            radius: 6.0.into(),
             ..Default::default()
-        });
+        },
+        ..Default::default()
+    });
 
     // Clone host results data and build result rows
     let results: Vec<Element<'static, Message>> = host_results
@@ -248,42 +256,6 @@ fn build_current_view(
     let results_list = scrollable(Column::with_children(results).spacing(8).width(Fill))
         .height(Length::Fixed(300.0));
 
-    // Clear button (only if completed)
-    let clear_btn = if completed {
-        button(text("Clear Results").size(FONT_SIZE_LABEL).color(theme.text_primary))
-            .style(move |_theme, status| {
-                let bg = match status {
-                    button::Status::Hovered => theme.hover,
-                    _ => theme.surface,
-                };
-                button::Style {
-                    background: Some(bg.into()),
-                    text_color: theme.text_primary,
-                    border: iced::Border {
-                        color: theme.border,
-                        width: 1.0,
-                        radius: 6.0.into(),
-                    },
-                    ..Default::default()
-                }
-            })
-            .padding([6, 12])
-            .on_press(Message::Snippet(SnippetMessage::ClearResults(snippet_id)))
-    } else {
-        button(text("Clear Results").size(FONT_SIZE_LABEL).color(theme.text_muted))
-            .style(move |_theme, _status| button::Style {
-                background: Some(theme.surface.into()),
-                text_color: theme.text_muted,
-                border: iced::Border {
-                    color: theme.border,
-                    width: 1.0,
-                    radius: 6.0.into(),
-                },
-                ..Default::default()
-            })
-            .padding([6, 12])
-    };
-
     // Build history section
     let history_section: Element<'static, Message> = if !history_entries.is_empty() {
         let history_items: Vec<Element<'static, Message>> = history_entries
@@ -293,10 +265,12 @@ fn build_current_view(
 
         column![
             Space::new().height(16),
-            text("History").size(FONT_SIZE_BODY).color(theme.text_secondary),
+            text("History")
+                .size(FONT_SIZE_BODY)
+                .color(theme.text_secondary),
             Space::new().height(8),
             scrollable(Column::with_children(history_items).spacing(4).width(Fill))
-                .height(Length::Fixed(150.0)),
+                .height(Length::Fixed(108.0)),
         ]
         .into()
     } else {
@@ -308,11 +282,12 @@ fn build_current_view(
         Space::new().height(12),
         command_display,
         Space::new().height(16),
-        text("Results").size(FONT_SIZE_BODY).color(theme.text_secondary),
+        text("Results")
+            .size(FONT_SIZE_BODY)
+            .color(theme.text_secondary),
         Space::new().height(8),
         results_list,
-        Space::new().height(12),
-        clear_btn,
+        Space::new().height(Fill),
         history_section,
     ]
     .padding(16)
@@ -350,9 +325,13 @@ fn build_history_view(
 
     let header = row![
         column![
-            text(snippet_name).size(FONT_SIZE_SECTION).color(theme.text_primary),
+            text(snippet_name)
+                .size(FONT_SIZE_SECTION)
+                .color(theme.text_primary),
             row![
-                text(status_text).size(FONT_SIZE_BUTTON_SMALL).color(status_color),
+                text(status_text)
+                    .size(FONT_SIZE_BUTTON_SMALL)
+                    .color(status_color),
                 Space::new().width(8),
                 text(format!("• {}", time_ago))
                     .size(FONT_SIZE_BUTTON_SMALL)
@@ -370,7 +349,9 @@ fn build_history_view(
     let back_btn = button(
         row![
             icon_with_color(icons::ui::CHEVRON_LEFT, 14, theme.text_primary),
-            text("Back to Current").size(FONT_SIZE_LABEL).color(theme.text_primary),
+            text("Back to Current")
+                .size(FONT_SIZE_LABEL)
+                .color(theme.text_primary),
         ]
         .spacing(4)
         .align_y(Alignment::Center),
@@ -396,17 +377,21 @@ fn build_history_view(
 
     // Command display
     let command = entry.command.clone();
-    let command_display = container(text(command).size(FONT_SIZE_LABEL).color(theme.text_secondary))
-        .padding(12)
-        .width(Fill)
-        .style(move |_theme| container::Style {
-            background: Some(theme.surface.into()),
-            border: iced::Border {
-                radius: 6.0.into(),
-                ..Default::default()
-            },
+    let command_display = container(
+        text(command)
+            .size(FONT_SIZE_LABEL)
+            .color(theme.text_secondary),
+    )
+    .padding(12)
+    .width(Fill)
+    .style(move |_theme| container::Style {
+        background: Some(theme.surface.into()),
+        border: iced::Border {
+            radius: 6.0.into(),
             ..Default::default()
-        });
+        },
+        ..Default::default()
+    });
 
     // Historical host results
     let results: Vec<Element<'static, Message>> = entry
@@ -427,10 +412,12 @@ fn build_history_view(
 
     let history_section = column![
         Space::new().height(16),
-        text("History").size(FONT_SIZE_BODY).color(theme.text_secondary),
+        text("History")
+            .size(FONT_SIZE_BODY)
+            .color(theme.text_secondary),
         Space::new().height(8),
         scrollable(Column::with_children(history_items).spacing(4).width(Fill))
-            .height(Length::Fixed(150.0)),
+            .height(Length::Fixed(108.0)),
     ];
 
     column![
@@ -440,9 +427,12 @@ fn build_history_view(
         Space::new().height(12),
         command_display,
         Space::new().height(16),
-        text("Results").size(FONT_SIZE_BODY).color(theme.text_secondary),
+        text("Results")
+            .size(FONT_SIZE_BODY)
+            .color(theme.text_secondary),
         Space::new().height(8),
         results_list,
+        Space::new().height(Fill),
         history_section,
     ]
     .padding(16)
@@ -460,8 +450,12 @@ fn build_history_only_view(
 
     let header = row![
         column![
-            text(snippet_name).size(FONT_SIZE_SECTION).color(theme.text_primary),
-            text("No recent execution").size(FONT_SIZE_BUTTON_SMALL).color(theme.text_muted),
+            text(snippet_name)
+                .size(FONT_SIZE_SECTION)
+                .color(theme.text_primary),
+            text("No recent execution")
+                .size(FONT_SIZE_BUTTON_SMALL)
+                .color(theme.text_muted),
         ]
         .spacing(4),
         Space::new().width(Length::Fill),
@@ -477,7 +471,9 @@ fn build_history_only_view(
 
     let history_section = if !history_items.is_empty() {
         column![
-            text("History").size(FONT_SIZE_BODY).color(theme.text_secondary),
+            text("History")
+                .size(FONT_SIZE_BODY)
+                .color(theme.text_secondary),
             Space::new().height(8),
             scrollable(Column::with_children(history_items).spacing(4).width(Fill))
                 .height(Length::Fixed(400.0)),
@@ -515,7 +511,9 @@ fn host_result_row(data: HostResultData, theme: Theme) -> Element<'static, Messa
     let error_section: Element<'static, Message> = if let Some(err) = &data.error {
         column![
             Space::new().height(4),
-            text(err.clone()).size(FONT_SIZE_SMALL).color(STATUS_FAILURE),
+            text(err.clone())
+                .size(FONT_SIZE_SMALL)
+                .color(STATUS_FAILURE),
         ]
         .into()
     } else {
@@ -532,7 +530,9 @@ fn host_result_row(data: HostResultData, theme: Theme) -> Element<'static, Messa
                 .size(FONT_SIZE_BODY)
                 .color(theme.text_primary),
             Space::new().width(Length::Fill),
-            text(duration_text).size(FONT_SIZE_LABEL).color(theme.text_muted),
+            text(duration_text)
+                .size(FONT_SIZE_LABEL)
+                .color(theme.text_muted),
             Space::new().width(8),
             if data.expanded {
                 icon_with_color(icons::ui::CHEVRON_DOWN, 12, theme.text_muted)
@@ -549,7 +549,9 @@ fn host_result_row(data: HostResultData, theme: Theme) -> Element<'static, Messa
                 .size(FONT_SIZE_BODY)
                 .color(theme.text_primary),
             Space::new().width(Length::Fill),
-            text(duration_text).size(FONT_SIZE_LABEL).color(theme.text_muted),
+            text(duration_text)
+                .size(FONT_SIZE_LABEL)
+                .color(theme.text_muted),
         ]
         .align_y(Alignment::Center)
     };
