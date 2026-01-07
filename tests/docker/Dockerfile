@@ -18,6 +18,11 @@ RUN mkdir -p /home/${TEST_USER}/.ssh && \
     chmod 700 /home/${TEST_USER}/.ssh && \
     chown -R ${TEST_USER}:${TEST_USER} /home/${TEST_USER}/.ssh
 
+# Copy authorized_keys for public key authentication
+COPY test_keys/authorized_keys /home/${TEST_USER}/.ssh/authorized_keys
+RUN chmod 600 /home/${TEST_USER}/.ssh/authorized_keys && \
+    chown ${TEST_USER}:${TEST_USER} /home/${TEST_USER}/.ssh/authorized_keys
+
 # Copy sshd configuration
 COPY sshd_config /etc/ssh/sshd_config
 
