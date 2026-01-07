@@ -388,8 +388,8 @@ fn font_size_setting(current_size: f32, theme: Theme) -> Element<'static, Messag
 }
 
 fn toggle_setting<F>(
-    label: &str,
-    description: &str,
+    label: &'static str,
+    description: &'static str,
     enabled: bool,
     on_toggle: F,
     theme: Theme,
