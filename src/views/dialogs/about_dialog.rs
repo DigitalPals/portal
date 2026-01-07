@@ -58,10 +58,6 @@ pub fn about_dialog_view(_state: &AboutDialogState, theme: Theme) -> Element<'st
         .size(FONT_SIZE_BUTTON_SMALL)
         .color(theme.text_secondary);
 
-    let location_text = text("from the Netherlands")
-        .size(FONT_SIZE_LABEL)
-        .color(theme.text_muted);
-
     // Vibe coded note
     let vibe_text = row![
         text("Proudly vibe coded with ")
@@ -72,13 +68,6 @@ pub fn about_dialog_view(_state: &AboutDialogState, theme: Theme) -> Element<'st
             .color(theme.accent),
         text(" & ").size(FONT_SIZE_LABEL).color(theme.text_muted),
         text("Codex CLI").size(FONT_SIZE_LABEL).color(theme.accent),
-    ];
-
-    let time_text = row![
-        text("in less than two days ")
-            .size(FONT_SIZE_LABEL)
-            .color(theme.text_muted),
-        text("\u{1F92F}").size(FONT_SIZE_BODY), // Mind blown emoji
     ];
 
     // Credits section
@@ -132,14 +121,8 @@ pub fn about_dialog_view(_state: &AboutDialogState, theme: Theme) -> Element<'st
         container(author_text)
             .width(Length::Fill)
             .align_x(Alignment::Center),
-        container(location_text)
-            .width(Length::Fill)
-            .align_x(Alignment::Center),
         Space::new().height(12),
         container(vibe_text)
-            .width(Length::Fill)
-            .align_x(Alignment::Center),
-        container(time_text)
             .width(Length::Fill)
             .align_x(Alignment::Center),
         Space::new().height(20),
