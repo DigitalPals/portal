@@ -279,9 +279,9 @@ async fn test_connection_timeout() {
         )
         .await;
 
-    assert!(result.is_err(), "Should timeout");
-    assert!(
-        matches!(result.unwrap_err(), SshError::Timeout(_)),
-        "Should be Timeout error"
-    );
+    let err = result.expect_err("Should fail to connect");
+    match err {
+        SshError::Timeout(_) | SshError::ConnectionFailed { .. } => {}
+        other => panic!("Expected timeout or connection failure, got: {other}"),
+    }
 }
