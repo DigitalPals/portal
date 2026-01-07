@@ -49,7 +49,11 @@ impl SnippetExecutionEntry {
     ) -> Self {
         let success_count = host_results.iter().filter(|r| r.success).count();
         let failure_count = host_results.len() - success_count;
-        let total_duration_ms = host_results.iter().map(|r| r.duration_ms).max().unwrap_or(0);
+        let total_duration_ms = host_results
+            .iter()
+            .map(|r| r.duration_ms)
+            .max()
+            .unwrap_or(0);
 
         Self {
             id: Uuid::new_v4(),
@@ -126,16 +130,6 @@ impl SnippetHistoryConfig {
             .iter()
             .filter(|e| e.snippet_id == snippet_id)
             .collect()
-    }
-
-    /// Clear all history
-    pub fn clear(&mut self) {
-        self.entries.clear();
-    }
-
-    /// Clear history for a specific snippet
-    pub fn clear_snippet(&mut self, snippet_id: Uuid) {
-        self.entries.retain(|e| e.snippet_id != snippet_id);
     }
 
     /// Load from file, creating default if not exists

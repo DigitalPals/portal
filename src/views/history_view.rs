@@ -5,7 +5,10 @@ use crate::app::FocusSection;
 use crate::config::{HistoryConfig, SessionType};
 use crate::icons::{self, icon_with_color};
 use crate::message::{HistoryMessage, Message};
-use crate::theme::{BORDER_RADIUS, CARD_BORDER_RADIUS, Theme};
+use crate::theme::{
+    BORDER_RADIUS, CARD_BORDER_RADIUS, FONT_SIZE_BODY, FONT_SIZE_HEADING, FONT_SIZE_LABEL,
+    FONT_SIZE_MONO_TINY, Theme,
+};
 
 /// Build the history view showing recent connections
 pub fn history_view(
@@ -17,10 +20,10 @@ pub fn history_view(
     // Header
     let header = row![
         text("Connection History")
-            .size(18)
+            .size(FONT_SIZE_HEADING)
             .color(theme.text_primary),
         Space::new().width(Length::Fill),
-        button(text("Clear History").size(12).color(theme.text_secondary),)
+        button(text("Clear History").size(FONT_SIZE_LABEL).color(theme.text_secondary),)
             .style(move |_theme, status| {
                 let bg = match status {
                     button::Status::Hovered => Some(theme.hover.into()),
@@ -101,9 +104,9 @@ fn history_entry_row(
 
     let info = column![
         row![
-            text(host_name).size(14).color(theme.text_primary),
+            text(host_name).size(FONT_SIZE_BODY).color(theme.text_primary),
             Space::new().width(8),
-            container(text(type_text).size(10).color(theme.text_secondary),)
+            container(text(type_text).size(FONT_SIZE_MONO_TINY).color(theme.text_secondary),)
                 .padding([2, 6])
                 .style(move |_theme| container::Style {
                     background: Some(theme.surface.into()),
@@ -119,7 +122,7 @@ fn history_entry_row(
             "{}@{} | {} | {}",
             username, hostname, time_str, duration_str
         ))
-        .size(12)
+        .size(FONT_SIZE_LABEL)
         .color(theme.text_muted),
     ]
     .spacing(4);
@@ -141,7 +144,7 @@ fn history_entry_row(
     let reconnect_btn = button(
         row![
             icon_with_color(icons::ui::REFRESH, 12, theme.text_primary),
-            text("Reconnect").size(12).color(theme.text_primary),
+            text("Reconnect").size(FONT_SIZE_LABEL).color(theme.text_primary),
         ]
         .spacing(4)
         .align_y(Alignment::Center),
@@ -212,10 +215,10 @@ fn empty_state(theme: Theme) -> Element<'static, Message> {
     let content = column![
         icon_with_color(icons::ui::HISTORY, 48, theme.text_muted),
         text("No connection history")
-            .size(18)
+            .size(FONT_SIZE_HEADING)
             .color(theme.text_primary),
         text("Your recent connections will appear here")
-            .size(14)
+            .size(FONT_SIZE_BODY)
             .color(theme.text_muted),
     ]
     .spacing(8)

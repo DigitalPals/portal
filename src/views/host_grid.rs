@@ -14,8 +14,9 @@ use crate::config::DetectedOs;
 use crate::icons::{self, icon_with_color};
 use crate::message::{HostMessage, Message, UiMessage};
 use crate::theme::{
-    BORDER_RADIUS, CARD_BORDER_RADIUS, CARD_HEIGHT, GRID_PADDING, GRID_SPACING, MIN_CARD_WIDTH,
-    SIDEBAR_WIDTH, SIDEBAR_WIDTH_COLLAPSED, Theme,
+    BORDER_RADIUS, CARD_BORDER_RADIUS, CARD_HEIGHT, FONT_SIZE_BODY, FONT_SIZE_BUTTON,
+    FONT_SIZE_BUTTON_SMALL, FONT_SIZE_HEADING, FONT_SIZE_LABEL, FONT_SIZE_SECTION, GRID_PADDING,
+    GRID_SPACING, MIN_CARD_WIDTH, SIDEBAR_WIDTH, SIDEBAR_WIDTH_COLLAPSED, Theme,
 };
 
 /// Group card data for the grid view
@@ -87,7 +88,7 @@ fn build_action_bar(search_query: &str, theme: Theme) -> Element<'static, Messag
             });
 
     // Connect button - pill-shaped, accent color
-    let connect_btn = button(text("Connect").size(14).color(iced::Color::WHITE))
+    let connect_btn = button(text("Connect").size(FONT_SIZE_BUTTON).color(iced::Color::WHITE))
         .style(move |_theme, status| {
             let bg = match status {
                 button::Status::Hovered => iced::Color::from_rgb8(0x00, 0x8B, 0xE8),
@@ -110,7 +111,7 @@ fn build_action_bar(search_query: &str, theme: Theme) -> Element<'static, Messag
     let new_host_btn = button(
         row![
             icon_with_color(icons::ui::PLUS, 14, theme.text_primary),
-            text("New Host").size(13).color(theme.text_primary),
+            text("New Host").size(FONT_SIZE_BUTTON_SMALL).color(theme.text_primary),
         ]
         .spacing(6)
         .align_y(Alignment::Center),
@@ -138,7 +139,7 @@ fn build_action_bar(search_query: &str, theme: Theme) -> Element<'static, Messag
     let terminal_btn = button(
         row![
             icon_with_color(icons::ui::TERMINAL, 14, theme.text_primary),
-            text("Terminal").size(13).color(theme.text_primary),
+            text("Terminal").size(FONT_SIZE_BUTTON_SMALL).color(theme.text_primary),
         ]
         .spacing(6)
         .align_y(Alignment::Center),
@@ -262,7 +263,7 @@ fn build_groups_section(
     focus_section: FocusSection,
     focus_index: Option<usize>,
 ) -> Element<'static, Message> {
-    let section_header = text("Groups").size(16).color(theme.text_primary);
+    let section_header = text("Groups").size(FONT_SIZE_SECTION).color(theme.text_primary);
 
     // Build grid of group cards (dynamic columns)
     let mut rows: Vec<Element<'static, Message>> = Vec::new();
@@ -303,7 +304,7 @@ fn build_hosts_section(
     focus_index: Option<usize>,
     hovered_host: Option<Uuid>,
 ) -> Element<'static, Message> {
-    let section_header = text("Hosts").size(16).color(theme.text_primary);
+    let section_header = text("Hosts").size(FONT_SIZE_SECTION).color(theme.text_primary);
 
     // Build grid of host cards (dynamic columns)
     let mut rows: Vec<Element<'static, Message>> = Vec::new();
@@ -367,8 +368,8 @@ fn group_card(group: GroupCard, theme: Theme, is_focused: bool) -> Element<'stat
     };
 
     let info = column![
-        text(group.name).size(16).color(theme.text_primary),
-        text(host_text).size(12).color(theme.text_secondary),
+        text(group.name).size(FONT_SIZE_SECTION).color(theme.text_primary),
+        text(host_text).size(FONT_SIZE_LABEL).color(theme.text_secondary),
     ]
     .spacing(4);
 
@@ -504,8 +505,8 @@ fn host_card(
     };
 
     let info = column![
-        text(host.name.clone()).size(16).color(theme.text_primary),
-        text(os_text).size(12).color(theme.text_secondary),
+        text(host.name.clone()).size(FONT_SIZE_SECTION).color(theme.text_primary),
+        text(os_text).size(FONT_SIZE_LABEL).color(theme.text_secondary),
     ]
     .spacing(4);
 
@@ -599,16 +600,16 @@ fn empty_state(theme: Theme) -> Element<'static, Message> {
     let content = column![
         icon_with_color(icons::ui::SERVER, 48, theme.text_muted),
         text("No hosts configured")
-            .size(18)
+            .size(FONT_SIZE_HEADING)
             .color(theme.text_primary),
         text("Click NEW HOST to add your first server")
-            .size(14)
+            .size(FONT_SIZE_BODY)
             .color(theme.text_muted),
         Space::new().height(16),
         button(
             row![
                 icon_with_color(icons::ui::PLUS, 14, iced::Color::WHITE),
-                text("NEW HOST").size(14).color(iced::Color::WHITE),
+                text("NEW HOST").size(FONT_SIZE_BODY).color(iced::Color::WHITE),
             ]
             .spacing(6)
             .align_y(Alignment::Center),

@@ -11,7 +11,9 @@ use uuid::Uuid;
 
 use iced::keyboard;
 
-use crate::config::{HistoryConfig, HostsConfig, SettingsConfig, SnippetHistoryConfig, SnippetsConfig};
+use crate::config::{
+    HistoryConfig, HostsConfig, SettingsConfig, SnippetHistoryConfig, SnippetsConfig,
+};
 use crate::message::{Message, SessionId, SessionMessage, SidebarMenuItem, UiMessage};
 use crate::theme::{ThemeId, get_theme};
 use crate::views::dialogs::about_dialog::about_dialog_view;
@@ -22,8 +24,8 @@ use crate::views::history_view::history_view;
 use crate::views::host_grid::{calculate_columns, host_grid_view, search_input_id};
 use crate::views::settings_page::settings_page_view;
 use crate::views::sftp::{dual_pane_sftp_view, sftp_context_menu_overlay};
-use crate::views::snippet_grid::snippet_page_view;
 use crate::views::sidebar::sidebar_view;
+use crate::views::snippet_grid::snippet_page_view;
 use crate::views::tabs::{Tab, tab_bar_view};
 use crate::views::terminal_view::terminal_view_with_status;
 use crate::views::toast::{ToastManager, toast_overlay_view};

@@ -344,3 +344,44 @@ pub const GRID_PADDING: f32 = 48.0;
 
 /// Width of the snippet results panel
 pub const RESULTS_PANEL_WIDTH: f32 = 500.0;
+
+/// Minimum card width for snippet grid (wider due to more content)
+pub const MIN_SNIPPET_CARD_WIDTH: f32 = 380.0;
+
+// Typography constants - Font sizes for consistent UI text
+
+/// Page headers (Settings, About page titles)
+pub const FONT_SIZE_PAGE_TITLE: f32 = 28.0;
+
+/// Dialog titles
+pub const FONT_SIZE_DIALOG_TITLE: f32 = 20.0;
+
+/// Empty state headings (large centered messages)
+pub const FONT_SIZE_HEADING: f32 = 18.0;
+
+/// Section headers (Groups, Hosts, Snippets, History, Results)
+pub const FONT_SIZE_SECTION: f32 = 16.0;
+
+/// Card titles, primary item names (host names, snippet names, etc.)
+pub const FONT_SIZE_CARD_TITLE: f32 = 16.0;
+
+/// Body text, primary readable content
+pub const FONT_SIZE_BODY: f32 = 14.0;
+
+/// Button text in primary/secondary buttons
+pub const FONT_SIZE_BUTTON: f32 = 14.0;
+
+/// Small button text, menu items, inline buttons
+pub const FONT_SIZE_BUTTON_SMALL: f32 = 13.0;
+
+/// Secondary info, descriptions, form field labels
+pub const FONT_SIZE_LABEL: f32 = 12.0;
+
+/// Metadata, timestamps, status bar, keyboard shortcuts
+pub const FONT_SIZE_CAPTION: f32 = 12.0;
+
+/// Very small text (badges, fingerprints, tiny labels)
+pub const FONT_SIZE_SMALL: f32 = 11.0;
+
+/// Monospace code display (ASCII logos)
+pub const FONT_SIZE_MONO_TINY: f32 = 10.0;

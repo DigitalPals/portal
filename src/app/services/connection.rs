@@ -20,7 +20,7 @@ const SSH_KEEPALIVE_INTERVAL_SECS: u64 = 60;
 
 static KNOWN_HOSTS_MANAGER: OnceLock<Arc<Mutex<KnownHostsManager>>> = OnceLock::new();
 
-fn shared_known_hosts_manager() -> Arc<Mutex<KnownHostsManager>> {
+pub fn shared_known_hosts_manager() -> Arc<Mutex<KnownHostsManager>> {
     KNOWN_HOSTS_MANAGER
         .get_or_init(|| Arc::new(Mutex::new(KnownHostsManager::new())))
         .clone()

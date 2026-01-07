@@ -20,6 +20,9 @@ pub struct Snippet {
     /// Optional tags for filtering
     #[serde(default)]
     pub tags: Vec<String>,
+    /// Target host IDs for multi-host execution
+    #[serde(default)]
+    pub host_ids: Vec<Uuid>,
     /// Creation timestamp
     pub created_at: chrono::DateTime<chrono::Utc>,
     /// Last update timestamp
@@ -36,6 +39,7 @@ impl Snippet {
             command,
             description: None,
             tags: Vec::new(),
+            host_ids: Vec::new(),
             created_at: now,
             updated_at: now,
         }

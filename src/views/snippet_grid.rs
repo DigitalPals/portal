@@ -15,8 +15,9 @@ use crate::config::{Snippet, SnippetHistoryConfig};
 use crate::icons::{self, icon_with_color};
 use crate::message::{Message, SnippetMessage};
 use crate::theme::{
-    BORDER_RADIUS, CARD_BORDER_RADIUS, GRID_PADDING, GRID_SPACING, MIN_CARD_WIDTH,
-    RESULTS_PANEL_WIDTH, SIDEBAR_WIDTH, SIDEBAR_WIDTH_COLLAPSED, Theme,
+    BORDER_RADIUS, CARD_BORDER_RADIUS, FONT_SIZE_BODY, FONT_SIZE_BUTTON_SMALL, FONT_SIZE_HEADING,
+    FONT_SIZE_LABEL, FONT_SIZE_SECTION, FONT_SIZE_SMALL, GRID_PADDING, GRID_SPACING,
+    MIN_SNIPPET_CARD_WIDTH, RESULTS_PANEL_WIDTH, SIDEBAR_WIDTH, SIDEBAR_WIDTH_COLLAPSED, Theme,
 };
 use crate::views::snippet_results::execution_results_panel;
 
@@ -48,7 +49,7 @@ pub fn calculate_columns(
 
     let content_width = window_width - sidebar_width - GRID_PADDING - panel_width;
     let columns =
-        ((content_width + GRID_SPACING) / (MIN_CARD_WIDTH + GRID_SPACING)).floor() as usize;
+        ((content_width + GRID_SPACING) / (MIN_SNIPPET_CARD_WIDTH + GRID_SPACING)).floor() as usize;
     columns.clamp(1, 4)
 }
 
@@ -85,7 +86,7 @@ fn build_action_bar(search_query: &str, theme: Theme) -> Element<'static, Messag
     let new_btn = button(
         row![
             icon_with_color(icons::ui::PLUS, 14, theme.text_primary),
-            text("New Snippet").size(13).color(theme.text_primary),
+            text("New Snippet").size(FONT_SIZE_BUTTON_SMALL).color(theme.text_primary),
         ]
         .spacing(6)
         .align_y(Alignment::Center),
@@ -110,7 +111,8 @@ fn build_action_bar(search_query: &str, theme: Theme) -> Element<'static, Messag
     .on_press(Message::Snippet(SnippetMessage::New));
 
     // Build the bar row
-    let bar_content = row![search_input, Space::new().width(12), new_btn,].align_y(Alignment::Center);
+    let bar_content =
+        row![search_input, Space::new().width(12), new_btn,].align_y(Alignment::Center);
 
     container(bar_content)
         .width(Fill)
@@ -149,7 +151,9 @@ pub fn snippet_page_view(
         .filter(|s| {
             search_query.is_empty()
                 || s.name.to_lowercase().contains(&search_query.to_lowercase())
-                || s.command.to_lowercase().contains(&search_query.to_lowercase())
+                || s.command
+                    .to_lowercase()
+                    .contains(&search_query.to_lowercase())
         })
         .collect();
 
@@ -192,8 +196,7 @@ pub fn snippet_page_view(
             let history_entries = snippet_history.entries_for_snippet(snippet_id);
 
             // Find the viewed history entry if any
-            let viewed_entry = viewed_history_entry
-                .and_then(|id| snippet_history.find_entry(id));
+            let viewed_entry = viewed_history_entry.and_then(|id| snippet_history.find_entry(id));
 
             // Show panel if we have execution OR history
             if execution.is_none() && history_entries.is_empty() {
@@ -216,11 +219,7 @@ pub fn snippet_page_view(
 
     // Layout with optional results panel
     let page_content: Element<'static, Message> = if let Some(panel) = results_panel {
-        row![
-            container(main_content).width(Fill).height(Fill),
-            panel,
-        ]
-        .into()
+        row![container(main_content).width(Fill).height(Fill), panel,].into()
     } else {
         container(main_content).width(Fill).height(Fill).into()
     };
@@ -244,7 +243,7 @@ fn build_snippet_grid(
     hovered_snippet: Option<Uuid>,
     selected_snippet: Option<Uuid>,
 ) -> Element<'static, Message> {
-    let section_header = text("Snippets").size(16).color(theme.text_primary);
+    let section_header = text("Snippets").size(FONT_SIZE_SECTION).color(theme.text_primary);
 
     // Build grid of snippet cards
     let mut rows: Vec<Element<'static, Message>> = Vec::new();
@@ -277,7 +276,7 @@ fn build_snippet_grid(
     // Add remaining cards in the last row with spacers
     if !current_row.is_empty() {
         while current_row.len() < column_count {
-            current_row.push(container(text("")).width(Length::FillPortion(1)).into());
+            current_row.push(Space::new().width(Length::Fixed(MIN_SNIPPET_CARD_WIDTH)).into());
         }
         rows.push(Row::with_children(current_row).spacing(GRID_SPACING).into());
     }
@@ -339,9 +338,13 @@ fn snippet_card(
             let failed = exec.failure_count();
             if failed == 0 {
                 row![
-                    icon_with_color(icons::ui::CHECK, 12, iced::Color::from_rgb8(0x40, 0xa0, 0x2b)),
+                    icon_with_color(
+                        icons::ui::CHECK,
+                        12,
+                        iced::Color::from_rgb8(0x40, 0xa0, 0x2b)
+                    ),
                     text(format!("{} OK", success))
-                        .size(11)
+                        .size(FONT_SIZE_SMALL)
                         .color(iced::Color::from_rgb8(0x40, 0xa0, 0x2b)),
                 ]
                 .spacing(4)
@@ -351,7 +354,7 @@ fn snippet_card(
                 row![
                     icon_with_color(icons::ui::X, 12, iced::Color::from_rgb8(0xd2, 0x0f, 0x39)),
                     text(format!("{} failed", failed))
-                        .size(11)
+                        .size(FONT_SIZE_SMALL)
                         .color(iced::Color::from_rgb8(0xd2, 0x0f, 0x39)),
                 ]
                 .spacing(4)
@@ -359,7 +362,7 @@ fn snippet_card(
                 .into()
             }
         } else {
-            text("Running...").size(11).color(theme.accent).into()
+            text("Running...").size(FONT_SIZE_SMALL).color(theme.accent).into()
         }
     } else {
         Space::new().into()
@@ -367,10 +370,12 @@ fn snippet_card(
 
     // Info column
     let info = column![
-        text(snippet.name.clone()).size(15).color(theme.text_primary),
-        text(cmd_preview).size(12).color(theme.text_muted),
+        text(snippet.name.clone())
+            .size(FONT_SIZE_SECTION)
+            .color(theme.text_primary),
+        text(cmd_preview).size(FONT_SIZE_LABEL).color(theme.text_muted),
         row![
-            text(status_text).size(11).color(theme.text_secondary),
+            text(status_text).size(FONT_SIZE_SMALL).color(theme.text_secondary),
             Space::new().width(8),
             status_indicator,
         ]
@@ -384,7 +389,7 @@ fn snippet_card(
             button(
                 row![
                     icon_with_color(icons::ui::CHEVRON_RIGHT, 14, iced::Color::WHITE),
-                    text("RUN").size(12).color(iced::Color::WHITE),
+                    text("RUN").size(FONT_SIZE_LABEL).color(iced::Color::WHITE),
                 ]
                 .spacing(4)
                 .align_y(Alignment::Center),
@@ -408,7 +413,7 @@ fn snippet_card(
             .on_press(Message::Snippet(SnippetMessage::Run(snippet_id)))
             .into()
         } else if is_running {
-            text("...").size(14).color(theme.text_muted).into()
+            text("...").size(FONT_SIZE_BODY).color(theme.text_muted).into()
         } else {
             Space::new().into()
         };
@@ -438,14 +443,18 @@ fn snippet_card(
         Space::new().into()
     };
 
+    // Action buttons in a tight row
+    let action_buttons = row![run_button, edit_button,]
+        .spacing(4)
+        .align_y(Alignment::Center);
+
     let card_content = row![
         icon_widget,
         info,
         Space::new().width(Length::Fill),
-        run_button,
-        edit_button,
+        action_buttons,
     ]
-    .spacing(14)
+    .spacing(10)
     .align_y(Alignment::Center);
 
     let card_button = button(
@@ -488,7 +497,7 @@ fn snippet_card(
         }
     })
     .padding(0)
-    .width(Length::FillPortion(1))
+    .width(Length::Fixed(MIN_SNIPPET_CARD_WIDTH))
     .height(Length::Fixed(SNIPPET_CARD_HEIGHT))
     .on_press(Message::Snippet(SnippetMessage::Select(snippet_id)));
 
@@ -503,15 +512,15 @@ fn snippet_card(
 fn empty_state(theme: Theme) -> Element<'static, Message> {
     let content = column![
         icon_with_color(icons::ui::CODE, 48, theme.text_muted),
-        text("No snippets yet").size(18).color(theme.text_primary),
+        text("No snippets yet").size(FONT_SIZE_HEADING).color(theme.text_primary),
         text("Create a snippet to run commands on multiple hosts")
-            .size(14)
+            .size(FONT_SIZE_BODY)
             .color(theme.text_muted),
         Space::new().height(16),
         button(
             row![
                 icon_with_color(icons::ui::PLUS, 14, iced::Color::WHITE),
-                text("NEW SNIPPET").size(14).color(iced::Color::WHITE),
+                text("NEW SNIPPET").size(FONT_SIZE_BODY).color(iced::Color::WHITE),
             ]
             .spacing(6)
             .align_y(Alignment::Center),
@@ -549,9 +558,11 @@ fn empty_state(theme: Theme) -> Element<'static, Message> {
 fn no_results_state(theme: Theme) -> Element<'static, Message> {
     let content = column![
         icon_with_color(icons::ui::CODE, 48, theme.text_muted),
-        text("No matching snippets").size(18).color(theme.text_primary),
+        text("No matching snippets")
+            .size(FONT_SIZE_HEADING)
+            .color(theme.text_primary),
         text("Try a different search term")
-            .size(14)
+            .size(FONT_SIZE_BODY)
             .color(theme.text_muted),
     ]
     .spacing(8)

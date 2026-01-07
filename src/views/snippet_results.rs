@@ -26,7 +26,10 @@ use crate::app::managers::ExecutionStatus;
 use crate::config::SnippetExecutionEntry;
 use crate::icons::{self, icon_with_color};
 use crate::message::{Message, SnippetMessage};
-use crate::theme::{Theme, RESULTS_PANEL_WIDTH};
+use crate::theme::{
+    FONT_SIZE_BODY, FONT_SIZE_BUTTON_SMALL, FONT_SIZE_LABEL, FONT_SIZE_SECTION, FONT_SIZE_SMALL,
+    RESULTS_PANEL_WIDTH, Theme,
+};
 
 /// Data for displaying a host result (cloned from HostResult)
 struct HostResultData {
@@ -81,7 +84,14 @@ pub fn execution_results_panel(
     // 3. Otherwise show history-only view
     let content = if let Some(entry) = viewed_entry {
         // Viewing historical entry
-        build_history_view(snippet_id, &snippet_name, entry, history_entries, close_btn, theme)
+        build_history_view(
+            snippet_id,
+            &snippet_name,
+            entry,
+            history_entries,
+            close_btn,
+            theme,
+        )
     } else if let Some(results) = host_results {
         // Viewing current execution
         build_current_view(
@@ -158,8 +168,8 @@ fn build_current_view(
 
     let header = row![
         column![
-            text(snippet_name).size(16).color(theme.text_primary),
-            text(status_text).size(13).color(status_color),
+            text(snippet_name).size(FONT_SIZE_SECTION).color(theme.text_primary),
+            text(status_text).size(FONT_SIZE_BUTTON_SMALL).color(status_color),
         ]
         .spacing(4),
         Space::new().width(Length::Fill),
@@ -168,7 +178,7 @@ fn build_current_view(
     .align_y(Alignment::Center);
 
     // Command display
-    let command_display = container(text(command).size(12).color(theme.text_secondary))
+    let command_display = container(text(command).size(FONT_SIZE_LABEL).color(theme.text_secondary))
         .padding(12)
         .width(Fill)
         .style(move |_theme| container::Style {
@@ -199,12 +209,12 @@ fn build_current_view(
         .map(|data| host_result_row(data, snippet_id, theme))
         .collect();
 
-    let results_list =
-        scrollable(Column::with_children(results).spacing(8).width(Fill)).height(Length::Fixed(300.0));
+    let results_list = scrollable(Column::with_children(results).spacing(8).width(Fill))
+        .height(Length::Fixed(300.0));
 
     // Clear button (only if completed)
     let clear_btn = if completed {
-        button(text("Clear Results").size(12).color(theme.text_primary))
+        button(text("Clear Results").size(FONT_SIZE_LABEL).color(theme.text_primary))
             .style(move |_theme, status| {
                 let bg = match status {
                     button::Status::Hovered => theme.hover,
@@ -224,7 +234,7 @@ fn build_current_view(
             .padding([6, 12])
             .on_press(Message::Snippet(SnippetMessage::ClearResults(snippet_id)))
     } else {
-        button(text("Clear Results").size(12).color(theme.text_muted))
+        button(text("Clear Results").size(FONT_SIZE_LABEL).color(theme.text_muted))
             .style(move |_theme, _status| button::Style {
                 background: Some(theme.surface.into()),
                 text_color: theme.text_muted,
@@ -247,7 +257,7 @@ fn build_current_view(
 
         column![
             Space::new().height(16),
-            text("History").size(14).color(theme.text_secondary),
+            text("History").size(FONT_SIZE_BODY).color(theme.text_secondary),
             Space::new().height(8),
             scrollable(Column::with_children(history_items).spacing(4).width(Fill))
                 .height(Length::Fixed(150.0)),
@@ -262,7 +272,7 @@ fn build_current_view(
         Space::new().height(12),
         command_display,
         Space::new().height(16),
-        text("Results").size(14).color(theme.text_secondary),
+        text("Results").size(FONT_SIZE_BODY).color(theme.text_secondary),
         Space::new().height(8),
         results_list,
         Space::new().height(12),
@@ -290,7 +300,10 @@ fn build_history_view(
     } else if entry.success_count == 0 {
         format!("{} failed", entry.failure_count)
     } else {
-        format!("{} succeeded, {} failed", entry.success_count, entry.failure_count)
+        format!(
+            "{} succeeded, {} failed",
+            entry.success_count, entry.failure_count
+        )
     };
 
     let status_color = if entry.failure_count == 0 {
@@ -301,12 +314,15 @@ fn build_history_view(
 
     let header = row![
         column![
-            text(snippet_name).size(16).color(theme.text_primary),
+            text(snippet_name).size(FONT_SIZE_SECTION).color(theme.text_primary),
             row![
-                text(status_text).size(13).color(status_color),
+                text(status_text).size(FONT_SIZE_BUTTON_SMALL).color(status_color),
                 Space::new().width(8),
-                text(format!("• {}", time_ago)).size(13).color(theme.text_muted),
-            ].align_y(Alignment::Center),
+                text(format!("• {}", time_ago))
+                    .size(FONT_SIZE_BUTTON_SMALL)
+                    .color(theme.text_muted),
+            ]
+            .align_y(Alignment::Center),
         ]
         .spacing(4),
         Space::new().width(Length::Fill),
@@ -318,7 +334,7 @@ fn build_history_view(
     let back_btn = button(
         row![
             icon_with_color(icons::ui::CHEVRON_LEFT, 14, theme.text_primary),
-            text("Back to Current").size(12).color(theme.text_primary),
+            text("Back to Current").size(FONT_SIZE_LABEL).color(theme.text_primary),
         ]
         .spacing(4)
         .align_y(Alignment::Center),
@@ -344,7 +360,7 @@ fn build_history_view(
 
     // Command display
     let command = entry.command.clone();
-    let command_display = container(text(command).size(12).color(theme.text_secondary))
+    let command_display = container(text(command).size(FONT_SIZE_LABEL).color(theme.text_secondary))
         .padding(12)
         .width(Fill)
         .style(move |_theme| container::Style {
@@ -363,8 +379,8 @@ fn build_history_view(
         .map(|r| historical_host_result_row(r, theme))
         .collect();
 
-    let results_list =
-        scrollable(Column::with_children(results).spacing(8).width(Fill)).height(Length::Fixed(300.0));
+    let results_list = scrollable(Column::with_children(results).spacing(8).width(Fill))
+        .height(Length::Fixed(300.0));
 
     // History section (for navigation)
     let viewed_id = entry.id;
@@ -375,7 +391,7 @@ fn build_history_view(
 
     let history_section = column![
         Space::new().height(16),
-        text("History").size(14).color(theme.text_secondary),
+        text("History").size(FONT_SIZE_BODY).color(theme.text_secondary),
         Space::new().height(8),
         scrollable(Column::with_children(history_items).spacing(4).width(Fill))
             .height(Length::Fixed(150.0)),
@@ -388,7 +404,7 @@ fn build_history_view(
         Space::new().height(12),
         command_display,
         Space::new().height(16),
-        text("Results").size(14).color(theme.text_secondary),
+        text("Results").size(FONT_SIZE_BODY).color(theme.text_secondary),
         Space::new().height(8),
         results_list,
         history_section,
@@ -408,8 +424,8 @@ fn build_history_only_view(
 
     let header = row![
         column![
-            text(snippet_name).size(16).color(theme.text_primary),
-            text("No recent execution").size(13).color(theme.text_muted),
+            text(snippet_name).size(FONT_SIZE_SECTION).color(theme.text_primary),
+            text("No recent execution").size(FONT_SIZE_BUTTON_SMALL).color(theme.text_muted),
         ]
         .spacing(4),
         Space::new().width(Length::Fill),
@@ -425,23 +441,20 @@ fn build_history_only_view(
 
     let history_section = if !history_items.is_empty() {
         column![
-            text("History").size(14).color(theme.text_secondary),
+            text("History").size(FONT_SIZE_BODY).color(theme.text_secondary),
             Space::new().height(8),
             scrollable(Column::with_children(history_items).spacing(4).width(Fill))
                 .height(Length::Fixed(400.0)),
         ]
     } else {
         column![
-            text("No execution history").size(14).color(theme.text_muted),
+            text("No execution history")
+                .size(FONT_SIZE_BODY)
+                .color(theme.text_muted),
         ]
     };
 
-    column![
-        header,
-        Space::new().height(16),
-        history_section,
-    ]
-    .padding(16)
+    column![header, Space::new().height(16), history_section,].padding(16)
 }
 
 /// Single host result row
@@ -472,7 +485,7 @@ fn host_result_row(
     // Error message if failed
     let error_text: Element<'static, Message> = match &data.status {
         ExecutionStatus::Failed(err) => text(err.clone())
-            .size(11)
+            .size(FONT_SIZE_SMALL)
             .color(iced::Color::from_rgb8(0xd2, 0x0f, 0x39))
             .into(),
         _ => Space::new().into(),
@@ -482,9 +495,9 @@ fn host_result_row(
     let header_row = row![
         icon,
         Space::new().width(8),
-        text(data.host_name).size(14).color(theme.text_primary),
+        text(data.host_name).size(FONT_SIZE_BODY).color(theme.text_primary),
         Space::new().width(Length::Fill),
-        text(duration_text).size(12).color(theme.text_muted),
+        text(duration_text).size(FONT_SIZE_LABEL).color(theme.text_muted),
         Space::new().width(8),
         if data.expanded {
             icon_with_color(icons::ui::CHEVRON_DOWN, 12, theme.text_muted)
@@ -502,7 +515,7 @@ fn host_result_row(
         let output = container(
             scrollable(
                 text(sanitized_output)
-                    .size(12)
+                    .size(FONT_SIZE_LABEL)
                     .font(MONOSPACE_FONT)
                     .color(theme.text_secondary),
             )
@@ -591,9 +604,9 @@ fn history_entry_row(
     let row_content = row![
         icon_with_color(icon, 12, color),
         Space::new().width(6),
-        text(status).size(12).color(color),
+        text(status).size(FONT_SIZE_LABEL).color(color),
         Space::new().width(Length::Fill),
-        text(time_ago).size(11).color(theme.text_muted),
+        text(time_ago).size(FONT_SIZE_SMALL).color(theme.text_muted),
     ]
     .align_y(Alignment::Center);
 
@@ -651,7 +664,7 @@ fn historical_host_result_row(
         column![
             Space::new().height(4),
             text(err.clone())
-                .size(11)
+                .size(FONT_SIZE_SMALL)
                 .color(iced::Color::from_rgb8(0xd2, 0x0f, 0x39)),
         ]
         .into()
@@ -667,7 +680,7 @@ fn historical_host_result_row(
             container(
                 scrollable(
                     text(sanitized_output)
-                        .size(12)
+                        .size(FONT_SIZE_LABEL)
                         .font(MONOSPACE_FONT)
                         .color(theme.text_secondary),
                 )
@@ -698,9 +711,11 @@ fn historical_host_result_row(
     let header_row = row![
         icon,
         Space::new().width(8),
-        text(result.host_name.clone()).size(14).color(theme.text_primary),
+        text(result.host_name.clone())
+            .size(FONT_SIZE_BODY)
+            .color(theme.text_primary),
         Space::new().width(Length::Fill),
-        text(duration_text).size(12).color(theme.text_muted),
+        text(duration_text).size(FONT_SIZE_LABEL).color(theme.text_muted),
     ]
     .align_y(Alignment::Center);
 

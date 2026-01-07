@@ -4,7 +4,7 @@
 //! in-flight operations and storing results per host.
 
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use uuid::Uuid;
 
 /// Status of command execution on a single host
@@ -40,7 +40,6 @@ pub struct SnippetExecution {
     pub snippet_id: Uuid,
     pub snippet_name: String,
     pub command: String,
-    pub started_at: Instant,
     pub host_results: Vec<HostResult>,
     pub completed: bool,
 }
@@ -71,7 +70,6 @@ impl SnippetExecution {
             snippet_id,
             snippet_name,
             command,
-            started_at: Instant::now(),
             host_results,
             completed: false,
         }
@@ -178,11 +176,6 @@ impl SnippetExecutionManager {
     /// Clear results for a snippet
     pub fn clear_results(&mut self, snippet_id: Uuid) {
         self.last_result.remove(&snippet_id);
-    }
-
-    /// Check if any snippet has an active or recent execution
-    pub fn has_any_results(&self) -> bool {
-        !self.active.is_empty() || !self.last_result.is_empty()
     }
 }
 

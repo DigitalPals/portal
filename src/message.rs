@@ -231,8 +231,6 @@ pub enum SnippetMessage {
     Edit(Uuid),
     /// Delete a snippet
     Delete(Uuid),
-    /// Insert snippet into terminal (legacy modal behavior)
-    Insert(Uuid),
     /// Snippet field changed
     FieldChanged(SnippetField, String),
     /// Cancel snippet edit
@@ -257,7 +255,6 @@ pub enum SnippetMessage {
     HostResult {
         snippet_id: Uuid,
         host_id: Uuid,
-        host_name: String,
         result: Result<HostExecutionResult, String>,
         duration_ms: u64,
     },

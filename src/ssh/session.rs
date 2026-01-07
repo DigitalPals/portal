@@ -9,6 +9,14 @@ use tokio::time::timeout;
 use crate::error::SshError;
 
 use super::SshEvent;
+
+/// Result of executing a command, including output and exit code
+#[derive(Debug, Clone)]
+pub struct CommandResult {
+    pub stdout: String,
+    pub stderr: String,
+    pub exit_code: i32,
+}
 use super::handler::ClientHandler;
 
 /// Commands that can be sent to the channel task
@@ -186,6 +194,69 @@ impl SshSession {
             Err(_) => Err(SshError::Channel(format!(
                 "Command '{}' timed out",
                 command
+            ))),
+        }
+    }
+
+    /// Execute a command and return full result including exit code
+    /// This method captures stdout, stderr, and the exit code
+    pub async fn execute_command_full(
+        &self,
+        command: &str,
+        timeout_secs: u64,
+    ) -> Result<CommandResult, SshError> {
+        let timeout_result = timeout(Duration::from_secs(timeout_secs), async {
+            let handle = self.handle.lock().await;
+            let mut channel = handle
+                .channel_open_session()
+                .await
+                .map_err(|e| SshError::Channel(format!("Failed to open channel: {}", e)))?;
+            drop(handle);
+
+            channel
+                .exec(true, command)
+                .await
+                .map_err(|e| SshError::Channel(format!("Failed to exec '{}': {}", command, e)))?;
+
+            let mut stdout = String::new();
+            let mut stderr = String::new();
+            let mut exit_code: i32 = 0;
+
+            loop {
+                match channel.wait().await {
+                    Some(ChannelMsg::Data { data }) => {
+                        if let Ok(s) = std::str::from_utf8(&data) {
+                            stdout.push_str(s);
+                        }
+                    }
+                    Some(ChannelMsg::ExtendedData { data, .. }) => {
+                        if let Ok(s) = std::str::from_utf8(&data) {
+                            stderr.push_str(s);
+                        }
+                    }
+                    Some(ChannelMsg::ExitStatus { exit_status }) => {
+                        exit_code = exit_status as i32;
+                    }
+                    Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => {
+                        break;
+                    }
+                    Some(_) => {}
+                }
+            }
+
+            Ok(CommandResult {
+                stdout,
+                stderr,
+                exit_code,
+            })
+        })
+        .await;
+
+        match timeout_result {
+            Ok(result) => result,
+            Err(_) => Err(SshError::Channel(format!(
+                "Command '{}' timed out after {} seconds",
+                command, timeout_secs
             ))),
         }
     }

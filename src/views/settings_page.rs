@@ -7,7 +7,10 @@ use iced::{Alignment, Element, Fill, Length};
 
 use crate::fonts::TerminalFont;
 use crate::message::{Message, UiMessage};
-use crate::theme::{BORDER_RADIUS, CARD_BORDER_RADIUS, Theme, ThemeId, get_theme};
+use crate::theme::{
+    BORDER_RADIUS, CARD_BORDER_RADIUS, FONT_SIZE_BODY, FONT_SIZE_LABEL, FONT_SIZE_PAGE_TITLE,
+    FONT_SIZE_SMALL, Theme, ThemeId, get_theme,
+};
 
 /// Build the settings page view
 pub fn settings_page_view(
@@ -16,7 +19,7 @@ pub fn settings_page_view(
     terminal_font: TerminalFont,
     theme: Theme,
 ) -> Element<'static, Message> {
-    let header = text("Settings").size(28).color(theme.text_primary);
+    let header = text("Settings").size(FONT_SIZE_PAGE_TITLE).color(theme.text_primary);
 
     // === Appearance Section ===
     let appearance_section = settings_section(
@@ -66,7 +69,7 @@ fn settings_section<'a>(
     let mut section = Column::new().spacing(8);
 
     // Section title
-    section = section.push(text(title).size(12).color(theme.text_muted));
+    section = section.push(text(title).size(FONT_SIZE_LABEL).color(theme.text_muted));
 
     // Section card with items
     let mut card_content = Column::new().spacing(16).padding(20);
@@ -127,7 +130,7 @@ fn theme_tile(
         ThemeId::CatppuccinMocha => "Mocha",
     };
 
-    let name = text(short_name).size(11).color(if is_selected {
+    let name = text(short_name).size(FONT_SIZE_SMALL).color(if is_selected {
         current_theme.accent
     } else {
         current_theme.text_secondary
@@ -230,10 +233,10 @@ fn mini_app_preview(preview_theme: Theme) -> Element<'static, Message> {
 
 /// Font selector with tile previews
 fn font_selector_setting(current_font: TerminalFont, theme: Theme) -> Element<'static, Message> {
-    let label = text("Font").size(14).color(theme.text_primary);
+    let label = text("Font").size(FONT_SIZE_BODY).color(theme.text_primary);
 
     let description = text("Terminal font family")
-        .size(12)
+        .size(FONT_SIZE_LABEL)
         .color(theme.text_muted);
 
     // Create font tiles
@@ -265,7 +268,7 @@ fn font_tile(font: TerminalFont, is_selected: bool, theme: Theme) -> Element<'st
         .font(iced_font)
         .color(theme.text_primary);
 
-    let name = text(font.display_name()).size(11).color(if is_selected {
+    let name = text(font.display_name()).size(FONT_SIZE_SMALL).color(if is_selected {
         theme.accent
     } else {
         theme.text_secondary
@@ -302,9 +305,9 @@ fn font_tile(font: TerminalFont, is_selected: bool, theme: Theme) -> Element<'st
 
 /// Font size slider setting
 fn font_size_setting(current_size: f32, theme: Theme) -> Element<'static, Message> {
-    let label = text("Font Size").size(14).color(theme.text_primary);
+    let label = text("Font Size").size(FONT_SIZE_BODY).color(theme.text_primary);
 
-    let description = text("Terminal text size").size(12).color(theme.text_muted);
+    let description = text("Terminal text size").size(FONT_SIZE_LABEL).color(theme.text_muted);
 
     let slider_widget = slider(6.0..=20.0, current_size, |v| {
         Message::Ui(UiMessage::FontSizeChange(v))
@@ -313,7 +316,7 @@ fn font_size_setting(current_size: f32, theme: Theme) -> Element<'static, Messag
     .width(140);
 
     let value_text = text(format!("{}px", current_size as u32))
-        .size(14)
+        .size(FONT_SIZE_BODY)
         .color(theme.text_secondary);
 
     column![

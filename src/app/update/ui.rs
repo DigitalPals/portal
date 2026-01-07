@@ -11,7 +11,6 @@ use crate::message::{
 };
 use crate::ssh::host_key_verification::HostKeyVerificationResponse;
 use crate::views::dialogs::host_dialog::host_dialog_field_id;
-use crate::views::dialogs::snippets_dialog::SnippetsDialogState;
 use crate::views::sftp::PaneId;
 use crate::views::toast::Toast;
 
@@ -76,18 +75,13 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
                     portal.active_view = View::Settings;
                 }
                 SidebarMenuItem::Snippets => {
-                    let has_terminal = portal
-                        .active_tab
-                        .is_some_and(|id| portal.sessions.contains(id));
-                    tracing::debug!(
-                        "Opening snippets dialog: active_tab={:?}, has_terminal={}",
-                        portal.active_tab,
-                        has_terminal
-                    );
-                    portal.dialogs.open_snippets(SnippetsDialogState::new(
-                        portal.snippets_config.snippets.clone(),
-                        has_terminal,
-                    ));
+                    // Navigate to snippets page
+                    portal.active_view = View::Snippets;
+                    portal.snippet_editing = None;
+                    // Restore sidebar state if returning from terminal
+                    if let Some(saved_state) = portal.sidebar_state_before_session.take() {
+                        portal.sidebar_state = saved_state;
+                    }
                 }
                 SidebarMenuItem::About => {
                     portal.dialogs.open_about();
@@ -445,6 +439,13 @@ fn handle_content_keyboard(
         View::DualSftp(tab_id) => handle_sftp_keyboard(portal, *tab_id, key, modifiers),
         View::FileViewer(_) => {
             // File viewer keyboard - arrow left goes back to sidebar
+            if let Key::Named(keyboard::key::Named::ArrowLeft) = key {
+                portal.focus_section = FocusSection::Sidebar;
+            }
+            Task::none()
+        }
+        View::Snippets => {
+            // Snippets page - arrow left goes back to sidebar
             if let Key::Named(keyboard::key::Named::ArrowLeft) = key {
                 portal.focus_section = FocusSection::Sidebar;
             }

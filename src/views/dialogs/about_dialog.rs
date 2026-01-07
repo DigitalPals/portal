@@ -4,7 +4,10 @@ use iced::widget::{Column, Space, button, column, container, row, scrollable, te
 use iced::{Alignment, Element, Font, Length};
 
 use crate::message::{DialogMessage, Message};
-use crate::theme::Theme;
+use crate::theme::{
+    FONT_SIZE_BODY, FONT_SIZE_BUTTON_SMALL, FONT_SIZE_LABEL, FONT_SIZE_MONO_TINY, FONT_SIZE_SECTION,
+    Theme,
+};
 
 use super::common::{dialog_backdrop, secondary_button_style};
 
@@ -38,46 +41,46 @@ pub fn about_dialog_view(_state: &AboutDialogState, theme: Theme) -> Element<'st
     let full_logo = format!("{}\n{}", PORTAL_LOGO_TOP, PORTAL_LOGO_LAST_LINE);
 
     let logo_text = text(full_logo)
-        .size(10)
+        .size(FONT_SIZE_MONO_TINY)
         .color(theme.text_secondary)
         .font(Font::MONOSPACE);
 
     let version_text = text(format!("Version {}", version))
-        .size(16)
+        .size(FONT_SIZE_SECTION)
         .color(theme.text_primary);
 
     let tagline = text("A modern, fast SSH client for macOS and Linux")
-        .size(14)
+        .size(FONT_SIZE_BODY)
         .color(theme.text_secondary);
 
     // Author section
     let author_text = text("Created by John Pals")
-        .size(13)
+        .size(FONT_SIZE_BUTTON_SMALL)
         .color(theme.text_secondary);
 
     let location_text = text("from the Netherlands")
-        .size(12)
+        .size(FONT_SIZE_LABEL)
         .color(theme.text_muted);
 
     // Vibe coded note
     let vibe_text = row![
         text("Proudly vibe coded with ")
-            .size(12)
+            .size(FONT_SIZE_LABEL)
             .color(theme.text_muted),
-        text("Claude Code").size(12).color(theme.accent),
-        text(" & ").size(12).color(theme.text_muted),
-        text("Codex CLI").size(12).color(theme.accent),
+        text("Claude Code").size(FONT_SIZE_LABEL).color(theme.accent),
+        text(" & ").size(FONT_SIZE_LABEL).color(theme.text_muted),
+        text("Codex CLI").size(FONT_SIZE_LABEL).color(theme.accent),
     ];
 
     let time_text = row![
         text("in less than two days ")
-            .size(12)
+            .size(FONT_SIZE_LABEL)
             .color(theme.text_muted),
-        text("\u{1F92F}").size(14), // Mind blown emoji
+        text("\u{1F92F}").size(FONT_SIZE_BODY), // Mind blown emoji
     ];
 
     // Credits section
-    let credits_title = text("Built with").size(14).color(theme.text_primary);
+    let credits_title = text("Built with").size(FONT_SIZE_BODY).color(theme.text_primary);
 
     let credits_list = vec![
         ("Iced", "Cross-platform GUI framework"),
@@ -90,9 +93,9 @@ pub fn about_dialog_view(_state: &AboutDialogState, theme: Theme) -> Element<'st
         .into_iter()
         .map(|(name, desc)| {
             row![
-                text(name).size(13).color(theme.accent),
-                text(" - ").size(13).color(theme.text_muted),
-                text(desc).size(13).color(theme.text_secondary),
+                text(name).size(FONT_SIZE_BUTTON_SMALL).color(theme.accent),
+                text(" - ").size(FONT_SIZE_BUTTON_SMALL).color(theme.text_muted),
+                text(desc).size(FONT_SIZE_BUTTON_SMALL).color(theme.text_secondary),
             ]
             .into()
         })
@@ -101,7 +104,7 @@ pub fn about_dialog_view(_state: &AboutDialogState, theme: Theme) -> Element<'st
     let credits_column = Column::with_children(credits_items).spacing(6);
 
     // Close button
-    let close_btn = button(text("Close").size(14).color(theme.text_primary))
+    let close_btn = button(text("Close").size(FONT_SIZE_BODY).color(theme.text_primary))
         .style(secondary_button_style(theme))
         .padding([8, 20])
         .on_press(Message::Dialog(DialogMessage::Close));

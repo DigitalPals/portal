@@ -12,7 +12,9 @@ use uuid::Uuid;
 use crate::app::SnippetEditState;
 use crate::icons::{self, icon_with_color};
 use crate::message::{Message, SnippetField, SnippetMessage};
-use crate::theme::{BORDER_RADIUS, Theme};
+use crate::theme::{
+    BORDER_RADIUS, FONT_SIZE_BODY, FONT_SIZE_DIALOG_TITLE, FONT_SIZE_LABEL, Theme,
+};
 
 /// Build the snippet edit form (full-page, replacing grid)
 pub fn snippet_edit_view(
@@ -28,13 +30,13 @@ pub fn snippet_edit_view(
 
     let title_row = row![
         icon_with_color(icons::ui::CODE, 24, theme.accent),
-        text(title).size(24).color(theme.text_primary),
+        text(title).size(FONT_SIZE_DIALOG_TITLE + 4.0).color(theme.text_primary),
     ]
     .spacing(12)
     .align_y(Alignment::Center);
 
     // Name input
-    let name_label = text("Name").size(14).color(theme.text_secondary);
+    let name_label = text("Name").size(FONT_SIZE_BODY).color(theme.text_secondary);
     let name_value = state.name.clone();
     let name_input = text_input("e.g., Update System", &name_value)
         .on_input(|s| Message::Snippet(SnippetMessage::FieldChanged(SnippetField::Name, s)))
@@ -61,65 +63,71 @@ pub fn snippet_edit_view(
         });
 
     // Command input
-    let command_label = text("Command").size(14).color(theme.text_secondary);
+    let command_label = text("Command").size(FONT_SIZE_BODY).color(theme.text_secondary);
     let command_value = state.command.clone();
-    let command_input = text_input("e.g., sudo apt update && sudo apt upgrade -y", &command_value)
-        .on_input(|s| Message::Snippet(SnippetMessage::FieldChanged(SnippetField::Command, s)))
-        .padding(12)
-        .width(Length::Fill)
-        .style(move |_theme, status| {
-            use iced::widget::text_input::{Status, Style};
-            let border_color = match status {
-                Status::Focused { .. } => theme.accent,
-                _ => theme.border,
-            };
-            Style {
-                background: theme.surface.into(),
-                border: iced::Border {
-                    color: border_color,
-                    width: 1.0,
-                    radius: 8.0.into(),
-                },
-                icon: theme.text_muted,
-                placeholder: theme.text_muted,
-                value: theme.text_primary,
-                selection: theme.selected,
-            }
-        });
+    let command_input = text_input(
+        "e.g., sudo apt update && sudo apt upgrade -y",
+        &command_value,
+    )
+    .on_input(|s| Message::Snippet(SnippetMessage::FieldChanged(SnippetField::Command, s)))
+    .padding(12)
+    .width(Length::Fill)
+    .style(move |_theme, status| {
+        use iced::widget::text_input::{Status, Style};
+        let border_color = match status {
+            Status::Focused { .. } => theme.accent,
+            _ => theme.border,
+        };
+        Style {
+            background: theme.surface.into(),
+            border: iced::Border {
+                color: border_color,
+                width: 1.0,
+                radius: 8.0.into(),
+            },
+            icon: theme.text_muted,
+            placeholder: theme.text_muted,
+            value: theme.text_primary,
+            selection: theme.selected,
+        }
+    });
 
     // Description input (optional)
     let description_label = text("Description (optional)")
-        .size(14)
+        .size(FONT_SIZE_BODY)
         .color(theme.text_secondary);
     let description_value = state.description.clone();
-    let description_input = text_input("Optional description of what this command does", &description_value)
-        .on_input(|s| Message::Snippet(SnippetMessage::FieldChanged(SnippetField::Description, s)))
-        .padding(12)
-        .width(Length::Fill)
-        .style(move |_theme, status| {
-            use iced::widget::text_input::{Status, Style};
-            let border_color = match status {
-                Status::Focused { .. } => theme.accent,
-                _ => theme.border,
-            };
-            Style {
-                background: theme.surface.into(),
-                border: iced::Border {
-                    color: border_color,
-                    width: 1.0,
-                    radius: 8.0.into(),
-                },
-                icon: theme.text_muted,
-                placeholder: theme.text_muted,
-                value: theme.text_primary,
-                selection: theme.selected,
-            }
-        });
+    let description_input = text_input(
+        "Optional description of what this command does",
+        &description_value,
+    )
+    .on_input(|s| Message::Snippet(SnippetMessage::FieldChanged(SnippetField::Description, s)))
+    .padding(12)
+    .width(Length::Fill)
+    .style(move |_theme, status| {
+        use iced::widget::text_input::{Status, Style};
+        let border_color = match status {
+            Status::Focused { .. } => theme.accent,
+            _ => theme.border,
+        };
+        Style {
+            background: theme.surface.into(),
+            border: iced::Border {
+                color: border_color,
+                width: 1.0,
+                radius: 8.0.into(),
+            },
+            icon: theme.text_muted,
+            placeholder: theme.text_muted,
+            value: theme.text_primary,
+            selection: theme.selected,
+        }
+    });
 
     // Host selection section
-    let hosts_label = text("Target Hosts").size(14).color(theme.text_secondary);
+    let hosts_label = text("Target Hosts").size(FONT_SIZE_BODY).color(theme.text_secondary);
     let hosts_help = text("Select which hosts to run this command on")
-        .size(12)
+        .size(FONT_SIZE_LABEL)
         .color(theme.text_muted);
 
     let selected_hosts = state.selected_hosts.clone();
@@ -131,7 +139,9 @@ pub fn snippet_edit_view(
 
             Checkbox::new(is_selected)
                 .label(host_name.clone())
-                .on_toggle(move |checked| Message::Snippet(SnippetMessage::ToggleHost(hid, checked)))
+                .on_toggle(move |checked| {
+                    Message::Snippet(SnippetMessage::ToggleHost(hid, checked))
+                })
                 .text_size(14)
                 .size(18)
                 .spacing(10)
@@ -167,11 +177,9 @@ pub fn snippet_edit_view(
     let hosts_list: Element<'static, Message> = if host_checkboxes.is_empty() {
         container(
             column![
-                text("No hosts configured")
-                    .size(14)
-                    .color(theme.text_muted),
+                text("No hosts configured").size(FONT_SIZE_BODY).color(theme.text_muted),
                 text("Add hosts from the Hosts page first")
-                    .size(12)
+                    .size(FONT_SIZE_LABEL)
                     .color(theme.text_muted),
             ]
             .spacing(4),
@@ -190,8 +198,12 @@ pub fn snippet_edit_view(
         .into()
     } else {
         container(
-            scrollable(Column::with_children(host_checkboxes).spacing(12).padding(4))
-                .height(Length::Fixed(200.0)),
+            scrollable(
+                Column::with_children(host_checkboxes)
+                    .spacing(12)
+                    .padding(4),
+            )
+            .height(Length::Fixed(200.0)),
         )
         .padding(12)
         .width(Fill)
@@ -210,7 +222,7 @@ pub fn snippet_edit_view(
     // Action buttons
     let is_valid = state.is_valid();
 
-    let cancel_btn = button(text("Cancel").size(14).color(theme.text_primary))
+    let cancel_btn = button(text("Cancel").size(FONT_SIZE_BODY).color(theme.text_primary))
         .style(move |_theme, status| {
             let bg = match status {
                 button::Status::Hovered => theme.hover,
@@ -231,7 +243,7 @@ pub fn snippet_edit_view(
         .on_press(Message::Snippet(SnippetMessage::EditCancel));
 
     let save_btn = if is_valid {
-        button(text("Save").size(14).color(iced::Color::WHITE))
+        button(text("Save").size(FONT_SIZE_BODY).color(iced::Color::WHITE))
             .style(move |_theme, status| {
                 let bg = match status {
                     button::Status::Hovered => iced::Color::from_rgb8(0x00, 0x8B, 0xE8),
@@ -250,7 +262,7 @@ pub fn snippet_edit_view(
             .padding([10, 20])
             .on_press(Message::Snippet(SnippetMessage::Save))
     } else {
-        button(text("Save").size(14).color(theme.text_muted))
+        button(text("Save").size(FONT_SIZE_BODY).color(theme.text_muted))
             .style(move |_theme, _status| button::Style {
                 background: Some(theme.surface.into()),
                 text_color: theme.text_muted,
@@ -266,26 +278,30 @@ pub fn snippet_edit_view(
 
     // Delete button (only for existing snippets)
     let delete_btn: Element<'static, Message> = if let Some(sid) = state.snippet_id {
-        button(text("Delete").size(14).color(iced::Color::from_rgb8(0xd2, 0x0f, 0x39)))
-            .style(move |_theme, status| {
-                let bg = match status {
-                    button::Status::Hovered => iced::Color::from_rgba8(0xd2, 0x0f, 0x39, 0.13),
-                    _ => iced::Color::TRANSPARENT,
-                };
-                button::Style {
-                    background: Some(bg.into()),
-                    text_color: iced::Color::from_rgb8(0xd2, 0x0f, 0x39),
-                    border: iced::Border {
-                        color: iced::Color::from_rgb8(0xd2, 0x0f, 0x39),
-                        width: 1.0,
-                        radius: BORDER_RADIUS.into(),
-                    },
-                    ..Default::default()
-                }
-            })
-            .padding([10, 20])
-            .on_press(Message::Snippet(SnippetMessage::Delete(sid)))
-            .into()
+        button(
+            text("Delete")
+                .size(FONT_SIZE_BODY)
+                .color(iced::Color::from_rgb8(0xd2, 0x0f, 0x39)),
+        )
+        .style(move |_theme, status| {
+            let bg = match status {
+                button::Status::Hovered => iced::Color::from_rgba8(0xd2, 0x0f, 0x39, 0.13),
+                _ => iced::Color::TRANSPARENT,
+            };
+            button::Style {
+                background: Some(bg.into()),
+                text_color: iced::Color::from_rgb8(0xd2, 0x0f, 0x39),
+                border: iced::Border {
+                    color: iced::Color::from_rgb8(0xd2, 0x0f, 0x39),
+                    width: 1.0,
+                    radius: BORDER_RADIUS.into(),
+                },
+                ..Default::default()
+            }
+        })
+        .padding([10, 20])
+        .on_press(Message::Snippet(SnippetMessage::Delete(sid)))
+        .into()
     } else {
         Space::new().into()
     };

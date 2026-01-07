@@ -27,9 +27,16 @@ pub struct SshClient {
 
 impl SshClient {
     pub fn new(_connection_timeout: u64, keepalive_interval: u64) -> Self {
+        // Treat 0 as "no keepalive" to avoid immediate timeout
+        let keepalive = if keepalive_interval == 0 {
+            None
+        } else {
+            Some(Duration::from_secs(keepalive_interval))
+        };
+
         let config = Config {
             inactivity_timeout: Some(Duration::from_secs(3600)),
-            keepalive_interval: Some(Duration::from_secs(keepalive_interval)),
+            keepalive_interval: keepalive,
             keepalive_max: 3,
             ..Default::default()
         };
@@ -44,9 +51,16 @@ impl SshClient {
         keepalive_interval: u64,
         known_hosts: Arc<Mutex<KnownHostsManager>>,
     ) -> Self {
+        // Treat 0 as "no keepalive" to avoid immediate timeout
+        let keepalive = if keepalive_interval == 0 {
+            None
+        } else {
+            Some(Duration::from_secs(keepalive_interval))
+        };
+
         let config = Config {
             inactivity_timeout: Some(Duration::from_secs(3600)),
-            keepalive_interval: Some(Duration::from_secs(keepalive_interval)),
+            keepalive_interval: keepalive,
             keepalive_max: 3,
             ..Default::default()
         };

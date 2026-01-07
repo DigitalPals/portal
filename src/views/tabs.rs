@@ -8,7 +8,7 @@ use crate::app::{FocusSection, SidebarState, View};
 use crate::config::HostsConfig;
 use crate::icons::{self, icon_with_color};
 use crate::message::{Message, TabMessage, UiMessage};
-use crate::theme::Theme;
+use crate::theme::{FONT_SIZE_BODY, Theme};
 use crate::views::host_grid::os_icon_data;
 
 /// Represents a single tab
@@ -228,7 +228,7 @@ fn tab_button<'a>(
 
     let content = row![
         icon,
-        text(title).size(14).color(text_icon_color),
+        text(title).size(FONT_SIZE_BODY).color(text_icon_color),
         close_button,
     ]
     .spacing(6)
