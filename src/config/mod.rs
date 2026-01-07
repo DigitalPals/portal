@@ -2,6 +2,7 @@ pub mod history;
 pub mod hosts;
 pub mod paths;
 pub mod settings;
+pub mod snippet_history;
 pub mod snippets;
 
 use std::io::Write;
@@ -12,6 +13,7 @@ pub use history::{HistoryConfig, HistoryEntry, SessionType};
 #[allow(unused_imports)]
 pub use hosts::{AuthMethod, DetectedOs, Host, HostsConfig};
 pub use settings::SettingsConfig;
+pub use snippet_history::{HistoricalHostResult, SnippetExecutionEntry, SnippetHistoryConfig};
 pub use snippets::{Snippet, SnippetsConfig};
 
 pub fn write_atomic(path: &Path, content: &str) -> std::io::Result<()> {

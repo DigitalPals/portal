@@ -38,6 +38,11 @@ pub fn settings_file() -> Option<PathBuf> {
     config_dir().map(|dir| dir.join("settings.toml"))
 }
 
+/// Get the path to the snippet execution history file
+pub fn snippet_history_file() -> Option<PathBuf> {
+    config_dir().map(|dir| dir.join("snippet_history.toml"))
+}
+
 /// Ensure the config directory exists
 pub fn ensure_config_dir() -> std::io::Result<PathBuf> {
     let dir = config_dir().ok_or_else(|| {

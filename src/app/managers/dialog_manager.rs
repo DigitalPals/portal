@@ -6,7 +6,6 @@
 use crate::views::dialogs::about_dialog::AboutDialogState;
 use crate::views::dialogs::host_dialog::HostDialogState;
 use crate::views::dialogs::host_key_dialog::HostKeyDialogState;
-use crate::views::dialogs::snippets_dialog::SnippetsDialogState;
 
 /// The currently active dialog, if any
 #[derive(Default)]
@@ -16,8 +15,6 @@ pub enum ActiveDialog {
     None,
     /// Host add/edit dialog
     Host(HostDialogState),
-    /// Snippets management dialog
-    Snippets(SnippetsDialogState),
     /// SSH host key verification dialog
     HostKey(HostKeyDialogState),
     /// About dialog
@@ -76,21 +73,6 @@ impl DialogManager {
     pub fn host_mut(&mut self) -> Option<&mut HostDialogState> {
         match &mut self.active {
             ActiveDialog::Host(state) => Some(state),
-            _ => None,
-        }
-    }
-
-    // ---- Snippets dialog operations ----
-
-    /// Open the snippets dialog with the given state
-    pub fn open_snippets(&mut self, state: SnippetsDialogState) {
-        self.active = ActiveDialog::Snippets(state);
-    }
-
-    /// Get mutable snippets dialog state if it's the active dialog
-    pub fn snippets_mut(&mut self) -> Option<&mut SnippetsDialogState> {
-        match &mut self.active {
-            ActiveDialog::Snippets(state) => Some(state),
             _ => None,
         }
     }

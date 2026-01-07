@@ -11,18 +11,18 @@ use uuid::Uuid;
 
 use iced::keyboard;
 
-use crate::config::{HistoryConfig, HostsConfig, SettingsConfig, SnippetsConfig};
+use crate::config::{HistoryConfig, HostsConfig, SettingsConfig, SnippetHistoryConfig, SnippetsConfig};
 use crate::message::{Message, SessionId, SessionMessage, SidebarMenuItem, UiMessage};
 use crate::theme::{ThemeId, get_theme};
 use crate::views::dialogs::about_dialog::about_dialog_view;
 use crate::views::dialogs::host_dialog::host_dialog_view;
 use crate::views::dialogs::host_key_dialog::host_key_dialog_view;
-use crate::views::dialogs::snippets_dialog::snippets_dialog_view;
 use crate::views::file_viewer::file_viewer_view;
 use crate::views::history_view::history_view;
 use crate::views::host_grid::{calculate_columns, host_grid_view, search_input_id};
 use crate::views::settings_page::settings_page_view;
 use crate::views::sftp::{dual_pane_sftp_view, sftp_context_menu_overlay};
+use crate::views::snippet_grid::snippet_page_view;
 use crate::views::sidebar::sidebar_view;
 use crate::views::tabs::{Tab, tab_bar_view};
 use crate::views::terminal_view::terminal_view_with_status;
@@ -30,7 +30,10 @@ use crate::views::toast::{ToastManager, toast_overlay_view};
 
 #[allow(unused_imports)]
 pub use self::managers::ActiveSession;
-use self::managers::{ActiveDialog, DialogManager, FileViewerManager, SessionManager, SftpManager};
+use self::managers::{
+    ActiveDialog, DialogManager, FileViewerManager, SessionManager, SftpManager,
+    SnippetExecutionManager,
+};
 use self::view_model::{filter_group_cards, filter_host_cards, group_cards, host_cards};
 
 /// Threshold for auto-collapsing sidebar (in pixels)
@@ -45,6 +48,7 @@ pub enum View {
     DualSftp(SessionId),   // Dual-pane SFTP browser
     FileViewer(SessionId), // In-app file viewer
     Settings,              // Full-page settings view
+    Snippets,              // Snippets page with execution
 }
 
 /// Major UI sections that can receive keyboard focus
@@ -73,6 +77,56 @@ impl SidebarState {
             SidebarState::IconsOnly => SidebarState::Expanded,
             SidebarState::Expanded => SidebarState::Hidden,
         }
+    }
+}
+
+/// State for editing a snippet (name, command, description, selected hosts)
+#[derive(Debug, Clone)]
+pub struct SnippetEditState {
+    /// ID of snippet being edited (None = creating new)
+    pub snippet_id: Option<Uuid>,
+    /// Snippet name
+    pub name: String,
+    /// Command to execute
+    pub command: String,
+    /// Optional description
+    pub description: String,
+    /// Selected host IDs for execution
+    pub selected_hosts: std::collections::HashSet<Uuid>,
+}
+
+impl SnippetEditState {
+    /// Create a new empty edit state (for creating a new snippet)
+    pub fn new() -> Self {
+        Self {
+            snippet_id: None,
+            name: String::new(),
+            command: String::new(),
+            description: String::new(),
+            selected_hosts: std::collections::HashSet::new(),
+        }
+    }
+
+    /// Create edit state from an existing snippet
+    pub fn from_snippet(snippet: &crate::config::Snippet) -> Self {
+        Self {
+            snippet_id: Some(snippet.id),
+            name: snippet.name.clone(),
+            command: snippet.command.clone(),
+            description: snippet.description.clone().unwrap_or_default(),
+            selected_hosts: snippet.host_ids.iter().copied().collect(),
+        }
+    }
+
+    /// Check if the form has valid required fields
+    pub fn is_valid(&self) -> bool {
+        !self.name.trim().is_empty() && !self.command.trim().is_empty()
+    }
+}
+
+impl Default for SnippetEditState {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -110,6 +164,7 @@ pub struct Portal {
     hosts_config: HostsConfig,
     snippets_config: SnippetsConfig,
     history_config: HistoryConfig,
+    snippet_history: SnippetHistoryConfig,
 
     // Toast notifications
     toast_manager: ToastManager,
@@ -125,6 +180,15 @@ pub struct Portal {
     host_grid_focus_index: Option<usize>,
     history_focus_index: Option<usize>,
     terminal_captured: bool,
+
+    // Snippets page state
+    snippet_executions: SnippetExecutionManager,
+    snippet_search_query: String,
+    snippet_editing: Option<SnippetEditState>,
+    hovered_snippet: Option<Uuid>,
+    selected_snippet: Option<Uuid>,
+    /// Currently viewed history entry (None = show current execution)
+    viewed_history_entry: Option<Uuid>,
 }
 
 impl Portal {
@@ -169,6 +233,21 @@ impl Portal {
             }
         };
 
+        // Load snippet execution history from config file
+        let snippet_history = match SnippetHistoryConfig::load() {
+            Ok(config) => {
+                tracing::info!(
+                    "Loaded {} snippet execution history entries",
+                    config.entries.len()
+                );
+                config
+            }
+            Err(e) => {
+                tracing::warn!("Failed to load snippet history: {}, using empty", e);
+                SnippetHistoryConfig::default()
+            }
+        };
+
         // Load settings from config file
         let settings_config = match SettingsConfig::load() {
             Ok(config) => {
@@ -205,6 +284,7 @@ impl Portal {
             hosts_config,
             snippets_config,
             history_config,
+            snippet_history,
             toast_manager: ToastManager::new(),
             window_size: iced::Size::new(1200.0, 800.0),
             sidebar_manually_set: false,
@@ -215,6 +295,14 @@ impl Portal {
             host_grid_focus_index: None,
             history_focus_index: None,
             terminal_captured: false,
+
+            // Snippets page state
+            snippet_executions: SnippetExecutionManager::new(),
+            snippet_search_query: String::new(),
+            snippet_editing: None,
+            hovered_snippet: None,
+            selected_snippet: None,
+            viewed_history_entry: None,
         };
 
         // Focus the search input on startup
@@ -317,6 +405,45 @@ impl Portal {
                     text("File viewer not found").into()
                 }
             }
+            View::Snippets => {
+                // Check if results panel will be visible
+                let results_panel_visible = self
+                    .selected_snippet
+                    .map(|id| {
+                        self.snippet_executions.get_active(id).is_some()
+                            || self.snippet_executions.get_last_result(id).is_some()
+                    })
+                    .unwrap_or(false);
+
+                // Calculate responsive column count for snippet grid
+                let column_count = crate::views::snippet_grid::calculate_columns(
+                    self.window_size.width,
+                    self.sidebar_state,
+                    results_panel_visible,
+                );
+
+                // Collect available hosts for the edit form
+                let hosts: Vec<_> = self
+                    .hosts_config
+                    .hosts
+                    .iter()
+                    .map(|h| (h.id, h.name.clone()))
+                    .collect();
+
+                snippet_page_view(
+                    &self.snippets_config.snippets,
+                    &self.snippet_search_query,
+                    self.snippet_editing.as_ref(),
+                    &hosts,
+                    &self.snippet_executions,
+                    &self.snippet_history,
+                    column_count,
+                    theme,
+                    self.hovered_snippet,
+                    self.selected_snippet,
+                    self.viewed_history_entry,
+                )
+            }
             View::HostGrid => {
                 // Calculate responsive column count
                 let column_count = calculate_columns(self.window_size.width, self.sidebar_state);
@@ -390,10 +517,6 @@ impl Portal {
             }
             ActiveDialog::Host(dialog_state) => {
                 let dialog = host_dialog_view(dialog_state, theme);
-                stack![main_layout, dialog].into()
-            }
-            ActiveDialog::Snippets(snippets_state) => {
-                let dialog = snippets_dialog_view(snippets_state, theme);
                 stack![main_layout, dialog].into()
             }
             ActiveDialog::About(about_state) => {

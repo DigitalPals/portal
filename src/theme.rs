@@ -341,3 +341,6 @@ pub const GRID_SPACING: f32 = 16.0;
 
 /// Grid horizontal padding (left + right)
 pub const GRID_PADDING: f32 = 48.0;
+
+/// Width of the snippet results panel
+pub const RESULTS_PANEL_WIDTH: f32 = 500.0;

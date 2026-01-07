@@ -212,10 +212,18 @@ pub enum HistoryMessage {
     Reconnect(Uuid),
 }
 
+/// Result of executing a snippet command on a single host
+#[derive(Debug, Clone)]
+pub struct HostExecutionResult {
+    pub stdout: String,
+    pub stderr: String,
+    pub exit_code: i32,
+}
+
 /// Snippet management messages
 #[derive(Debug, Clone)]
 pub enum SnippetMessage {
-    /// Select a snippet
+    /// Select a snippet (show results panel)
     Select(Uuid),
     /// Create new snippet
     New,
@@ -223,7 +231,7 @@ pub enum SnippetMessage {
     Edit(Uuid),
     /// Delete a snippet
     Delete(Uuid),
-    /// Insert snippet into terminal
+    /// Insert snippet into terminal (legacy modal behavior)
     Insert(Uuid),
     /// Snippet field changed
     FieldChanged(SnippetField, String),
@@ -231,6 +239,40 @@ pub enum SnippetMessage {
     EditCancel,
     /// Save snippet changes
     Save,
+
+    // Page navigation
+    /// Search query changed on snippets page
+    SearchChanged(String),
+    /// Track which snippet is being hovered
+    Hover(Option<Uuid>),
+
+    // Host association (during edit)
+    /// Toggle host selection in edit form
+    ToggleHost(Uuid, bool),
+
+    // Execution
+    /// Run snippet on associated hosts
+    Run(Uuid),
+    /// Single host execution result received
+    HostResult {
+        snippet_id: Uuid,
+        host_id: Uuid,
+        host_name: String,
+        result: Result<HostExecutionResult, String>,
+        duration_ms: u64,
+    },
+
+    // Results panel
+    /// Deselect snippet (close results panel)
+    Deselect,
+    /// Toggle expand/collapse of host result output
+    ToggleResultExpand(Uuid, Uuid),
+    /// Clear results for a snippet
+    ClearResults(Uuid),
+    /// View a historical execution entry
+    ViewHistoryEntry(Uuid),
+    /// Return to current results from history view
+    ViewCurrentResults,
 }
 
 /// File viewer messages
