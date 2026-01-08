@@ -259,7 +259,11 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
             Task::none()
         }
         SessionMessage::Input(session_id, bytes) => {
-            tracing::debug!("Terminal input for session {}: {:?}", session_id, bytes);
+            tracing::debug!(
+                "Terminal input for session {} ({} bytes)",
+                session_id,
+                bytes.len()
+            );
             if let Some(session) = portal.sessions.get(session_id) {
                 match &session.backend {
                     SessionBackend::Ssh(ssh_session) => {

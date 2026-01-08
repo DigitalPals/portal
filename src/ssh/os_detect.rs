@@ -39,7 +39,7 @@ async fn exec_command(
                     }
                 }
                 Some(ChannelMsg::ExtendedData { data, .. }) => {
-                    tracing::debug!("{} stderr: {:?}", command, std::str::from_utf8(&data));
+                    tracing::debug!("{} stderr ({} bytes)", command, data.len());
                 }
                 Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => {
                     break;
@@ -88,11 +88,7 @@ pub async fn detect_os(
         tracing::debug!("Linux detected, attempting to read /etc/os-release");
         match exec_command(handle, "cat /etc/os-release 2>/dev/null").await {
             Ok(os_release) => {
-                tracing::debug!(
-                    "os-release content ({} bytes): {:?}",
-                    os_release.len(),
-                    os_release.lines().take(5).collect::<Vec<_>>()
-                );
+                tracing::debug!("os-release content ({} bytes)", os_release.len());
                 if !os_release.is_empty() {
                     if let Some(distro) = DetectedOs::from_os_release(&os_release) {
                         tracing::info!("Detected Linux distro: {:?}", distro);

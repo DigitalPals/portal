@@ -170,8 +170,8 @@ impl SshSession {
                         }
                     }
                     Some(ChannelMsg::ExtendedData { data, .. }) => {
-                        // Log stderr but don't include in output
-                        tracing::debug!("{} stderr: {:?}", command, std::str::from_utf8(&data));
+                        // Avoid logging stderr contents to prevent leaking secrets.
+                        tracing::debug!("{} stderr ({} bytes)", command, data.len());
                     }
                     Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => {
                         break;
