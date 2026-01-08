@@ -1,7 +1,6 @@
 //! Logging initialization with file output support
 
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -73,7 +72,8 @@ fn cleanup_old_logs(dir: &Path, prefix: &str, keep: usize) {
     }
 
     files.sort_by_key(|(modified, _)| *modified);
-    for (_, path) in files.into_iter().take(files.len() - keep) {
+    let to_remove = files.len() - keep;
+    for (_, path) in files.into_iter().take(to_remove) {
         let _ = std::fs::remove_file(path);
     }
 }
