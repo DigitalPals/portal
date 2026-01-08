@@ -14,6 +14,10 @@ use crate::terminal::backend::TerminalEvent;
 use crate::views::terminal_view::TerminalSession;
 use crate::views::toast::Toast;
 
+/// Maximum bytes to buffer before dropping oldest data.
+/// 16MB is generous - if we hit this, data is arriving faster than humanly readable.
+const MAX_PENDING_OUTPUT_BYTES: usize = 16 * 1024 * 1024;
+
 /// Handle terminal session messages
 pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message> {
     match msg {
@@ -166,6 +170,21 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
             if let Some(session) = portal.sessions.get_mut(session_id) {
                 if !data.is_empty() {
                     session.pending_output.push_back(data);
+
+                    // Enforce buffer size limit by dropping oldest data
+                    let mut total_size: usize = session
+                        .pending_output
+                        .iter()
+                        .map(|chunk| chunk.len())
+                        .sum();
+
+                    while total_size > MAX_PENDING_OUTPUT_BYTES {
+                        if let Some(dropped) = session.pending_output.pop_front() {
+                            total_size -= dropped.len();
+                        } else {
+                            break;
+                        }
+                    }
                 }
             }
             Task::none()
