@@ -199,7 +199,7 @@ Portal is available as a Nix flake with binaries cached on [Cachix](https://app.
 **Run directly:**
 
 ```bash
-nix run github:DigitalPals/portal
+nix run github:DigitalPals/portal/release
 ```
 
 **Install in NixOS configuration** (`flake.nix`):
@@ -208,8 +208,9 @@ nix run github:DigitalPals/portal
 {
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    # Use the release branch for stable builds with cachix cache hits
     # Don't use inputs.nixpkgs.follows for portal - it breaks cachix
-    portal.url = "github:DigitalPals/portal";
+    portal.url = "github:DigitalPals/portal/release";
   };
 
   outputs = { nixpkgs, portal, ... }: {
@@ -230,6 +231,8 @@ nix run github:DigitalPals/portal
 ```
 
 > **Note:** Do not add `inputs.nixpkgs.follows = "nixpkgs"` to the portal input. This changes the derivation hash and prevents cachix from providing pre-built binaries.
+
+> **Note:** The `release` branch contains stable releases. The `main` branch may contain unreleased development changes.
 
 **Build from source:**
 
