@@ -24,48 +24,17 @@ Portal is a native SSH client built for speed and simplicity. Manage your server
 
 ## Highlights
 
-<table>
-<tr>
-<td width="33%" valign="top">
+**`>_` Multi-Tab Terminal** — Manage multiple SSH sessions in tabs. Switch between servers instantly without juggling windows.
 
-### Multi-Tab Terminal
-Manage multiple SSH sessions in tabs. Switch between servers instantly without juggling windows.
+**`< >` Dual-Pane SFTP** — Browse local and remote files side by side. Drag, drop, copy, and manage files with ease.
 
-</td>
-<td width="33%" valign="top">
+**`{ }` Smart OS Detection** — Automatically detects 20+ operating systems and displays branded icons for Ubuntu, Debian, Arch, Fedora, and more.
 
-### Dual-Pane SFTP
-Browse local and remote files side by side. Drag, drop, copy, and manage files with ease.
+**`#!` Built-in File Viewer** — View code with syntax highlighting, preview images and PDFs, edit markdown—all without leaving Portal.
 
-</td>
-<td width="33%" valign="top">
+**`::` Beautiful Themes** — Choose from 5 built-in themes including the popular Catppuccin palette in both light and dark variants.
 
-### Smart OS Detection
-Automatically detects 20+ operating systems and displays branded icons for Ubuntu, Debian, Arch, Fedora, and more.
-
-</td>
-</tr>
-<tr>
-<td width="33%" valign="top">
-
-### Built-in File Viewer
-View code with syntax highlighting, preview images and PDFs, edit markdown—all without leaving Portal.
-
-</td>
-<td width="33%" valign="top">
-
-### Beautiful Themes
-Choose from 5 built-in themes including the popular Catppuccin palette in both light and dark variants.
-
-</td>
-<td width="33%" valign="top">
-
-### Command Snippets
-Save frequently used commands and insert them into any session with a click. Never retype complex commands.
-
-</td>
-</tr>
-</table>
+**`/>` Command Snippets** — Save frequently used commands and insert them into any session with a click. Never retype complex commands.
 
 ## Features
 
