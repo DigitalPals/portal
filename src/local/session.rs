@@ -188,4 +188,12 @@ impl LocalSession {
             })?;
         Ok(())
     }
+
+    /// Create a stub LocalSession for testing purposes.
+    /// The returned session has a disconnected channel and cannot perform real operations.
+    #[cfg(test)]
+    pub fn new_test_stub() -> Self {
+        let (command_tx, _rx) = mpsc::channel(1);
+        Self { command_tx }
+    }
 }

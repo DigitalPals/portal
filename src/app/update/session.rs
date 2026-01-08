@@ -172,11 +172,8 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                     session.pending_output.push_back(data);
 
                     // Enforce buffer size limit by dropping oldest data
-                    let mut total_size: usize = session
-                        .pending_output
-                        .iter()
-                        .map(|chunk| chunk.len())
-                        .sum();
+                    let mut total_size: usize =
+                        session.pending_output.iter().map(|chunk| chunk.len()).sum();
 
                     while total_size > MAX_PENDING_OUTPUT_BYTES {
                         if let Some(dropped) = session.pending_output.pop_front() {
