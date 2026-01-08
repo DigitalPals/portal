@@ -104,3 +104,46 @@ Config stored in platform-specific directory (`~/.config/portal/` on Linux):
 - **Terminal**: alacritty_terminal 0.25
 - **SSH**: russh 0.56, russh-sftp 2.1
 - **Async**: Tokio (full features)
+
+## Release Process
+
+### Branch Structure
+
+- **`main`** — Development branch for ongoing work
+- **`release`** — Stable release branch, triggers CI/CD builds
+
+### Creating a Release
+
+1. **Update version** in `Cargo.toml`:
+   ```toml
+   version = "X.Y.Z"
+   ```
+
+2. **Commit and push to main**:
+   ```bash
+   git add Cargo.toml
+   git commit -m "chore: bump version to X.Y.Z"
+   git push origin main
+   ```
+
+3. **Merge to release branch**:
+   ```bash
+   git checkout release
+   git merge main
+   git push origin release
+   ```
+
+4. **Automated CI/CD** (`.github/workflows/release.yml`) will:
+   - Build for Linux (x86_64, arm64) and macOS (x86_64, arm64)
+   - Create DEB, RPM, AppImage, and tarball packages
+   - Push Nix build to Cachix
+   - Create GitHub release with tag `vX.Y.Z`
+
+### Release Artifacts
+
+| Platform | Artifacts |
+|----------|-----------|
+| Linux x86_64 | `.tar.gz`, `.deb`, `.rpm`, `.AppImage` |
+| Linux arm64 | `.tar.gz`, `.deb`, `.rpm` |
+| macOS x86_64 | `.app.zip`, `.tar.gz` |
+| macOS arm64 | `.app.zip`, `.tar.gz` |
