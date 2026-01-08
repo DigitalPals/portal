@@ -177,7 +177,7 @@ Portal is built for Wayland. If it does not start, install your distro's Wayland
 Requires Rust 1.85 or later.
 
 ```bash
-git clone https://github.com/USER/portal.git
+git clone https://github.com/DigitalPals/portal.git
 cd portal
 ./run.sh build
 ./run.sh run
@@ -262,8 +262,8 @@ That's it. You're in.
 
 - [Rust](https://www.rust-lang.org/) — Systems programming language
 - [Iced](https://iced.rs/) — Cross-platform GUI framework
-- [alacritty_terminal](https://github.com/alacritty/alacritty) — Terminal emulation
-- [russh](https://github.com/warp-tech/russh) — SSH protocol implementation
+- [Alacritty Terminal](https://github.com/alacritty/alacritty) — Terminal emulation
+- [Russh](https://github.com/warp-tech/russh) — SSH protocol implementation
 
 ## Configuration
 

@@ -100,7 +100,7 @@ Config stored in platform-specific directory (`~/.config/portal/` on Linux):
 ## Technical Details
 
 - **Rust Edition**: 2024, MSRV 1.85
-- **GUI**: Iced 0.13
-- **Terminal**: alacritty_terminal 0.24
-- **SSH**: russh 0.54, russh-sftp 2.0
+- **GUI**: Iced 0.14
+- **Terminal**: alacritty_terminal 0.25
+- **SSH**: russh 0.56, russh-sftp 2.1
 - **Async**: Tokio (full features)
