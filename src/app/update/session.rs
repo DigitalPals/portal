@@ -28,7 +28,7 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
             host_id,
             detected_os,
         } => {
-            tracing::info!("SSH connected to {}", host_name);
+            tracing::info!("SSH connected");
 
             // Update host with detected OS if available
             if let Some(os) = detected_os {
@@ -211,7 +211,7 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
             Task::none()
         }
         SessionMessage::Disconnected(session_id) => {
-            tracing::info!("Terminal session disconnected: {}", session_id);
+            tracing::info!("Terminal session disconnected");
             if let Some(session) = portal.sessions.get(session_id) {
                 portal
                     .history_config
@@ -259,11 +259,7 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
             Task::none()
         }
         SessionMessage::Input(session_id, bytes) => {
-            tracing::debug!(
-                "Terminal input for session {} ({} bytes)",
-                session_id,
-                bytes.len()
-            );
+            tracing::debug!("Terminal input ({} bytes)", bytes.len());
             if let Some(session) = portal.sessions.get(session_id) {
                 match &session.backend {
                     SessionBackend::Ssh(ssh_session) => {
@@ -293,12 +289,7 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
             Task::none()
         }
         SessionMessage::Resize(session_id, cols, rows) => {
-            tracing::debug!(
-                "Terminal resize for session {}: {}x{}",
-                session_id,
-                cols,
-                rows
-            );
+            tracing::debug!("Terminal resize: {}x{}", cols, rows);
             if let Some(session) = portal.sessions.get_mut(session_id) {
                 session.terminal.resize(cols, rows);
                 match &session.backend {

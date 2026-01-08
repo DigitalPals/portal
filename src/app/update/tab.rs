@@ -9,12 +9,12 @@ use crate::message::{Message, TabMessage};
 pub fn handle_tab(portal: &mut Portal, msg: TabMessage) -> Task<Message> {
     match msg {
         TabMessage::Select(tab_id) => {
-            tracing::info!("Tab selected: {}", tab_id);
+            tracing::info!("Tab selected");
             portal.set_active_tab(tab_id);
             Task::none()
         }
         TabMessage::Close(tab_id) => {
-            tracing::info!("Tab closed: {}", tab_id);
+            tracing::info!("Tab closed");
             portal.close_tab(tab_id);
             Task::none()
         }

@@ -159,7 +159,7 @@ impl HostDialogState {
 
         // Port is validated, safe to parse
         let port: u16 = validate_port(&self.port).unwrap_or_else(|_| {
-            tracing::warn!("Invalid port '{}', using default 22", self.port);
+            tracing::warn!("Invalid port, using default 22");
             22
         });
 

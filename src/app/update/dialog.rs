@@ -44,11 +44,11 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                         if let Err(e) = portal.hosts_config.update_host(host.clone()) {
                             tracing::error!("Failed to update host: {}", e);
                         } else {
-                            tracing::info!("Updated host: {}", host.name);
+                            tracing::info!("Updated host");
                         }
                     } else {
                         portal.hosts_config.add_host(host.clone());
-                        tracing::info!("Added host: {}", host.name);
+                        tracing::info!("Added host");
                     }
 
                     if let Err(e) = portal.hosts_config.save() {
@@ -95,7 +95,7 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
             if let Some(dialog) = portal.dialogs.host_key_mut() {
                 let was_changed = dialog.is_changed_host;
                 dialog.respond(HostKeyVerificationResponse::Accept);
-                tracing::info!("Host key accepted for {}:{}", dialog.host, dialog.port);
+                tracing::info!("Host key accepted");
                 // Log security event - warn if host key was changed (potential MITM)
                 security_log::log_host_key_accepted(
                     &dialog.host,
@@ -110,7 +110,7 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
         DialogMessage::HostKeyReject => {
             if let Some(dialog) = portal.dialogs.host_key_mut() {
                 dialog.respond(HostKeyVerificationResponse::Reject);
-                tracing::info!("Host key rejected for {}:{}", dialog.host, dialog.port);
+                tracing::info!("Host key rejected");
                 // Log security event
                 security_log::log_host_key_rejected(
                     &dialog.host,

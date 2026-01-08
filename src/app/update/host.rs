@@ -13,7 +13,7 @@ use crate::views::toast::Toast;
 pub fn handle_host(portal: &mut Portal, msg: HostMessage) -> Task<Message> {
     match msg {
         HostMessage::Connect(id) => {
-            tracing::info!("Connect to host: {}", id);
+            tracing::info!("Connect to host");
             if let Some(host) = portal.hosts_config.find_host(id).cloned() {
                 return portal.connect_to_host(&host);
             }
@@ -88,12 +88,7 @@ pub fn handle_host(portal: &mut Portal, msg: HostMessage) -> Task<Message> {
                 last_connected: None,
             };
 
-            tracing::info!(
-                "Quick connect to: {}@{}:{}",
-                temp_host.username,
-                temp_host.hostname,
-                temp_host.port
-            );
+            tracing::info!("Quick connect requested");
             portal.connect_to_host(&temp_host)
         }
         HostMessage::LocalTerminal => {

@@ -46,7 +46,7 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
             portal.terminal_captured = false;
 
             portal.sidebar_selection = item;
-            tracing::info!("Sidebar item selected: {:?}", item);
+            tracing::info!("Sidebar item selected");
             match item {
                 SidebarMenuItem::Hosts => {
                     portal.active_view = View::HostGrid;
@@ -92,7 +92,7 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
         UiMessage::SidebarToggleCollapse => {
             portal.sidebar_state = portal.sidebar_state.next();
             portal.sidebar_manually_set = true;
-            tracing::info!("Sidebar state: {:?} (manual)", portal.sidebar_state);
+            tracing::info!("Sidebar state updated (manual)");
             Task::none()
         }
         UiMessage::ThemeChange(theme_id) => {
@@ -101,7 +101,7 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
             Task::none()
         }
         UiMessage::FontChange(font) => {
-            tracing::info!("Font changed to: {:?}", font);
+            tracing::info!("Font changed");
             portal.terminal_font = font;
             portal.save_settings();
             Task::none()

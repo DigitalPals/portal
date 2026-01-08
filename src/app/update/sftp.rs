@@ -34,7 +34,7 @@ pub fn handle_sftp(portal: &mut Portal, msg: SftpMessage) -> Task<Message> {
                     if let Some(sftp) = portal.sftp.get_connection(*session_id) {
                         sftp.home_dir().to_path_buf()
                     } else {
-                        tracing::warn!("SFTP connection {} not found", session_id);
+                        tracing::warn!("SFTP connection not found");
                         return Task::none();
                     }
                 }
@@ -98,7 +98,7 @@ pub fn handle_sftp(portal: &mut Portal, msg: SftpMessage) -> Task<Message> {
             Task::none()
         }
         SftpMessage::ConnectHost(tab_id, pane_id, host_id) => {
-            tracing::info!("Connecting to host {} for pane {:?}", host_id, pane_id);
+            tracing::info!("Connecting to host for pane {:?}", pane_id);
             if let Some(host) = portal.hosts_config.find_host(host_id).cloned() {
                 return portal.connect_sftp_for_pane(tab_id, pane_id, &host);
             }
@@ -112,7 +112,7 @@ pub fn handle_sftp(portal: &mut Portal, msg: SftpMessage) -> Task<Message> {
             host_name,
             sftp_session,
         } => {
-            tracing::info!("SFTP connected to {} for pane {:?}", host_name, pane_id);
+            tracing::info!("SFTP connected for pane {:?}", pane_id);
             portal.sftp.clear_pending_connection();
 
             if let Some(host) = portal.hosts_config.find_host(host_id) {

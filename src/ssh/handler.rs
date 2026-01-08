@@ -68,11 +68,11 @@ impl Handler for ClientHandler {
 
             match status {
                 HostKeyStatus::Known => {
-                    tracing::debug!("Host key verified for {}:{}", host, port);
+                    tracing::debug!("Host key verified");
                     Ok(true)
                 }
-                HostKeyStatus::Revoked { fingerprint, .. } => {
-                    tracing::warn!("HOST KEY REVOKED for {}:{} - {}", host, port, fingerprint);
+                HostKeyStatus::Revoked { .. } => {
+                    tracing::warn!("Host key revoked");
                     Err(SshError::HostKeyVerification(
                         "Host key has been revoked".to_string(),
                     ))
@@ -81,13 +81,7 @@ impl Handler for ClientHandler {
                     fingerprint,
                     key_type,
                 } => {
-                    tracing::debug!(
-                        "New host key for {}:{} - {} ({})",
-                        host,
-                        port,
-                        fingerprint,
-                        key_type
-                    );
+                    tracing::debug!("New host key received");
 
                     // Create oneshot channel for response
                     let (tx, rx) = oneshot::channel();
@@ -115,7 +109,7 @@ impl Handler for ClientHandler {
                     // Wait for user response (with timeout)
                     match tokio::time::timeout(Duration::from_secs(60), rx).await {
                         Ok(Ok(HostKeyVerificationResponse::Accept)) => {
-                            tracing::debug!("User accepted host key for {}:{}", host, port);
+                            tracing::debug!("User accepted host key");
                             // Save key to known_hosts (fail closed if we cannot persist)
                             let store_result = tokio::task::spawn_blocking({
                                 let known_hosts = known_hosts.clone();
@@ -143,13 +137,13 @@ impl Handler for ClientHandler {
                             }
                         }
                         Ok(Ok(HostKeyVerificationResponse::Reject)) | Ok(Err(_)) => {
-                            tracing::debug!("User rejected host key for {}:{}", host, port);
+                            tracing::debug!("User rejected host key");
                             Err(SshError::HostKeyVerification(
                                 "Host key rejected by user".to_string(),
                             ))
                         }
                         Err(_) => {
-                            tracing::warn!("Host key verification timed out for {}:{}", host, port);
+                            tracing::warn!("Host key verification timed out");
                             Err(SshError::HostKeyVerification(
                                 "Host key verification timed out".to_string(),
                             ))
@@ -161,14 +155,7 @@ impl Handler for ClientHandler {
                     new_fingerprint,
                     key_type,
                 } => {
-                    tracing::warn!(
-                        "HOST KEY CHANGED for {}:{} - old: {}, new: {} ({})",
-                        host,
-                        port,
-                        old_fingerprint,
-                        new_fingerprint,
-                        key_type
-                    );
+                    tracing::warn!("Host key changed");
 
                     // Create oneshot channel for response
                     let (tx, rx) = oneshot::channel();
@@ -197,7 +184,7 @@ impl Handler for ClientHandler {
                     // Wait for user response (with timeout)
                     match tokio::time::timeout(Duration::from_secs(60), rx).await {
                         Ok(Ok(HostKeyVerificationResponse::Accept)) => {
-                            tracing::debug!("User accepted changed host key for {}:{}", host, port);
+                            tracing::debug!("User accepted changed host key");
                             // Update key in known_hosts (fail closed if we cannot persist)
                             let update_result = tokio::task::spawn_blocking({
                                 let known_hosts = known_hosts.clone();
@@ -225,13 +212,13 @@ impl Handler for ClientHandler {
                             }
                         }
                         Ok(Ok(HostKeyVerificationResponse::Reject)) | Ok(Err(_)) => {
-                            tracing::debug!("User rejected changed host key for {}:{}", host, port);
+                            tracing::debug!("User rejected changed host key");
                             Err(SshError::HostKeyVerification(
                                 "Host key change rejected by user".to_string(),
                             ))
                         }
                         Err(_) => {
-                            tracing::warn!("Host key verification timed out for {}:{}", host, port);
+                            tracing::warn!("Host key verification timed out");
                             Err(SshError::HostKeyVerification(
                                 "Host key verification timed out".to_string(),
                             ))

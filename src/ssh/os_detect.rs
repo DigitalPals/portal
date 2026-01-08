@@ -77,11 +77,7 @@ pub async fn detect_os(
     // First, detect OS family with uname -s
     let uname_output = exec_command(handle, "uname -s").await?;
     let mut os = DetectedOs::from_uname(&uname_output);
-    tracing::info!(
-        "Detected OS family: {:?} (from uname: {:?})",
-        os,
-        uname_output.trim()
-    );
+    tracing::info!("Detected OS family: {:?}", os);
 
     // For Linux, try to identify the specific distribution
     if os.is_linux() {

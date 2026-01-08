@@ -408,7 +408,7 @@ async fn execute_on_host(host: &Host, command: &str) -> Result<HostExecutionResu
     let client = SshClient::with_known_hosts(0, known_hosts); // No keepalive for exec
 
     // Connect to the host
-    tracing::debug!("Connecting to host {} for snippet execution", host.name);
+    tracing::debug!("Connecting for snippet execution");
     let connection_result = client
         .connect(
             host,
@@ -422,28 +422,23 @@ async fn execute_on_host(host: &Host, command: &str) -> Result<HostExecutionResu
         .await;
 
     let (ssh_session, _) = connection_result.map_err(|e| {
-        tracing::error!(
-            "Snippet execution connection failed to {}: {}",
-            host.name,
-            e
-        );
+        tracing::error!("Snippet execution connection failed: {}", e);
         format!("Connection failed: {}", e)
     })?;
 
-    tracing::debug!("Connected to {}, executing command", host.name);
+    tracing::debug!("Connected for snippet execution");
 
     // Execute the command with full result (stdout, stderr, exit code)
     let result = ssh_session
         .execute_command_full(command, 60) // 60 second timeout
         .await
         .map_err(|e| {
-            tracing::error!("Snippet command execution failed on {}: {}", host.name, e);
+            tracing::error!("Snippet command execution failed: {}", e);
             format!("Execution failed: {}", e)
         })?;
 
     tracing::debug!(
-        "Command completed on {} with exit code {}, stdout length: {}, stderr length: {}",
-        host.name,
+        "Command completed with exit code {}, stdout length: {}, stderr length: {}",
         result.exit_code,
         result.stdout.len(),
         result.stderr.len()

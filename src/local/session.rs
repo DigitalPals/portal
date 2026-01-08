@@ -52,7 +52,7 @@ impl LocalSession {
         } else {
             std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string())
         };
-        tracing::info!("Spawning local terminal with shell: {}", shell);
+        tracing::info!("Spawning local terminal");
 
         // Create PTY system
         let pty_system = native_pty_system();
