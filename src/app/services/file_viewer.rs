@@ -94,8 +94,7 @@ fn parse_image_dimensions(path: &Path, data: &[u8]) -> Result<(u32, u32, bool), 
 }
 
 fn inspect_pdf(path: &Path) -> Result<ViewerContent, String> {
-    let bindings = Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("./"))
-        .or_else(|_| Pdfium::bind_to_system_library())
+    let bindings = Pdfium::bind_to_system_library()
         .map_err(|e| format!("PDF rendering unavailable: {}", e))?;
     let pdfium = Pdfium::new(bindings);
 
@@ -155,8 +154,7 @@ pub async fn render_pdf_page(source: FileSource, page_index: usize) -> Result<Ve
 }
 
 fn render_pdf_page_sync(path: &Path, page_index: usize) -> Result<Vec<u8>, String> {
-    let bindings = Pdfium::bind_to_library(Pdfium::pdfium_platform_library_name_at_path("./"))
-        .or_else(|_| Pdfium::bind_to_system_library())
+    let bindings = Pdfium::bind_to_system_library()
         .map_err(|e| format!("PDF rendering unavailable: {}", e))?;
     let pdfium = Pdfium::new(bindings);
 

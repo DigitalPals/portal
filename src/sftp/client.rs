@@ -38,9 +38,15 @@ impl Default for SftpClient {
 
 impl SftpClient {
     pub fn new(keepalive_interval: u64) -> Self {
+        let keepalive = if keepalive_interval == 0 {
+            None
+        } else {
+            Some(Duration::from_secs(keepalive_interval))
+        };
+
         let config = Config {
             inactivity_timeout: Some(Duration::from_secs(3600)),
-            keepalive_interval: Some(Duration::from_secs(keepalive_interval)),
+            keepalive_interval: keepalive,
             keepalive_max: 3,
             ..Default::default()
         };
@@ -55,9 +61,15 @@ impl SftpClient {
         keepalive_interval: u64,
         known_hosts: Arc<Mutex<KnownHostsManager>>,
     ) -> Self {
+        let keepalive = if keepalive_interval == 0 {
+            None
+        } else {
+            Some(Duration::from_secs(keepalive_interval))
+        };
+
         let config = Config {
             inactivity_timeout: Some(Duration::from_secs(3600)),
-            keepalive_interval: Some(Duration::from_secs(keepalive_interval)),
+            keepalive_interval: keepalive,
             keepalive_max: 3,
             ..Default::default()
         };
