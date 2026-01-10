@@ -410,9 +410,6 @@ pub fn pane_file_list<'a>(
     }
 
     // Column headers with resize handles at right edge
-    // Calculate total width for horizontal scrolling
-    let total_width = column_widths.total_width() + 32.0 + 24.0; // +32 for padding, +24 for spacing (8*3)
-
     // Name column with resize handle at right edge
     let name_header: Element<'_, Message> = container(
         row![
@@ -424,6 +421,7 @@ pub fn pane_file_list<'a>(
             column_resize_handle()
                 .on_drag_start(move |x| Message::Sftp(SftpMessage::ColumnResizeStart(
                     tab_id,
+                    pane_id,
                     SftpColumn::Name,
                     x
                 )))
@@ -447,6 +445,7 @@ pub fn pane_file_list<'a>(
             column_resize_handle()
                 .on_drag_start(move |x| Message::Sftp(SftpMessage::ColumnResizeStart(
                     tab_id,
+                    pane_id,
                     SftpColumn::DateModified,
                     x
                 )))
@@ -470,6 +469,7 @@ pub fn pane_file_list<'a>(
             column_resize_handle()
                 .on_drag_start(move |x| Message::Sftp(SftpMessage::ColumnResizeStart(
                     tab_id,
+                    pane_id,
                     SftpColumn::Size,
                     x
                 )))
@@ -482,14 +482,14 @@ pub fn pane_file_list<'a>(
     .clip(true)
     .into();
 
-    // Kind column (last column, no resize handle)
+    // Kind column (last column, no resize handle - fills remaining space)
     let kind_header: Element<'_, Message> = container(
         text("Kind")
             .size(FONT_SIZE_BODY)
             .color(theme.text_muted)
             .wrapping(text::Wrapping::None),
     )
-    .width(Length::Fixed(column_widths.kind))
+    .width(Fill)
     .clip(true)
     .into();
 
@@ -498,7 +498,7 @@ pub fn pane_file_list<'a>(
             .spacing(8)
             .padding(Padding::new(8.0).left(12.0).right(12.0))
             .align_y(Alignment::Center)
-            .width(Length::Fixed(total_width)),
+            .width(Fill),
     )
     .style(move |_theme| container::Style {
         background: Some(theme.surface.into()),
@@ -530,68 +530,14 @@ pub fn pane_file_list<'a>(
     // Scrollbar styling: show only when hovered/dragged
     let scrollbar_color = theme.text_muted.scale_alpha(0.5);
 
-    // Vertical scrollable for file entries (with fixed width to support horizontal scrolling)
-    let file_list = scrollable(
-        Column::with_children(entries)
-            .spacing(0)
-            .width(Length::Fixed(total_width)),
-    )
-    .id(state.scrollable_id.clone())
-    .height(Fill)
-    .width(Length::Fixed(total_width))
-    .direction(scrollable::Direction::Vertical(
-        scrollable::Scrollbar::new().width(6).scroller_width(6),
-    ))
-    .style(move |_theme, status| {
-        let scroller_color = match status {
-            scrollable::Status::Active { .. } => Color::TRANSPARENT,
-            scrollable::Status::Hovered { .. } | scrollable::Status::Dragged { .. } => {
-                scrollbar_color
-            }
-        };
-        scrollable::Style {
-            container: container::Style::default(),
-            vertical_rail: scrollable::Rail {
-                background: None,
-                border: iced::Border::default(),
-                scroller: scrollable::Scroller {
-                    background: scroller_color.into(),
-                    border: iced::Border {
-                        radius: 3.0.into(),
-                        ..Default::default()
-                    },
-                },
-            },
-            horizontal_rail: scrollable::Rail {
-                background: None,
-                border: iced::Border::default(),
-                scroller: scrollable::Scroller {
-                    background: Color::TRANSPARENT.into(),
-                    border: iced::Border::default(),
-                },
-            },
-            gap: None,
-            auto_scroll: scrollable::AutoScroll {
-                background: Color::TRANSPARENT.into(),
-                border: iced::Border::default(),
-                shadow: iced::Shadow::default(),
-                icon: Color::TRANSPARENT,
-            },
-        }
-    });
-
-    // Inner content with fixed width for horizontal scrolling
-    let inner_content = column![headers, file_list]
-        .spacing(0)
-        .width(Length::Fixed(total_width));
-
-    // Horizontal scrollable wrapper - scrollbar appears when columns exceed panel width
-    let horizontal_wrapper = scrollable(inner_content)
-        .direction(scrollable::Direction::Horizontal(
+    // Vertical scrollable for file entries
+    let file_list = scrollable(Column::with_children(entries).spacing(0).width(Fill))
+        .id(state.scrollable_id.clone())
+        .height(Fill)
+        .width(Fill)
+        .direction(scrollable::Direction::Vertical(
             scrollable::Scrollbar::new().width(6).scroller_width(6),
         ))
-        .width(Fill)
-        .height(Fill)
         .style(move |_theme, status| {
             let scroller_color = match status {
                 scrollable::Status::Active { .. } => Color::TRANSPARENT,
@@ -605,19 +551,19 @@ pub fn pane_file_list<'a>(
                     background: None,
                     border: iced::Border::default(),
                     scroller: scrollable::Scroller {
-                        background: Color::TRANSPARENT.into(),
-                        border: iced::Border::default(),
+                        background: scroller_color.into(),
+                        border: iced::Border {
+                            radius: 3.0.into(),
+                            ..Default::default()
+                        },
                     },
                 },
                 horizontal_rail: scrollable::Rail {
                     background: None,
                     border: iced::Border::default(),
                     scroller: scrollable::Scroller {
-                        background: scroller_color.into(),
-                        border: iced::Border {
-                            radius: 3.0.into(),
-                            ..Default::default()
-                        },
+                        background: Color::TRANSPARENT.into(),
+                        border: iced::Border::default(),
                     },
                 },
                 gap: None,
@@ -630,7 +576,7 @@ pub fn pane_file_list<'a>(
             }
         });
 
-    horizontal_wrapper.into()
+    column![headers, file_list].spacing(0).into()
 }
 
 /// Single file entry row for a pane
@@ -714,9 +660,6 @@ pub fn pane_file_entry_row(
         theme.text_secondary
     };
 
-    // Calculate total width for horizontal scrolling
-    let total_width = column_widths.total_width() + 32.0 + 24.0; // +32 for padding, +24 for spacing (8*3)
-
     let content = row![
         container(name_with_tooltip).width(Length::Fixed(column_widths.name)),
         container(
@@ -741,12 +684,12 @@ pub fn pane_file_entry_row(
                 .color(secondary_color)
                 .wrapping(text::Wrapping::None),
         )
-        .width(Length::Fixed(column_widths.kind))
+        .width(Fill)
         .clip(true),
     ]
     .spacing(8)
     .align_y(Alignment::Center)
-    .width(Length::Fixed(total_width));
+    .width(Fill);
 
     let btn = button(
         container(content)

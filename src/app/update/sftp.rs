@@ -356,28 +356,30 @@ pub fn handle_sftp(portal: &mut Portal, msg: SftpMessage) -> Task<Message> {
             }
             Task::none()
         }
-        SftpMessage::ColumnResizeStart(tab_id, column, start_x) => {
+        SftpMessage::ColumnResizeStart(tab_id, pane_id, column, start_x) => {
             if let Some(tab_state) = portal.sftp.get_tab_mut(tab_id) {
+                let pane = tab_state.pane(pane_id);
                 tab_state.column_resize_drag = Some(ColumnResizeDrag {
+                    pane_id,
                     column,
                     start_x,
-                    original_widths: tab_state.column_widths.clone(),
+                    original_widths: pane.column_widths.clone(),
                 });
             }
             Task::none()
         }
         SftpMessage::ColumnResizing(tab_id, current_x) => {
             if let Some(tab_state) = portal.sftp.get_tab_mut(tab_id) {
-                if let Some(ref drag) = tab_state.column_resize_drag {
+                if let Some(ref drag) = tab_state.column_resize_drag.clone() {
                     // Direct pixel-based resize: new width = original + delta
                     let delta = current_x - drag.start_x;
                     let original_width = drag.original_widths.get(drag.column);
                     let new_width = original_width + delta;
 
                     // The set() method enforces minimum width
-                    let column = drag.column;
-                    if (tab_state.column_widths.get(column) - new_width).abs() > 0.5 {
-                        tab_state.column_widths.set(column, new_width);
+                    let pane = tab_state.pane_mut(drag.pane_id);
+                    if (pane.column_widths.get(drag.column) - new_width).abs() > 0.5 {
+                        pane.column_widths.set(drag.column, new_width);
                     }
                 }
             }
@@ -385,16 +387,19 @@ pub fn handle_sftp(portal: &mut Portal, msg: SftpMessage) -> Task<Message> {
         }
         SftpMessage::ColumnResizeEnd(tab_id) => {
             if let Some(tab_state) = portal.sftp.get_tab_mut(tab_id) {
-                tab_state.column_resize_drag = None;
-                // Update the app's column widths and persist to settings
-                portal.sftp_column_widths = tab_state.column_widths.clone();
+                if let Some(ref drag) = tab_state.column_resize_drag {
+                    // Update the app's column widths from the active pane and persist to settings
+                    let pane = tab_state.pane(drag.pane_id);
+                    portal.sftp_column_widths = pane.column_widths.clone();
 
-                // Save to disk
-                let mut settings = SettingsConfig::load().unwrap_or_default();
-                settings.sftp_column_widths = portal.sftp_column_widths.clone();
-                if let Err(e) = settings.save() {
-                    tracing::error!("Failed to save column widths: {}", e);
+                    // Save to disk
+                    let mut settings = SettingsConfig::load().unwrap_or_default();
+                    settings.sftp_column_widths = portal.sftp_column_widths.clone();
+                    if let Err(e) = settings.save() {
+                        tracing::error!("Failed to save column widths: {}", e);
+                    }
                 }
+                tab_state.column_resize_drag = None;
             }
             Task::none()
         }

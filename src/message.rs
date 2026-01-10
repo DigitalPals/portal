@@ -155,8 +155,8 @@ pub enum SftpMessage {
     FilterChanged(SessionId, PaneId, String),
     /// Navigate to specific breadcrumb path segment
     PaneBreadcrumbNavigate(SessionId, PaneId, PathBuf),
-    /// Column resize drag started
-    ColumnResizeStart(SessionId, SftpColumn, f32),
+    /// Column resize drag started (tab_id, pane_id, column, start_x)
+    ColumnResizeStart(SessionId, PaneId, SftpColumn, f32),
     /// Column being resized (during drag)
     ColumnResizing(SessionId, f32),
     /// Column resize completed

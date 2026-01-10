@@ -30,6 +30,7 @@ pub struct FilePaneState {
     pub filter_text: String,
     pub scrollable_id: Id,
     pub actions_menu_open: bool,
+    pub column_widths: ColumnWidths,
 }
 
 impl FilePaneState {
@@ -50,6 +51,28 @@ impl FilePaneState {
             filter_text: String::new(),
             scrollable_id: Id::unique(),
             actions_menu_open: false,
+            column_widths: ColumnWidths::default(),
+        }
+    }
+
+    pub fn new_local_with_column_widths(column_widths: ColumnWidths) -> Self {
+        let home_dir = directories::BaseDirs::new()
+            .map(|d| d.home_dir().to_path_buf())
+            .unwrap_or_else(|| PathBuf::from("/"));
+        Self {
+            source: PaneSource::Local,
+            current_path: home_dir,
+            entries: Vec::new(),
+            selected_indices: HashSet::new(),
+            last_selected_index: None,
+            sort_order: SortOrder::default(),
+            loading: true,
+            error: None,
+            show_hidden: false,
+            filter_text: String::new(),
+            scrollable_id: Id::unique(),
+            actions_menu_open: false,
+            column_widths,
         }
     }
 
@@ -208,6 +231,8 @@ impl SftpDialogState {
 /// State for active column resize drag operation
 #[derive(Debug, Clone)]
 pub struct ColumnResizeDrag {
+    /// Which pane is being resized
+    pub pane_id: PaneId,
     /// Which column's right edge is being dragged
     pub column: SftpColumn,
     /// Starting X position when drag began
@@ -225,7 +250,6 @@ pub struct DualPaneSftpState {
     pub active_pane: PaneId,
     pub context_menu: ContextMenuState,
     pub dialog: Option<SftpDialogState>,
-    pub column_widths: ColumnWidths,
     pub column_resize_drag: Option<ColumnResizeDrag>,
 }
 
@@ -238,7 +262,6 @@ impl DualPaneSftpState {
             active_pane: PaneId::Left,
             context_menu: ContextMenuState::default(),
             dialog: None,
-            column_widths: ColumnWidths::default(),
             column_resize_drag: None,
         }
     }
@@ -246,12 +269,11 @@ impl DualPaneSftpState {
     pub fn new_with_column_widths(tab_id: SessionId, column_widths: ColumnWidths) -> Self {
         Self {
             tab_id,
-            left_pane: FilePaneState::new_local(),
-            right_pane: FilePaneState::new_local(),
+            left_pane: FilePaneState::new_local_with_column_widths(column_widths.clone()),
+            right_pane: FilePaneState::new_local_with_column_widths(column_widths),
             active_pane: PaneId::Left,
             context_menu: ContextMenuState::default(),
             dialog: None,
-            column_widths,
             column_resize_drag: None,
         }
     }
