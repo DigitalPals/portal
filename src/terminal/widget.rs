@@ -1478,7 +1478,13 @@ fn key_to_escape_sequence(key: &Key, modifiers: Modifiers, text: Option<&str>) -
             let seq = match named {
                 keyboard::key::Named::Enter => b"\r".to_vec(),
                 keyboard::key::Named::Backspace => vec![127],
-                keyboard::key::Named::Tab => b"\t".to_vec(),
+                keyboard::key::Named::Tab => {
+                    if modifiers.shift() {
+                        b"\x1b[Z".to_vec()
+                    } else {
+                        b"\t".to_vec()
+                    }
+                }
                 keyboard::key::Named::Escape => vec![27],
                 keyboard::key::Named::ArrowUp => b"\x1b[A".to_vec(),
                 keyboard::key::Named::ArrowDown => b"\x1b[B".to_vec(),
