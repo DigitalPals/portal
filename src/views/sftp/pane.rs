@@ -414,72 +414,84 @@ pub fn pane_file_list<'a>(
     let total_width = column_widths.total_width() + 32.0 + 24.0; // +32 for padding, +24 for spacing (8*3)
 
     // Name column with resize handle at right edge
-    let name_header: Element<'_, Message> = row![
-        text("Name")
-            .size(FONT_SIZE_BODY)
-            .color(theme.text_muted)
-            .wrapping(text::Wrapping::None),
-        Space::new().width(Fill), // Push resize handle to right edge
-        column_resize_handle()
-            .on_drag_start(move |x| Message::Sftp(SftpMessage::ColumnResizeStart(
-                tab_id,
-                SftpColumn::Name,
-                x
-            )))
-            .on_drag(move |x| Message::Sftp(SftpMessage::ColumnResizing(tab_id, x)))
-            .on_drag_end(Message::Sftp(SftpMessage::ColumnResizeEnd(tab_id))),
-    ]
-    .align_y(Alignment::Center)
+    let name_header: Element<'_, Message> = container(
+        row![
+            text("Name")
+                .size(FONT_SIZE_BODY)
+                .color(theme.text_muted)
+                .wrapping(text::Wrapping::None),
+            Space::new().width(Fill), // Push resize handle to right edge
+            column_resize_handle()
+                .on_drag_start(move |x| Message::Sftp(SftpMessage::ColumnResizeStart(
+                    tab_id,
+                    SftpColumn::Name,
+                    x
+                )))
+                .on_drag(move |x| Message::Sftp(SftpMessage::ColumnResizing(tab_id, x)))
+                .on_drag_end(Message::Sftp(SftpMessage::ColumnResizeEnd(tab_id))),
+        ]
+        .align_y(Alignment::Center),
+    )
     .width(Length::Fixed(column_widths.name))
+    .clip(true)
     .into();
 
     // Date Modified column with resize handle at right edge
-    let date_header: Element<'_, Message> = row![
-        text("Date Modified")
-            .size(FONT_SIZE_BODY)
-            .color(theme.text_muted)
-            .wrapping(text::Wrapping::None),
-        Space::new().width(Fill),
-        column_resize_handle()
-            .on_drag_start(move |x| Message::Sftp(SftpMessage::ColumnResizeStart(
-                tab_id,
-                SftpColumn::DateModified,
-                x
-            )))
-            .on_drag(move |x| Message::Sftp(SftpMessage::ColumnResizing(tab_id, x)))
-            .on_drag_end(Message::Sftp(SftpMessage::ColumnResizeEnd(tab_id))),
-    ]
-    .align_y(Alignment::Center)
+    let date_header: Element<'_, Message> = container(
+        row![
+            text("Date Modified")
+                .size(FONT_SIZE_BODY)
+                .color(theme.text_muted)
+                .wrapping(text::Wrapping::None),
+            Space::new().width(Fill),
+            column_resize_handle()
+                .on_drag_start(move |x| Message::Sftp(SftpMessage::ColumnResizeStart(
+                    tab_id,
+                    SftpColumn::DateModified,
+                    x
+                )))
+                .on_drag(move |x| Message::Sftp(SftpMessage::ColumnResizing(tab_id, x)))
+                .on_drag_end(Message::Sftp(SftpMessage::ColumnResizeEnd(tab_id))),
+        ]
+        .align_y(Alignment::Center),
+    )
     .width(Length::Fixed(column_widths.date_modified))
+    .clip(true)
     .into();
 
     // Size column with resize handle at right edge
-    let size_header: Element<'_, Message> = row![
-        text("Size")
-            .size(FONT_SIZE_BODY)
-            .color(theme.text_muted)
-            .wrapping(text::Wrapping::None),
-        Space::new().width(Fill),
-        column_resize_handle()
-            .on_drag_start(move |x| Message::Sftp(SftpMessage::ColumnResizeStart(
-                tab_id,
-                SftpColumn::Size,
-                x
-            )))
-            .on_drag(move |x| Message::Sftp(SftpMessage::ColumnResizing(tab_id, x)))
-            .on_drag_end(Message::Sftp(SftpMessage::ColumnResizeEnd(tab_id))),
-    ]
-    .align_y(Alignment::Center)
+    let size_header: Element<'_, Message> = container(
+        row![
+            text("Size")
+                .size(FONT_SIZE_BODY)
+                .color(theme.text_muted)
+                .wrapping(text::Wrapping::None),
+            Space::new().width(Fill),
+            column_resize_handle()
+                .on_drag_start(move |x| Message::Sftp(SftpMessage::ColumnResizeStart(
+                    tab_id,
+                    SftpColumn::Size,
+                    x
+                )))
+                .on_drag(move |x| Message::Sftp(SftpMessage::ColumnResizing(tab_id, x)))
+                .on_drag_end(Message::Sftp(SftpMessage::ColumnResizeEnd(tab_id))),
+        ]
+        .align_y(Alignment::Center),
+    )
     .width(Length::Fixed(column_widths.size))
+    .clip(true)
     .into();
 
     // Kind column (last column, no resize handle)
-    let kind_header: Element<'_, Message> = text("Kind")
-        .size(FONT_SIZE_BODY)
-        .color(theme.text_muted)
-        .wrapping(text::Wrapping::None)
-        .width(Length::Fixed(column_widths.kind))
-        .into();
+    let kind_header: Element<'_, Message> = container(
+        text("Kind")
+            .size(FONT_SIZE_BODY)
+            .color(theme.text_muted)
+            .wrapping(text::Wrapping::None),
+    )
+    .width(Length::Fixed(column_widths.kind))
+    .clip(true)
+    .into();
 
     let headers = container(
         Row::with_children(vec![name_header, date_header, size_header, kind_header])
@@ -707,21 +719,30 @@ pub fn pane_file_entry_row(
 
     let content = row![
         container(name_with_tooltip).width(Length::Fixed(column_widths.name)),
-        text(modified)
-            .size(FONT_SIZE_BODY)
-            .color(secondary_color)
-            .wrapping(text::Wrapping::None)
-            .width(Length::Fixed(column_widths.date_modified)),
-        text(size)
-            .size(FONT_SIZE_BODY)
-            .color(secondary_color)
-            .wrapping(text::Wrapping::None)
-            .width(Length::Fixed(column_widths.size)),
-        text(kind)
-            .size(FONT_SIZE_BODY)
-            .color(secondary_color)
-            .wrapping(text::Wrapping::None)
-            .width(Length::Fixed(column_widths.kind)),
+        container(
+            text(modified)
+                .size(FONT_SIZE_BODY)
+                .color(secondary_color)
+                .wrapping(text::Wrapping::None),
+        )
+        .width(Length::Fixed(column_widths.date_modified))
+        .clip(true),
+        container(
+            text(size)
+                .size(FONT_SIZE_BODY)
+                .color(secondary_color)
+                .wrapping(text::Wrapping::None),
+        )
+        .width(Length::Fixed(column_widths.size))
+        .clip(true),
+        container(
+            text(kind)
+                .size(FONT_SIZE_BODY)
+                .color(secondary_color)
+                .wrapping(text::Wrapping::None),
+        )
+        .width(Length::Fixed(column_widths.kind))
+        .clip(true),
     ]
     .spacing(8)
     .align_y(Alignment::Center)
