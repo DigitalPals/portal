@@ -560,7 +560,7 @@ impl Portal {
         };
 
         // Overlay toast notifications on top of everything
-        if self.toast_manager.has_toasts() {
+        let final_content = if self.toast_manager.has_toasts() {
             stack![
                 with_context_menu,
                 toast_overlay_view(&self.toast_manager, theme)
@@ -568,13 +568,34 @@ impl Portal {
             .into()
         } else {
             with_context_menu
-        }
+        };
+
+        // Wrap everything in a container with our background color
+        iced::widget::container(final_content)
+            .width(Fill)
+            .height(Fill)
+            .style(move |_| iced::widget::container::Style {
+                background: Some(theme.background.into()),
+                ..Default::default()
+            })
+            .into()
     }
 
     /// Theme based on theme_id preference
     pub fn theme(&self) -> IcedTheme {
+        let theme = get_theme(self.theme_id);
         if self.theme_id.is_dark() {
-            IcedTheme::Dark
+            let palette = iced::theme::Palette {
+                background: theme.background,
+                text: theme.text_primary,
+                primary: theme.accent,
+                success: iced::Color::from_rgb8(0x40, 0xa0, 0x2b),
+                warning: iced::Color::from_rgb8(0xdf, 0x8e, 0x1d),
+                danger: iced::Color::from_rgb8(0xd2, 0x0f, 0x39),
+            };
+            IcedTheme::custom_with_fn("Portal Dark".to_string(), palette, |p| {
+                iced::theme::palette::Extended::generate(p)
+            })
         } else {
             IcedTheme::Light
         }

@@ -245,7 +245,45 @@ pub fn host_grid_view(
         content = content.push(hosts_section);
     }
 
-    let scrollable_content = iced::widget::scrollable(content).height(Fill).width(Fill);
+    let scrollable_content = iced::widget::scrollable(content)
+        .height(Fill)
+        .width(Fill)
+        .style(move |_iced_theme, _status| {
+            use iced::widget::scrollable::{AutoScroll, Rail, Scroller, Style};
+            let scroller_color = iced::Color::from_rgba8(0x60, 0x60, 0x70, 0.5);
+            Style {
+                container: container::Style {
+                    background: Some(theme.background.into()),
+                    ..Default::default()
+                },
+                vertical_rail: Rail {
+                    background: None,
+                    border: iced::Border::default(),
+                    scroller: Scroller {
+                        background: scroller_color.into(),
+                        border: iced::Border {
+                            radius: 3.0.into(),
+                            ..Default::default()
+                        },
+                    },
+                },
+                horizontal_rail: Rail {
+                    background: None,
+                    border: iced::Border::default(),
+                    scroller: Scroller {
+                        background: iced::Color::TRANSPARENT.into(),
+                        border: iced::Border::default(),
+                    },
+                },
+                gap: None,
+                auto_scroll: AutoScroll {
+                    background: iced::Color::TRANSPARENT.into(),
+                    border: iced::Border::default(),
+                    shadow: iced::Shadow::default(),
+                    icon: iced::Color::TRANSPARENT,
+                },
+            }
+        });
 
     // Action bar (fixed at top, below tab bar)
     let action_bar = build_action_bar(search_query, theme);
