@@ -475,6 +475,7 @@ impl Portal {
                     }
                     SidebarMenuItem::History => history_view(
                         &self.history_config,
+                        &self.hosts_config,
                         theme,
                         self.focus_section,
                         self.history_focus_index,

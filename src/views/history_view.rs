@@ -1,18 +1,41 @@
+use chrono::Local;
 use iced::widget::{Column, Space, button, column, container, row, scrollable, text};
 use iced::{Alignment, Element, Fill, Length};
 
 use crate::app::FocusSection;
-use crate::config::{HistoryConfig, SessionType};
+use crate::config::{HistoryConfig, HistoryEntry, HostsConfig, SessionType};
 use crate::icons::{self, icon_with_color};
 use crate::message::{HistoryMessage, Message};
 use crate::theme::{
     BORDER_RADIUS, CARD_BORDER_RADIUS, FONT_SIZE_BODY, FONT_SIZE_HEADING, FONT_SIZE_LABEL,
     FONT_SIZE_MONO_TINY, Theme,
 };
+use crate::views::host_grid::os_icon_data;
+
+/// Format a date as a relative label ("Today", "Yesterday") or "Mon dd" format
+fn format_relative_date(date: chrono::DateTime<chrono::Utc>) -> String {
+    let local_date = date.with_timezone(&Local).date_naive();
+    let today = Local::now().date_naive();
+    let yesterday = today - chrono::Duration::days(1);
+
+    if local_date == today {
+        "Today".to_string()
+    } else if local_date == yesterday {
+        "Yesterday".to_string()
+    } else {
+        date.with_timezone(&Local).format("%b %-d").to_string()
+    }
+}
+
+/// Get the local date key for grouping (YYYY-MM-DD format)
+fn date_key(date: chrono::DateTime<chrono::Utc>) -> String {
+    date.with_timezone(&Local).format("%Y-%m-%d").to_string()
+}
 
 /// Build the history view showing recent connections
 pub fn history_view(
     history: &HistoryConfig,
+    hosts_config: &HostsConfig,
     theme: Theme,
     focus_section: FocusSection,
     focus_index: Option<usize>,
@@ -50,20 +73,46 @@ pub fn history_view(
     .align_y(Alignment::Center)
     .padding(iced::Padding::new(24.0).bottom(16.0));
 
-    // History entries
+    // History entries grouped by day as a timeline
     let content: Element<'static, Message> = if history.entries.is_empty() {
         empty_state(theme)
     } else {
-        let mut entries_column = Column::new()
-            .spacing(8)
-            .padding(iced::Padding::new(24.0).top(0.0));
+        // Group entries by date
+        let mut day_groups: Vec<(String, String, Vec<(usize, &HistoryEntry)>)> = Vec::new();
+        let mut current_key: Option<String> = None;
 
         for (idx, entry) in history.entries.iter().enumerate() {
-            let is_focused = focus_section == FocusSection::Content && focus_index == Some(idx);
-            entries_column = entries_column.push(history_entry_row(entry, theme, is_focused));
+            let key = date_key(entry.connected_at);
+            let label = format_relative_date(entry.connected_at);
+
+            if current_key.as_deref() != Some(key.as_str()) {
+                day_groups.push((key.clone(), label, vec![(idx, entry)]));
+                current_key = Some(key);
+            } else if let Some((_, _, entries)) = day_groups.last_mut() {
+                entries.push((idx, entry));
+            }
         }
 
-        scrollable(entries_column).height(Fill).width(Fill).into()
+        let mut main_column = Column::new()
+            .spacing(0)
+            .padding(iced::Padding::new(24.0).top(0.0));
+
+        let day_count = day_groups.len();
+        for (i, (_key, day_label, day_entries)) in day_groups.into_iter().enumerate() {
+            let has_next_day = i < day_count - 1;
+            let day_section = build_day_section(
+                day_label,
+                day_entries,
+                hosts_config,
+                theme,
+                focus_section,
+                focus_index,
+                has_next_day,
+            );
+            main_column = main_column.push(day_section);
+        }
+
+        scrollable(main_column).height(Fill).width(Fill).into()
     };
 
     let main_content = column![header, content];
@@ -78,30 +127,123 @@ pub fn history_view(
         .into()
 }
 
-/// Single history entry row
-fn history_entry_row(
-    entry: &crate::config::HistoryEntry,
+/// Build a complete day section with timeline
+fn build_day_section(
+    day_label: String,
+    entries: Vec<(usize, &HistoryEntry)>,
+    hosts_config: &HostsConfig,
+    theme: Theme,
+    focus_section: FocusSection,
+    focus_index: Option<usize>,
+    has_next_day: bool,
+) -> Element<'static, Message> {
+    let line_color = theme.border;
+
+    // Day header: dot + label
+    let header_dot = container(Space::new().width(12).height(12))
+        .width(12)
+        .height(12)
+        .style(move |_theme| container::Style {
+            background: Some(theme.text_secondary.into()),
+            border: iced::Border {
+                radius: 6.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+    let header = row![
+        container(header_dot)
+            .width(48)
+            .align_x(Alignment::Center),
+        text(day_label)
+            .size(FONT_SIZE_BODY)
+            .color(theme.text_primary),
+    ]
+    .align_y(Alignment::Center)
+    .padding(iced::Padding::new(0.0).bottom(12.0));
+
+    // Build entries column
+    let mut entries_col = Column::new().spacing(8);
+    for (idx, entry) in entries {
+        let is_focused = focus_section == FocusSection::Content && focus_index == Some(idx);
+        let card = build_entry_card(entry, hosts_config, theme, is_focused);
+        entries_col = entries_col.push(card);
+    }
+
+    // Vertical line that runs alongside entries (and continues to next day if exists)
+    let line_height = if has_next_day {
+        Length::Fill
+    } else {
+        Length::Shrink
+    };
+
+    let timeline_line = container(Space::new().width(2).height(line_height))
+        .width(2)
+        .height(line_height)
+        .style(move |_theme| container::Style {
+            background: Some(line_color.into()),
+            ..Default::default()
+        });
+
+    // Entries row: line on left, cards on right
+    let entries_row = row![
+        container(timeline_line)
+            .width(48)
+            .align_x(Alignment::Center),
+        entries_col,
+    ]
+    .width(Fill);
+
+    // Add extra spacing after entries before next day section
+    let bottom_spacing = if has_next_day { 24 } else { 0 };
+
+    column![header, entries_row]
+        .spacing(0)
+        .padding(iced::Padding::new(0.0).bottom(bottom_spacing as f32))
+        .into()
+}
+
+/// Build a single entry card (no timeline elements)
+fn build_entry_card(
+    entry: &HistoryEntry,
+    hosts_config: &HostsConfig,
     theme: Theme,
     is_focused: bool,
 ) -> Element<'static, Message> {
     let entry_id = entry.id;
 
     // Session type icon
-    let icon_data = match entry.session_type {
+    let fallback_icon_data = match entry.session_type {
         SessionType::Ssh => icons::ui::TERMINAL,
         SessionType::Sftp => icons::ui::HARD_DRIVE,
         SessionType::Local => icons::ui::TERMINAL,
     };
 
+    let (icon_data, icon_bg) = if entry.host_id.is_nil() {
+        (fallback_icon_data, theme.selected)
+    } else if let Some(host) = hosts_config.find_host(entry.host_id) {
+        if let Some(detected_os) = host.detected_os.as_ref() {
+            let (r, g, b) = detected_os.icon_color();
+            (
+                os_icon_data(&host.detected_os),
+                iced::Color::from_rgba8(r, g, b, 0.85),
+            )
+        } else {
+            (fallback_icon_data, theme.selected)
+        }
+    } else {
+        (fallback_icon_data, theme.selected)
+    };
+
     let type_text = entry.session_type.display_name().to_string();
-
-    // Format connection time
-    let time_str = entry.connected_at.format("%Y-%m-%d %H:%M").to_string();
-
-    // Duration (if disconnected)
+    let time_str = entry
+        .connected_at
+        .with_timezone(&Local)
+        .format("%H:%M")
+        .to_string();
     let duration_str = entry.duration_string();
 
-    // Clone all needed strings
     let host_name = entry.host_name.clone();
     let username = entry.username.clone();
     let hostname = entry.hostname.clone();
@@ -128,22 +270,22 @@ fn history_entry_row(
             }),
         ]
         .align_y(Alignment::Center),
-        text(format!(
-            "{}@{} | {} | {}",
-            username, hostname, time_str, duration_str
-        ))
-        .size(FONT_SIZE_LABEL)
-        .color(theme.text_muted),
+        text(format!("{}@{} | {}", username, hostname, duration_str))
+            .size(FONT_SIZE_LABEL)
+            .color(theme.text_muted),
+        text(time_str)
+            .size(FONT_SIZE_LABEL)
+            .color(theme.text_muted),
     ]
     .spacing(4);
 
-    let icon_widget = container(icon_with_color(icon_data, 18, theme.accent))
+    let icon_widget = container(icon_with_color(icon_data, 18, iced::Color::WHITE))
         .width(36)
         .height(36)
         .align_x(Alignment::Center)
         .align_y(Alignment::Center)
         .style(move |_theme| container::Style {
-            background: Some(theme.selected.into()),
+            background: Some(icon_bg.into()),
             border: iced::Border {
                 radius: BORDER_RADIUS.into(),
                 ..Default::default()
@@ -208,7 +350,7 @@ fn history_entry_row(
 
     container(card_content)
         .padding(12)
-        .width(Fill)
+        .max_width(600)
         .style(move |_theme| container::Style {
             background: Some(bg.into()),
             border,
