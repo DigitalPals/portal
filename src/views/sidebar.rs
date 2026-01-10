@@ -97,7 +97,7 @@ pub fn sidebar_view(
             .width(Length::Fixed(sidebar_width - 1.0))
             .height(Fill)
             .style(move |_theme| container::Style {
-                background: Some(theme.surface.into()),
+                background: Some(theme.background.into()),
                 ..Default::default()
             }),
         right_border,

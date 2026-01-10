@@ -74,7 +74,7 @@ fn build_action_bar(search_query: &str, theme: Theme) -> Element<'static, Messag
                     _ => theme.border,
                 };
                 Style {
-                    background: iced::Color::from_rgb8(0x3E, 0x42, 0x57).into(),
+                    background: theme.surface.into(),
                     border: iced::Border {
                         color: border_color,
                         width: 1.0,
@@ -95,12 +95,12 @@ fn build_action_bar(search_query: &str, theme: Theme) -> Element<'static, Messag
     )
     .style(move |_theme, status| {
         let bg = match status {
-            button::Status::Hovered => iced::Color::from_rgb8(0x50, 0x55, 0x70),
-            _ => iced::Color::from_rgb8(0x40, 0x44, 0x58),
+            button::Status::Hovered => theme.hover,
+            _ => theme.accent,
         };
         button::Style {
             background: Some(bg.into()),
-            text_color: iced::Color::WHITE,
+            text_color: theme.text_primary,
             border: iced::Border {
                 radius: 22.0.into(),
                 ..Default::default()
@@ -188,7 +188,7 @@ fn build_action_bar(search_query: &str, theme: Theme) -> Element<'static, Messag
         .width(Fill)
         .padding([16, 24])
         .style(move |_theme| container::Style {
-            background: Some(theme.surface.into()),
+            background: Some(theme.background.into()),
             border: iced::Border::default(),
             ..Default::default()
         })
@@ -439,7 +439,7 @@ fn group_card(group: GroupCard, theme: Theme, is_focused: bool) -> Element<'stat
             .align_y(Alignment::Center),
     )
     .style(move |_theme, status| {
-        let card_bg = iced::Color::from_rgb8(0x28, 0x2B, 0x3D);
+        let card_bg = theme.surface;
         let bg = match (status, is_focused) {
             (_, true) => theme.hover,
             (button::Status::Hovered, _) => theme.hover,
@@ -610,7 +610,7 @@ fn host_card(
             .align_y(Alignment::Center),
     )
     .style(move |_theme, status| {
-        let card_bg = iced::Color::from_rgb8(0x28, 0x2B, 0x3D);
+        let card_bg = theme.surface;
         let (bg, shadow_alpha) = match (status, is_focused, is_hovered) {
             (_, true, _) => (theme.hover, 0.25),
             (_, _, true) => (theme.hover, 0.25),
