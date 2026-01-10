@@ -65,9 +65,11 @@ pub fn about_dialog_view(_state: &AboutDialogState, theme: Theme) -> Element<'st
             .color(theme.text_muted),
         text("Claude Code")
             .size(FONT_SIZE_LABEL)
-            .color(theme.accent),
+            .color(theme.text_primary),
         text(" & ").size(FONT_SIZE_LABEL).color(theme.text_muted),
-        text("Codex CLI").size(FONT_SIZE_LABEL).color(theme.accent),
+        text("Codex CLI")
+            .size(FONT_SIZE_LABEL)
+            .color(theme.text_primary),
     ];
 
     // Credits section
@@ -86,7 +88,9 @@ pub fn about_dialog_view(_state: &AboutDialogState, theme: Theme) -> Element<'st
         .into_iter()
         .map(|(name, desc)| {
             row![
-                text(name).size(FONT_SIZE_BUTTON_SMALL).color(theme.accent),
+                text(name)
+                    .size(FONT_SIZE_BUTTON_SMALL)
+                    .color(theme.text_primary),
                 text(" - ")
                     .size(FONT_SIZE_BUTTON_SMALL)
                     .color(theme.text_muted),
