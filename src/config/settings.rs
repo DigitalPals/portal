@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::ConfigError;
 use crate::fonts::TerminalFont;
 use crate::theme::ThemeId;
+use crate::views::sftp::ColumnWidths;
 
 /// Application settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -19,6 +20,10 @@ pub struct SettingsConfig {
     #[serde(default)]
     pub theme: ThemeId,
 
+    /// SFTP file list column widths
+    #[serde(default)]
+    pub sftp_column_widths: ColumnWidths,
+
     /// Legacy dark_mode field for migration (read-only, not serialized)
     #[serde(default, skip_serializing)]
     dark_mode: Option<bool>,
@@ -34,6 +39,7 @@ impl Default for SettingsConfig {
             terminal_font_size: default_terminal_font_size(),
             terminal_font: TerminalFont::default(),
             theme: ThemeId::default(),
+            sftp_column_widths: ColumnWidths::default(),
             dark_mode: None,
         }
     }
@@ -60,6 +66,7 @@ impl SettingsConfig {
         })?;
 
         let mut config: Self = toml::from_str(&content).map_err(ConfigError::Parse)?;
+        let mut needs_save = false;
 
         // Migration: convert old dark_mode to new theme field
         if let Some(dark_mode) = config.dark_mode.take() {
@@ -68,7 +75,22 @@ impl SettingsConfig {
             } else {
                 ThemeId::CatppuccinLatte
             };
-            // Save migrated config to persist the change
+            needs_save = true;
+        }
+
+        // Migration: convert old proportion-based column widths to pixel-based
+        // Old values were typically 4-20, new values should be 60+ pixels
+        if config.sftp_column_widths.name < 50.0
+            || config.sftp_column_widths.date_modified < 50.0
+            || config.sftp_column_widths.size < 50.0
+            || config.sftp_column_widths.kind < 50.0
+        {
+            config.sftp_column_widths = ColumnWidths::default();
+            needs_save = true;
+        }
+
+        // Save migrated config to persist the changes
+        if needs_save {
             if let Err(e) = config.save() {
                 tracing::warn!("Failed to save migrated settings: {}", e);
             }

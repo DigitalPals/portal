@@ -164,6 +164,9 @@ pub struct Portal {
     terminal_font_size: f32,
     terminal_font: crate::fonts::TerminalFont,
 
+    // SFTP settings
+    sftp_column_widths: crate::views::sftp::ColumnWidths,
+
     // Data from config
     hosts_config: HostsConfig,
     snippets_config: SnippetsConfig,
@@ -285,6 +288,7 @@ impl Portal {
             theme_id: settings_config.theme,
             terminal_font_size: settings_config.terminal_font_size,
             terminal_font: settings_config.terminal_font,
+            sftp_column_widths: settings_config.sftp_column_widths,
             hosts_config,
             snippets_config,
             history_config,

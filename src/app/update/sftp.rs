@@ -5,6 +5,8 @@ use uuid::Uuid;
 
 use crate::app::{Portal, Tab, View};
 use crate::message::{Message, SftpMessage};
+use crate::config::SettingsConfig;
+use crate::views::sftp::state::ColumnResizeDrag;
 use crate::views::sftp::{DualPaneSftpState, PaneId, PaneSource};
 use crate::views::toast::Toast;
 
@@ -13,7 +15,10 @@ pub fn handle_sftp(portal: &mut Portal, msg: SftpMessage) -> Task<Message> {
     match msg {
         SftpMessage::Open => {
             let tab_id = Uuid::new_v4();
-            let dual_state = DualPaneSftpState::new(tab_id);
+            let dual_state = DualPaneSftpState::new_with_column_widths(
+                tab_id,
+                portal.sftp_column_widths.clone(),
+            );
             portal.sftp.insert_tab(tab_id, dual_state);
 
             let tab = Tab::new_sftp(tab_id, "File Browser".to_string(), None);
@@ -348,6 +353,48 @@ pub fn handle_sftp(portal: &mut Portal, msg: SftpMessage) -> Task<Message> {
                 pane.current_path = path;
                 pane.loading = true;
                 return portal.load_dual_pane_directory(tab_id, pane_id);
+            }
+            Task::none()
+        }
+        SftpMessage::ColumnResizeStart(tab_id, column, start_x) => {
+            if let Some(tab_state) = portal.sftp.get_tab_mut(tab_id) {
+                tab_state.column_resize_drag = Some(ColumnResizeDrag {
+                    column,
+                    start_x,
+                    original_widths: tab_state.column_widths.clone(),
+                });
+            }
+            Task::none()
+        }
+        SftpMessage::ColumnResizing(tab_id, current_x) => {
+            if let Some(tab_state) = portal.sftp.get_tab_mut(tab_id) {
+                if let Some(ref drag) = tab_state.column_resize_drag {
+                    // Direct pixel-based resize: new width = original + delta
+                    let delta = current_x - drag.start_x;
+                    let original_width = drag.original_widths.get(drag.column);
+                    let new_width = original_width + delta;
+
+                    // The set() method enforces minimum width
+                    let column = drag.column;
+                    if (tab_state.column_widths.get(column) - new_width).abs() > 0.5 {
+                        tab_state.column_widths.set(column, new_width);
+                    }
+                }
+            }
+            Task::none()
+        }
+        SftpMessage::ColumnResizeEnd(tab_id) => {
+            if let Some(tab_state) = portal.sftp.get_tab_mut(tab_id) {
+                tab_state.column_resize_drag = None;
+                // Update the app's column widths and persist to settings
+                portal.sftp_column_widths = tab_state.column_widths.clone();
+
+                // Save to disk
+                let mut settings = SettingsConfig::load().unwrap_or_default();
+                settings.sftp_column_widths = portal.sftp_column_widths.clone();
+                if let Err(e) = settings.save() {
+                    tracing::error!("Failed to save column widths: {}", e);
+                }
             }
             Task::none()
         }

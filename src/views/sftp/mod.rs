@@ -18,7 +18,8 @@ pub mod types;
 // Re-export types for external use
 pub use state::DualPaneSftpState;
 pub use types::{
-    ContextMenuAction, PaneId, PaneSource, PermissionBit, PermissionBits, SftpDialogType,
+    ColumnWidths, ContextMenuAction, PaneId, PaneSource, PermissionBit, PermissionBits,
+    SftpColumn, SftpDialogType,
 };
 
 use iced::widget::{Space, container, row, stack};
@@ -45,6 +46,7 @@ pub fn dual_pane_sftp_view(
         available_hosts.clone(),
         state.active_pane == PaneId::Left,
         state.context_menu.visible,
+        &state.column_widths,
         theme,
     );
 
@@ -55,6 +57,7 @@ pub fn dual_pane_sftp_view(
         available_hosts,
         state.active_pane == PaneId::Right,
         state.context_menu.visible,
+        &state.column_widths,
         theme,
     );
 

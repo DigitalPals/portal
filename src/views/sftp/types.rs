@@ -3,6 +3,7 @@
 //! This module contains all type definitions for the SFTP dual-pane browser.
 
 use iced::Point;
+use serde::{Deserialize, Serialize};
 
 use crate::message::SessionId;
 
@@ -174,5 +175,65 @@ impl Default for PermissionBits {
     fn default() -> Self {
         // Default to 644 (rw-r--r--)
         Self::from_mode(0o644)
+    }
+}
+
+/// Column identifiers for the SFTP file list
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum SftpColumn {
+    Name,
+    DateModified,
+    Size,
+    Kind,
+}
+
+/// Minimum column width in pixels
+pub const MIN_COLUMN_WIDTH: f32 = 60.0;
+
+/// Column width configuration for SFTP file lists (stored as pixel widths)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ColumnWidths {
+    pub name: f32,
+    pub date_modified: f32,
+    pub size: f32,
+    pub kind: f32,
+}
+
+impl Default for ColumnWidths {
+    fn default() -> Self {
+        Self {
+            name: 200.0,
+            date_modified: 150.0,
+            size: 80.0,
+            kind: 120.0,
+        }
+    }
+}
+
+impl ColumnWidths {
+    /// Get the pixel width for a column
+    pub fn get(&self, column: SftpColumn) -> f32 {
+        match column {
+            SftpColumn::Name => self.name,
+            SftpColumn::DateModified => self.date_modified,
+            SftpColumn::Size => self.size,
+            SftpColumn::Kind => self.kind,
+        }
+    }
+
+    /// Set the width for a column, enforcing minimum width
+    pub fn set(&mut self, column: SftpColumn, width: f32) {
+        let width = width.max(MIN_COLUMN_WIDTH);
+        match column {
+            SftpColumn::Name => self.name = width,
+            SftpColumn::DateModified => self.date_modified = width,
+            SftpColumn::Size => self.size = width,
+            SftpColumn::Kind => self.kind = width,
+        }
+    }
+
+    /// Get the total width of all columns
+    pub fn total_width(&self) -> f32 {
+        self.name + self.date_modified + self.size + self.kind
     }
 }

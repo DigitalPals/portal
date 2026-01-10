@@ -11,7 +11,8 @@ use crate::message::SessionId;
 use crate::sftp::{FileEntry, SortOrder};
 
 use super::types::{
-    ContextMenuState, PaneId, PaneSource, PermissionBit, PermissionBits, SftpDialogType,
+    ColumnWidths, ContextMenuState, PaneId, PaneSource, PermissionBit, PermissionBits,
+    SftpColumn, SftpDialogType,
 };
 
 /// State for a single file browser pane (can be local or remote)
@@ -204,6 +205,17 @@ impl SftpDialogState {
     }
 }
 
+/// State for active column resize drag operation
+#[derive(Debug, Clone)]
+pub struct ColumnResizeDrag {
+    /// Which column's right edge is being dragged
+    pub column: SftpColumn,
+    /// Starting X position when drag began
+    pub start_x: f32,
+    /// Original column widths when drag started
+    pub original_widths: ColumnWidths,
+}
+
 /// State for the dual-pane SFTP browser
 #[derive(Debug, Clone)]
 pub struct DualPaneSftpState {
@@ -213,6 +225,8 @@ pub struct DualPaneSftpState {
     pub active_pane: PaneId,
     pub context_menu: ContextMenuState,
     pub dialog: Option<SftpDialogState>,
+    pub column_widths: ColumnWidths,
+    pub column_resize_drag: Option<ColumnResizeDrag>,
 }
 
 impl DualPaneSftpState {
@@ -224,6 +238,21 @@ impl DualPaneSftpState {
             active_pane: PaneId::Left,
             context_menu: ContextMenuState::default(),
             dialog: None,
+            column_widths: ColumnWidths::default(),
+            column_resize_drag: None,
+        }
+    }
+
+    pub fn new_with_column_widths(tab_id: SessionId, column_widths: ColumnWidths) -> Self {
+        Self {
+            tab_id,
+            left_pane: FilePaneState::new_local(),
+            right_pane: FilePaneState::new_local(),
+            active_pane: PaneId::Left,
+            context_menu: ContextMenuState::default(),
+            dialog: None,
+            column_widths,
+            column_resize_drag: None,
         }
     }
 

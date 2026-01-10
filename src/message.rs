@@ -13,7 +13,7 @@ use crate::ssh::host_key_verification::HostKeyVerificationRequest;
 use crate::terminal::backend::TerminalEvent;
 use crate::theme::ThemeId;
 use crate::views::file_viewer::ViewerContent;
-use crate::views::sftp::{ContextMenuAction, PaneId, PaneSource, PermissionBit};
+use crate::views::sftp::{ContextMenuAction, PaneId, PaneSource, PermissionBit, SftpColumn};
 
 /// Session ID type alias
 pub type SessionId = Uuid;
@@ -155,6 +155,12 @@ pub enum SftpMessage {
     FilterChanged(SessionId, PaneId, String),
     /// Navigate to specific breadcrumb path segment
     PaneBreadcrumbNavigate(SessionId, PaneId, PathBuf),
+    /// Column resize drag started
+    ColumnResizeStart(SessionId, SftpColumn, f32),
+    /// Column being resized (during drag)
+    ColumnResizing(SessionId, f32),
+    /// Column resize completed
+    ColumnResizeEnd(SessionId),
 }
 
 /// Dialog-related messages
