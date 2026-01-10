@@ -7,6 +7,7 @@ use std::path::PathBuf;
 
 use iced::widget::{
     Column, Row, Space, button, column, container, pick_list, row, scrollable, text, text_input,
+    tooltip,
 };
 use iced::{Alignment, Color, Element, Fill, Length, Padding};
 use uuid::Uuid;
@@ -280,7 +281,7 @@ pub fn pane_breadcrumb_bar(
         // Folder icon + clickable segment
         let segment = button(
             row![
-                icon_with_color(icons::files::FOLDER, 14, theme.accent),
+                icon_with_color(icons::files::FOLDER, 14, theme.text_secondary),
                 text(display_name)
                     .size(FONT_SIZE_LABEL)
                     .color(theme.text_primary)
@@ -539,8 +540,6 @@ pub fn pane_file_entry_row(
 
     let icon_color = if is_selected {
         theme.background
-    } else if entry.is_dir {
-        theme.accent
     } else {
         theme.text_secondary
     };
@@ -551,12 +550,36 @@ pub fn pane_file_entry_row(
     let modified = entry.formatted_modified();
     let kind = entry.kind_description();
 
+    // Clone name for tooltip
+    let tooltip_name = name.clone();
+
     let name_row = row![
         icon_with_color(icon_data, 16, icon_color),
-        text(name).size(FONT_SIZE_BUTTON_SMALL).color(text_color),
+        text(name)
+            .size(FONT_SIZE_BUTTON_SMALL)
+            .color(text_color)
+            .wrapping(text::Wrapping::None),
     ]
     .spacing(8)
     .align_y(Alignment::Center);
+
+    // Wrap name in tooltip showing full name on hover (1 second delay)
+    let name_with_tooltip = tooltip(
+        container(name_row).width(Fill).clip(true),
+        text(tooltip_name).size(FONT_SIZE_LABEL),
+        tooltip::Position::Top,
+    )
+    .delay(std::time::Duration::from_secs(1))
+    .style(move |_theme| container::Style {
+        background: Some(theme.surface.into()),
+        border: iced::Border {
+            color: theme.border,
+            width: 1.0,
+            radius: 4.0.into(),
+        },
+        ..Default::default()
+    })
+    .padding(6);
 
     let secondary_color = if is_selected {
         text_color
@@ -565,7 +588,7 @@ pub fn pane_file_entry_row(
     };
 
     let content = row![
-        container(name_row).width(Length::FillPortion(4)),
+        container(name_with_tooltip).width(Length::FillPortion(4)),
         text(modified)
             .size(FONT_SIZE_BODY)
             .color(secondary_color)
