@@ -42,6 +42,7 @@ fn file_icon_data(icon_type: FileIcon) -> &'static [u8] {
 }
 
 /// Build a single pane view for the dual-pane browser
+#[allow(clippy::too_many_arguments)]
 pub fn single_pane_view<'a>(
     state: &'a FilePaneState,
     pane_id: PaneId,
@@ -54,7 +55,14 @@ pub fn single_pane_view<'a>(
 ) -> Element<'a, Message> {
     let header = pane_header(state, pane_id, tab_id, available_hosts, is_active, theme);
     let breadcrumbs = pane_breadcrumb_bar(state, pane_id, tab_id, theme);
-    let file_list = pane_file_list(state, pane_id, tab_id, context_menu_open, column_widths, theme);
+    let file_list = pane_file_list(
+        state,
+        pane_id,
+        tab_id,
+        context_menu_open,
+        column_widths,
+        theme,
+    );
     let footer = pane_footer(state, pane_id, tab_id, theme);
 
     let content = column![header, breadcrumbs, file_list, footer].spacing(0);
@@ -77,7 +85,7 @@ pub fn pane_header(
     pane_id: PaneId,
     tab_id: SessionId,
     available_hosts: Vec<(Uuid, String)>,
-    is_active: bool,
+    _is_active: bool,
     theme: Theme,
 ) -> Element<'_, Message> {
     // Build source options: Local + all configured hosts
@@ -170,13 +178,6 @@ pub fn pane_header(
         tab_id, pane_id,
     )));
 
-    // Active pane indicator: colored top border
-    let border_color = if is_active {
-        theme.accent
-    } else {
-        theme.border
-    };
-
     container(
         row![
             source_picker,
@@ -191,11 +192,6 @@ pub fn pane_header(
     .width(Fill)
     .style(move |_theme| container::Style {
         background: Some(theme.surface.into()),
-        border: iced::Border {
-            color: border_color,
-            width: if is_active { 2.0 } else { 1.0 },
-            radius: 0.0.into(),
-        },
         ..Default::default()
     })
     .into()
@@ -273,7 +269,7 @@ pub fn pane_breadcrumb_bar(
         if i > 0 {
             breadcrumb_elements.push(
                 text(">")
-                    .size(FONT_SIZE_LABEL)
+                    .size(FONT_SIZE_BUTTON_SMALL)
                     .color(theme.text_muted)
                     .into(),
             );
@@ -284,7 +280,7 @@ pub fn pane_breadcrumb_bar(
             row![
                 icon_with_color(icons::files::FOLDER, 14, theme.text_secondary),
                 text(display_name)
-                    .size(FONT_SIZE_LABEL)
+                    .size(FONT_SIZE_BUTTON_SMALL)
                     .color(theme.text_primary)
             ]
             .spacing(4)
@@ -335,11 +331,6 @@ pub fn pane_breadcrumb_bar(
     .width(Fill)
     .style(move |_| container::Style {
         background: Some(theme.surface.into()),
-        border: iced::Border {
-            color: theme.border,
-            width: 1.0,
-            radius: 0.0.into(),
-        },
         ..Default::default()
     })
     .into()
@@ -502,11 +493,6 @@ pub fn pane_file_list<'a>(
     )
     .style(move |_theme| container::Style {
         background: Some(theme.surface.into()),
-        border: iced::Border {
-            color: theme.border,
-            width: 1.0,
-            radius: 0.0.into(),
-        },
         ..Default::default()
     });
 
@@ -580,6 +566,7 @@ pub fn pane_file_list<'a>(
 }
 
 /// Single file entry row for a pane
+#[allow(clippy::too_many_arguments)]
 pub fn pane_file_entry_row(
     entry: &FileEntry,
     index: usize,
@@ -773,11 +760,6 @@ pub fn pane_footer<'a>(
     .width(Fill)
     .style(move |_theme| container::Style {
         background: Some(theme.surface.into()),
-        border: iced::Border {
-            color: theme.border,
-            width: 1.0,
-            radius: 0.0.into(),
-        },
         ..Default::default()
     })
     .into()

@@ -4,8 +4,8 @@ use iced::Task;
 use uuid::Uuid;
 
 use crate::app::{Portal, Tab, View};
-use crate::message::{Message, SftpMessage};
 use crate::config::SettingsConfig;
+use crate::message::{Message, SftpMessage};
 use crate::views::sftp::state::ColumnResizeDrag;
 use crate::views::sftp::{DualPaneSftpState, PaneId, PaneSource};
 use crate::views::toast::Toast;

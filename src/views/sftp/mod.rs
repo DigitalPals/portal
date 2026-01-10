@@ -18,8 +18,8 @@ pub mod types;
 // Re-export types for external use
 pub use state::DualPaneSftpState;
 pub use types::{
-    ColumnWidths, ContextMenuAction, PaneId, PaneSource, PermissionBit, PermissionBits,
-    SftpColumn, SftpDialogType,
+    ColumnWidths, ContextMenuAction, PaneId, PaneSource, PermissionBit, PermissionBits, SftpColumn,
+    SftpDialogType,
 };
 
 use iced::widget::{Space, container, row, stack};

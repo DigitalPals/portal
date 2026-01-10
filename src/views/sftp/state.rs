@@ -11,8 +11,8 @@ use crate::message::SessionId;
 use crate::sftp::{FileEntry, SortOrder};
 
 use super::types::{
-    ColumnWidths, ContextMenuState, PaneId, PaneSource, PermissionBit, PermissionBits,
-    SftpColumn, SftpDialogType,
+    ColumnWidths, ContextMenuState, PaneId, PaneSource, PermissionBit, PermissionBits, SftpColumn,
+    SftpDialogType,
 };
 
 /// State for a single file browser pane (can be local or remote)
