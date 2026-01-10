@@ -42,11 +42,17 @@ impl fmt::Display for TerminalFont {
     }
 }
 
+/// Inter font for UI
+pub const INTER: Font = Font::with_name("Inter");
+
 /// JetBrains Mono Nerd Font
 pub const JETBRAINS_MONO_NERD: Font = Font::with_name("JetBrainsMono Nerd Font");
 
 /// Hack Nerd Font
 pub const HACK_NERD: Font = Font::with_name("Hack Nerd Font");
+
+/// Raw font bytes for loading at startup - Inter
+pub const INTER_BYTES: &[u8] = include_bytes!("../assets/fonts/Inter-Regular.ttf");
 
 /// Raw font bytes for loading at startup - JetBrains Mono
 pub const JETBRAINS_MONO_NERD_BYTES: &[u8] =

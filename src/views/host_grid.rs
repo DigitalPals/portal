@@ -74,7 +74,7 @@ fn build_action_bar(search_query: &str, theme: Theme) -> Element<'static, Messag
                     _ => theme.border,
                 };
                 Style {
-                    background: theme.background.into(),
+                    background: iced::Color::from_rgb8(0x3E, 0x42, 0x57).into(),
                     border: iced::Border {
                         color: border_color,
                         width: 1.0,
@@ -87,7 +87,7 @@ fn build_action_bar(search_query: &str, theme: Theme) -> Element<'static, Messag
                 }
             });
 
-    // Connect button - pill-shaped, accent color
+    // Connect button - pill-shaped
     let connect_btn = button(
         text("Connect")
             .size(FONT_SIZE_BUTTON)
@@ -95,8 +95,8 @@ fn build_action_bar(search_query: &str, theme: Theme) -> Element<'static, Messag
     )
     .style(move |_theme, status| {
         let bg = match status {
-            button::Status::Hovered => iced::Color::from_rgb8(0x00, 0x8B, 0xE8),
-            _ => theme.accent,
+            button::Status::Hovered => iced::Color::from_rgb8(0x50, 0x55, 0x70),
+            _ => iced::Color::from_rgb8(0x40, 0x44, 0x58),
         };
         button::Style {
             background: Some(bg.into()),
@@ -523,7 +523,7 @@ fn host_card(
     let info = column![
         text(host.name.clone())
             .size(FONT_SIZE_SECTION)
-            .color(theme.text_primary),
+            .color(iced::Color::WHITE),
         text(os_text)
             .size(FONT_SIZE_LABEL)
             .color(theme.text_secondary),

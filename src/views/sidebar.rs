@@ -5,8 +5,7 @@ use crate::app::{FocusSection, SidebarState};
 use crate::icons::{self, icon_with_color};
 use crate::message::{Message, SidebarMenuItem, UiMessage};
 use crate::theme::{
-    BORDER_RADIUS, FONT_SIZE_LABEL, FONT_SIZE_SECTION, SIDEBAR_WIDTH, SIDEBAR_WIDTH_COLLAPSED,
-    Theme,
+    BORDER_RADIUS, FONT_SIZE_BODY, FONT_SIZE_LABEL, SIDEBAR_WIDTH, SIDEBAR_WIDTH_COLLAPSED, Theme,
 };
 
 /// Menu item definition
@@ -116,13 +115,7 @@ fn menu_item_button(
     collapsed: bool,
     theme: Theme,
 ) -> Element<'static, Message> {
-    let icon_color = if is_selected || is_focused {
-        theme.accent
-    } else {
-        theme.text_secondary
-    };
-
-    let icon_widget = icon_with_color(menu_item.icon, 18, icon_color);
+    let icon_widget = icon_with_color(menu_item.icon, 18, iced::Color::WHITE);
 
     let content: Element<'static, Message> = if collapsed {
         // Collapsed: just icon, centered
@@ -135,12 +128,8 @@ fn menu_item_button(
         row![
             container(icon_widget).width(32).align_x(Alignment::Center),
             text(menu_item.label)
-                .size(FONT_SIZE_SECTION)
-                .color(if is_selected || is_focused {
-                    theme.text_primary
-                } else {
-                    theme.text_secondary
-                }),
+                .size(FONT_SIZE_BODY)
+                .color(iced::Color::WHITE),
         ]
         .spacing(8)
         .align_y(Alignment::Center)

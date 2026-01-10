@@ -89,17 +89,17 @@ pub struct Theme {
 }
 
 impl Theme {
-    /// Portal Default theme - Royal TSX-style navy blue-gray
+    /// Portal Default theme - Dark navy blue
     pub fn portal_default() -> Self {
         Self {
-            background: Color::from_rgb8(0x1e, 0x22, 0x33),
-            surface: Color::from_rgb8(0x2a, 0x31, 0x42),
-            sidebar: Color::from_rgb8(0x1a, 0x1d, 0x2b),
+            background: Color::from_rgb8(0x1D, 0x20, 0x33),
+            surface: Color::from_rgb8(0x28, 0x2B, 0x3D),
+            sidebar: Color::from_rgb8(0x28, 0x2B, 0x3D),
             tab_bar: Color::from_rgb8(0x14, 0x17, 0x29),
-            accent: Color::from_rgb8(0x00, 0x78, 0xd4),
+            accent: Color::from_rgb8(0x32, 0x36, 0x4A),
             text_primary: Color::from_rgb8(0xe8, 0xe8, 0xe8),
             text_secondary: Color::from_rgb8(0x9a, 0xa0, 0xb0),
-            text_muted: Color::from_rgb8(0x6a, 0x70, 0x80),
+            text_muted: Color::from_rgb8(0x5B, 0x5F, 0x74),
             border: Color::from_rgb8(0x3a, 0x40, 0x55),
             hover: Color::from_rgb8(0x35, 0x3d, 0x50),
             selected: Color::from_rgb8(0x2a, 0x4a, 0x6d),
@@ -331,13 +331,13 @@ pub const BORDER_RADIUS: f32 = 8.0;
 pub const CARD_BORDER_RADIUS: f32 = 12.0;
 
 /// Minimum card width for responsive grid
-pub const MIN_CARD_WIDTH: f32 = 300.0;
+pub const MIN_CARD_WIDTH: f32 = 260.0;
 
 /// Fixed card height for consistent tile heights
-pub const CARD_HEIGHT: f32 = 60.0;
+pub const CARD_HEIGHT: f32 = 56.0;
 
 /// Grid spacing between cards
-pub const GRID_SPACING: f32 = 16.0;
+pub const GRID_SPACING: f32 = 12.0;
 
 /// Grid horizontal padding (left + right)
 pub const GRID_PADDING: f32 = 48.0;
@@ -386,10 +386,10 @@ pub const FONT_SIZE_DIALOG_TITLE: f32 = 20.0;
 pub const FONT_SIZE_HEADING: f32 = 18.0;
 
 /// Section headers (Groups, Hosts, Snippets, History, Results)
-pub const FONT_SIZE_SECTION: f32 = 16.0;
+pub const FONT_SIZE_SECTION: f32 = 13.0;
 
 /// Body text, primary readable content
-pub const FONT_SIZE_BODY: f32 = 14.0;
+pub const FONT_SIZE_BODY: f32 = 13.0;
 
 /// Button text in primary/secondary buttons
 pub const FONT_SIZE_BUTTON: f32 = 14.0;
@@ -398,7 +398,7 @@ pub const FONT_SIZE_BUTTON: f32 = 14.0;
 pub const FONT_SIZE_BUTTON_SMALL: f32 = 13.0;
 
 /// Secondary info, descriptions, form field labels
-pub const FONT_SIZE_LABEL: f32 = 12.0;
+pub const FONT_SIZE_LABEL: f32 = 9.0;
 
 /// Metadata, timestamps, status bar, keyboard shortcuts
 pub const FONT_SIZE_CAPTION: f32 = 12.0;
