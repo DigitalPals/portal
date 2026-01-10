@@ -569,9 +569,12 @@ fn host_card(
     .spacing(4);
 
     // Edit button - only visible on hover
+    // Use fixed dimensions (16px icon + 8px padding each side = 32px)
     let edit_button: Element<'static, Message> = if is_hovered {
         button(icon_with_color(icons::ui::PENCIL, 16, theme.text_secondary))
             .padding(8)
+            .width(32)
+            .height(32)
             .style(move |_theme, status| {
                 let bg = match status {
                     button::Status::Hovered => theme.hover,
@@ -590,13 +593,12 @@ fn host_card(
             .on_press(Message::Host(HostMessage::Edit(host_id)))
             .into()
     } else {
-        Space::new().into()
+        Space::new().width(32).height(32).into()
     };
 
     let card_content = row![
         icon_widget,
-        info,
-        Space::new().width(Length::Fill),
+        container(info).width(Length::Fill),
         edit_button,
     ]
     .spacing(14)

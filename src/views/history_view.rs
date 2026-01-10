@@ -78,6 +78,7 @@ pub fn history_view(
         empty_state(theme)
     } else {
         // Group entries by date
+        #[allow(clippy::type_complexity)]
         let mut day_groups: Vec<(String, String, Vec<(usize, &HistoryEntry)>)> = Vec::new();
         let mut current_key: Option<String> = None;
 
@@ -153,9 +154,7 @@ fn build_day_section(
         });
 
     let header = row![
-        container(header_dot)
-            .width(48)
-            .align_x(Alignment::Center),
+        container(header_dot).width(48).align_x(Alignment::Center),
         text(day_label)
             .size(FONT_SIZE_BODY)
             .color(theme.text_primary),
@@ -273,9 +272,7 @@ fn build_entry_card(
         text(format!("{}@{} | {}", username, hostname, duration_str))
             .size(FONT_SIZE_LABEL)
             .color(theme.text_muted),
-        text(time_str)
-            .size(FONT_SIZE_LABEL)
-            .color(theme.text_muted),
+        text(time_str).size(FONT_SIZE_LABEL).color(theme.text_muted),
     ]
     .spacing(4);
 
