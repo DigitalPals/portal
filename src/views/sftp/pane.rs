@@ -113,7 +113,7 @@ pub fn pane_header(
         },
     )
     .width(Length::Fixed(150.0))
-    .text_size(FONT_SIZE_LABEL)
+    .text_size(FONT_SIZE_BODY)
     .padding([4, 8]);
 
     // Filter input
@@ -121,7 +121,7 @@ pub fn pane_header(
     let filter_input = text_input("Filter...", &filter_value)
         .on_input(move |value| Message::Sftp(SftpMessage::FilterChanged(tab_id, pane_id, value)))
         .padding([4, 8])
-        .size(FONT_SIZE_LABEL)
+        .size(FONT_SIZE_BODY)
         .width(Length::Fixed(120.0))
         .style(move |_theme, _status| text_input::Style {
             background: theme.background.into(),
@@ -140,9 +140,9 @@ pub fn pane_header(
     let actions_btn = button(
         row![
             text("Actions")
-                .size(FONT_SIZE_LABEL)
+                .size(FONT_SIZE_BODY)
                 .color(theme.text_primary),
-            icon_with_color(icons::ui::CHEVRON_DOWN, 12, theme.text_primary)
+            icon_with_color(icons::ui::CHEVRON_DOWN, 14, theme.text_primary)
         ]
         .spacing(4)
         .align_y(Alignment::Center),
@@ -410,19 +410,19 @@ pub fn pane_file_list<'a>(
     let headers = container(
         row![
             text("Name")
-                .size(FONT_SIZE_LABEL)
+                .size(FONT_SIZE_BODY)
                 .color(theme.text_muted)
                 .width(Length::FillPortion(4)),
             text("Date Modified")
-                .size(FONT_SIZE_LABEL)
+                .size(FONT_SIZE_BODY)
                 .color(theme.text_muted)
                 .width(Length::FillPortion(2)),
             text("Size")
-                .size(FONT_SIZE_LABEL)
+                .size(FONT_SIZE_BODY)
                 .color(theme.text_muted)
                 .width(Length::FillPortion(1)),
             text("Kind")
-                .size(FONT_SIZE_LABEL)
+                .size(FONT_SIZE_BODY)
                 .color(theme.text_muted)
                 .width(Length::FillPortion(2)),
         ]
@@ -567,15 +567,15 @@ pub fn pane_file_entry_row(
     let content = row![
         container(name_row).width(Length::FillPortion(4)),
         text(modified)
-            .size(FONT_SIZE_LABEL)
+            .size(FONT_SIZE_BODY)
             .color(secondary_color)
             .width(Length::FillPortion(2)),
         text(size)
-            .size(FONT_SIZE_LABEL)
+            .size(FONT_SIZE_BODY)
             .color(secondary_color)
             .width(Length::FillPortion(1)),
         text(kind)
-            .size(FONT_SIZE_LABEL)
+            .size(FONT_SIZE_BODY)
             .color(secondary_color)
             .width(Length::FillPortion(2)),
     ]
@@ -718,11 +718,10 @@ pub fn actions_menu_overlay(
         tab_id, pane_id,
     )));
 
-    let menu_bg = Color::from_rgb(0.98, 0.98, 0.98);
     let menu = container(column![menu_item])
         .padding(8)
         .style(move |_| container::Style {
-            background: Some(menu_bg.into()),
+            background: Some(theme.surface.into()),
             border: iced::Border {
                 color: theme.border,
                 width: 1.0,
@@ -747,9 +746,10 @@ pub fn actions_menu_overlay(
     )));
 
     // Position menu at top-right of pane (below the Actions button)
-    let positioned_menu = container(container(menu).align_x(Alignment::End))
+    let positioned_menu = container(menu)
         .width(Fill)
-        .padding(Padding::new(0.0).top(40.0).right(8.0));
+        .padding(Padding::new(0.0).top(40.0).right(8.0))
+        .align_x(Alignment::End);
 
     iced::widget::stack![background, positioned_menu].into()
 }
