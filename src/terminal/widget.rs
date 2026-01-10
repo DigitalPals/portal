@@ -617,7 +617,7 @@ impl<'a, Message> TerminalWidget<'a, Message> {
             column: cursor.point.column.0,
             line: screen_line as usize,
             shape: cursor.shape,
-            visible: true, // Cursor visibility handled by mode flags
+            visible: cursor.shape != CursorShape::Hidden,
         })
     }
 
@@ -920,8 +920,14 @@ where
             let x = bounds.x + TERMINAL_PADDING_LEFT + cell.column as f32 * cell_width;
             let y = bounds.y + cell.line as f32 * cell_height;
 
-            // Draw cell background if not default
-            let bg_color = ansi_to_iced_themed(cell.bg, colors);
+            let mut fg_color = ansi_to_iced_themed(cell.fg, colors);
+            let mut bg_color = ansi_to_iced_themed(cell.bg, colors);
+
+            if cell.flags.contains(CellFlags::INVERSE) {
+                std::mem::swap(&mut fg_color, &mut bg_color);
+            }
+
+            // Draw cell background if not default (after inverse swap)
             if bg_color != colors.background {
                 renderer.fill_quad(
                     Quad {
@@ -940,9 +946,7 @@ where
             }
 
             // Draw character
-            if cell.character != ' ' {
-                let mut fg_color = ansi_to_iced_themed(cell.fg, colors);
-
+            if cell.character != ' ' && !cell.flags.contains(CellFlags::HIDDEN) {
                 // Handle flags
                 if cell.flags.contains(CellFlags::DIM) {
                     fg_color = Color::from_rgba(
@@ -951,11 +955,6 @@ where
                         fg_color.b * 0.66,
                         fg_color.a,
                     );
-                }
-
-                if cell.flags.contains(CellFlags::INVERSE) {
-                    // Use bg color as fg (inverse)
-                    fg_color = ansi_to_iced_themed(cell.bg, colors);
                 }
 
                 // Wide characters (e.g. CJK, emoji) occupy 2 cells
