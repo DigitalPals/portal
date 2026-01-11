@@ -3,6 +3,7 @@
 //! This module wraps the alacritty_terminal Term for use with iced.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use alacritty_terminal::event::{Event, EventListener};
 use alacritty_terminal::grid::Dimensions;
@@ -134,6 +135,7 @@ pub struct TerminalBackend {
     term: Arc<Mutex<Term<EventProxy>>>,
     processor: Mutex<Processor>,
     size: TerminalSize,
+    render_epoch: Arc<AtomicU64>,
 }
 
 impl TerminalBackend {
@@ -141,6 +143,7 @@ impl TerminalBackend {
     pub fn new(size: TerminalSize) -> (Self, mpsc::Receiver<TerminalEvent>) {
         let (event_tx, event_rx) = mpsc::channel(256);
         let event_proxy = EventProxy::new(event_tx);
+        let render_epoch = Arc::new(AtomicU64::new(1));
 
         // Create terminal config with scrollback history
         let config = TermConfig {
@@ -155,6 +158,7 @@ impl TerminalBackend {
             term: Arc::new(Mutex::new(term)),
             processor: Mutex::new(Processor::new()),
             size,
+            render_epoch,
         };
 
         (backend, event_rx)
@@ -165,6 +169,11 @@ impl TerminalBackend {
         self.term.clone()
     }
 
+    /// Render version for change detection (incremented on output/resize).
+    pub fn render_epoch(&self) -> Arc<AtomicU64> {
+        self.render_epoch.clone()
+    }
+
     /// Get the terminal size
     /// Process input bytes from PTY/SSH
     pub fn process_input(&self, bytes: &[u8]) {
@@ -172,6 +181,9 @@ impl TerminalBackend {
         let mut processor = self.processor.lock();
 
         processor.advance(&mut *term, bytes);
+        if !bytes.is_empty() {
+            self.render_epoch.fetch_add(1, Ordering::Relaxed);
+        }
     }
 
     /// Resize the terminal to new dimensions
@@ -190,5 +202,6 @@ impl TerminalBackend {
 
         let mut term = self.term.lock();
         term.resize(self.size);
+        self.render_epoch.fetch_add(1, Ordering::Relaxed);
     }
 }

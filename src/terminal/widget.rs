@@ -2,7 +2,9 @@
 //!
 //! This implements the iced Widget trait for rendering terminal content.
 
+use std::cell::RefCell;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use alacritty_terminal::grid::Scroll;
 use alacritty_terminal::term::cell::Flags as CellFlags;
@@ -500,6 +502,7 @@ pub struct TerminalWidget<'a, Message> {
     font_size: f32,
     font: iced::Font,
     terminal_colors: Option<TerminalColors>,
+    render_epoch: Option<Arc<AtomicU64>>,
 }
 
 impl<'a, Message> TerminalWidget<'a, Message> {
@@ -515,6 +518,7 @@ impl<'a, Message> TerminalWidget<'a, Message> {
             font_size: 9.0,
             font: JETBRAINS_MONO_NERD,
             terminal_colors: None,
+            render_epoch: None,
         }
     }
 
@@ -533,6 +537,12 @@ impl<'a, Message> TerminalWidget<'a, Message> {
     /// Set terminal colors from theme
     pub fn terminal_colors(mut self, colors: TerminalColors) -> Self {
         self.terminal_colors = Some(colors);
+        self
+    }
+
+    /// Set render epoch for change detection.
+    pub fn render_epoch(mut self, epoch: Arc<AtomicU64>) -> Self {
+        self.render_epoch = Some(epoch);
         self
     }
 
@@ -799,10 +809,14 @@ struct TerminalState {
     cursor_visible: bool,
     last_size: Option<(u16, u16)>,
     scroll_pixels: f32, // Accumulated scroll pixels for trackpad
+    // Cached render data (updated only when terminal content changes)
+    render_cache: RefCell<RenderCache>,
     // Selection state
     selection_start: Option<(usize, usize)>, // (column, line) in screen coords
     selection_end: Option<(usize, usize)>,
     is_selecting: bool, // Mouse button held during drag
+    last_drag_cell: Option<(usize, usize)>,
+    last_drag_update: Option<std::time::Instant>,
     // Click tracking for double/triple click
     last_click_time: Option<std::time::Instant>,
     last_click_position: Option<(usize, usize)>,
@@ -819,6 +833,14 @@ enum SelectionMode {
     Line, // Triple-click: select by line
 }
 
+#[derive(Debug, Default)]
+struct RenderCache {
+    cells: Vec<RenderCell>,
+    cursor: Option<CursorInfo>,
+    epoch: u64,
+    needs_refresh: bool,
+}
+
 impl Default for TerminalState {
     fn default() -> Self {
         Self {
@@ -826,9 +848,15 @@ impl Default for TerminalState {
             cursor_visible: true,
             last_size: None,
             scroll_pixels: 0.0,
+            render_cache: RefCell::new(RenderCache {
+                needs_refresh: true,
+                ..RenderCache::default()
+            }),
             selection_start: None,
             selection_end: None,
             is_selecting: false,
+            last_drag_cell: None,
+            last_drag_update: None,
             last_click_time: None,
             last_click_position: None,
             click_count: 0,
@@ -868,9 +896,15 @@ where
             cursor_visible: true,
             last_size: None,
             scroll_pixels: 0.0,
+            render_cache: RefCell::new(RenderCache {
+                needs_refresh: true,
+                ..RenderCache::default()
+            }),
             selection_start: None,
             selection_end: None,
             is_selecting: false,
+            last_drag_cell: None,
+            last_drag_update: None,
             last_click_time: None,
             last_click_position: None,
             click_count: 0,
@@ -890,6 +924,9 @@ where
     ) {
         let bounds = layout.bounds();
         let state = tree.state.downcast_ref::<TerminalState>();
+        let selection = (state.selection_start, state.selection_end);
+        let is_focused = state.is_focused;
+        let cursor_visible = state.cursor_visible;
 
         // Get terminal colors (from theme or defaults)
         let default_colors = TerminalColors {
@@ -914,9 +951,30 @@ where
         let cell_width = self.cell_width();
         let cell_height = self.cell_height();
 
+        // Refresh cached render data if terminal content changed.
+        let mut cache = state.render_cache.borrow_mut();
+        let mut needs_refresh = cache.needs_refresh;
+        if let Some(epoch) = self.render_epoch.as_ref() {
+            let current = epoch.load(Ordering::Relaxed);
+            if current != cache.epoch {
+                cache.epoch = current;
+                needs_refresh = true;
+            }
+        } else {
+            needs_refresh = true;
+        }
+
+        if needs_refresh {
+            cache.cells = self.get_cells();
+            cache.cursor = self.get_cursor();
+            cache.needs_refresh = false;
+        }
+
+        let cached_cursor = cache.cursor.clone();
+        drop(cache);
+
         // Draw cells
-        let cells = self.get_cells();
-        for cell in cells {
+        for cell in &state.render_cache.borrow().cells {
             let x = bounds.x + TERMINAL_PADDING_LEFT + cell.column as f32 * cell_width;
             let y = bounds.y + cell.line as f32 * cell_height;
 
@@ -997,7 +1055,7 @@ where
         }
 
         // Draw selection highlight
-        if let (Some(start), Some(end)) = (state.selection_start, state.selection_end) {
+        if let (Some(start), Some(end)) = selection {
             // Normalize selection (ensure start comes before end)
             let (start, end) = if start.1 < end.1 || (start.1 == end.1 && start.0 <= end.0) {
                 (start, end)
@@ -1038,8 +1096,8 @@ where
         }
 
         // Draw cursor (only if visible and in valid position)
-        if state.is_focused && state.cursor_visible {
-            if let Some(cursor_info) = self.get_cursor() {
+        if is_focused && cursor_visible {
+            if let Some(cursor_info) = cached_cursor {
                 if cursor_info.visible {
                     let cursor_x =
                         bounds.x + TERMINAL_PADDING_LEFT + cursor_info.column as f32 * cell_width;
@@ -1160,6 +1218,7 @@ where
 
             if size_changed {
                 state.last_size = Some((cols, rows));
+                state.render_cache.borrow_mut().needs_refresh = true;
                 shell.publish((on_resize)(cols, rows));
             }
         }
@@ -1207,6 +1266,8 @@ where
                                 state.selection_start = Some((word_start, cell.1));
                                 state.selection_end = Some((word_end, cell.1));
                                 state.is_selecting = true;
+                                state.last_drag_cell = Some(cell);
+                                shell.request_redraw();
                             }
                             3 => {
                                 // Triple-click: select line
@@ -1214,6 +1275,8 @@ where
                                 state.selection_start = Some((0, cell.1));
                                 state.selection_end = Some((cols.saturating_sub(1), cell.1));
                                 state.is_selecting = true;
+                                state.last_drag_cell = Some(cell);
+                                shell.request_redraw();
                             }
                             _ => {
                                 // Single click: character selection
@@ -1221,6 +1284,8 @@ where
                                 state.selection_start = Some(cell);
                                 state.selection_end = Some(cell);
                                 state.is_selecting = true;
+                                state.last_drag_cell = Some(cell);
+                                shell.request_redraw();
                             }
                         }
                     }
@@ -1234,11 +1299,24 @@ where
                 state.is_selecting = false;
                 state.click_count = 0;
                 state.selection_mode = SelectionMode::Character;
+                state.last_drag_cell = None;
+                shell.request_redraw();
             }
             Event::Mouse(mouse::Event::CursorMoved { position }) => {
                 // Update selection while dragging
                 if state.is_selecting && cursor.is_over(bounds) {
                     if let Some(cell) = self.pixel_to_cell(&bounds, *position) {
+                        // Throttle selection updates to avoid excessive redraws.
+                        if let Some(last) = state.last_drag_update {
+                            if last.elapsed() < std::time::Duration::from_millis(8) {
+                                return;
+                            }
+                        }
+                        if state.last_drag_cell == Some(cell) {
+                            return;
+                        }
+                        state.last_drag_cell = Some(cell);
+                        state.last_drag_update = Some(std::time::Instant::now());
                         let cols = (bounds.width / self.cell_width()) as usize;
 
                         match state.selection_mode {
@@ -1275,6 +1353,7 @@ where
                                 state.selection_end = Some(cell);
                             }
                         }
+                        shell.request_redraw();
                     }
                 }
             }
@@ -1282,6 +1361,9 @@ where
                 if state.is_selecting =>
             {
                 state.is_selecting = false;
+                state.last_drag_cell = None;
+                state.last_drag_update = None;
+                shell.request_redraw();
             }
             Event::Mouse(mouse::Event::WheelScrolled { delta }) if cursor.is_over(bounds) => {
                 // Focus the terminal on scroll
@@ -1315,6 +1397,7 @@ where
                     if lines != 0 {
                         let mut term = self.term.lock();
                         term.scroll_display(Scroll::Delta(lines));
+                        state.render_cache.borrow_mut().needs_refresh = true;
                     }
                 }
             }

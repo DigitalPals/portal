@@ -17,6 +17,7 @@ use crate::terminal::backend::{EventProxy, TerminalEvent, TerminalSize};
 use crate::terminal::widget::TerminalWidget;
 use crate::theme::Theme;
 use tokio::sync::mpsc;
+use std::sync::atomic::AtomicU64;
 
 use super::terminal_status_bar::terminal_status_bar;
 use alacritty_terminal::term::Term;
@@ -44,6 +45,10 @@ impl TerminalSession {
     /// Get the terminal for rendering
     pub fn term(&self) -> Arc<Mutex<Term<EventProxy>>> {
         self.backend.term()
+    }
+
+    pub fn render_epoch(&self) -> Arc<AtomicU64> {
+        self.backend.render_epoch()
     }
 
     /// Process input bytes (from SSH or PTY)
@@ -74,6 +79,7 @@ pub fn terminal_view_with_status<'a>(
     let session_id = session.id;
     let term = session.term();
     let terminal_widget = TerminalWidget::new(term, move |bytes| on_input(session_id, bytes))
+        .render_epoch(session.render_epoch())
         .on_resize(move |cols, rows| on_resize(session_id, cols, rows))
         .font_size(font_size)
         .font(terminal_font)

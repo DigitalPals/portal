@@ -4,7 +4,7 @@ use portal::fonts;
 use iced::Size;
 
 fn main() -> iced::Result {
-    // Initialize logging with file output
+    // Initialize logging with file output.
     let log_dir = portal::config::paths::ensure_log_dir().ok();
     let _guard = portal::logging::init_logging(log_dir);
 

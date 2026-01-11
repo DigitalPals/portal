@@ -4395,7 +4395,7 @@ dependencies = [
 
 [[package]]
 name = "portal"
-version = "0.5.8"
+version = "0.5.9"
 dependencies = [
  "alacritty_terminal",
  "anyhow",
