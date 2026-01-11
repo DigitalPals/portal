@@ -114,7 +114,7 @@ pub fn ensure_docker_started() {
     });
 }
 
-fn ensure_test_keys(docker_dir: &PathBuf) -> bool {
+fn ensure_test_keys(docker_dir: &std::path::Path) -> bool {
     let test_keys_dir = docker_dir.join("test_keys");
     let required = [
         "id_ed25519",
