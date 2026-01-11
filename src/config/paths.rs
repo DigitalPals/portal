@@ -101,13 +101,23 @@ pub fn default_identity_files() -> Vec<PathBuf> {
 
 /// Get the log directory path
 pub fn log_dir() -> Option<PathBuf> {
+    if let Ok(raw) = std::env::var("PORTAL_LOG_DIR") {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        return Some(PathBuf::from(trimmed));
+    }
+
     config_dir().map(|d| d.join("logs"))
 }
 
 /// Ensure the log directory exists with proper permissions
 pub fn ensure_log_dir() -> std::io::Result<PathBuf> {
-    // First ensure parent config dir exists
-    ensure_config_dir()?;
+    if std::env::var_os("PORTAL_LOG_DIR").is_none() {
+        // First ensure parent config dir exists
+        ensure_config_dir()?;
+    }
 
     let dir = log_dir().ok_or_else(|| {
         std::io::Error::new(

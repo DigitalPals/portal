@@ -52,6 +52,10 @@ impl Default for TestSshServer {
 pub fn ensure_docker_started() {
     DOCKER_INIT.call_once(|| {
         let docker_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/docker");
+        if !ensure_test_keys(&docker_dir) {
+            eprintln!("WARNING: SSH test keys unavailable, SSH integration tests will be skipped");
+            return;
+        }
 
         // Check if Docker is available
         let docker_check = Command::new("docker").arg("--version").output();
@@ -108,6 +112,53 @@ pub fn ensure_docker_started() {
             }
         }
     });
+}
+
+fn ensure_test_keys(docker_dir: &PathBuf) -> bool {
+    let test_keys_dir = docker_dir.join("test_keys");
+    let required = [
+        "id_ed25519",
+        "id_ed25519.pub",
+        "id_ed25519_encrypted",
+        "id_ed25519_encrypted.pub",
+        "authorized_keys",
+    ];
+
+    let missing = required
+        .iter()
+        .any(|name| !test_keys_dir.join(name).exists());
+    if !missing {
+        return true;
+    }
+
+    let generator = test_keys_dir.join("generate_keys.sh");
+    if !generator.exists() {
+        eprintln!(
+            "WARNING: Missing test key generator at {:?}",
+            generator
+        );
+        return false;
+    }
+
+    let status = Command::new("bash")
+        .arg(generator)
+        .current_dir(&test_keys_dir)
+        .status();
+
+    match status {
+        Ok(s) if s.success() => true,
+        Ok(s) => {
+            eprintln!(
+                "WARNING: Test key generation failed with exit code {:?}",
+                s.code()
+            );
+            false
+        }
+        Err(e) => {
+            eprintln!("WARNING: Failed to run test key generator: {}", e);
+            false
+        }
+    }
 }
 
 /// Check if Docker containers are running

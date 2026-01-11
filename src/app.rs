@@ -32,7 +32,6 @@ use crate::views::tabs::{Tab, tab_bar_view};
 use crate::views::terminal_view::terminal_view_with_status;
 use crate::views::toast::{ToastManager, toast_overlay_view};
 
-#[allow(unused_imports)]
 pub use self::managers::ActiveSession;
 use self::managers::{
     ActiveDialog, DialogManager, FileViewerManager, SessionManager, SftpManager,

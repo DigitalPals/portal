@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use russh::client::Handle;
@@ -29,6 +29,19 @@ enum ChannelCommand {
 pub struct SshSession {
     command_tx: mpsc::Sender<ChannelCommand>,
     handle: Arc<Mutex<Handle<ClientHandler>>>,
+}
+
+const DEFAULT_COMMAND_OUTPUT_LIMIT: usize = 4 * 1024 * 1024;
+
+fn command_output_limit() -> usize {
+    static LIMIT: OnceLock<usize> = OnceLock::new();
+    *LIMIT.get_or_init(|| {
+        std::env::var("PORTAL_MAX_COMMAND_OUTPUT_BYTES")
+            .ok()
+            .and_then(|raw| raw.trim().parse::<usize>().ok())
+            .filter(|value| *value > 0)
+            .unwrap_or(DEFAULT_COMMAND_OUTPUT_LIMIT)
+    })
 }
 
 impl std::fmt::Debug for SshSession {
@@ -147,6 +160,7 @@ impl SshSession {
     /// Execute a command on the remote host and return its stdout output.
     /// This opens a new exec channel separate from the interactive PTY.
     pub async fn execute_command(&self, command: &str) -> Result<String, SshError> {
+        let output_limit = command_output_limit();
         let timeout_result = timeout(Duration::from_secs(10), async {
             let handle = self.handle.lock().await;
             let mut channel = handle
@@ -161,15 +175,38 @@ impl SshSession {
                 .map_err(|e| SshError::Channel(format!("Failed to exec '{}': {}", command, e)))?;
 
             let mut output = String::new();
+            let mut total_bytes = 0usize;
 
             loop {
                 match channel.wait().await {
                     Some(ChannelMsg::Data { data }) => {
+                        total_bytes = total_bytes.saturating_add(data.len());
+                        if total_bytes > output_limit {
+                            tracing::warn!(
+                                "Command output exceeded limit ({} bytes)",
+                                output_limit
+                            );
+                            return Err(SshError::Channel(format!(
+                                "Command output exceeded {} bytes",
+                                output_limit
+                            )));
+                        }
                         if let Ok(s) = std::str::from_utf8(&data) {
                             output.push_str(s);
                         }
                     }
                     Some(ChannelMsg::ExtendedData { data, .. }) => {
+                        total_bytes = total_bytes.saturating_add(data.len());
+                        if total_bytes > output_limit {
+                            tracing::warn!(
+                                "Command output exceeded limit ({} bytes)",
+                                output_limit
+                            );
+                            return Err(SshError::Channel(format!(
+                                "Command output exceeded {} bytes",
+                                output_limit
+                            )));
+                        }
                         // Avoid logging stderr contents to prevent leaking secrets.
                         tracing::debug!("{} stderr ({} bytes)", command, data.len());
                     }
@@ -205,6 +242,7 @@ impl SshSession {
         command: &str,
         timeout_secs: u64,
     ) -> Result<CommandResult, SshError> {
+        let output_limit = command_output_limit();
         let timeout_result = timeout(Duration::from_secs(timeout_secs), async {
             let handle = self.handle.lock().await;
             let mut channel = handle
@@ -221,15 +259,38 @@ impl SshSession {
             let mut stdout = String::new();
             let mut stderr = String::new();
             let mut exit_code: i32 = 0;
+            let mut total_bytes = 0usize;
 
             loop {
                 match channel.wait().await {
                     Some(ChannelMsg::Data { data }) => {
+                        total_bytes = total_bytes.saturating_add(data.len());
+                        if total_bytes > output_limit {
+                            tracing::warn!(
+                                "Command output exceeded limit ({} bytes)",
+                                output_limit
+                            );
+                            return Err(SshError::Channel(format!(
+                                "Command output exceeded {} bytes",
+                                output_limit
+                            )));
+                        }
                         if let Ok(s) = std::str::from_utf8(&data) {
                             stdout.push_str(s);
                         }
                     }
                     Some(ChannelMsg::ExtendedData { data, .. }) => {
+                        total_bytes = total_bytes.saturating_add(data.len());
+                        if total_bytes > output_limit {
+                            tracing::warn!(
+                                "Command output exceeded limit ({} bytes)",
+                                output_limit
+                            );
+                            return Err(SshError::Channel(format!(
+                                "Command output exceeded {} bytes",
+                                output_limit
+                            )));
+                        }
                         if let Ok(s) = std::str::from_utf8(&data) {
                             stderr.push_str(s);
                         }

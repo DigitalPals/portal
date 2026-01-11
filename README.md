@@ -161,6 +161,25 @@ cd portal
 ./run.sh check   # Run cargo check and clippy
 ```
 
+## Operations
+
+Portal logs to the console and to a daily rotating file in the config logs
+directory. The default log level is INFO in debug builds and WARN in release
+builds. Override it with `RUST_LOG`.
+
+Environment variables:
+
+- `PORTAL_LOG_DIR` (optional) - set a custom log directory. Set to an empty
+  string to disable file logging.
+- `PORTAL_MAX_COMMAND_OUTPUT_BYTES` (optional) - cap command output collected
+  from SSH exec calls. Default: 4194304 (4 MiB).
+
+Example:
+
+```bash
+RUST_LOG=portal=info PORTAL_LOG_DIR=/var/log/portal ./portal
+```
+
 ### NixOS / Nix Flakes
 
 Portal is available as a Nix flake with binaries cached on [Cachix](https://app.cachix.org/cache/digitalpals).

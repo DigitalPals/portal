@@ -10,7 +10,6 @@ use std::path::Path;
 use uuid::Uuid;
 
 pub use history::{HistoryConfig, HistoryEntry, SessionType};
-#[allow(unused_imports)]
 pub use hosts::{AuthMethod, DetectedOs, Host, HostsConfig};
 pub use settings::SettingsConfig;
 pub use snippet_history::{HistoricalHostResult, SnippetExecutionEntry, SnippetHistoryConfig};

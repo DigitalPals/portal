@@ -9,7 +9,12 @@ const LOG_RETENTION_FILES: usize = 7;
 /// Initialize logging with optional file output.
 /// Returns a guard that must be kept alive for the duration of the program.
 pub fn init_logging(log_dir: Option<PathBuf>) -> Option<WorkerGuard> {
-    let env_filter = EnvFilter::from_default_env().add_directive(tracing::Level::INFO.into());
+    let default_level = if cfg!(debug_assertions) {
+        tracing::Level::INFO
+    } else {
+        tracing::Level::WARN
+    };
+    let env_filter = EnvFilter::from_default_env().add_directive(default_level.into());
 
     let console_layer = fmt::layer().with_target(true).with_thread_ids(false);
 
