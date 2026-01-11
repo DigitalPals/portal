@@ -133,10 +133,7 @@ fn ensure_test_keys(docker_dir: &PathBuf) -> bool {
 
     let generator = test_keys_dir.join("generate_keys.sh");
     if !generator.exists() {
-        eprintln!(
-            "WARNING: Missing test key generator at {:?}",
-            generator
-        );
+        eprintln!("WARNING: Missing test key generator at {:?}", generator);
         return false;
     }
 

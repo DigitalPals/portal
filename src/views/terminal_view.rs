@@ -16,8 +16,8 @@ use crate::terminal::TerminalBackend;
 use crate::terminal::backend::{EventProxy, TerminalEvent, TerminalSize};
 use crate::terminal::widget::TerminalWidget;
 use crate::theme::Theme;
-use tokio::sync::mpsc;
 use std::sync::atomic::AtomicU64;
+use tokio::sync::mpsc;
 
 use super::terminal_status_bar::terminal_status_bar;
 use alacritty_terminal::term::Term;
