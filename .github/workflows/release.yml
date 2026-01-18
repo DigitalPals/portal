@@ -103,7 +103,7 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           cd target/${{ matrix.target }}/release/bundle/osx
-          ditto -c -k --sequesterRsrc --keepParent Portal.app ../../../portal-${{ needs.prepare.outputs.version }}-${{ matrix.name }}.app.zip
+          ditto -c -k --sequesterRsrc --keepParent Portal.app ../../../../../portal-${{ needs.prepare.outputs.version }}-${{ matrix.name }}.app.zip
           cd ../../../../..
 
       - name: Install AppImage tools
