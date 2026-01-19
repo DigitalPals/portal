@@ -110,7 +110,19 @@ Pick the file that matches your OS and CPU:
 1. Download the matching `.app.zip` for your architecture from Releases.
 2. Extract and move `Portal.app` to your Applications folder.
 
-If macOS blocks the app, open **System Settings > Privacy & Security** and click **Open Anyway** for Portal, then run it again.
+**Gatekeeper Warning:** Portal is not signed with an Apple Developer certificate, so macOS may show "Portal.app is damaged and can't be opened" or block the app from running. Use one of these methods to open it:
+
+**Method 1 — Remove quarantine attribute (recommended):**
+```bash
+xattr -cr /Applications/Portal.app
+```
+Then open Portal normally.
+
+**Method 2 — Right-click to open:**
+Right-click (or Control-click) Portal.app → select **Open** → click **Open** in the dialog. You only need to do this once.
+
+**Method 3 — System Settings:**
+Open **System Settings > Privacy & Security**, scroll down and click **Open Anyway** for Portal.
 
 ### Install on Linux
 
