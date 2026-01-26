@@ -168,6 +168,7 @@ fn handle_keyboard_event(
 
     // Priority 2: Terminal captured - only Ctrl+Escape exits
     if portal.terminal_captured {
+        // Ctrl+Escape exits captured mode
         if let Key::Named(keyboard::key::Named::Escape) = &key {
             if modifiers.control() {
                 portal.terminal_captured = false;
@@ -175,8 +176,17 @@ fn handle_keyboard_event(
                 return Task::none();
             }
         }
-        // All other keys go to terminal (handled by terminal widget)
-        return Task::none();
+        // Ctrl+Shift+K installs SSH key - allow this through to global shortcuts
+        if let Key::Character(c) = &key {
+            if modifiers.control() && modifiers.shift() && (c.as_str() == "k" || c.as_str() == "K")
+            {
+                // Fall through to global shortcuts below
+            } else {
+                return Task::none();
+            }
+        } else {
+            return Task::none();
+        }
     }
 
     // Priority 3: Global shortcuts (always work unless terminal captured)
