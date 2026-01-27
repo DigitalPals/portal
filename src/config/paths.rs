@@ -1,11 +1,19 @@
+#[cfg(windows)]
 use directories::ProjectDirs;
 use std::path::PathBuf;
 
 /// Get the configuration directory path
 /// Creates the directory if it doesn't exist
 pub fn config_dir() -> Option<PathBuf> {
-    ProjectDirs::from("com", "portal", "portal")
-        .map(|proj_dirs| proj_dirs.config_dir().to_path_buf())
+    #[cfg(unix)]
+    {
+        dirs_home().map(|home| home.join(".config").join("portal"))
+    }
+    #[cfg(windows)]
+    {
+        ProjectDirs::from("com", "portal", "portal")
+            .map(|proj_dirs| proj_dirs.config_dir().to_path_buf())
+    }
 }
 
 /// Get the path to the hosts config file
