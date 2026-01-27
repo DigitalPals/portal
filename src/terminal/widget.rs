@@ -27,6 +27,7 @@ use crate::theme::TerminalColors;
 /// Left padding for terminal content (matches Termius style)
 const TERMINAL_PADDING_LEFT: f32 = 12.0;
 
+
 /// Render block element characters as rectangles.
 /// This bypasses font rendering for pixel-perfect block graphics.
 /// Returns true if the character was rendered, false if it should use text rendering.
@@ -1381,11 +1382,12 @@ where
                         mouse::ScrollDelta::Lines { y, .. } => {
                             // Reset pixel accumulator on line-based scroll
                             state.scroll_pixels = 0.0;
-                            -*y as i32 * 3 // 3 lines per scroll step
+                            // 1:1 scrolling - OS handles scroll direction preference
+                            *y as i32
                         }
                         mouse::ScrollDelta::Pixels { y, .. } => {
                             // Accumulate pixels for smooth trackpad scrolling
-                            state.scroll_pixels -= y;
+                            state.scroll_pixels += y;
                             let line_height = self.cell_height();
                             let lines = (state.scroll_pixels / line_height) as i32;
                             // Keep remainder for next scroll event
@@ -1398,6 +1400,7 @@ where
                         let mut term = self.term.lock();
                         term.scroll_display(Scroll::Delta(lines));
                         state.render_cache.borrow_mut().needs_refresh = true;
+                        shell.request_redraw();
                     }
                 }
             }
