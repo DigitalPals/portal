@@ -27,7 +27,6 @@ use crate::theme::TerminalColors;
 /// Left padding for terminal content (matches Termius style)
 const TERMINAL_PADDING_LEFT: f32 = 12.0;
 
-
 /// Render block element characters as rectangles.
 /// This bypasses font rendering for pixel-perfect block graphics.
 /// Returns true if the character was rendered, false if it should use text rendering.
