@@ -128,6 +128,7 @@ pub fn history_view(
 }
 
 /// Build a complete day section with timeline
+#[allow(clippy::too_many_arguments)]
 fn build_day_section(
     day_label: String,
     entries: Vec<(usize, &HistoryEntry)>,
