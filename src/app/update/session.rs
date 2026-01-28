@@ -236,7 +236,9 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                 Task::none()
             }
             TerminalEvent::Bell => {
-                portal.toast_manager.push(Toast::warning("Terminal bell"));
+                portal
+                    .toast_manager
+                    .push_or_refresh(Toast::warning("Terminal bell"));
                 Task::none()
             }
             TerminalEvent::ClipboardStore(contents) => clipboard::write::<Message>(contents),

@@ -102,6 +102,20 @@ impl ToastManager {
         self.toasts.push(toast);
     }
 
+    /// Add a toast, or refresh an existing one with the same message and type.
+    /// If a matching toast exists, its `created_at` is reset to extend its display time.
+    pub fn push_or_refresh(&mut self, toast: Toast) {
+        if let Some(existing) = self
+            .toasts
+            .iter_mut()
+            .find(|t| t.message == toast.message && t.toast_type == toast.toast_type)
+        {
+            existing.created_at = Instant::now();
+            return;
+        }
+        self.push(toast);
+    }
+
     /// Remove a toast by ID (for manual dismissal)
     pub fn dismiss(&mut self, id: Uuid) {
         self.toasts.retain(|t| t.id != id);
