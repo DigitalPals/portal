@@ -117,7 +117,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           cargo deb --target ${{ matrix.target }} --no-build
-          deb_path=$(ls target/debian/*.deb | head -n 1)
+          deb_path=$(ls target/${{ matrix.target }}/debian/*.deb | head -n 1)
           mv "$deb_path" portal-${{ needs.prepare.outputs.version }}-${{ matrix.name }}.deb
 
       - name: Package RPM
