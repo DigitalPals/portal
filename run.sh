@@ -3,19 +3,28 @@ set -e
 
 cd "$(dirname "$0")"
 
+# Use nix develop on Linux, direct cargo on macOS
+run_cargo() {
+  if [[ "$(uname)" == "Darwin" ]]; then
+    cargo "$@"
+  else
+    nix develop --command cargo "$@"
+  fi
+}
+
 case "${1:-run}" in
 build)
   echo "Building Portal..."
-  nix develop --command cargo build --release
+  run_cargo build --release
   echo "Build complete: target/release/portal"
   ;;
 run)
   echo "Building and running Portal..."
-  nix develop --command cargo run --release
+  run_cargo run --release
   ;;
 dev)
   echo "Running Portal in debug mode..."
-  nix develop --command cargo run
+  run_cargo run
   ;;
 check)
   echo "Checking Portal..."
