@@ -323,6 +323,12 @@ impl DualPaneSftpState {
         self.dialog = None;
     }
 
+    /// Close actions menus in both panes
+    pub fn close_actions_menus(&mut self) {
+        self.left_pane.actions_menu_open = false;
+        self.right_pane.actions_menu_open = false;
+    }
+
     pub fn pane_mut(&mut self, pane_id: PaneId) -> &mut FilePaneState {
         match pane_id {
             PaneId::Left => &mut self.left_pane,

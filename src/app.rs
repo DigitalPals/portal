@@ -25,7 +25,10 @@ use crate::views::file_viewer::file_viewer_view;
 use crate::views::history_view::history_view;
 use crate::views::host_grid::{calculate_columns, host_grid_view, search_input_id};
 use crate::views::settings_page::{SettingsPageContext, settings_page_view};
-use crate::views::sftp::{dual_pane_sftp_view, sftp_context_menu_overlay};
+use crate::views::sftp::{
+    dual_pane_sftp_view, has_actions_menu_open, sftp_actions_menu_dismiss_overlay,
+    sftp_context_menu_overlay,
+};
 use crate::views::sidebar::sidebar_view;
 use crate::views::snippet_grid::{SnippetPageContext, snippet_page_view};
 use crate::views::tabs::{Tab, tab_bar_view};
@@ -548,15 +551,11 @@ impl Portal {
             ActiveDialog::None => main_layout,
         };
 
-        // Overlay SFTP context menu if visible (rendered at app level for correct window positioning)
-        let with_context_menu: Element<'_, Message> = if let Some(tab_id) = self.active_tab {
+        // Overlay SFTP actions menu dismiss background if visible (rendered at app level for window-wide dismissal)
+        let with_actions_dismiss: Element<'_, Message> = if let Some(tab_id) = self.active_tab {
             if let Some(sftp_state) = self.sftp.get_tab(tab_id) {
-                if sftp_state.context_menu.visible {
-                    stack![
-                        with_dialog,
-                        sftp_context_menu_overlay(sftp_state, theme, self.window_size)
-                    ]
-                    .into()
+                if has_actions_menu_open(sftp_state) {
+                    stack![with_dialog, sftp_actions_menu_dismiss_overlay(sftp_state)].into()
                 } else {
                     with_dialog
                 }
@@ -565,6 +564,25 @@ impl Portal {
             }
         } else {
             with_dialog
+        };
+
+        // Overlay SFTP context menu if visible (rendered at app level for correct window positioning)
+        let with_context_menu: Element<'_, Message> = if let Some(tab_id) = self.active_tab {
+            if let Some(sftp_state) = self.sftp.get_tab(tab_id) {
+                if sftp_state.context_menu.visible {
+                    stack![
+                        with_actions_dismiss,
+                        sftp_context_menu_overlay(sftp_state, theme, self.window_size)
+                    ]
+                    .into()
+                } else {
+                    with_actions_dismiss
+                }
+            } else {
+                with_actions_dismiss
+            }
+        } else {
+            with_actions_dismiss
         };
 
         // Overlay toast notifications on top of everything

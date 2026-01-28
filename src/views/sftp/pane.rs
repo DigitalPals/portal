@@ -825,21 +825,11 @@ pub fn actions_menu_overlay(
             ..Default::default()
         });
 
-    // Background to dismiss menu when clicking outside
-    let background = crate::widgets::mouse_area(
-        container(Space::new().width(Fill).height(Fill))
-            .width(Fill)
-            .height(Fill),
-    )
-    .on_press(Message::Sftp(SftpMessage::ToggleActionsMenu(
-        tab_id, pane_id,
-    )));
-
     // Position menu at top-right of pane (below the Actions button)
-    let positioned_menu = container(menu)
+    // Note: dismiss background is rendered at app level for window-wide click handling
+    container(menu)
         .width(Fill)
         .padding(Padding::new(0.0).top(40.0).right(8.0))
-        .align_x(Alignment::End);
-
-    iced::widget::stack![background, positioned_menu].into()
+        .align_x(Alignment::End)
+        .into()
 }

@@ -31,6 +31,10 @@ pub fn handle_sftp(portal: &mut Portal, msg: SftpMessage) -> Task<Message> {
             Task::batch([left_task, right_task])
         }
         SftpMessage::PaneSourceChanged(tab_id, pane_id, new_source) => {
+            if let Some(tab_state) = portal.sftp.get_tab_mut(tab_id) {
+                tab_state.close_actions_menus();
+            }
+
             let new_path = match &new_source {
                 PaneSource::Local => directories::BaseDirs::new()
                     .map(|d| d.home_dir().to_path_buf())
@@ -57,6 +61,7 @@ pub fn handle_sftp(portal: &mut Portal, msg: SftpMessage) -> Task<Message> {
         }
         SftpMessage::PaneNavigate(tab_id, pane_id, path) => {
             if let Some(tab_state) = portal.sftp.get_tab_mut(tab_id) {
+                tab_state.close_actions_menus();
                 tab_state.active_pane = pane_id;
                 let pane = tab_state.pane_mut(pane_id);
                 pane.current_path = path;
@@ -67,6 +72,7 @@ pub fn handle_sftp(portal: &mut Portal, msg: SftpMessage) -> Task<Message> {
         }
         SftpMessage::PaneNavigateUp(tab_id, pane_id) => {
             if let Some(tab_state) = portal.sftp.get_tab_mut(tab_id) {
+                tab_state.close_actions_menus();
                 tab_state.active_pane = pane_id;
                 let pane = tab_state.pane_mut(pane_id);
                 if let Some(parent) = pane.current_path.parent() {
@@ -79,6 +85,7 @@ pub fn handle_sftp(portal: &mut Portal, msg: SftpMessage) -> Task<Message> {
         }
         SftpMessage::PaneRefresh(tab_id, pane_id) => {
             if let Some(tab_state) = portal.sftp.get_tab_mut(tab_id) {
+                tab_state.close_actions_menus();
                 tab_state.active_pane = pane_id;
                 tab_state.pane_mut(pane_id).loading = true;
                 return portal.load_dual_pane_directory(tab_id, pane_id);
@@ -87,6 +94,7 @@ pub fn handle_sftp(portal: &mut Portal, msg: SftpMessage) -> Task<Message> {
         }
         SftpMessage::PaneSelect(tab_id, pane_id, index) => {
             if let Some(tab_state) = portal.sftp.get_tab_mut(tab_id) {
+                tab_state.close_actions_menus();
                 tab_state.active_pane = pane_id;
                 tab_state.pane_mut(pane_id).select(index);
             }
@@ -103,6 +111,9 @@ pub fn handle_sftp(portal: &mut Portal, msg: SftpMessage) -> Task<Message> {
             Task::none()
         }
         SftpMessage::ConnectHost(tab_id, pane_id, host_id) => {
+            if let Some(tab_state) = portal.sftp.get_tab_mut(tab_id) {
+                tab_state.close_actions_menus();
+            }
             tracing::info!("Connecting to host for pane {:?}", pane_id);
             if let Some(host) = portal.hosts_config.find_host(host_id).cloned() {
                 return portal.connect_sftp_for_pane(tab_id, pane_id, &host);
@@ -154,6 +165,7 @@ pub fn handle_sftp(portal: &mut Portal, msg: SftpMessage) -> Task<Message> {
         }
         SftpMessage::ShowContextMenu(tab_id, pane_id, x, y, index) => {
             if let Some(tab_state) = portal.sftp.get_tab_mut(tab_id) {
+                tab_state.close_actions_menus();
                 tab_state.active_pane = pane_id;
                 if let Some(idx) = index {
                     if !tab_state.pane(pane_id).is_selected(idx) {
@@ -331,6 +343,14 @@ pub fn handle_sftp(portal: &mut Portal, msg: SftpMessage) -> Task<Message> {
         }
         SftpMessage::ToggleActionsMenu(tab_id, pane_id) => {
             if let Some(tab_state) = portal.sftp.get_tab_mut(tab_id) {
+                // Close the other pane's menu first
+                let other_pane = match pane_id {
+                    PaneId::Left => PaneId::Right,
+                    PaneId::Right => PaneId::Left,
+                };
+                tab_state.pane_mut(other_pane).actions_menu_open = false;
+
+                // Toggle this pane's menu
                 let pane = tab_state.pane_mut(pane_id);
                 pane.actions_menu_open = !pane.actions_menu_open;
             }
@@ -338,6 +358,7 @@ pub fn handle_sftp(portal: &mut Portal, msg: SftpMessage) -> Task<Message> {
         }
         SftpMessage::FilterChanged(tab_id, pane_id, text) => {
             if let Some(tab_state) = portal.sftp.get_tab_mut(tab_id) {
+                tab_state.close_actions_menus();
                 let pane = tab_state.pane_mut(pane_id);
                 pane.filter_text = text;
                 // Clear selection since filtered indices may change
@@ -348,6 +369,7 @@ pub fn handle_sftp(portal: &mut Portal, msg: SftpMessage) -> Task<Message> {
         }
         SftpMessage::PaneBreadcrumbNavigate(tab_id, pane_id, path) => {
             if let Some(tab_state) = portal.sftp.get_tab_mut(tab_id) {
+                tab_state.close_actions_menus();
                 tab_state.active_pane = pane_id;
                 let pane = tab_state.pane_mut(pane_id);
                 pane.current_path = path;
@@ -358,6 +380,7 @@ pub fn handle_sftp(portal: &mut Portal, msg: SftpMessage) -> Task<Message> {
         }
         SftpMessage::ColumnResizeStart(tab_id, pane_id, column, start_x) => {
             if let Some(tab_state) = portal.sftp.get_tab_mut(tab_id) {
+                tab_state.close_actions_menus();
                 let pane = tab_state.pane(pane_id);
                 tab_state.column_resize_drag = Some(ColumnResizeDrag {
                     pane_id,

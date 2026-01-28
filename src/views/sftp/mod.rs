@@ -96,3 +96,33 @@ pub fn sftp_context_menu_overlay(
 ) -> Element<'_, Message> {
     context_menu_view(state, theme, window_size)
 }
+
+/// Check if any actions menu is open in the SFTP state
+pub fn has_actions_menu_open(state: &DualPaneSftpState) -> bool {
+    state.left_pane.actions_menu_open || state.right_pane.actions_menu_open
+}
+
+/// Build a window-wide dismiss background for actions menus
+/// This should be rendered at the app level to allow clicking anywhere to dismiss
+pub fn sftp_actions_menu_dismiss_overlay(state: &DualPaneSftpState) -> Element<'_, Message> {
+    use crate::widgets::mouse_area;
+
+    // Determine which pane's menu is open (if any) to send the correct toggle message
+    let (tab_id, pane_id) = if state.left_pane.actions_menu_open {
+        (state.tab_id, PaneId::Left)
+    } else if state.right_pane.actions_menu_open {
+        (state.tab_id, PaneId::Right)
+    } else {
+        return Space::new().into();
+    };
+
+    mouse_area(
+        container(Space::new().width(Fill).height(Fill))
+            .width(Fill)
+            .height(Fill),
+    )
+    .on_press(Message::Sftp(crate::message::SftpMessage::ToggleActionsMenu(
+        tab_id, pane_id,
+    )))
+    .into()
+}
