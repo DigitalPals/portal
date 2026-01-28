@@ -43,6 +43,14 @@ pub enum HostDialogField {
 }
 
 #[derive(Debug, Clone)]
+pub enum QuickConnectField {
+    Hostname,
+    Port,
+    Username,
+    AuthMethod,
+}
+
+#[derive(Debug, Clone)]
 pub enum SnippetField {
     Name,
     Command,
@@ -192,6 +200,10 @@ pub enum DialogMessage {
     PassphraseSubmit,
     /// Passphrase dialog: user cancelled
     PassphraseCancel,
+    /// Quick connect dialog: field changed
+    QuickConnectFieldChanged(QuickConnectField, String),
+    /// Quick connect dialog: user submitted
+    QuickConnectSubmit,
 }
 
 /// Context for passphrase-based SFTP connections

@@ -2,8 +2,8 @@
 
 use crate::app::Portal;
 use crate::app::services::connection;
-use crate::config::Host;
-use crate::message::{DialogMessage, HostDialogField, Message};
+use crate::config::{AuthMethod, Host};
+use crate::message::{DialogMessage, HostDialogField, Message, QuickConnectField};
 use crate::security_log;
 use crate::ssh::host_key_verification::HostKeyVerificationResponse;
 use crate::views::dialogs::host_dialog::AuthMethodChoice;
@@ -11,6 +11,7 @@ use crate::views::dialogs::host_key_dialog::HostKeyDialogState;
 use crate::views::dialogs::passphrase_dialog::PassphraseDialogState;
 use crate::views::toast::Toast;
 use iced::Task;
+use uuid::Uuid;
 
 /// Handle dialog messages
 pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
@@ -244,6 +245,65 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                 dialog.clear_passphrase();
             }
             portal.dialogs.close();
+            Task::none()
+        }
+        DialogMessage::QuickConnectFieldChanged(field, value) => {
+            if let Some(dialog_state) = portal.dialogs.quick_connect_mut() {
+                match field {
+                    QuickConnectField::Hostname => dialog_state.hostname = value,
+                    QuickConnectField::Port => dialog_state.port = value,
+                    QuickConnectField::Username => dialog_state.username = value,
+                    QuickConnectField::AuthMethod => {
+                        dialog_state.auth_method = match value.as_str() {
+                            "Agent" => AuthMethodChoice::Agent,
+                            "Password" => AuthMethodChoice::Password,
+                            "PublicKey" => AuthMethodChoice::PublicKey,
+                            _ => dialog_state.auth_method,
+                        };
+                    }
+                }
+            }
+            Task::none()
+        }
+        DialogMessage::QuickConnectSubmit => {
+            if let Some(dialog_state) = portal.dialogs.quick_connect_mut() {
+                // Run validation
+                if !dialog_state.validate() {
+                    return Task::none();
+                }
+
+                let hostname = dialog_state.hostname.trim().to_string();
+                let port = dialog_state.port_u16();
+                let username = dialog_state.effective_username();
+                let auth_method = dialog_state.auth_method;
+
+                let auth = match auth_method {
+                    AuthMethodChoice::Agent => AuthMethod::Agent,
+                    AuthMethodChoice::Password => AuthMethod::Password,
+                    AuthMethodChoice::PublicKey => AuthMethod::PublicKey { key_path: None },
+                };
+
+                let now = chrono::Utc::now();
+                let temp_host = Host {
+                    id: Uuid::new_v4(),
+                    name: format!("{}@{}", username, hostname),
+                    hostname,
+                    port,
+                    username,
+                    auth,
+                    group_id: None,
+                    notes: None,
+                    tags: vec![],
+                    created_at: now,
+                    updated_at: now,
+                    detected_os: None,
+                    last_connected: None,
+                };
+
+                portal.dialogs.close();
+                tracing::info!("Quick connect requested");
+                return portal.connect_to_host(&temp_host);
+            }
             Task::none()
         }
     }
