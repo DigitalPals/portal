@@ -114,7 +114,7 @@ impl Theme {
                     Color::from_rgb8(0xcc, 0x00, 0x00), // Red
                     Color::from_rgb8(0x00, 0xcc, 0x00), // Green
                     Color::from_rgb8(0xcc, 0xcc, 0x00), // Yellow
-                    Color::from_rgb8(0x00, 0x00, 0xcc), // Blue
+                    Color::from_rgb8(0x5c, 0x8a, 0xff), // Blue (#5C8AFF)
                     Color::from_rgb8(0xcc, 0x00, 0xcc), // Magenta
                     Color::from_rgb8(0x00, 0xcc, 0xcc), // Cyan
                     Color::from_rgb8(0xc0, 0xc0, 0xc0), // White
@@ -123,7 +123,7 @@ impl Theme {
                     Color::from_rgb8(0xff, 0x00, 0x00), // Bright Red
                     Color::from_rgb8(0x00, 0xff, 0x00), // Bright Green
                     Color::from_rgb8(0xff, 0xff, 0x00), // Bright Yellow
-                    Color::from_rgb8(0x00, 0x00, 0xff), // Bright Blue
+                    Color::from_rgb8(0x7a, 0xa2, 0xff), // Bright Blue (#7AA2FF)
                     Color::from_rgb8(0xff, 0x00, 0xff), // Bright Magenta
                     Color::from_rgb8(0x00, 0xff, 0xff), // Bright Cyan
                     Color::from_rgb8(0xff, 0xff, 0xff), // Bright White
