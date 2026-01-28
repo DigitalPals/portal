@@ -51,7 +51,16 @@ fn detect_linux_scale() -> f32 {
 fn detect_gnome_scale() -> Option<f32> {
     use gio::prelude::*;
 
-    // Try to get the GNOME desktop interface settings
+    // Check if the GNOME schema exists before trying to access it
+    // This prevents crashes on non-GNOME desktops (e.g., Hyprland, KDE)
+    let schema_source = gio::SettingsSchemaSource::default()?;
+    let schema = schema_source.lookup("org.gnome.desktop.interface", true)?;
+
+    // Verify the key exists in the schema
+    if !schema.has_key("text-scaling-factor") {
+        return None;
+    }
+
     let settings = gio::Settings::new("org.gnome.desktop.interface");
 
     // Read text-scaling-factor (typically 1.0-2.0)
