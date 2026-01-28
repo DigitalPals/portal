@@ -55,6 +55,9 @@ iced-code-editor = "0.2"  # Code editor with syntax highlighting
 pdfium-render = "0.8"     # PDF rendering
 image = "0.25"            # Image format support
 
+[target.'cfg(target_os = "linux")'.dependencies]
+gio = "0.20"              # For GNOME GSettings access (UI scale detection)
+
 [profile.release]
 lto = true
 codegen-units = 1

@@ -9,7 +9,7 @@ use iced::widget::{Space, container, row, text};
 use iced::{Alignment, Element, Length};
 
 use crate::message::Message;
-use crate::theme::{FONT_SIZE_CAPTION, FONT_SIZE_SMALL, Theme};
+use crate::theme::{ScaledFonts, Theme};
 
 /// Format duration as MM:SS or HH:MM:SS
 fn format_duration(start: Instant) -> String {
@@ -29,6 +29,7 @@ fn format_duration(start: Instant) -> String {
 /// Build the terminal status bar element
 pub fn terminal_status_bar<'a>(
     theme: Theme,
+    fonts: ScaledFonts,
     host_name: &'a str,
     session_start: Instant,
     status_message: Option<&'a str>,
@@ -38,18 +39,18 @@ pub fn terminal_status_bar<'a>(
     // Left side: hostname and duration
     let left = row![
         text(host_name)
-            .size(FONT_SIZE_CAPTION)
+            .size(fonts.caption)
             .color(theme.text_secondary),
-        text(" | ").size(FONT_SIZE_CAPTION).color(theme.text_muted),
+        text(" | ").size(fonts.caption).color(theme.text_muted),
         text(duration)
-            .size(FONT_SIZE_CAPTION)
+            .size(fonts.caption)
             .color(theme.text_secondary),
     ]
     .align_y(Alignment::Center);
 
     // Center: transient status message (if any)
     let center: Element<'_, Message> = if let Some(msg) = status_message {
-        text(msg).size(FONT_SIZE_CAPTION).color(theme.accent).into()
+        text(msg).size(fonts.caption).color(theme.accent).into()
     } else {
         Space::new().into()
     };
@@ -57,10 +58,10 @@ pub fn terminal_status_bar<'a>(
     // Right side: shortcut hint
     let right = row![
         text("Ctrl+Shift+K")
-            .size(FONT_SIZE_SMALL)
+            .size(fonts.small)
             .color(theme.text_muted),
         text(" Install SSH Key")
-            .size(FONT_SIZE_SMALL)
+            .size(fonts.small)
             .color(theme.text_secondary),
     ]
     .align_y(Alignment::Center);

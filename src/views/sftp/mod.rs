@@ -27,7 +27,7 @@ use iced::{Element, Fill, Length};
 use uuid::Uuid;
 
 use crate::message::Message;
-use crate::theme::Theme;
+use crate::theme::{ScaledFonts, Theme};
 
 use context_menu::context_menu_view;
 use dialogs::sftp_dialog_view;
@@ -38,6 +38,7 @@ pub fn dual_pane_sftp_view(
     state: &DualPaneSftpState,
     available_hosts: Vec<(Uuid, String)>,
     theme: Theme,
+    fonts: ScaledFonts,
 ) -> Element<'_, Message> {
     let left_pane = single_pane_view(
         &state.left_pane,
@@ -48,6 +49,7 @@ pub fn dual_pane_sftp_view(
         state.context_menu.visible,
         &state.left_pane.column_widths,
         theme,
+        fonts,
     );
 
     let right_pane = single_pane_view(
@@ -59,6 +61,7 @@ pub fn dual_pane_sftp_view(
         state.context_menu.visible,
         &state.right_pane.column_widths,
         theme,
+        fonts,
     );
 
     // Vertical divider between panes
@@ -82,7 +85,7 @@ pub fn dual_pane_sftp_view(
 
     // Overlay dialog if open (context menu is rendered at app level for correct positioning)
     if state.dialog.is_some() {
-        stack![main, sftp_dialog_view(state, theme)].into()
+        stack![main, sftp_dialog_view(state, theme, fonts)].into()
     } else {
         main.into()
     }
@@ -92,9 +95,10 @@ pub fn dual_pane_sftp_view(
 pub fn sftp_context_menu_overlay(
     state: &DualPaneSftpState,
     theme: Theme,
+    fonts: ScaledFonts,
     window_size: iced::Size,
 ) -> Element<'_, Message> {
-    context_menu_view(state, theme, window_size)
+    context_menu_view(state, theme, fonts, window_size)
 }
 
 /// Check if any actions menu is open in the SFTP state

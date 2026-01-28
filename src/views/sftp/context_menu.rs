@@ -7,7 +7,7 @@ use iced::widget::{Column, Space, button, container, text};
 use iced::{Color, Element, Fill, Length, Padding};
 
 use crate::message::{Message, SessionId, SftpMessage};
-use crate::theme::{FONT_SIZE_BUTTON_SMALL, Theme};
+use crate::theme::{ScaledFonts, Theme};
 use crate::widgets::mouse_area;
 
 use super::state::DualPaneSftpState;
@@ -27,6 +27,7 @@ fn context_menu_item<'a>(
     enabled: bool,
     is_destructive: bool,
     theme: Theme,
+    fonts: ScaledFonts,
 ) -> Element<'a, Message> {
     let text_color = if !enabled {
         theme.text_muted
@@ -36,7 +37,7 @@ fn context_menu_item<'a>(
         theme.text_primary
     };
 
-    let btn = button(text(label).size(FONT_SIZE_BUTTON_SMALL).color(text_color))
+    let btn = button(text(label).size(fonts.button_small).color(text_color))
         .padding([6, 12])
         .width(Length::Fill)
         .style(move |_theme, status| {
@@ -73,6 +74,7 @@ fn context_menu_item<'a>(
 pub fn context_menu_view(
     state: &DualPaneSftpState,
     theme: Theme,
+    fonts: ScaledFonts,
     window_size: iced::Size,
 ) -> Element<'_, Message> {
     if !state.context_menu.visible {
@@ -104,6 +106,7 @@ pub fn context_menu_view(
             true,
             false,
             theme,
+            fonts,
         ));
     }
 
@@ -116,6 +119,7 @@ pub fn context_menu_view(
             true,
             false,
             theme,
+            fonts,
         ));
     }
 
@@ -128,6 +132,7 @@ pub fn context_menu_view(
             true,
             false,
             theme,
+            fonts,
         ));
     }
 
@@ -140,6 +145,7 @@ pub fn context_menu_view(
             true,
             true, // is_destructive = true
             theme,
+            fonts,
         ));
     }
 
@@ -151,6 +157,7 @@ pub fn context_menu_view(
         true,
         false,
         theme,
+        fonts,
     ));
     items.push(context_menu_item(
         "New Folder",
@@ -159,6 +166,7 @@ pub fn context_menu_view(
         true,
         false,
         theme,
+        fonts,
     ));
 
     // Edit Permissions (only for single file/folder selection, not parent)
@@ -170,6 +178,7 @@ pub fn context_menu_view(
             true,
             false,
             theme,
+            fonts,
         ));
     }
 

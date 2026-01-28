@@ -13,7 +13,7 @@ use crate::app::SnippetEditState;
 use crate::config::DetectedOs;
 use crate::icons::{self, icon_with_color};
 use crate::message::{Message, SnippetField, SnippetMessage};
-use crate::theme::{BORDER_RADIUS, FONT_SIZE_BODY, FONT_SIZE_DIALOG_TITLE, FONT_SIZE_LABEL, Theme};
+use crate::theme::{BORDER_RADIUS, ScaledFonts, Theme};
 use crate::views::host_grid::os_icon_data;
 
 /// Build the snippet edit form (full-page, replacing grid)
@@ -21,6 +21,7 @@ pub fn snippet_edit_view(
     state: &SnippetEditState,
     hosts: &[(Uuid, String, Option<DetectedOs>)],
     theme: Theme,
+    fonts: ScaledFonts,
 ) -> Element<'static, Message> {
     let title = if state.snippet_id.is_some() {
         "Edit Snippet"
@@ -31,7 +32,7 @@ pub fn snippet_edit_view(
     let title_row = row![
         icon_with_color(icons::ui::CODE, 24, theme.accent),
         text(title)
-            .size(FONT_SIZE_DIALOG_TITLE + 4.0)
+            .size(fonts.dialog_title + 4.0)
             .color(theme.text_primary),
     ]
     .spacing(12)
@@ -39,7 +40,7 @@ pub fn snippet_edit_view(
 
     // Name input
     let name_label = text("Name")
-        .size(FONT_SIZE_BODY)
+        .size(fonts.body)
         .color(theme.text_secondary);
     let name_value = state.name.clone();
     let name_input = text_input("e.g., Update System", &name_value)
@@ -68,7 +69,7 @@ pub fn snippet_edit_view(
 
     // Command input
     let command_label = text("Command")
-        .size(FONT_SIZE_BODY)
+        .size(fonts.body)
         .color(theme.text_secondary);
     let command_value = state.command.clone();
     let command_input = text_input(
@@ -100,7 +101,7 @@ pub fn snippet_edit_view(
 
     // Description input (optional)
     let description_label = text("Description (optional)")
-        .size(FONT_SIZE_BODY)
+        .size(fonts.body)
         .color(theme.text_secondary);
     let description_value = state.description.clone();
     let description_input = text_input(
@@ -132,10 +133,10 @@ pub fn snippet_edit_view(
 
     // Host selection section
     let hosts_label = text("Target Hosts")
-        .size(FONT_SIZE_BODY)
+        .size(fonts.body)
         .color(theme.text_secondary);
     let hosts_help = text("Select which hosts to run this command on")
-        .size(FONT_SIZE_LABEL)
+        .size(fonts.label)
         .color(theme.text_muted);
 
     let selected_hosts = state.selected_hosts.clone();
@@ -168,7 +169,7 @@ pub fn snippet_edit_view(
             let row_content = row![
                 os_icon,
                 Space::new().width(10),
-                text(name).size(FONT_SIZE_BODY).color(theme.text_primary),
+                text(name).size(fonts.body).color(theme.text_primary),
                 Space::new().width(Fill),
                 checkmark,
             ]
@@ -206,10 +207,10 @@ pub fn snippet_edit_view(
         container(
             column![
                 text("No hosts configured")
-                    .size(FONT_SIZE_BODY)
+                    .size(fonts.body)
                     .color(theme.text_muted),
                 text("Add hosts from the Hosts page first")
-                    .size(FONT_SIZE_LABEL)
+                    .size(fonts.label)
                     .color(theme.text_muted),
             ]
             .spacing(4),
@@ -320,7 +321,7 @@ pub fn snippet_edit_view(
 
     let cancel_btn = button(
         text("Cancel")
-            .size(FONT_SIZE_BODY)
+            .size(fonts.body)
             .color(theme.text_primary),
     )
     .style(move |_theme, status| {
@@ -343,7 +344,7 @@ pub fn snippet_edit_view(
     .on_press(Message::Snippet(SnippetMessage::EditCancel));
 
     let save_btn = if is_valid {
-        button(text("Save").size(FONT_SIZE_BODY).color(iced::Color::WHITE))
+        button(text("Save").size(fonts.body).color(iced::Color::WHITE))
             .style(move |_theme, status| {
                 let bg = match status {
                     button::Status::Hovered => iced::Color::from_rgb8(0x00, 0x8B, 0xE8),
@@ -362,7 +363,7 @@ pub fn snippet_edit_view(
             .padding([10, 20])
             .on_press(Message::Snippet(SnippetMessage::Save))
     } else {
-        button(text("Save").size(FONT_SIZE_BODY).color(theme.text_muted))
+        button(text("Save").size(fonts.body).color(theme.text_muted))
             .style(move |_theme, _status| button::Style {
                 background: Some(theme.surface.into()),
                 text_color: theme.text_muted,
@@ -380,7 +381,7 @@ pub fn snippet_edit_view(
     let delete_btn: Element<'static, Message> = if let Some(sid) = state.snippet_id {
         button(
             text("Delete")
-                .size(FONT_SIZE_BODY)
+                .size(fonts.body)
                 .color(iced::Color::from_rgb8(0xd2, 0x0f, 0x39)),
         )
         .style(move |_theme, status| {

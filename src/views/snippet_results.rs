@@ -27,8 +27,7 @@ use crate::config::SnippetExecutionEntry;
 use crate::icons::{self, icon_with_color};
 use crate::message::{Message, SnippetMessage};
 use crate::theme::{
-    FONT_SIZE_BODY, FONT_SIZE_BUTTON_SMALL, FONT_SIZE_LABEL, FONT_SIZE_SECTION, FONT_SIZE_SMALL,
-    RESULTS_PANEL_WIDTH, STATUS_FAILURE, STATUS_PARTIAL, STATUS_SUCCESS, Theme,
+    RESULTS_PANEL_WIDTH, STATUS_FAILURE, STATUS_PARTIAL, STATUS_SUCCESS, ScaledFonts, Theme,
 };
 
 /// Data for displaying a host result row
@@ -88,6 +87,7 @@ pub struct ResultsPanelContext<'a> {
     pub history_entries: &'a [&'a SnippetExecutionEntry],
     pub viewed_entry: Option<&'a SnippetExecutionEntry>,
     pub theme: Theme,
+    pub fonts: ScaledFonts,
 }
 
 /// Build the results panel for a snippet execution
@@ -103,6 +103,7 @@ pub fn execution_results_panel(ctx: ResultsPanelContext<'_>) -> Element<'static,
         history_entries,
         viewed_entry,
         theme,
+        fonts,
     } = ctx;
     // Clone the data we need
     let snippet_name = snippet_name.to_string();
@@ -140,6 +141,7 @@ pub fn execution_results_panel(ctx: ResultsPanelContext<'_>) -> Element<'static,
             history_entries,
             close_btn,
             theme,
+            fonts,
         )
     } else if let Some(results) = host_results {
         // Viewing current execution
@@ -154,10 +156,11 @@ pub fn execution_results_panel(ctx: ResultsPanelContext<'_>) -> Element<'static,
             history_entries,
             close_btn,
             theme,
+            fonts,
         )
     } else {
         // No current execution, show history-only view
-        build_history_only_view(snippet_id, &snippet_name, history_entries, close_btn, theme)
+        build_history_only_view(snippet_id, &snippet_name, history_entries, close_btn, theme, fonts)
     };
 
     container(content)
@@ -188,6 +191,7 @@ fn build_current_view(
     history_entries: &[&SnippetExecutionEntry],
     close_btn: iced::widget::Button<'static, Message>,
     theme: Theme,
+    fonts: ScaledFonts,
 ) -> Column<'static, Message> {
     let snippet_name = snippet_name.to_string();
     let command = command.to_string();
@@ -218,10 +222,10 @@ fn build_current_view(
     let header = row![
         column![
             text(snippet_name)
-                .size(FONT_SIZE_SECTION)
+                .size(fonts.section)
                 .color(theme.text_primary),
             text(status_text)
-                .size(FONT_SIZE_BUTTON_SMALL)
+                .size(fonts.button_small)
                 .color(status_color),
         ]
         .spacing(4),
@@ -233,7 +237,7 @@ fn build_current_view(
     // Command display
     let command_display = container(
         text(command)
-            .size(FONT_SIZE_LABEL)
+            .size(fonts.label)
             .color(theme.text_secondary),
     )
     .padding(12)
@@ -250,7 +254,7 @@ fn build_current_view(
     // Clone host results data and build result rows
     let results: Vec<Element<'static, Message>> = host_results
         .iter()
-        .map(|r| host_result_row(HostResultData::from_current(r, snippet_id), theme))
+        .map(|r| host_result_row(HostResultData::from_current(r, snippet_id), theme, fonts))
         .collect();
 
     let results_list = scrollable(Column::with_children(results).spacing(8).width(Fill))
@@ -260,13 +264,13 @@ fn build_current_view(
     let history_section: Element<'static, Message> = if !history_entries.is_empty() {
         let history_items: Vec<Element<'static, Message>> = history_entries
             .iter()
-            .map(|entry| history_entry_row(entry, None, theme))
+            .map(|entry| history_entry_row(entry, None, theme, fonts))
             .collect();
 
         column![
             Space::new().height(16),
             text("History")
-                .size(FONT_SIZE_BODY)
+                .size(fonts.body)
                 .color(theme.text_secondary),
             Space::new().height(8),
             scrollable(Column::with_children(history_items).spacing(4).width(Fill))
@@ -283,7 +287,7 @@ fn build_current_view(
         command_display,
         Space::new().height(16),
         text("Results")
-            .size(FONT_SIZE_BODY)
+            .size(fonts.body)
             .color(theme.text_secondary),
         Space::new().height(8),
         results_list,
@@ -301,6 +305,7 @@ fn build_history_view(
     history_entries: &[&SnippetExecutionEntry],
     close_btn: iced::widget::Button<'static, Message>,
     theme: Theme,
+    fonts: ScaledFonts,
 ) -> Column<'static, Message> {
     let snippet_name = snippet_name.to_string();
     let time_ago = entry.time_ago();
@@ -326,15 +331,15 @@ fn build_history_view(
     let header = row![
         column![
             text(snippet_name)
-                .size(FONT_SIZE_SECTION)
+                .size(fonts.section)
                 .color(theme.text_primary),
             row![
                 text(status_text)
-                    .size(FONT_SIZE_BUTTON_SMALL)
+                    .size(fonts.button_small)
                     .color(status_color),
                 Space::new().width(8),
                 text(format!("• {}", time_ago))
-                    .size(FONT_SIZE_BUTTON_SMALL)
+                    .size(fonts.button_small)
                     .color(theme.text_muted),
             ]
             .align_y(Alignment::Center),
@@ -350,7 +355,7 @@ fn build_history_view(
         row![
             icon_with_color(icons::ui::CHEVRON_LEFT, 14, theme.text_primary),
             text("Back to Current")
-                .size(FONT_SIZE_LABEL)
+                .size(fonts.label)
                 .color(theme.text_primary),
         ]
         .spacing(4)
@@ -379,7 +384,7 @@ fn build_history_view(
     let command = entry.command.clone();
     let command_display = container(
         text(command)
-            .size(FONT_SIZE_LABEL)
+            .size(fonts.label)
             .color(theme.text_secondary),
     )
     .padding(12)
@@ -397,7 +402,7 @@ fn build_history_view(
     let results: Vec<Element<'static, Message>> = entry
         .host_results
         .iter()
-        .map(|r| host_result_row(HostResultData::from_historical(r), theme))
+        .map(|r| host_result_row(HostResultData::from_historical(r), theme, fonts))
         .collect();
 
     let results_list = scrollable(Column::with_children(results).spacing(8).width(Fill))
@@ -407,13 +412,13 @@ fn build_history_view(
     let viewed_id = entry.id;
     let history_items: Vec<Element<'static, Message>> = history_entries
         .iter()
-        .map(|e| history_entry_row(e, Some(viewed_id), theme))
+        .map(|e| history_entry_row(e, Some(viewed_id), theme, fonts))
         .collect();
 
     let history_section = column![
         Space::new().height(16),
         text("History")
-            .size(FONT_SIZE_BODY)
+            .size(fonts.body)
             .color(theme.text_secondary),
         Space::new().height(8),
         scrollable(Column::with_children(history_items).spacing(4).width(Fill))
@@ -428,7 +433,7 @@ fn build_history_view(
         command_display,
         Space::new().height(16),
         text("Results")
-            .size(FONT_SIZE_BODY)
+            .size(fonts.body)
             .color(theme.text_secondary),
         Space::new().height(8),
         results_list,
@@ -445,16 +450,17 @@ fn build_history_only_view(
     history_entries: &[&SnippetExecutionEntry],
     close_btn: iced::widget::Button<'static, Message>,
     theme: Theme,
+    fonts: ScaledFonts,
 ) -> Column<'static, Message> {
     let snippet_name = snippet_name.to_string();
 
     let header = row![
         column![
             text(snippet_name)
-                .size(FONT_SIZE_SECTION)
+                .size(fonts.section)
                 .color(theme.text_primary),
             text("No recent execution")
-                .size(FONT_SIZE_BUTTON_SMALL)
+                .size(fonts.button_small)
                 .color(theme.text_muted),
         ]
         .spacing(4),
@@ -466,13 +472,13 @@ fn build_history_only_view(
     // History list
     let history_items: Vec<Element<'static, Message>> = history_entries
         .iter()
-        .map(|entry| history_entry_row(entry, None, theme))
+        .map(|entry| history_entry_row(entry, None, theme, fonts))
         .collect();
 
     let history_section = if !history_items.is_empty() {
         column![
             text("History")
-                .size(FONT_SIZE_BODY)
+                .size(fonts.body)
                 .color(theme.text_secondary),
             Space::new().height(8),
             scrollable(Column::with_children(history_items).spacing(4).width(Fill))
@@ -481,7 +487,7 @@ fn build_history_only_view(
     } else {
         column![
             text("No execution history")
-                .size(FONT_SIZE_BODY)
+                .size(fonts.body)
                 .color(theme.text_muted),
         ]
     };
@@ -490,7 +496,7 @@ fn build_history_only_view(
 }
 
 /// Single host result row (unified for both current and historical results)
-fn host_result_row(data: HostResultData, theme: Theme) -> Element<'static, Message> {
+fn host_result_row(data: HostResultData, theme: Theme, fonts: ScaledFonts) -> Element<'static, Message> {
     // Status icon
     let (status_icon, status_color) = if data.success {
         (icons::ui::CHECK, STATUS_SUCCESS)
@@ -512,7 +518,7 @@ fn host_result_row(data: HostResultData, theme: Theme) -> Element<'static, Messa
         column![
             Space::new().height(4),
             text(err.clone())
-                .size(FONT_SIZE_SMALL)
+                .size(fonts.small)
                 .color(STATUS_FAILURE),
         ]
         .into()
@@ -527,11 +533,11 @@ fn host_result_row(data: HostResultData, theme: Theme) -> Element<'static, Messa
             icon,
             Space::new().width(8),
             text(data.host_name.clone())
-                .size(FONT_SIZE_BODY)
+                .size(fonts.body)
                 .color(theme.text_primary),
             Space::new().width(Length::Fill),
             text(duration_text)
-                .size(FONT_SIZE_LABEL)
+                .size(fonts.label)
                 .color(theme.text_muted),
             Space::new().width(8),
             if data.expanded {
@@ -546,11 +552,11 @@ fn host_result_row(data: HostResultData, theme: Theme) -> Element<'static, Messa
             icon,
             Space::new().width(8),
             text(data.host_name.clone())
-                .size(FONT_SIZE_BODY)
+                .size(fonts.body)
                 .color(theme.text_primary),
             Space::new().width(Length::Fill),
             text(duration_text)
-                .size(FONT_SIZE_LABEL)
+                .size(fonts.label)
                 .color(theme.text_muted),
         ]
         .align_y(Alignment::Center)
@@ -564,7 +570,7 @@ fn host_result_row(data: HostResultData, theme: Theme) -> Element<'static, Messa
         let output = container(
             scrollable(
                 text(sanitized_output)
-                    .size(FONT_SIZE_LABEL)
+                    .size(fonts.label)
                     .font(MONOSPACE_FONT)
                     .color(theme.text_secondary),
             )
@@ -641,6 +647,7 @@ fn history_entry_row(
     entry: &SnippetExecutionEntry,
     selected_id: Option<Uuid>,
     theme: Theme,
+    fonts: ScaledFonts,
 ) -> Element<'static, Message> {
     let entry_id = entry.id;
     let time_ago = entry.time_ago();
@@ -669,9 +676,9 @@ fn history_entry_row(
     let row_content = row![
         icon_with_color(icon, 12, color),
         Space::new().width(6),
-        text(status).size(FONT_SIZE_LABEL).color(color),
+        text(status).size(fonts.label).color(color),
         Space::new().width(Length::Fill),
-        text(time_ago).size(FONT_SIZE_SMALL).color(theme.text_muted),
+        text(time_ago).size(fonts.small).color(theme.text_muted),
     ]
     .align_y(Alignment::Center);
 

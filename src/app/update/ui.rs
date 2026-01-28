@@ -111,6 +111,18 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
             portal.save_settings();
             Task::none()
         }
+        UiMessage::UiScaleChange(scale) => {
+            // Clamp scale to valid range (0.8 to 1.5)
+            let clamped_scale = scale.clamp(0.8, 1.5);
+            portal.ui_scale_override = Some(clamped_scale);
+            portal.save_settings();
+            Task::none()
+        }
+        UiMessage::UiScaleReset => {
+            portal.ui_scale_override = None;
+            portal.save_settings();
+            Task::none()
+        }
         UiMessage::SnippetHistoryEnabled(enabled) => {
             portal.snippet_history.enabled = enabled;
             portal.save_snippet_history();

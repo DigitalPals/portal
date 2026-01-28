@@ -15,7 +15,7 @@ use crate::message::{Message, SessionId};
 use crate::terminal::TerminalBackend;
 use crate::terminal::backend::{EventProxy, TerminalEvent, TerminalSize};
 use crate::terminal::widget::TerminalWidget;
-use crate::theme::Theme;
+use crate::theme::{ScaledFonts, Theme};
 use std::sync::atomic::AtomicU64;
 use tokio::sync::mpsc;
 
@@ -67,6 +67,7 @@ impl TerminalSession {
 #[allow(clippy::too_many_arguments)]
 pub fn terminal_view_with_status<'a>(
     theme: Theme,
+    fonts: ScaledFonts,
     session: &'a TerminalSession,
     session_start: Instant,
     host_name: &'a str,
@@ -94,7 +95,7 @@ pub fn terminal_view_with_status<'a>(
                 ..Default::default()
             });
 
-    let status_bar = terminal_status_bar(theme, host_name, session_start, status_message);
+    let status_bar = terminal_status_bar(theme, fonts, host_name, session_start, status_message);
 
     column![terminal_container, status_bar].into()
 }

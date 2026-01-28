@@ -24,6 +24,7 @@
             pkgs.wayland
             pkgs.libxkbcommon
             pkgs.vulkan-loader
+            pkgs.glib
           ];
           postInstall = ''
             install -Dm644 assets/app-icons/portal.desktop $out/share/applications/portal.desktop
@@ -52,11 +53,13 @@
             pkgs.wayland
             pkgs.libxkbcommon
             pkgs.vulkan-loader
+            pkgs.glib
           ];
           LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [
             pkgs.wayland
             pkgs.libxkbcommon
             pkgs.vulkan-loader
+            pkgs.glib
           ];
         };
       });

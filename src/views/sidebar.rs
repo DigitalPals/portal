@@ -5,7 +5,7 @@ use crate::app::{FocusSection, SidebarState};
 use crate::icons::{self, icon_with_color};
 use crate::message::{Message, SidebarMenuItem, UiMessage};
 use crate::theme::{
-    BORDER_RADIUS, FONT_SIZE_BODY, FONT_SIZE_LABEL, SIDEBAR_WIDTH, SIDEBAR_WIDTH_COLLAPSED, Theme,
+    BORDER_RADIUS, SIDEBAR_WIDTH, SIDEBAR_WIDTH_COLLAPSED, ScaledFonts, Theme,
 };
 
 /// Menu item definition
@@ -51,6 +51,7 @@ const MENU_ITEMS: &[MenuItem] = &[
 /// Build the sidebar view
 pub fn sidebar_view(
     theme: Theme,
+    fonts: ScaledFonts,
     state: SidebarState,
     selected: SidebarMenuItem,
     focus_section: FocusSection,
@@ -77,7 +78,7 @@ pub fn sidebar_view(
     for (idx, menu_item) in MENU_ITEMS.iter().enumerate() {
         let is_selected = selected == menu_item.item;
         let is_focused = focus_section == FocusSection::Sidebar && idx == focus_index;
-        let item_element = menu_item_button(menu_item, is_selected, is_focused, icons_only, theme);
+        let item_element = menu_item_button(menu_item, is_selected, is_focused, icons_only, theme, fonts);
         menu_items = menu_items.push(item_element);
     }
 
@@ -114,6 +115,7 @@ fn menu_item_button(
     is_focused: bool,
     collapsed: bool,
     theme: Theme,
+    fonts: ScaledFonts,
 ) -> Element<'static, Message> {
     let icon_widget = icon_with_color(menu_item.icon, 18, iced::Color::WHITE);
 
@@ -128,7 +130,7 @@ fn menu_item_button(
         row![
             container(icon_widget).width(32).align_x(Alignment::Center),
             text(menu_item.label)
-                .size(FONT_SIZE_BODY)
+                .size(fonts.body)
                 .color(iced::Color::WHITE),
         ]
         .spacing(8)
@@ -178,7 +180,7 @@ fn menu_item_button(
         // Add tooltip when collapsed
         tooltip(
             btn,
-            text(menu_item.label).size(FONT_SIZE_LABEL),
+            text(menu_item.label).size(fonts.label),
             tooltip::Position::Right,
         )
         .style(move |_theme| container::Style {

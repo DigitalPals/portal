@@ -4,10 +4,7 @@ use iced::widget::{Column, Space, button, column, container, row, scrollable, te
 use iced::{Alignment, Element, Font, Length};
 
 use crate::message::{DialogMessage, Message};
-use crate::theme::{
-    FONT_SIZE_BODY, FONT_SIZE_BUTTON_SMALL, FONT_SIZE_LABEL, FONT_SIZE_MONO_TINY,
-    FONT_SIZE_SECTION, Theme,
-};
+use crate::theme::{ScaledFonts, Theme};
 
 use super::common::{dialog_backdrop, secondary_button_style};
 
@@ -34,47 +31,47 @@ impl AboutDialogState {
 }
 
 /// Build the About dialog view
-pub fn about_dialog_view(_state: &AboutDialogState, theme: Theme) -> Element<'static, Message> {
+pub fn about_dialog_view(_state: &AboutDialogState, theme: Theme, fonts: ScaledFonts) -> Element<'static, Message> {
     let version = env!("CARGO_PKG_VERSION");
 
     // Full logo
     let full_logo = format!("{}\n{}", PORTAL_LOGO_TOP, PORTAL_LOGO_LAST_LINE);
 
     let logo_text = text(full_logo)
-        .size(FONT_SIZE_MONO_TINY)
+        .size(fonts.mono_tiny)
         .color(theme.text_secondary)
         .font(Font::MONOSPACE);
 
     let version_text = text(format!("Version {}", version))
-        .size(FONT_SIZE_SECTION)
+        .size(fonts.section)
         .color(theme.text_primary);
 
     let tagline = text("A modern, fast SSH client for macOS and Linux")
-        .size(FONT_SIZE_BODY)
+        .size(fonts.body)
         .color(theme.text_secondary);
 
     // Author section
     let author_text = text("Created by John Pals")
-        .size(FONT_SIZE_BUTTON_SMALL)
+        .size(fonts.button_small)
         .color(theme.text_secondary);
 
     // Vibe coded note
     let vibe_text = row![
         text("Proudly vibe coded with ")
-            .size(FONT_SIZE_LABEL)
+            .size(fonts.label)
             .color(theme.text_muted),
         text("Claude Code")
-            .size(FONT_SIZE_LABEL)
+            .size(fonts.label)
             .color(theme.text_primary),
-        text(" & ").size(FONT_SIZE_LABEL).color(theme.text_muted),
+        text(" & ").size(fonts.label).color(theme.text_muted),
         text("Codex CLI")
-            .size(FONT_SIZE_LABEL)
+            .size(fonts.label)
             .color(theme.text_primary),
     ];
 
     // Credits section
     let credits_title = text("Built with")
-        .size(FONT_SIZE_BODY)
+        .size(fonts.body)
         .color(theme.text_primary);
 
     let credits_list = vec![
@@ -89,13 +86,13 @@ pub fn about_dialog_view(_state: &AboutDialogState, theme: Theme) -> Element<'st
         .map(|(name, desc)| {
             row![
                 text(name)
-                    .size(FONT_SIZE_BUTTON_SMALL)
+                    .size(fonts.button_small)
                     .color(theme.text_primary),
                 text(" - ")
-                    .size(FONT_SIZE_BUTTON_SMALL)
+                    .size(fonts.button_small)
                     .color(theme.text_muted),
                 text(desc)
-                    .size(FONT_SIZE_BUTTON_SMALL)
+                    .size(fonts.button_small)
                     .color(theme.text_secondary),
             ]
             .into()
@@ -105,7 +102,7 @@ pub fn about_dialog_view(_state: &AboutDialogState, theme: Theme) -> Element<'st
     let credits_column = Column::with_children(credits_items).spacing(6);
 
     // Close button
-    let close_btn = button(text("Close").size(FONT_SIZE_BODY).color(theme.text_primary))
+    let close_btn = button(text("Close").size(fonts.body).color(theme.text_primary))
         .style(secondary_button_style(theme))
         .padding([8, 20])
         .on_press(Message::Dialog(DialogMessage::Close));

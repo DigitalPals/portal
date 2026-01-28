@@ -9,15 +9,13 @@ use std::path::PathBuf;
 
 use crate::icons::{self, icon_with_color};
 use crate::message::{Message, SessionId, SftpMessage};
-use crate::theme::{
-    FONT_SIZE_BODY, FONT_SIZE_BUTTON_SMALL, FONT_SIZE_HEADING, FONT_SIZE_LABEL, Theme,
-};
+use crate::theme::{ScaledFonts, Theme};
 
 use super::state::{DualPaneSftpState, SftpDialogState};
 use super::types::{PermissionBit, PermissionBits, SftpDialogType};
 
 /// Build the SFTP dialog overlay (New Folder, Rename, or Delete)
-pub fn sftp_dialog_view(state: &DualPaneSftpState, theme: Theme) -> Element<'_, Message> {
+pub fn sftp_dialog_view(state: &DualPaneSftpState, theme: Theme, fonts: ScaledFonts) -> Element<'_, Message> {
     let Some(ref dialog) = state.dialog else {
         return Space::new().into();
     };
@@ -27,12 +25,12 @@ pub fn sftp_dialog_view(state: &DualPaneSftpState, theme: Theme) -> Element<'_, 
     // Build dialog content based on type
     let dialog_content: Element<'_, Message> = match &dialog.dialog_type {
         SftpDialogType::Delete { entries } => {
-            build_delete_dialog(tab_id, entries, dialog.error.as_deref(), theme)
+            build_delete_dialog(tab_id, entries, dialog.error.as_deref(), theme, fonts)
         }
         SftpDialogType::EditPermissions {
             name, permissions, ..
-        } => build_permissions_dialog(tab_id, name, permissions, dialog.error.as_deref(), theme),
-        _ => build_input_dialog(tab_id, dialog, theme),
+        } => build_permissions_dialog(tab_id, name, permissions, dialog.error.as_deref(), theme, fonts),
+        _ => build_input_dialog(tab_id, dialog, theme, fonts),
     };
 
     // Dialog box with styling
@@ -74,6 +72,7 @@ fn build_input_dialog(
     tab_id: SessionId,
     dialog: &SftpDialogState,
     theme: Theme,
+    fonts: ScaledFonts,
 ) -> Element<'_, Message> {
     // Handle unexpected dialog types by returning an error element early
     if matches!(
@@ -87,10 +86,10 @@ fn build_input_dialog(
         );
         return column![
             text("Internal Error")
-                .size(FONT_SIZE_HEADING)
+                .size(fonts.heading)
                 .color(iced::Color::from_rgb8(220, 80, 80)),
             text("Unexpected dialog type. Please report this issue.")
-                .size(FONT_SIZE_BODY)
+                .size(fonts.body)
                 .color(theme.text_secondary),
         ]
         .padding(24)
@@ -113,7 +112,7 @@ fn build_input_dialog(
     };
 
     let title_text = text(title)
-        .size(FONT_SIZE_HEADING)
+        .size(fonts.heading)
         .color(theme.text_primary);
 
     let input_value = dialog.input_value.clone();
@@ -121,7 +120,7 @@ fn build_input_dialog(
         .on_input(move |value| Message::Sftp(SftpMessage::DialogInputChanged(tab_id, value)))
         .on_submit(Message::Sftp(SftpMessage::DialogSubmit(tab_id)))
         .padding([10, 12])
-        .size(FONT_SIZE_BODY)
+        .size(fonts.body)
         .style(move |_theme, _status| text_input::Style {
             background: theme.background.into(),
             border: iced::Border {
@@ -138,24 +137,24 @@ fn build_input_dialog(
     // Error message if any
     let error_text: Element<'_, Message> = if let Some(ref error) = dialog.error {
         text(error)
-            .size(FONT_SIZE_LABEL)
+            .size(fonts.label)
             .color(iced::Color::from_rgb8(220, 80, 80))
             .into()
     } else {
         Space::new().into()
     };
 
-    let cancel_btn = dialog_cancel_button(tab_id, theme);
+    let cancel_btn = dialog_cancel_button(tab_id, theme, fonts);
 
     let is_valid = dialog.is_valid();
-    let submit_btn = dialog_submit_button(tab_id, submit_label, is_valid, false, theme);
+    let submit_btn = dialog_submit_button(tab_id, submit_label, is_valid, false, theme, fonts);
 
     let button_row = row![Space::new().width(Fill), cancel_btn, submit_btn].spacing(8);
 
     // Build subtitle element if present
     let subtitle_element: Element<'_, Message> = if let Some(subtitle) = subtitle {
         text(subtitle)
-            .size(FONT_SIZE_BUTTON_SMALL)
+            .size(fonts.button_small)
             .color(theme.text_muted)
             .into()
     } else {
@@ -183,9 +182,10 @@ fn build_delete_dialog<'a>(
     entries: &'a [(String, PathBuf, bool)],
     error: Option<&'a str>,
     theme: Theme,
+    fonts: ScaledFonts,
 ) -> Element<'a, Message> {
     let title_text = text("Delete")
-        .size(FONT_SIZE_HEADING)
+        .size(fonts.heading)
         .color(theme.text_primary);
 
     // Build the confirmation message
@@ -209,7 +209,7 @@ fn build_delete_dialog<'a>(
     };
 
     let warning_text = text(warning_msg)
-        .size(FONT_SIZE_BODY)
+        .size(fonts.body)
         .color(theme.text_secondary);
 
     // List the items to be deleted (show up to 5)
@@ -226,7 +226,7 @@ fn build_delete_dialog<'a>(
                 row![
                     icon,
                     text(name)
-                        .size(FONT_SIZE_BUTTON_SMALL)
+                        .size(fonts.button_small)
                         .color(theme.text_secondary)
                 ]
                 .spacing(8)
@@ -254,7 +254,7 @@ fn build_delete_dialog<'a>(
                 row![
                     icon,
                     text(name)
-                        .size(FONT_SIZE_BUTTON_SMALL)
+                        .size(fonts.button_small)
                         .color(theme.text_secondary)
                 ]
                 .spacing(8)
@@ -265,7 +265,7 @@ fn build_delete_dialog<'a>(
 
         items.push(
             text(format!("... and {} more", count - 3))
-                .size(FONT_SIZE_BUTTON_SMALL)
+                .size(fonts.button_small)
                 .color(theme.text_muted)
                 .into(),
         );
@@ -297,7 +297,7 @@ fn build_delete_dialog<'a>(
             iced::Color::from_rgb8(220, 160, 60)
         ),
         text("This action cannot be undone.")
-            .size(FONT_SIZE_LABEL)
+            .size(fonts.label)
             .color(iced::Color::from_rgb8(220, 160, 60))
     ]
     .spacing(8)
@@ -306,15 +306,15 @@ fn build_delete_dialog<'a>(
     // Error message if any
     let error_text: Element<'_, Message> = if let Some(error) = error {
         text(error)
-            .size(FONT_SIZE_LABEL)
+            .size(fonts.label)
             .color(iced::Color::from_rgb8(220, 80, 80))
             .into()
     } else {
         Space::new().into()
     };
 
-    let cancel_btn = dialog_cancel_button(tab_id, theme);
-    let delete_btn = dialog_submit_button(tab_id, "Delete", true, true, theme);
+    let cancel_btn = dialog_cancel_button(tab_id, theme, fonts);
+    let delete_btn = dialog_submit_button(tab_id, "Delete", true, true, theme, fonts);
 
     let button_row = row![Space::new().width(Fill), cancel_btn, delete_btn].spacing(8);
 
@@ -343,37 +343,38 @@ fn build_permissions_dialog<'a>(
     permissions: &'a PermissionBits,
     error: Option<&'a str>,
     theme: Theme,
+    fonts: ScaledFonts,
 ) -> Element<'a, Message> {
     let title_text = text("Edit Permissions")
-        .size(FONT_SIZE_HEADING)
+        .size(fonts.heading)
         .color(theme.text_primary);
 
     // File name display
     let file_info = row![
         icon_with_color(icons::files::FILE, 16, theme.text_muted),
-        text(name).size(FONT_SIZE_BODY).color(theme.text_secondary)
+        text(name).size(fonts.body).color(theme.text_secondary)
     ]
     .spacing(8)
     .align_y(Alignment::Center);
 
     // Current mode display
     let mode_text = text(format!("Mode: {}", permissions.as_octal_string()))
-        .size(FONT_SIZE_BUTTON_SMALL)
+        .size(fonts.button_small)
         .color(theme.text_muted);
 
     // Permission grid headers
     let header_row = row![
         Space::new().width(Length::Fixed(80.0)),
         text("Read")
-            .size(FONT_SIZE_LABEL)
+            .size(fonts.label)
             .color(theme.text_muted)
             .width(Length::Fixed(60.0)),
         text("Write")
-            .size(FONT_SIZE_LABEL)
+            .size(fonts.label)
             .color(theme.text_muted)
             .width(Length::Fixed(60.0)),
         text("Execute")
-            .size(FONT_SIZE_LABEL)
+            .size(fonts.label)
             .color(theme.text_muted)
             .width(Length::Fixed(60.0)),
     ]
@@ -391,6 +392,7 @@ fn build_permissions_dialog<'a>(
         PermissionBit::OwnerWrite,
         PermissionBit::OwnerExecute,
         theme,
+        fonts,
     );
 
     // Group row
@@ -404,6 +406,7 @@ fn build_permissions_dialog<'a>(
         PermissionBit::GroupWrite,
         PermissionBit::GroupExecute,
         theme,
+        fonts,
     );
 
     // Other row
@@ -417,6 +420,7 @@ fn build_permissions_dialog<'a>(
         PermissionBit::OtherWrite,
         PermissionBit::OtherExecute,
         theme,
+        fonts,
     );
 
     // Permission grid
@@ -437,15 +441,15 @@ fn build_permissions_dialog<'a>(
     // Error message if any
     let error_text: Element<'_, Message> = if let Some(error) = error {
         text(error)
-            .size(FONT_SIZE_LABEL)
+            .size(fonts.label)
             .color(iced::Color::from_rgb8(220, 80, 80))
             .into()
     } else {
         Space::new().into()
     };
 
-    let cancel_btn = dialog_cancel_button(tab_id, theme);
-    let apply_btn = dialog_submit_button(tab_id, "Apply", true, false, theme);
+    let cancel_btn = dialog_cancel_button(tab_id, theme, fonts);
+    let apply_btn = dialog_submit_button(tab_id, "Apply", true, false, theme, fonts);
 
     let button_row = row![Space::new().width(Fill), cancel_btn, apply_btn].spacing(8);
 
@@ -478,10 +482,11 @@ fn permission_row<'a>(
     write_bit: PermissionBit,
     execute_bit: PermissionBit,
     theme: Theme,
+    fonts: ScaledFonts,
 ) -> Element<'a, Message> {
     row![
         text(label)
-            .size(FONT_SIZE_BUTTON_SMALL)
+            .size(fonts.button_small)
             .color(theme.text_primary)
             .width(Length::Fixed(80.0)),
         permission_checkbox(tab_id, read, read_bit, theme),
@@ -554,10 +559,10 @@ fn permission_checkbox(
 }
 
 /// Create a cancel button for dialogs
-fn dialog_cancel_button(tab_id: SessionId, theme: Theme) -> iced::widget::Button<'static, Message> {
+fn dialog_cancel_button(tab_id: SessionId, theme: Theme, fonts: ScaledFonts) -> iced::widget::Button<'static, Message> {
     button(
         text("Cancel")
-            .size(FONT_SIZE_BUTTON_SMALL)
+            .size(fonts.button_small)
             .color(theme.text_primary),
     )
     .padding([8, 16])
@@ -587,6 +592,7 @@ fn dialog_submit_button(
     is_valid: bool,
     is_destructive: bool,
     theme: Theme,
+    fonts: ScaledFonts,
 ) -> iced::widget::Button<'static, Message> {
     let (normal_color, hover_color) = if is_destructive {
         (
@@ -599,7 +605,7 @@ fn dialog_submit_button(
 
     let btn = button(
         text(label.to_string())
-            .size(FONT_SIZE_BUTTON_SMALL)
+            .size(fonts.button_small)
             .color(if is_valid {
                 theme.background
             } else {

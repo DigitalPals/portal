@@ -6,10 +6,7 @@ use crate::app::FocusSection;
 use crate::config::{HistoryConfig, HistoryEntry, HostsConfig, SessionType};
 use crate::icons::{self, icon_with_color};
 use crate::message::{HistoryMessage, Message};
-use crate::theme::{
-    BORDER_RADIUS, CARD_BORDER_RADIUS, FONT_SIZE_BODY, FONT_SIZE_HEADING, FONT_SIZE_LABEL,
-    FONT_SIZE_MONO_TINY, Theme,
-};
+use crate::theme::{BORDER_RADIUS, CARD_BORDER_RADIUS, Theme, ScaledFonts};
 use crate::views::host_grid::os_icon_data;
 
 /// Format a date as a relative label ("Today", "Yesterday") or "Mon dd" format
@@ -37,18 +34,19 @@ pub fn history_view(
     history: &HistoryConfig,
     hosts_config: &HostsConfig,
     theme: Theme,
+    fonts: ScaledFonts,
     focus_section: FocusSection,
     focus_index: Option<usize>,
 ) -> Element<'static, Message> {
     // Header
     let header = row![
         text("Connection History")
-            .size(FONT_SIZE_HEADING)
+            .size(fonts.heading)
             .color(theme.text_primary),
         Space::new().width(Length::Fill),
         button(
             text("Clear History")
-                .size(FONT_SIZE_LABEL)
+                .size(fonts.label)
                 .color(theme.text_secondary),
         )
         .style(move |_theme, status| {
@@ -75,7 +73,7 @@ pub fn history_view(
 
     // History entries grouped by day as a timeline
     let content: Element<'static, Message> = if history.entries.is_empty() {
-        empty_state(theme)
+        empty_state(theme, fonts)
     } else {
         // Group entries by date
         #[allow(clippy::type_complexity)]
@@ -106,6 +104,7 @@ pub fn history_view(
                 day_entries,
                 hosts_config,
                 theme,
+                fonts,
                 focus_section,
                 focus_index,
                 has_next_day,
@@ -134,6 +133,7 @@ fn build_day_section(
     entries: Vec<(usize, &HistoryEntry)>,
     hosts_config: &HostsConfig,
     theme: Theme,
+    fonts: ScaledFonts,
     focus_section: FocusSection,
     focus_index: Option<usize>,
     has_next_day: bool,
@@ -156,7 +156,7 @@ fn build_day_section(
     let header = row![
         container(header_dot).width(48).align_x(Alignment::Center),
         text(day_label)
-            .size(FONT_SIZE_BODY)
+            .size(fonts.body)
             .color(theme.text_primary),
     ]
     .align_y(Alignment::Center)
@@ -166,7 +166,7 @@ fn build_day_section(
     let mut entries_col = Column::new().spacing(8);
     for (idx, entry) in entries {
         let is_focused = focus_section == FocusSection::Content && focus_index == Some(idx);
-        let card = build_entry_card(entry, hosts_config, theme, is_focused);
+        let card = build_entry_card(entry, hosts_config, theme, fonts, is_focused);
         entries_col = entries_col.push(card);
     }
 
@@ -208,6 +208,7 @@ fn build_entry_card(
     entry: &HistoryEntry,
     hosts_config: &HostsConfig,
     theme: Theme,
+    fonts: ScaledFonts,
     is_focused: bool,
 ) -> Element<'static, Message> {
     let entry_id = entry.id;
@@ -250,12 +251,12 @@ fn build_entry_card(
     let info = column![
         row![
             text(host_name)
-                .size(FONT_SIZE_BODY)
+                .size(fonts.body)
                 .color(theme.text_primary),
             Space::new().width(8),
             container(
                 text(type_text)
-                    .size(FONT_SIZE_MONO_TINY)
+                    .size(fonts.mono_tiny)
                     .color(theme.text_secondary),
             )
             .padding([2, 6])
@@ -270,9 +271,9 @@ fn build_entry_card(
         ]
         .align_y(Alignment::Center),
         text(format!("{}@{} | {}", username, hostname, duration_str))
-            .size(FONT_SIZE_LABEL)
+            .size(fonts.label)
             .color(theme.text_muted),
-        text(time_str).size(FONT_SIZE_LABEL).color(theme.text_muted),
+        text(time_str).size(fonts.label).color(theme.text_muted),
     ]
     .spacing(4);
 
@@ -294,7 +295,7 @@ fn build_entry_card(
         row![
             icon_with_color(icons::ui::REFRESH, 12, theme.text_primary),
             text("Reconnect")
-                .size(FONT_SIZE_LABEL)
+                .size(fonts.label)
                 .color(theme.text_primary),
         ]
         .spacing(4)
@@ -362,14 +363,14 @@ fn build_entry_card(
 }
 
 /// Empty state when no history
-fn empty_state(theme: Theme) -> Element<'static, Message> {
+fn empty_state(theme: Theme, fonts: ScaledFonts) -> Element<'static, Message> {
     let content = column![
         icon_with_color(icons::ui::HISTORY, 48, theme.text_muted),
         text("No connection history")
-            .size(FONT_SIZE_HEADING)
+            .size(fonts.heading)
             .color(theme.text_primary),
         text("Your recent connections will appear here")
-            .size(FONT_SIZE_BODY)
+            .size(fonts.body)
             .color(theme.text_muted),
     ]
     .spacing(8)

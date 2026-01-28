@@ -20,6 +20,11 @@ pub struct SettingsConfig {
     #[serde(default)]
     pub theme: ThemeId,
 
+    /// UI scale override (None = use system default)
+    /// Range: 0.8 to 1.5 (80% to 150%)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ui_scale: Option<f32>,
+
     /// SFTP file list column widths
     #[serde(default)]
     pub sftp_column_widths: ColumnWidths,
@@ -39,6 +44,7 @@ impl Default for SettingsConfig {
             terminal_font_size: default_terminal_font_size(),
             terminal_font: TerminalFont::default(),
             theme: ThemeId::default(),
+            ui_scale: None,
             sftp_column_widths: ColumnWidths::default(),
             dark_mode: None,
         }

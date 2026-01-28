@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use crate::icons::{icon_with_color, ui};
 use crate::message::{Message, UiMessage};
-use crate::theme::{BORDER_RADIUS, FONT_SIZE_BUTTON_SMALL, Theme};
+use crate::theme::{BORDER_RADIUS, ScaledFonts, Theme};
 
 /// Type of toast notification (determines color and icon)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -138,7 +138,7 @@ impl ToastManager {
 }
 
 /// Render the toast overlay (positioned at bottom-right)
-pub fn toast_overlay_view(manager: &ToastManager, theme: Theme) -> Element<'static, Message> {
+pub fn toast_overlay_view(manager: &ToastManager, theme: Theme, fonts: ScaledFonts) -> Element<'static, Message> {
     if !manager.has_toasts() {
         return Space::new().into();
     }
@@ -148,7 +148,7 @@ pub fn toast_overlay_view(manager: &ToastManager, theme: Theme) -> Element<'stat
             .toasts()
             .iter()
             .rev()
-            .map(|toast| toast_item_view(toast, theme)),
+            .map(|toast| toast_item_view(toast, theme, fonts)),
     )
     .spacing(8)
     .into();
@@ -168,7 +168,7 @@ pub fn toast_overlay_view(manager: &ToastManager, theme: Theme) -> Element<'stat
 }
 
 /// Render a single toast notification
-fn toast_item_view(toast: &Toast, theme: Theme) -> Element<'static, Message> {
+fn toast_item_view(toast: &Toast, theme: Theme, fonts: ScaledFonts) -> Element<'static, Message> {
     let toast_id = toast.id;
     let accent_color = toast.toast_type.color();
     let message = toast.message.clone();
@@ -198,7 +198,7 @@ fn toast_item_view(toast: &Toast, theme: Theme) -> Element<'static, Message> {
     let content = row![
         container(type_icon).padding(Padding::from([0, 8])),
         text(message)
-            .size(FONT_SIZE_BUTTON_SMALL)
+            .size(fonts.button_small)
             .color(theme.text_primary),
         Space::new().width(Length::Fill),
         dismiss_btn,

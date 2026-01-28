@@ -14,9 +14,8 @@ use crate::config::DetectedOs;
 use crate::icons::{self, icon_with_color};
 use crate::message::{HostMessage, Message, UiMessage};
 use crate::theme::{
-    BORDER_RADIUS, CARD_BORDER_RADIUS, CARD_HEIGHT, FONT_SIZE_BODY, FONT_SIZE_BUTTON,
-    FONT_SIZE_BUTTON_SMALL, FONT_SIZE_HEADING, FONT_SIZE_LABEL, FONT_SIZE_SECTION, GRID_PADDING,
-    GRID_SPACING, MIN_CARD_WIDTH, SIDEBAR_WIDTH, SIDEBAR_WIDTH_COLLAPSED, Theme,
+    BORDER_RADIUS, CARD_BORDER_RADIUS, CARD_HEIGHT, GRID_PADDING, GRID_SPACING, MIN_CARD_WIDTH,
+    SIDEBAR_WIDTH, SIDEBAR_WIDTH_COLLAPSED, ScaledFonts, Theme,
 };
 
 /// Group card data for the grid view
@@ -58,7 +57,7 @@ pub fn calculate_columns(window_width: f32, sidebar_state: SidebarState) -> usiz
 }
 
 /// Build the action bar with search, connect, new host, and terminal buttons
-fn build_action_bar(search_query: &str, theme: Theme) -> Element<'static, Message> {
+fn build_action_bar(search_query: &str, theme: Theme, fonts: ScaledFonts) -> Element<'static, Message> {
     // Search input - pill-shaped, auto-focused
     let search_input: iced::widget::TextInput<'static, Message> =
         text_input("Find a host or ssh user@hostname...", search_query)
@@ -90,7 +89,7 @@ fn build_action_bar(search_query: &str, theme: Theme) -> Element<'static, Messag
     // Connect button - pill-shaped
     let connect_btn = button(
         text("Connect")
-            .size(FONT_SIZE_BUTTON)
+            .size(fonts.button)
             .color(iced::Color::WHITE),
     )
     .style(move |_theme, status| {
@@ -116,7 +115,7 @@ fn build_action_bar(search_query: &str, theme: Theme) -> Element<'static, Messag
         row![
             icon_with_color(icons::ui::PLUS, 14, theme.text_primary),
             text("New Host")
-                .size(FONT_SIZE_BUTTON_SMALL)
+                .size(fonts.button_small)
                 .color(theme.text_primary),
         ]
         .spacing(6)
@@ -146,7 +145,7 @@ fn build_action_bar(search_query: &str, theme: Theme) -> Element<'static, Messag
         row![
             icon_with_color(icons::ui::TERMINAL, 14, theme.text_primary),
             text("Terminal")
-                .size(FONT_SIZE_BUTTON_SMALL)
+                .size(fonts.button_small)
                 .color(theme.text_primary),
         ]
         .spacing(6)
@@ -203,6 +202,7 @@ pub fn host_grid_view(
     hosts: Vec<HostCard>,
     column_count: usize,
     theme: Theme,
+    fonts: ScaledFonts,
     focus_section: FocusSection,
     focus_index: Option<usize>,
     hovered_host: Option<Uuid>,
@@ -220,13 +220,13 @@ pub fn host_grid_view(
     // Groups section (if any groups exist)
     if !groups_empty {
         let groups_section =
-            build_groups_section(groups, column_count, theme, focus_section, focus_index);
+            build_groups_section(groups, column_count, theme, fonts, focus_section, focus_index);
         content = content.push(groups_section);
     }
 
     // Hosts section
     if hosts_empty && groups_empty {
-        content = content.push(empty_state(theme));
+        content = content.push(empty_state(theme, fonts));
     } else if !hosts_empty {
         // Adjust focus index for hosts (groups come first)
         let host_focus_index = if focus_section == FocusSection::Content {
@@ -238,6 +238,7 @@ pub fn host_grid_view(
             hosts,
             column_count,
             theme,
+            fonts,
             focus_section,
             host_focus_index,
             hovered_host,
@@ -286,7 +287,7 @@ pub fn host_grid_view(
         });
 
     // Action bar (fixed at top, below tab bar)
-    let action_bar = build_action_bar(search_query, theme);
+    let action_bar = build_action_bar(search_query, theme, fonts);
 
     // Main layout: action bar at top, scrollable content fills remaining space
     let main_content = column![action_bar, scrollable_content];
@@ -306,11 +307,12 @@ fn build_groups_section(
     groups: Vec<GroupCard>,
     column_count: usize,
     theme: Theme,
+    fonts: ScaledFonts,
     focus_section: FocusSection,
     focus_index: Option<usize>,
 ) -> Element<'static, Message> {
     let section_header = text("Groups")
-        .size(FONT_SIZE_SECTION)
+        .size(fonts.section)
         .color(theme.text_primary);
 
     // Build grid of group cards (dynamic columns)
@@ -319,7 +321,7 @@ fn build_groups_section(
 
     for (idx, group) in groups.into_iter().enumerate() {
         let is_focused = focus_section == FocusSection::Content && focus_index == Some(idx);
-        current_row.push(group_card(group, theme, is_focused));
+        current_row.push(group_card(group, theme, fonts, is_focused));
 
         if current_row.len() >= column_count {
             rows.push(
@@ -348,12 +350,13 @@ fn build_hosts_section(
     hosts: Vec<HostCard>,
     column_count: usize,
     theme: Theme,
+    fonts: ScaledFonts,
     focus_section: FocusSection,
     focus_index: Option<usize>,
     hovered_host: Option<Uuid>,
 ) -> Element<'static, Message> {
     let section_header = text("Hosts")
-        .size(FONT_SIZE_SECTION)
+        .size(fonts.section)
         .color(theme.text_primary);
 
     // Build grid of host cards (dynamic columns)
@@ -363,7 +366,7 @@ fn build_hosts_section(
     for (idx, host) in hosts.into_iter().enumerate() {
         let is_focused = focus_section == FocusSection::Content && focus_index == Some(idx);
         let is_hovered = hovered_host == Some(host.id);
-        current_row.push(host_card(host, theme, is_focused, is_hovered));
+        current_row.push(host_card(host, theme, fonts, is_focused, is_hovered));
 
         if current_row.len() >= column_count {
             rows.push(
@@ -388,7 +391,7 @@ fn build_hosts_section(
 }
 
 /// Single group card
-fn group_card(group: GroupCard, theme: Theme, is_focused: bool) -> Element<'static, Message> {
+fn group_card(group: GroupCard, theme: Theme, fonts: ScaledFonts, is_focused: bool) -> Element<'static, Message> {
     let group_id = group.id;
 
     // Folder icon with vibrant accent background
@@ -419,10 +422,10 @@ fn group_card(group: GroupCard, theme: Theme, is_focused: bool) -> Element<'stat
 
     let info = column![
         text(group.name)
-            .size(FONT_SIZE_SECTION)
+            .size(fonts.section)
             .color(theme.text_primary),
         text(host_text)
-            .size(FONT_SIZE_LABEL)
+            .size(fonts.label)
             .color(theme.text_secondary),
     ]
     .spacing(4);
@@ -526,6 +529,7 @@ fn os_icon_color(os: &Option<DetectedOs>) -> iced::Color {
 fn host_card(
     host: HostCard,
     theme: Theme,
+    fonts: ScaledFonts,
     is_focused: bool,
     is_hovered: bool,
 ) -> Element<'static, Message> {
@@ -560,10 +564,10 @@ fn host_card(
 
     let info = column![
         text(host.name.clone())
-            .size(FONT_SIZE_SECTION)
+            .size(fonts.section)
             .color(iced::Color::WHITE),
         text(os_text)
-            .size(FONT_SIZE_LABEL)
+            .size(fonts.label)
             .color(theme.text_secondary),
     ]
     .spacing(4);
@@ -656,21 +660,21 @@ fn host_card(
 }
 
 /// Empty state when no hosts are configured
-fn empty_state(theme: Theme) -> Element<'static, Message> {
+fn empty_state(theme: Theme, fonts: ScaledFonts) -> Element<'static, Message> {
     let content = column![
         icon_with_color(icons::ui::SERVER, 48, theme.text_muted),
         text("No hosts configured")
-            .size(FONT_SIZE_HEADING)
+            .size(fonts.heading)
             .color(theme.text_primary),
         text("Click NEW HOST to add your first server")
-            .size(FONT_SIZE_BODY)
+            .size(fonts.body)
             .color(theme.text_muted),
         Space::new().height(16),
         button(
             row![
                 icon_with_color(icons::ui::PLUS, 14, iced::Color::WHITE),
                 text("NEW HOST")
-                    .size(FONT_SIZE_BODY)
+                    .size(fonts.body)
                     .color(iced::Color::WHITE),
             ]
             .spacing(6)

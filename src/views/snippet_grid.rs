@@ -15,10 +15,9 @@ use crate::config::{DetectedOs, Snippet, SnippetHistoryConfig};
 use crate::icons::{self, icon_with_color};
 use crate::message::{Message, SnippetMessage};
 use crate::theme::{
-    BORDER_RADIUS, CARD_BORDER_RADIUS, FONT_SIZE_BODY, FONT_SIZE_BUTTON_SMALL, FONT_SIZE_HEADING,
-    FONT_SIZE_LABEL, FONT_SIZE_SECTION, FONT_SIZE_SMALL, GRID_PADDING, GRID_SPACING,
+    BORDER_RADIUS, CARD_BORDER_RADIUS, GRID_PADDING, GRID_SPACING,
     MIN_SNIPPET_CARD_WIDTH, RESULTS_PANEL_WIDTH, SIDEBAR_WIDTH, SIDEBAR_WIDTH_COLLAPSED,
-    STATUS_FAILURE, STATUS_SUCCESS, STATUS_SUCCESS_DARK, Theme,
+    STATUS_FAILURE, STATUS_SUCCESS, STATUS_SUCCESS_DARK, ScaledFonts, Theme,
 };
 use crate::views::snippet_results::{ResultsPanelContext, execution_results_panel};
 
@@ -55,7 +54,7 @@ pub fn calculate_columns(
 }
 
 /// Build the action bar with search and new snippet button
-fn build_action_bar(search_query: &str, theme: Theme) -> Element<'static, Message> {
+fn build_action_bar(search_query: &str, theme: Theme, fonts: ScaledFonts) -> Element<'static, Message> {
     // Search input - pill-shaped
     let search_input: iced::widget::TextInput<'static, Message> =
         text_input("Search snippets...", search_query)
@@ -88,7 +87,7 @@ fn build_action_bar(search_query: &str, theme: Theme) -> Element<'static, Messag
         row![
             icon_with_color(icons::ui::PLUS, 14, theme.text_primary),
             text("New Snippet")
-                .size(FONT_SIZE_BUTTON_SMALL)
+                .size(fonts.button_small)
                 .color(theme.text_primary),
         ]
         .spacing(6)
@@ -138,6 +137,7 @@ pub struct SnippetPageContext<'a> {
     pub snippet_history: &'a SnippetHistoryConfig,
     pub column_count: usize,
     pub theme: Theme,
+    pub fonts: ScaledFonts,
     pub hovered_snippet: Option<Uuid>,
     pub selected_snippet: Option<Uuid>,
     pub viewed_history_entry: Option<Uuid>,
@@ -154,13 +154,14 @@ pub fn snippet_page_view(ctx: SnippetPageContext<'_>) -> Element<'static, Messag
         snippet_history,
         column_count,
         theme,
+        fonts,
         hovered_snippet,
         selected_snippet,
         viewed_history_entry,
     } = ctx;
     // If editing, show edit form instead of grid
     if let Some(edit_state) = editing {
-        return super::snippet_edit::snippet_edit_view(edit_state, hosts, theme);
+        return super::snippet_edit::snippet_edit_view(edit_state, hosts, theme, fonts);
     }
 
     // Filter snippets by search query
@@ -176,19 +177,20 @@ pub fn snippet_page_view(ctx: SnippetPageContext<'_>) -> Element<'static, Messag
         .collect();
 
     // Action bar
-    let action_bar = build_action_bar(search_query, theme);
+    let action_bar = build_action_bar(search_query, theme, fonts);
 
     // Grid content
     let grid_content = if filtered_snippets.is_empty() && snippets.is_empty() {
-        empty_state(theme)
+        empty_state(theme, fonts)
     } else if filtered_snippets.is_empty() {
-        no_results_state(theme)
+        no_results_state(theme, fonts)
     } else {
         build_snippet_grid(
             filtered_snippets,
             executions,
             column_count,
             theme,
+            fonts,
             hovered_snippet,
             selected_snippet,
         )
@@ -232,6 +234,7 @@ pub fn snippet_page_view(ctx: SnippetPageContext<'_>) -> Element<'static, Messag
                 history_entries: &history_entries,
                 viewed_entry,
                 theme,
+                fonts,
             }))
         });
 
@@ -258,11 +261,12 @@ fn build_snippet_grid(
     executions: &SnippetExecutionManager,
     column_count: usize,
     theme: Theme,
+    fonts: ScaledFonts,
     hovered_snippet: Option<Uuid>,
     selected_snippet: Option<Uuid>,
 ) -> Element<'static, Message> {
     let section_header = text("Snippets")
-        .size(FONT_SIZE_SECTION)
+        .size(fonts.section)
         .color(theme.text_primary);
 
     // Build grid of snippet cards
@@ -282,6 +286,7 @@ fn build_snippet_grid(
             is_running,
             last_execution,
             theme,
+            fonts,
         ));
 
         if current_row.len() >= column_count {
@@ -321,6 +326,7 @@ fn snippet_card(
     is_running: bool,
     last_execution: Option<&SnippetExecution>,
     theme: Theme,
+    fonts: ScaledFonts,
 ) -> Element<'static, Message> {
     let snippet_id = snippet.id;
 
@@ -364,7 +370,7 @@ fn snippet_card(
                 row![
                     icon_with_color(icons::ui::CHECK, 12, STATUS_SUCCESS),
                     text(format!("{} OK", success))
-                        .size(FONT_SIZE_SMALL)
+                        .size(fonts.small)
                         .color(STATUS_SUCCESS),
                 ]
                 .spacing(4)
@@ -374,7 +380,7 @@ fn snippet_card(
                 row![
                     icon_with_color(icons::ui::X, 12, STATUS_FAILURE),
                     text(format!("{} failed", failed))
-                        .size(FONT_SIZE_SMALL)
+                        .size(fonts.small)
                         .color(STATUS_FAILURE),
                 ]
                 .spacing(4)
@@ -383,7 +389,7 @@ fn snippet_card(
             }
         } else {
             text("Running...")
-                .size(FONT_SIZE_SMALL)
+                .size(fonts.small)
                 .color(theme.accent)
                 .into()
         }
@@ -394,14 +400,14 @@ fn snippet_card(
     // Info column
     let info = column![
         text(snippet.name.clone())
-            .size(FONT_SIZE_SECTION)
+            .size(fonts.section)
             .color(theme.text_primary),
         text(cmd_preview)
-            .size(FONT_SIZE_LABEL)
+            .size(fonts.label)
             .color(theme.text_muted),
         row![
             text(status_text)
-                .size(FONT_SIZE_SMALL)
+                .size(fonts.small)
                 .color(theme.text_secondary),
             Space::new().width(8),
             status_indicator,
@@ -416,7 +422,7 @@ fn snippet_card(
             button(
                 row![
                     icon_with_color(icons::ui::CHEVRON_RIGHT, 14, iced::Color::WHITE),
-                    text("RUN").size(FONT_SIZE_LABEL).color(iced::Color::WHITE),
+                    text("RUN").size(fonts.label).color(iced::Color::WHITE),
                 ]
                 .spacing(4)
                 .align_y(Alignment::Center),
@@ -441,7 +447,7 @@ fn snippet_card(
             .into()
         } else if is_running {
             text("...")
-                .size(FONT_SIZE_BODY)
+                .size(fonts.body)
                 .color(theme.text_muted)
                 .into()
         } else {
@@ -539,21 +545,21 @@ fn snippet_card(
 }
 
 /// Empty state when no snippets are configured
-fn empty_state(theme: Theme) -> Element<'static, Message> {
+fn empty_state(theme: Theme, fonts: ScaledFonts) -> Element<'static, Message> {
     let content = column![
         icon_with_color(icons::ui::CODE, 48, theme.text_muted),
         text("No snippets yet")
-            .size(FONT_SIZE_HEADING)
+            .size(fonts.heading)
             .color(theme.text_primary),
         text("Create a snippet to run commands on multiple hosts")
-            .size(FONT_SIZE_BODY)
+            .size(fonts.body)
             .color(theme.text_muted),
         Space::new().height(16),
         button(
             row![
                 icon_with_color(icons::ui::PLUS, 14, iced::Color::WHITE),
                 text("NEW SNIPPET")
-                    .size(FONT_SIZE_BODY)
+                    .size(fonts.body)
                     .color(iced::Color::WHITE),
             ]
             .spacing(6)
@@ -589,14 +595,14 @@ fn empty_state(theme: Theme) -> Element<'static, Message> {
 }
 
 /// No results state when search has no matches
-fn no_results_state(theme: Theme) -> Element<'static, Message> {
+fn no_results_state(theme: Theme, fonts: ScaledFonts) -> Element<'static, Message> {
     let content = column![
         icon_with_color(icons::ui::CODE, 48, theme.text_muted),
         text("No matching snippets")
-            .size(FONT_SIZE_HEADING)
+            .size(fonts.heading)
             .color(theme.text_primary),
         text("Try a different search term")
-            .size(FONT_SIZE_BODY)
+            .size(fonts.body)
             .color(theme.text_muted),
     ]
     .spacing(8)

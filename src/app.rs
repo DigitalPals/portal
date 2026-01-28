@@ -15,7 +15,7 @@ use crate::config::{
     HistoryConfig, HostsConfig, SettingsConfig, SnippetHistoryConfig, SnippetsConfig,
 };
 use crate::message::{Message, SessionId, SessionMessage, SidebarMenuItem, UiMessage};
-use crate::theme::{ThemeId, get_theme};
+use crate::theme::{ScaledFonts, ThemeId, get_theme};
 use crate::views::dialogs::about_dialog::about_dialog_view;
 use crate::views::dialogs::host_dialog::host_dialog_view;
 use crate::views::dialogs::host_key_dialog::host_key_dialog_view;
@@ -162,6 +162,10 @@ pub struct Portal {
     // Theme preference
     theme_id: ThemeId,
 
+    // UI scale settings
+    system_ui_scale: f32,            // Detected at startup, read-only
+    ui_scale_override: Option<f32>,  // User override from settings
+
     // Terminal settings
     terminal_font_size: f32,
     terminal_font: crate::fonts::TerminalFont,
@@ -273,6 +277,10 @@ impl Portal {
             }
         };
 
+        // Detect system UI scale at startup
+        let system_ui_scale = crate::platform::detect_system_ui_scale();
+        tracing::info!("System UI scale: {}", system_ui_scale);
+
         let app = Self {
             active_view: View::HostGrid,
             search_query: String::new(),
@@ -288,6 +296,8 @@ impl Portal {
             file_viewers: FileViewerManager::new(),
             dialogs: DialogManager::new(),
             theme_id: settings_config.theme,
+            system_ui_scale,
+            ui_scale_override: settings_config.ui_scale,
             terminal_font_size: settings_config.terminal_font_size,
             terminal_font: settings_config.terminal_font,
             sftp_column_widths: settings_config.sftp_column_widths,
@@ -346,10 +356,12 @@ impl Portal {
         let filtered_groups = filter_group_cards(&self.search_query, all_groups);
 
         let theme = get_theme(self.theme_id);
+        let fonts = ScaledFonts::new(self.effective_ui_scale());
 
         // Sidebar (new collapsible icon menu)
         let sidebar = sidebar_view(
             theme,
+            fonts,
             self.sidebar_state,
             self.sidebar_selection,
             self.focus_section,
@@ -367,8 +379,12 @@ impl Portal {
                     snippet_store_command: self.snippet_history.store_command,
                     snippet_store_output: self.snippet_history.store_output,
                     snippet_redact_output: self.snippet_history.redact_output,
+                    ui_scale: self.effective_ui_scale(),
+                    system_ui_scale: self.system_ui_scale,
+                    has_ui_scale_override: self.has_ui_scale_override(),
                 },
                 theme,
+                fonts,
             ),
             View::Terminal(session_id) => {
                 if let Some(session) = self.sessions.get(*session_id) {
@@ -383,6 +399,7 @@ impl Portal {
 
                     terminal_view_with_status(
                         theme,
+                        fonts,
                         &session.terminal,
                         session.session_start,
                         &session.host_name,
@@ -409,7 +426,7 @@ impl Portal {
                         .iter()
                         .map(|h| (h.id, h.name.clone()))
                         .collect();
-                    dual_pane_sftp_view(state, available_hosts, theme)
+                    dual_pane_sftp_view(state, available_hosts, theme, fonts)
                 } else {
                     text("File browser not found").into()
                 }
@@ -455,6 +472,7 @@ impl Portal {
                     snippet_history: &self.snippet_history,
                     column_count,
                     theme,
+                    fonts,
                     hovered_snippet: self.hovered_snippet,
                     selected_snippet: self.selected_snippet,
                     viewed_history_entry: self.viewed_history_entry,
@@ -474,6 +492,7 @@ impl Portal {
                             filtered_cards,
                             column_count,
                             theme,
+                            fonts,
                             self.focus_section,
                             self.host_grid_focus_index,
                             self.hovered_host,
@@ -483,6 +502,7 @@ impl Portal {
                         &self.history_config,
                         &self.hosts_config,
                         theme,
+                        fonts,
                         self.focus_section,
                         self.history_focus_index,
                     ),
@@ -496,6 +516,7 @@ impl Portal {
                             filtered_cards,
                             column_count,
                             theme,
+                            fonts,
                             self.focus_section,
                             self.host_grid_focus_index,
                             self.hovered_host,
@@ -512,6 +533,7 @@ impl Portal {
             self.active_tab,
             self.sidebar_state,
             theme,
+            fonts,
             self.focus_section,
             self.tab_focus_index,
             &self.active_view,
@@ -537,7 +559,7 @@ impl Portal {
                 stack![main_layout, dialog].into()
             }
             ActiveDialog::About(about_state) => {
-                let dialog = about_dialog_view(about_state, theme);
+                let dialog = about_dialog_view(about_state, theme, fonts);
                 stack![main_layout, dialog].into()
             }
             ActiveDialog::PasswordPrompt(password_state) => {
@@ -572,7 +594,7 @@ impl Portal {
                 if sftp_state.context_menu.visible {
                     stack![
                         with_actions_dismiss,
-                        sftp_context_menu_overlay(sftp_state, theme, self.window_size)
+                        sftp_context_menu_overlay(sftp_state, theme, fonts, self.window_size)
                     ]
                     .into()
                 } else {
@@ -589,7 +611,7 @@ impl Portal {
         let final_content = if self.toast_manager.has_toasts() {
             stack![
                 with_context_menu,
-                toast_overlay_view(&self.toast_manager, theme)
+                toast_overlay_view(&self.toast_manager, theme, fonts)
             ]
             .into()
         } else {
@@ -627,12 +649,28 @@ impl Portal {
         }
     }
 
+    /// Get the effective UI scale (user override or system default)
+    pub fn effective_ui_scale(&self) -> f32 {
+        self.ui_scale_override.unwrap_or(self.system_ui_scale)
+    }
+
+    /// Get the system-detected UI scale
+    pub fn system_ui_scale(&self) -> f32 {
+        self.system_ui_scale
+    }
+
+    /// Check if user has overridden the UI scale
+    pub fn has_ui_scale_override(&self) -> bool {
+        self.ui_scale_override.is_some()
+    }
+
     /// Save settings to config file
     pub(crate) fn save_settings(&self) {
         let mut settings = SettingsConfig::default();
         settings.terminal_font_size = self.terminal_font_size;
         settings.terminal_font = self.terminal_font;
         settings.theme = self.theme_id;
+        settings.ui_scale = self.ui_scale_override;
         if let Err(e) = settings.save() {
             tracing::error!("Failed to save settings: {}", e);
         }

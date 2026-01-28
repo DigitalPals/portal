@@ -8,7 +8,7 @@ use crate::app::{FocusSection, SidebarState, View};
 use crate::config::HostsConfig;
 use crate::icons::{self, icon_with_color};
 use crate::message::{Message, TabMessage, UiMessage};
-use crate::theme::{FONT_SIZE_BODY, Theme};
+use crate::theme::{ScaledFonts, Theme};
 use crate::views::host_grid::os_icon_data;
 
 /// Represents a single tab
@@ -65,6 +65,7 @@ pub fn tab_bar_view<'a>(
     active_tab: Option<Uuid>,
     _sidebar_state: SidebarState,
     theme: Theme,
+    fonts: ScaledFonts,
     focus_section: FocusSection,
     focus_index: usize,
     active_view: &View,
@@ -112,6 +113,7 @@ pub fn tab_bar_view<'a>(
             is_focused,
             is_hovered,
             theme,
+            fonts,
             hosts_config,
         ));
     }
@@ -159,6 +161,7 @@ fn tab_button<'a>(
     is_focused: bool,
     is_hovered: bool,
     theme: Theme,
+    fonts: ScaledFonts,
     hosts_config: &'a HostsConfig,
 ) -> Element<'a, Message> {
     let tab_id = tab.id;
@@ -228,7 +231,7 @@ fn tab_button<'a>(
 
     let content = row![
         icon,
-        text(title).size(FONT_SIZE_BODY).color(text_icon_color),
+        text(title).size(fonts.body).color(text_icon_color),
         close_button,
     ]
     .spacing(6)

@@ -374,7 +374,8 @@ pub const STATUS_PARTIAL: Color = Color::from_rgb(
     0x39 as f32 / 255.0,
 );
 
-// Typography constants - Font sizes for consistent UI text
+// Typography constants - Base font sizes for consistent UI text
+// These are the base sizes before UI scaling is applied
 
 /// Page headers (Settings, About page titles)
 pub const FONT_SIZE_PAGE_TITLE: f32 = 28.0;
@@ -408,3 +409,75 @@ pub const FONT_SIZE_SMALL: f32 = 11.0;
 
 /// Monospace code display (ASCII logos)
 pub const FONT_SIZE_MONO_TINY: f32 = 10.0;
+
+/// Scaled font sizes for UI elements.
+///
+/// This struct holds all font sizes after applying the UI scale factor.
+/// Use `ScaledFonts::new(scale)` to create an instance with the appropriate scaling.
+#[derive(Debug, Clone, Copy)]
+#[allow(dead_code)]
+pub struct ScaledFonts {
+    /// Page headers (Settings, About page titles)
+    pub page_title: f32,
+    /// Dialog titles
+    pub dialog_title: f32,
+    /// Empty state headings (large centered messages)
+    pub heading: f32,
+    /// Section headers (Groups, Hosts, Snippets, History, Results)
+    pub section: f32,
+    /// Body text, primary readable content
+    pub body: f32,
+    /// Button text in primary/secondary buttons
+    pub button: f32,
+    /// Small button text, menu items, inline buttons
+    pub button_small: f32,
+    /// Secondary info, descriptions, form field labels
+    pub label: f32,
+    /// Metadata, timestamps, status bar, keyboard shortcuts
+    pub caption: f32,
+    /// Very small text (badges, fingerprints, tiny labels)
+    pub small: f32,
+    /// Monospace code display (ASCII logos)
+    pub mono_tiny: f32,
+}
+
+impl ScaledFonts {
+    /// Create scaled fonts with the given scale factor.
+    ///
+    /// Scale factor should be between 0.8 and 1.5 (80% to 150%).
+    /// Values are rounded to produce clean pixel sizes.
+    pub fn new(scale: f32) -> Self {
+        Self {
+            page_title: (FONT_SIZE_PAGE_TITLE * scale).round(),
+            dialog_title: (FONT_SIZE_DIALOG_TITLE * scale).round(),
+            heading: (FONT_SIZE_HEADING * scale).round(),
+            section: (FONT_SIZE_SECTION * scale).round(),
+            body: (FONT_SIZE_BODY * scale).round(),
+            button: (FONT_SIZE_BUTTON * scale).round(),
+            button_small: (FONT_SIZE_BUTTON_SMALL * scale).round(),
+            label: (FONT_SIZE_LABEL * scale).round(),
+            caption: (FONT_SIZE_CAPTION * scale).round(),
+            small: (FONT_SIZE_SMALL * scale).round(),
+            mono_tiny: (FONT_SIZE_MONO_TINY * scale).round(),
+        }
+    }
+
+    /// Create scaled fonts with no scaling (scale = 1.0).
+    pub fn default_scale() -> Self {
+        Self::new(1.0)
+    }
+}
+
+impl Default for ScaledFonts {
+    fn default() -> Self {
+        Self::default_scale()
+    }
+}
+
+/// Get a scaled font size from a base size and scale factor.
+/// This is a convenience function for views that need to scale individual sizes.
+#[inline]
+#[allow(dead_code)]
+pub fn scaled_font_size(base: f32, scale: f32) -> f32 {
+    (base * scale).round()
+}

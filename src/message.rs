@@ -360,6 +360,10 @@ pub enum UiMessage {
     FontChange(crate::fonts::TerminalFont),
     /// Terminal font size changed
     FontSizeChange(f32),
+    /// UI scale changed (0.8 to 1.5)
+    UiScaleChange(f32),
+    /// Reset UI scale to system default
+    UiScaleReset,
     /// Snippet history enabled/disabled
     SnippetHistoryEnabled(bool),
     /// Store snippet command in history
