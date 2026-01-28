@@ -8,6 +8,7 @@ use crate::views::dialogs::host_dialog::HostDialogState;
 use crate::views::dialogs::host_key_dialog::HostKeyDialogState;
 use crate::views::dialogs::passphrase_dialog::PassphraseDialogState;
 use crate::views::dialogs::password_dialog::PasswordDialogState;
+use crate::views::dialogs::quick_connect_dialog::QuickConnectDialogState;
 
 /// The currently active dialog, if any
 #[derive(Default)]
@@ -25,6 +26,8 @@ pub enum ActiveDialog {
     PasswordPrompt(PasswordDialogState),
     /// Passphrase prompt dialog for SSH key authentication
     PassphrasePrompt(PassphraseDialogState),
+    /// Quick connect dialog for ad-hoc connections
+    QuickConnect(QuickConnectDialogState),
 }
 
 /// Manages the active dialog state
@@ -139,6 +142,21 @@ impl DialogManager {
     pub fn passphrase_mut(&mut self) -> Option<&mut PassphraseDialogState> {
         match &mut self.active {
             ActiveDialog::PassphrasePrompt(state) => Some(state),
+            _ => None,
+        }
+    }
+
+    // ---- Quick connect dialog operations ----
+
+    /// Open the quick connect dialog
+    pub fn open_quick_connect(&mut self) {
+        self.active = ActiveDialog::QuickConnect(QuickConnectDialogState::new());
+    }
+
+    /// Get mutable quick connect dialog state if it's the active dialog
+    pub fn quick_connect_mut(&mut self) -> Option<&mut QuickConnectDialogState> {
+        match &mut self.active {
+            ActiveDialog::QuickConnect(state) => Some(state),
             _ => None,
         }
     }

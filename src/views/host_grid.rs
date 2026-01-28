@@ -64,10 +64,9 @@ fn build_action_bar(
 ) -> Element<'static, Message> {
     // Search input - pill-shaped, auto-focused
     let search_input: iced::widget::TextInput<'static, Message> =
-        text_input("Find a host or ssh user@hostname...", search_query)
+        text_input("Search hosts...", search_query)
             .id(search_input_id())
             .on_input(|s| Message::Ui(UiMessage::SearchChanged(s)))
-            .on_submit(Message::Host(HostMessage::QuickConnect))
             .padding([12, 20])
             .width(Length::Fill)
             .style(move |_theme, status| {
@@ -90,25 +89,35 @@ fn build_action_bar(
                 }
             });
 
-    // Connect button - pill-shaped
-    let connect_btn = button(text("Connect").size(fonts.button).color(iced::Color::WHITE))
-        .style(move |_theme, status| {
-            let bg = match status {
-                button::Status::Hovered => theme.hover,
-                _ => theme.accent,
-            };
-            button::Style {
-                background: Some(bg.into()),
-                text_color: theme.text_primary,
-                border: iced::Border {
-                    radius: 22.0.into(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            }
-        })
-        .padding([12, 24])
-        .on_press(Message::Host(HostMessage::QuickConnect));
+    // Connect button - pill-shaped with border (matches New Host styling)
+    let connect_btn = button(
+        row![
+            icon_with_color(icons::ui::ZAP, 14, theme.text_primary),
+            text("Connect")
+                .size(fonts.button_small)
+                .color(theme.text_primary),
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center),
+    )
+    .style(move |_theme, status| {
+        let bg = match status {
+            button::Status::Hovered => theme.hover,
+            _ => theme.background,
+        };
+        button::Style {
+            background: Some(bg.into()),
+            text_color: theme.text_primary,
+            border: iced::Border {
+                color: theme.border,
+                width: 1.0,
+                radius: 22.0.into(),
+            },
+            ..Default::default()
+        }
+    })
+    .padding([12, 20])
+    .on_press(Message::Host(HostMessage::QuickConnect));
 
     // New Host button - pill-shaped with border
     let new_host_btn = button(
