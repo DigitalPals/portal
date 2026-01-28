@@ -89,6 +89,10 @@ pub fn dual_pane_sftp_view(
 }
 
 /// Build the context menu overlay - should be rendered at app level for correct window positioning
-pub fn sftp_context_menu_overlay(state: &DualPaneSftpState, theme: Theme) -> Element<'_, Message> {
-    context_menu_view(state, theme)
+pub fn sftp_context_menu_overlay(
+    state: &DualPaneSftpState,
+    theme: Theme,
+    window_size: iced::Size,
+) -> Element<'_, Message> {
+    context_menu_view(state, theme, window_size)
 }

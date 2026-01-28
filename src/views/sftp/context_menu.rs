@@ -16,6 +16,8 @@ use super::types::ContextMenuAction;
 /// Red color for destructive actions
 const DESTRUCTIVE_COLOR: Color = Color::from_rgb(0.86, 0.24, 0.24);
 const CONTEXT_MENU_WIDTH: f32 = 240.0;
+/// Estimated max menu height for bounds checking (7 items max * ~28px + padding)
+const ESTIMATED_MENU_HEIGHT: f32 = 220.0;
 
 /// Build a context menu item button
 fn context_menu_item<'a>(
@@ -68,7 +70,11 @@ fn context_menu_item<'a>(
 }
 
 /// Build the context menu overlay
-pub fn context_menu_view(state: &DualPaneSftpState, theme: Theme) -> Element<'_, Message> {
+pub fn context_menu_view(
+    state: &DualPaneSftpState,
+    theme: Theme,
+    window_size: iced::Size,
+) -> Element<'_, Message> {
     if !state.context_menu.visible {
         return Space::new().into();
     }
@@ -187,8 +193,21 @@ pub fn context_menu_view(state: &DualPaneSftpState, theme: Theme) -> Element<'_,
         });
     let menu = mouse_area(menu).capture_all_events(true);
 
-    // Position the menu at the click location
+    // Position the menu at the click location, adjusting if it would overflow window bounds
     let pos = state.context_menu.position;
+
+    let mut x = pos.x;
+    let mut y = pos.y;
+
+    // Adjust if menu would overflow right edge
+    if x + CONTEXT_MENU_WIDTH > window_size.width {
+        x = (window_size.width - CONTEXT_MENU_WIDTH).max(0.0);
+    }
+
+    // Adjust if menu would overflow bottom edge
+    if y + ESTIMATED_MENU_HEIGHT > window_size.height {
+        y = (window_size.height - ESTIMATED_MENU_HEIGHT).max(0.0);
+    }
 
     // Wrap in a clickable background to dismiss when clicking outside
     let background = mouse_area(
@@ -199,7 +218,7 @@ pub fn context_menu_view(state: &DualPaneSftpState, theme: Theme) -> Element<'_,
     .on_press(Message::Sftp(SftpMessage::HideContextMenu(tab_id)));
 
     // Position the menu using margins
-    let positioned_menu = container(menu).padding(Padding::new(0.0).top(pos.y).left(pos.x));
+    let positioned_menu = container(menu).padding(Padding::new(0.0).top(y).left(x));
 
     iced::widget::stack![background, positioned_menu].into()
 }

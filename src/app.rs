@@ -552,7 +552,11 @@ impl Portal {
         let with_context_menu: Element<'_, Message> = if let Some(tab_id) = self.active_tab {
             if let Some(sftp_state) = self.sftp.get_tab(tab_id) {
                 if sftp_state.context_menu.visible {
-                    stack![with_dialog, sftp_context_menu_overlay(sftp_state, theme)].into()
+                    stack![
+                        with_dialog,
+                        sftp_context_menu_overlay(sftp_state, theme, self.window_size)
+                    ]
+                    .into()
                 } else {
                     with_dialog
                 }
