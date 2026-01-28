@@ -125,8 +125,8 @@ pub fn sftp_actions_menu_dismiss_overlay(state: &DualPaneSftpState) -> Element<'
             .width(Fill)
             .height(Fill),
     )
-    .on_press(Message::Sftp(crate::message::SftpMessage::ToggleActionsMenu(
-        tab_id, pane_id,
-    )))
+    .on_press(Message::Sftp(
+        crate::message::SftpMessage::ToggleActionsMenu(tab_id, pane_id),
+    ))
     .into()
 }

@@ -160,7 +160,14 @@ pub fn execution_results_panel(ctx: ResultsPanelContext<'_>) -> Element<'static,
         )
     } else {
         // No current execution, show history-only view
-        build_history_only_view(snippet_id, &snippet_name, history_entries, close_btn, theme, fonts)
+        build_history_only_view(
+            snippet_id,
+            &snippet_name,
+            history_entries,
+            close_btn,
+            theme,
+            fonts,
+        )
     };
 
     container(content)
@@ -235,21 +242,17 @@ fn build_current_view(
     .align_y(Alignment::Center);
 
     // Command display
-    let command_display = container(
-        text(command)
-            .size(fonts.label)
-            .color(theme.text_secondary),
-    )
-    .padding(12)
-    .width(Fill)
-    .style(move |_theme| container::Style {
-        background: Some(theme.surface.into()),
-        border: iced::Border {
-            radius: 6.0.into(),
+    let command_display = container(text(command).size(fonts.label).color(theme.text_secondary))
+        .padding(12)
+        .width(Fill)
+        .style(move |_theme| container::Style {
+            background: Some(theme.surface.into()),
+            border: iced::Border {
+                radius: 6.0.into(),
+                ..Default::default()
+            },
             ..Default::default()
-        },
-        ..Default::default()
-    });
+        });
 
     // Clone host results data and build result rows
     let results: Vec<Element<'static, Message>> = host_results
@@ -269,9 +272,7 @@ fn build_current_view(
 
         column![
             Space::new().height(16),
-            text("History")
-                .size(fonts.body)
-                .color(theme.text_secondary),
+            text("History").size(fonts.body).color(theme.text_secondary),
             Space::new().height(8),
             scrollable(Column::with_children(history_items).spacing(4).width(Fill))
                 .height(Length::Fixed(108.0)),
@@ -286,9 +287,7 @@ fn build_current_view(
         Space::new().height(12),
         command_display,
         Space::new().height(16),
-        text("Results")
-            .size(fonts.body)
-            .color(theme.text_secondary),
+        text("Results").size(fonts.body).color(theme.text_secondary),
         Space::new().height(8),
         results_list,
         Space::new().height(Fill),
@@ -382,21 +381,17 @@ fn build_history_view(
 
     // Command display
     let command = entry.command.clone();
-    let command_display = container(
-        text(command)
-            .size(fonts.label)
-            .color(theme.text_secondary),
-    )
-    .padding(12)
-    .width(Fill)
-    .style(move |_theme| container::Style {
-        background: Some(theme.surface.into()),
-        border: iced::Border {
-            radius: 6.0.into(),
+    let command_display = container(text(command).size(fonts.label).color(theme.text_secondary))
+        .padding(12)
+        .width(Fill)
+        .style(move |_theme| container::Style {
+            background: Some(theme.surface.into()),
+            border: iced::Border {
+                radius: 6.0.into(),
+                ..Default::default()
+            },
             ..Default::default()
-        },
-        ..Default::default()
-    });
+        });
 
     // Historical host results
     let results: Vec<Element<'static, Message>> = entry
@@ -417,9 +412,7 @@ fn build_history_view(
 
     let history_section = column![
         Space::new().height(16),
-        text("History")
-            .size(fonts.body)
-            .color(theme.text_secondary),
+        text("History").size(fonts.body).color(theme.text_secondary),
         Space::new().height(8),
         scrollable(Column::with_children(history_items).spacing(4).width(Fill))
             .height(Length::Fixed(108.0)),
@@ -432,9 +425,7 @@ fn build_history_view(
         Space::new().height(12),
         command_display,
         Space::new().height(16),
-        text("Results")
-            .size(fonts.body)
-            .color(theme.text_secondary),
+        text("Results").size(fonts.body).color(theme.text_secondary),
         Space::new().height(8),
         results_list,
         Space::new().height(Fill),
@@ -477,9 +468,7 @@ fn build_history_only_view(
 
     let history_section = if !history_items.is_empty() {
         column![
-            text("History")
-                .size(fonts.body)
-                .color(theme.text_secondary),
+            text("History").size(fonts.body).color(theme.text_secondary),
             Space::new().height(8),
             scrollable(Column::with_children(history_items).spacing(4).width(Fill))
                 .height(Length::Fixed(400.0)),
@@ -496,7 +485,11 @@ fn build_history_only_view(
 }
 
 /// Single host result row (unified for both current and historical results)
-fn host_result_row(data: HostResultData, theme: Theme, fonts: ScaledFonts) -> Element<'static, Message> {
+fn host_result_row(
+    data: HostResultData,
+    theme: Theme,
+    fonts: ScaledFonts,
+) -> Element<'static, Message> {
     // Status icon
     let (status_icon, status_color) = if data.success {
         (icons::ui::CHECK, STATUS_SUCCESS)
@@ -517,9 +510,7 @@ fn host_result_row(data: HostResultData, theme: Theme, fonts: ScaledFonts) -> El
     let error_section: Element<'static, Message> = if let Some(err) = &data.error {
         column![
             Space::new().height(4),
-            text(err.clone())
-                .size(fonts.small)
-                .color(STATUS_FAILURE),
+            text(err.clone()).size(fonts.small).color(STATUS_FAILURE),
         ]
         .into()
     } else {

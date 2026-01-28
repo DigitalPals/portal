@@ -39,9 +39,7 @@ pub fn snippet_edit_view(
     .align_y(Alignment::Center);
 
     // Name input
-    let name_label = text("Name")
-        .size(fonts.body)
-        .color(theme.text_secondary);
+    let name_label = text("Name").size(fonts.body).color(theme.text_secondary);
     let name_value = state.name.clone();
     let name_input = text_input("e.g., Update System", &name_value)
         .on_input(|s| Message::Snippet(SnippetMessage::FieldChanged(SnippetField::Name, s)))
@@ -68,9 +66,7 @@ pub fn snippet_edit_view(
         });
 
     // Command input
-    let command_label = text("Command")
-        .size(fonts.body)
-        .color(theme.text_secondary);
+    let command_label = text("Command").size(fonts.body).color(theme.text_secondary);
     let command_value = state.command.clone();
     let command_input = text_input(
         "e.g., sudo apt update && sudo apt upgrade -y",
@@ -319,29 +315,25 @@ pub fn snippet_edit_view(
     // Action buttons
     let is_valid = state.is_valid();
 
-    let cancel_btn = button(
-        text("Cancel")
-            .size(fonts.body)
-            .color(theme.text_primary),
-    )
-    .style(move |_theme, status| {
-        let bg = match status {
-            button::Status::Hovered => theme.hover,
-            _ => theme.surface,
-        };
-        button::Style {
-            background: Some(bg.into()),
-            text_color: theme.text_primary,
-            border: iced::Border {
-                color: theme.border,
-                width: 1.0,
-                radius: BORDER_RADIUS.into(),
-            },
-            ..Default::default()
-        }
-    })
-    .padding([10, 20])
-    .on_press(Message::Snippet(SnippetMessage::EditCancel));
+    let cancel_btn = button(text("Cancel").size(fonts.body).color(theme.text_primary))
+        .style(move |_theme, status| {
+            let bg = match status {
+                button::Status::Hovered => theme.hover,
+                _ => theme.surface,
+            };
+            button::Style {
+                background: Some(bg.into()),
+                text_color: theme.text_primary,
+                border: iced::Border {
+                    color: theme.border,
+                    width: 1.0,
+                    radius: BORDER_RADIUS.into(),
+                },
+                ..Default::default()
+            }
+        })
+        .padding([10, 20])
+        .on_press(Message::Snippet(SnippetMessage::EditCancel));
 
     let save_btn = if is_valid {
         button(text("Save").size(fonts.body).color(iced::Color::WHITE))

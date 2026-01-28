@@ -138,7 +138,11 @@ impl ToastManager {
 }
 
 /// Render the toast overlay (positioned at bottom-right)
-pub fn toast_overlay_view(manager: &ToastManager, theme: Theme, fonts: ScaledFonts) -> Element<'static, Message> {
+pub fn toast_overlay_view(
+    manager: &ToastManager,
+    theme: Theme,
+    fonts: ScaledFonts,
+) -> Element<'static, Message> {
     if !manager.has_toasts() {
         return Space::new().into();
     }

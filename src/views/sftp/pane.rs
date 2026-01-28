@@ -52,7 +52,15 @@ pub fn single_pane_view<'a>(
     theme: Theme,
     fonts: ScaledFonts,
 ) -> Element<'a, Message> {
-    let header = pane_header(state, pane_id, tab_id, available_hosts, is_active, theme, fonts);
+    let header = pane_header(
+        state,
+        pane_id,
+        tab_id,
+        available_hosts,
+        is_active,
+        theme,
+        fonts,
+    );
     let breadcrumbs = pane_breadcrumb_bar(state, pane_id, tab_id, theme, fonts);
     let file_list = pane_file_list(
         state,
@@ -73,7 +81,11 @@ pub fn single_pane_view<'a>(
 
     // Overlay actions menu if open
     if state.actions_menu_open {
-        iced::widget::stack![main, actions_menu_overlay(state, pane_id, tab_id, theme, fonts)].into()
+        iced::widget::stack![
+            main,
+            actions_menu_overlay(state, pane_id, tab_id, theme, fonts)
+        ]
+        .into()
     } else {
         main.into()
     }
@@ -150,9 +162,7 @@ pub fn pane_header(
     // Actions dropdown button
     let actions_btn = button(
         row![
-            text("Actions")
-                .size(fonts.body)
-                .color(theme.text_primary),
+            text("Actions").size(fonts.body).color(theme.text_primary),
             icon_with_color(icons::ui::CHEVRON_DOWN, 14, theme.text_primary)
         ]
         .spacing(4)
@@ -349,24 +359,18 @@ pub fn pane_file_list<'a>(
     fonts: ScaledFonts,
 ) -> Element<'a, Message> {
     if state.loading {
-        return container(
-            text("Loading...")
-                .size(fonts.body)
-                .color(theme.text_muted),
-        )
-        .width(Fill)
-        .height(Fill)
-        .align_x(Alignment::Center)
-        .align_y(Alignment::Center)
-        .into();
+        return container(text("Loading...").size(fonts.body).color(theme.text_muted))
+            .width(Fill)
+            .height(Fill)
+            .align_x(Alignment::Center)
+            .align_y(Alignment::Center)
+            .into();
     }
 
     if let Some(ref error) = state.error {
         return container(
             column![
-                text("Error")
-                    .size(fonts.section)
-                    .color(theme.text_primary),
+                text("Error").size(fonts.section).color(theme.text_primary),
                 text(error).size(fonts.label).color(theme.text_muted),
             ]
             .spacing(8)

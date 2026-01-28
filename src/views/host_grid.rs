@@ -57,7 +57,11 @@ pub fn calculate_columns(window_width: f32, sidebar_state: SidebarState) -> usiz
 }
 
 /// Build the action bar with search, connect, new host, and terminal buttons
-fn build_action_bar(search_query: &str, theme: Theme, fonts: ScaledFonts) -> Element<'static, Message> {
+fn build_action_bar(
+    search_query: &str,
+    theme: Theme,
+    fonts: ScaledFonts,
+) -> Element<'static, Message> {
     // Search input - pill-shaped, auto-focused
     let search_input: iced::widget::TextInput<'static, Message> =
         text_input("Find a host or ssh user@hostname...", search_query)
@@ -87,28 +91,24 @@ fn build_action_bar(search_query: &str, theme: Theme, fonts: ScaledFonts) -> Ele
             });
 
     // Connect button - pill-shaped
-    let connect_btn = button(
-        text("Connect")
-            .size(fonts.button)
-            .color(iced::Color::WHITE),
-    )
-    .style(move |_theme, status| {
-        let bg = match status {
-            button::Status::Hovered => theme.hover,
-            _ => theme.accent,
-        };
-        button::Style {
-            background: Some(bg.into()),
-            text_color: theme.text_primary,
-            border: iced::Border {
-                radius: 22.0.into(),
+    let connect_btn = button(text("Connect").size(fonts.button).color(iced::Color::WHITE))
+        .style(move |_theme, status| {
+            let bg = match status {
+                button::Status::Hovered => theme.hover,
+                _ => theme.accent,
+            };
+            button::Style {
+                background: Some(bg.into()),
+                text_color: theme.text_primary,
+                border: iced::Border {
+                    radius: 22.0.into(),
+                    ..Default::default()
+                },
                 ..Default::default()
-            },
-            ..Default::default()
-        }
-    })
-    .padding([12, 24])
-    .on_press(Message::Host(HostMessage::QuickConnect));
+            }
+        })
+        .padding([12, 24])
+        .on_press(Message::Host(HostMessage::QuickConnect));
 
     // New Host button - pill-shaped with border
     let new_host_btn = button(
@@ -219,8 +219,14 @@ pub fn host_grid_view(
 
     // Groups section (if any groups exist)
     if !groups_empty {
-        let groups_section =
-            build_groups_section(groups, column_count, theme, fonts, focus_section, focus_index);
+        let groups_section = build_groups_section(
+            groups,
+            column_count,
+            theme,
+            fonts,
+            focus_section,
+            focus_index,
+        );
         content = content.push(groups_section);
     }
 
@@ -311,9 +317,7 @@ fn build_groups_section(
     focus_section: FocusSection,
     focus_index: Option<usize>,
 ) -> Element<'static, Message> {
-    let section_header = text("Groups")
-        .size(fonts.section)
-        .color(theme.text_primary);
+    let section_header = text("Groups").size(fonts.section).color(theme.text_primary);
 
     // Build grid of group cards (dynamic columns)
     let mut rows: Vec<Element<'static, Message>> = Vec::new();
@@ -355,9 +359,7 @@ fn build_hosts_section(
     focus_index: Option<usize>,
     hovered_host: Option<Uuid>,
 ) -> Element<'static, Message> {
-    let section_header = text("Hosts")
-        .size(fonts.section)
-        .color(theme.text_primary);
+    let section_header = text("Hosts").size(fonts.section).color(theme.text_primary);
 
     // Build grid of host cards (dynamic columns)
     let mut rows: Vec<Element<'static, Message>> = Vec::new();
@@ -391,7 +393,12 @@ fn build_hosts_section(
 }
 
 /// Single group card
-fn group_card(group: GroupCard, theme: Theme, fonts: ScaledFonts, is_focused: bool) -> Element<'static, Message> {
+fn group_card(
+    group: GroupCard,
+    theme: Theme,
+    fonts: ScaledFonts,
+    is_focused: bool,
+) -> Element<'static, Message> {
     let group_id = group.id;
 
     // Folder icon with vibrant accent background
@@ -566,9 +573,7 @@ fn host_card(
         text(host.name.clone())
             .size(fonts.section)
             .color(iced::Color::WHITE),
-        text(os_text)
-            .size(fonts.label)
-            .color(theme.text_secondary),
+        text(os_text).size(fonts.label).color(theme.text_secondary),
     ]
     .spacing(4);
 
@@ -673,9 +678,7 @@ fn empty_state(theme: Theme, fonts: ScaledFonts) -> Element<'static, Message> {
         button(
             row![
                 icon_with_color(icons::ui::PLUS, 14, iced::Color::WHITE),
-                text("NEW HOST")
-                    .size(fonts.body)
-                    .color(iced::Color::WHITE),
+                text("NEW HOST").size(fonts.body).color(iced::Color::WHITE),
             ]
             .spacing(6)
             .align_y(Alignment::Center),

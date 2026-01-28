@@ -163,8 +163,8 @@ pub struct Portal {
     theme_id: ThemeId,
 
     // UI scale settings
-    system_ui_scale: f32,            // Detected at startup, read-only
-    ui_scale_override: Option<f32>,  // User override from settings
+    system_ui_scale: f32,           // Detected at startup, read-only
+    ui_scale_override: Option<f32>, // User override from settings
 
     // Terminal settings
     terminal_font_size: f32,

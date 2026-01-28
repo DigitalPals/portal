@@ -7,9 +7,7 @@ use iced::{Alignment, Element, Fill, Length};
 
 use crate::fonts::TerminalFont;
 use crate::message::{Message, UiMessage};
-use crate::theme::{
-    BORDER_RADIUS, CARD_BORDER_RADIUS, ScaledFonts, Theme, ThemeId, get_theme,
-};
+use crate::theme::{BORDER_RADIUS, CARD_BORDER_RADIUS, ScaledFonts, Theme, ThemeId, get_theme};
 
 pub struct SettingsPageContext {
     pub current_theme: ThemeId,
@@ -28,7 +26,11 @@ pub struct SettingsPageContext {
 }
 
 /// Build the settings page view
-pub fn settings_page_view(context: SettingsPageContext, theme: Theme, fonts: ScaledFonts) -> Element<'static, Message> {
+pub fn settings_page_view(
+    context: SettingsPageContext,
+    theme: Theme,
+    fonts: ScaledFonts,
+) -> Element<'static, Message> {
     let header = text("Settings")
         .size(fonts.page_title)
         .color(theme.text_primary);
@@ -159,7 +161,11 @@ fn settings_section<'a>(
 }
 
 /// Theme selector with visual tile previews
-fn theme_tiles_row(current: ThemeId, theme: Theme, fonts: ScaledFonts) -> Element<'static, Message> {
+fn theme_tiles_row(
+    current: ThemeId,
+    theme: Theme,
+    fonts: ScaledFonts,
+) -> Element<'static, Message> {
     let tiles: Vec<Element<'static, Message>> = ThemeId::all()
         .iter()
         .map(|&theme_id| theme_tile(theme_id, theme_id == current, theme, fonts))
@@ -198,13 +204,11 @@ fn theme_tile(
         ThemeId::CatppuccinMocha => "Mocha",
     };
 
-    let name = text(short_name)
-        .size(fonts.small)
-        .color(if is_selected {
-            current_theme.accent
-        } else {
-            current_theme.text_secondary
-        });
+    let name = text(short_name).size(fonts.small).color(if is_selected {
+        current_theme.accent
+    } else {
+        current_theme.text_secondary
+    });
 
     let border_width = if is_selected { 2.0 } else { 1.0 };
     let border_color = if is_selected {
@@ -302,7 +306,11 @@ fn mini_app_preview(preview_theme: Theme) -> Element<'static, Message> {
 }
 
 /// Font selector with tile previews
-fn font_selector_setting(current_font: TerminalFont, theme: Theme, fonts: ScaledFonts) -> Element<'static, Message> {
+fn font_selector_setting(
+    current_font: TerminalFont,
+    theme: Theme,
+    fonts: ScaledFonts,
+) -> Element<'static, Message> {
     let label = text("Font").size(fonts.body).color(theme.text_primary);
 
     let description = text("Terminal font family")
@@ -329,7 +337,12 @@ fn font_selector_setting(current_font: TerminalFont, theme: Theme, fonts: Scaled
 }
 
 /// Individual font tile showing font preview
-fn font_tile(font: TerminalFont, is_selected: bool, theme: Theme, fonts: ScaledFonts) -> Element<'static, Message> {
+fn font_tile(
+    font: TerminalFont,
+    is_selected: bool,
+    theme: Theme,
+    fonts: ScaledFonts,
+) -> Element<'static, Message> {
     let iced_font = font.to_iced_font();
 
     // Preview text showing the font
@@ -376,10 +389,12 @@ fn font_tile(font: TerminalFont, is_selected: bool, theme: Theme, fonts: ScaledF
 }
 
 /// Font size slider setting
-fn font_size_setting(current_size: f32, theme: Theme, fonts: ScaledFonts) -> Element<'static, Message> {
-    let label = text("Font Size")
-        .size(fonts.body)
-        .color(theme.text_primary);
+fn font_size_setting(
+    current_size: f32,
+    theme: Theme,
+    fonts: ScaledFonts,
+) -> Element<'static, Message> {
+    let label = text("Font Size").size(fonts.body).color(theme.text_primary);
 
     let description = text("Terminal text size")
         .size(fonts.label)
@@ -419,9 +434,7 @@ fn ui_scale_setting(
     theme: Theme,
     fonts: ScaledFonts,
 ) -> Element<'static, Message> {
-    let label = text("UI Scale")
-        .size(fonts.body)
-        .color(theme.text_primary);
+    let label = text("UI Scale").size(fonts.body).color(theme.text_primary);
 
     // Show system default in description when not overridden
     let description_text = if has_override {
@@ -507,9 +520,7 @@ where
 {
     let label_text = text(label).size(fonts.body).color(theme.text_primary);
 
-    let description_text = text(description)
-        .size(fonts.label)
-        .color(theme.text_muted);
+    let description_text = text(description).size(fonts.label).color(theme.text_muted);
 
     let toggle_label = if enabled { "On" } else { "Off" };
     let toggle_color = if enabled {

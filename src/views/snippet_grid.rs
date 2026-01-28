@@ -15,9 +15,9 @@ use crate::config::{DetectedOs, Snippet, SnippetHistoryConfig};
 use crate::icons::{self, icon_with_color};
 use crate::message::{Message, SnippetMessage};
 use crate::theme::{
-    BORDER_RADIUS, CARD_BORDER_RADIUS, GRID_PADDING, GRID_SPACING,
-    MIN_SNIPPET_CARD_WIDTH, RESULTS_PANEL_WIDTH, SIDEBAR_WIDTH, SIDEBAR_WIDTH_COLLAPSED,
-    STATUS_FAILURE, STATUS_SUCCESS, STATUS_SUCCESS_DARK, ScaledFonts, Theme,
+    BORDER_RADIUS, CARD_BORDER_RADIUS, GRID_PADDING, GRID_SPACING, MIN_SNIPPET_CARD_WIDTH,
+    RESULTS_PANEL_WIDTH, SIDEBAR_WIDTH, SIDEBAR_WIDTH_COLLAPSED, STATUS_FAILURE, STATUS_SUCCESS,
+    STATUS_SUCCESS_DARK, ScaledFonts, Theme,
 };
 use crate::views::snippet_results::{ResultsPanelContext, execution_results_panel};
 
@@ -54,7 +54,11 @@ pub fn calculate_columns(
 }
 
 /// Build the action bar with search and new snippet button
-fn build_action_bar(search_query: &str, theme: Theme, fonts: ScaledFonts) -> Element<'static, Message> {
+fn build_action_bar(
+    search_query: &str,
+    theme: Theme,
+    fonts: ScaledFonts,
+) -> Element<'static, Message> {
     // Search input - pill-shaped
     let search_input: iced::widget::TextInput<'static, Message> =
         text_input("Search snippets...", search_query)
@@ -402,9 +406,7 @@ fn snippet_card(
         text(snippet.name.clone())
             .size(fonts.section)
             .color(theme.text_primary),
-        text(cmd_preview)
-            .size(fonts.label)
-            .color(theme.text_muted),
+        text(cmd_preview).size(fonts.label).color(theme.text_muted),
         row![
             text(status_text)
                 .size(fonts.small)
@@ -446,10 +448,7 @@ fn snippet_card(
             .on_press(Message::Snippet(SnippetMessage::Run(snippet_id)))
             .into()
         } else if is_running {
-            text("...")
-                .size(fonts.body)
-                .color(theme.text_muted)
-                .into()
+            text("...").size(fonts.body).color(theme.text_muted).into()
         } else {
             Space::new().into()
         };

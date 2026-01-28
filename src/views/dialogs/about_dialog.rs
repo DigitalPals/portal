@@ -31,7 +31,11 @@ impl AboutDialogState {
 }
 
 /// Build the About dialog view
-pub fn about_dialog_view(_state: &AboutDialogState, theme: Theme, fonts: ScaledFonts) -> Element<'static, Message> {
+pub fn about_dialog_view(
+    _state: &AboutDialogState,
+    theme: Theme,
+    fonts: ScaledFonts,
+) -> Element<'static, Message> {
     let version = env!("CARGO_PKG_VERSION");
 
     // Full logo
@@ -88,9 +92,7 @@ pub fn about_dialog_view(_state: &AboutDialogState, theme: Theme, fonts: ScaledF
                 text(name)
                     .size(fonts.button_small)
                     .color(theme.text_primary),
-                text(" - ")
-                    .size(fonts.button_small)
-                    .color(theme.text_muted),
+                text(" - ").size(fonts.button_small).color(theme.text_muted),
                 text(desc)
                     .size(fonts.button_small)
                     .color(theme.text_secondary),

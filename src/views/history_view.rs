@@ -6,7 +6,7 @@ use crate::app::FocusSection;
 use crate::config::{HistoryConfig, HistoryEntry, HostsConfig, SessionType};
 use crate::icons::{self, icon_with_color};
 use crate::message::{HistoryMessage, Message};
-use crate::theme::{BORDER_RADIUS, CARD_BORDER_RADIUS, Theme, ScaledFonts};
+use crate::theme::{BORDER_RADIUS, CARD_BORDER_RADIUS, ScaledFonts, Theme};
 use crate::views::host_grid::os_icon_data;
 
 /// Format a date as a relative label ("Today", "Yesterday") or "Mon dd" format
@@ -155,9 +155,7 @@ fn build_day_section(
 
     let header = row![
         container(header_dot).width(48).align_x(Alignment::Center),
-        text(day_label)
-            .size(fonts.body)
-            .color(theme.text_primary),
+        text(day_label).size(fonts.body).color(theme.text_primary),
     ]
     .align_y(Alignment::Center)
     .padding(iced::Padding::new(0.0).bottom(12.0));
@@ -250,9 +248,7 @@ fn build_entry_card(
 
     let info = column![
         row![
-            text(host_name)
-                .size(fonts.body)
-                .color(theme.text_primary),
+            text(host_name).size(fonts.body).color(theme.text_primary),
             Space::new().width(8),
             container(
                 text(type_text)

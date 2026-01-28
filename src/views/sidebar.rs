@@ -4,9 +4,7 @@ use iced::{Alignment, Element, Fill, Length};
 use crate::app::{FocusSection, SidebarState};
 use crate::icons::{self, icon_with_color};
 use crate::message::{Message, SidebarMenuItem, UiMessage};
-use crate::theme::{
-    BORDER_RADIUS, SIDEBAR_WIDTH, SIDEBAR_WIDTH_COLLAPSED, ScaledFonts, Theme,
-};
+use crate::theme::{BORDER_RADIUS, SIDEBAR_WIDTH, SIDEBAR_WIDTH_COLLAPSED, ScaledFonts, Theme};
 
 /// Menu item definition
 struct MenuItem {
@@ -78,7 +76,8 @@ pub fn sidebar_view(
     for (idx, menu_item) in MENU_ITEMS.iter().enumerate() {
         let is_selected = selected == menu_item.item;
         let is_focused = focus_section == FocusSection::Sidebar && idx == focus_index;
-        let item_element = menu_item_button(menu_item, is_selected, is_focused, icons_only, theme, fonts);
+        let item_element =
+            menu_item_button(menu_item, is_selected, is_focused, icons_only, theme, fonts);
         menu_items = menu_items.push(item_element);
     }
 

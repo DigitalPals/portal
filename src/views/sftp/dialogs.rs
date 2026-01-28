@@ -15,7 +15,11 @@ use super::state::{DualPaneSftpState, SftpDialogState};
 use super::types::{PermissionBit, PermissionBits, SftpDialogType};
 
 /// Build the SFTP dialog overlay (New Folder, Rename, or Delete)
-pub fn sftp_dialog_view(state: &DualPaneSftpState, theme: Theme, fonts: ScaledFonts) -> Element<'_, Message> {
+pub fn sftp_dialog_view(
+    state: &DualPaneSftpState,
+    theme: Theme,
+    fonts: ScaledFonts,
+) -> Element<'_, Message> {
     let Some(ref dialog) = state.dialog else {
         return Space::new().into();
     };
@@ -29,7 +33,14 @@ pub fn sftp_dialog_view(state: &DualPaneSftpState, theme: Theme, fonts: ScaledFo
         }
         SftpDialogType::EditPermissions {
             name, permissions, ..
-        } => build_permissions_dialog(tab_id, name, permissions, dialog.error.as_deref(), theme, fonts),
+        } => build_permissions_dialog(
+            tab_id,
+            name,
+            permissions,
+            dialog.error.as_deref(),
+            theme,
+            fonts,
+        ),
         _ => build_input_dialog(tab_id, dialog, theme, fonts),
     };
 
@@ -111,9 +122,7 @@ fn build_input_dialog(
         }
     };
 
-    let title_text = text(title)
-        .size(fonts.heading)
-        .color(theme.text_primary);
+    let title_text = text(title).size(fonts.heading).color(theme.text_primary);
 
     let input_value = dialog.input_value.clone();
     let input = text_input(placeholder, &input_value)
@@ -184,9 +193,7 @@ fn build_delete_dialog<'a>(
     theme: Theme,
     fonts: ScaledFonts,
 ) -> Element<'a, Message> {
-    let title_text = text("Delete")
-        .size(fonts.heading)
-        .color(theme.text_primary);
+    let title_text = text("Delete").size(fonts.heading).color(theme.text_primary);
 
     // Build the confirmation message
     let count = entries.len();
@@ -559,7 +566,11 @@ fn permission_checkbox(
 }
 
 /// Create a cancel button for dialogs
-fn dialog_cancel_button(tab_id: SessionId, theme: Theme, fonts: ScaledFonts) -> iced::widget::Button<'static, Message> {
+fn dialog_cancel_button(
+    tab_id: SessionId,
+    theme: Theme,
+    fonts: ScaledFonts,
+) -> iced::widget::Button<'static, Message> {
     button(
         text("Cancel")
             .size(fonts.button_small)
