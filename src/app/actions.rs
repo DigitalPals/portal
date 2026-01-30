@@ -131,40 +131,52 @@ impl Portal {
 
     /// Connect to a VNC host
     pub(super) fn connect_vnc_host(&mut self, host: &Host) -> Task<Message> {
+        let port = host.effective_vnc_port();
+
+        // VNC (especially macOS ARD) always needs a password — prompt for it
+        let password_dialog = PasswordDialogState::new_vnc(
+            host.name.clone(),
+            host.hostname.clone(),
+            port,
+            host.username.clone(),
+            host.id,
+        );
+        self.dialogs.open_password(password_dialog);
+        Task::none()
+    }
+
+    pub(super) fn connect_vnc_host_with_password(
+        &mut self,
+        host: &Host,
+        password: secrecy::SecretString,
+    ) -> Task<Message> {
         use crate::message::VncMessage;
         use crate::vnc::VncSession;
         use crate::vnc::session::VncSessionEvent;
+        use secrecy::ExposeSecret;
 
         let session_id = Uuid::new_v4();
         let hostname = host.hostname.clone();
         let port = host.effective_vnc_port();
         let host_name = host.name.clone();
         let host_id = host.id;
+        let username = Some(host.username.clone()).filter(|u| !u.is_empty());
+        let password_str = Some(password.expose_secret().to_string());
 
-        // For VNC, password auth means we need a password dialog
-        if matches!(host.auth, AuthMethod::Password) {
-            let password_dialog = PasswordDialogState::new_ssh(
-                host.name.clone(),
-                host.hostname.clone(),
-                port,
-                String::new(),
-                host.id,
-            );
-            self.dialogs.open_password(password_dialog);
-            return Task::none();
-        }
-
-        // Use a message channel to bridge between async connect and Iced's Task system.
-        // The connect task will send VNC events through a channel that we listen on
-        // via Task::run, similar to how SSH sessions work.
         let (msg_tx, msg_rx) = mpsc::channel::<Message>(256);
 
-        // Spawn the connection + event listener in one async task
         let connect_task = Task::perform(
             async move {
-                match VncSession::connect(&hostname, port, None, host_name.clone()).await {
+                match VncSession::connect(
+                    &hostname,
+                    port,
+                    username,
+                    password_str,
+                    host_name.clone(),
+                )
+                .await
+                {
                     Ok((vnc_session, mut event_rx)) => {
-                        // Send connected message
                         let _ = msg_tx
                             .send(Message::Vnc(VncMessage::Connected {
                                 session_id,
@@ -174,13 +186,9 @@ impl Portal {
                             }))
                             .await;
 
-                        // Pump VNC events into messages
                         while let Some(event) = event_rx.recv().await {
                             let msg = match event {
-                                VncSessionEvent::FrameUpdated
-                                | VncSessionEvent::ResolutionChanged(_, _) => {
-                                    Message::Vnc(VncMessage::FrameUpdate(session_id))
-                                }
+                                VncSessionEvent::ResolutionChanged(_, _) => continue,
                                 VncSessionEvent::Disconnected => {
                                     Message::Vnc(VncMessage::Disconnected(session_id))
                                 }
@@ -192,16 +200,13 @@ impl Portal {
                         }
                     }
                     Err(e) => {
-                        let _ = msg_tx
-                            .send(Message::Vnc(VncMessage::Error(e)))
-                            .await;
+                        let _ = msg_tx.send(Message::Vnc(VncMessage::Error(e))).await;
                     }
                 }
             },
             |_| Message::Noop,
         );
 
-        // Listen on the message channel
         let event_listener = Task::run(
             stream::unfold(msg_rx, |mut rx| async move {
                 rx.recv().await.map(|msg| (msg, rx))

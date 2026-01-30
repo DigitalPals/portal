@@ -10,11 +10,11 @@ use crate::local::LocalSession;
 use crate::sftp::{FileEntry, SharedSftpSession};
 use crate::ssh::SshSession;
 use crate::ssh::host_key_verification::HostKeyVerificationRequest;
-use crate::vnc::VncSession;
 use crate::terminal::backend::TerminalEvent;
 use crate::theme::ThemeId;
 use crate::views::file_viewer::ViewerContent;
 use crate::views::sftp::{ContextMenuAction, PaneId, PaneSource, PermissionBit, SftpColumn};
+use crate::vnc::VncSession;
 
 /// Session ID type alias
 pub type SessionId = Uuid;
@@ -367,12 +367,18 @@ pub enum VncMessage {
         vnc_session: Arc<VncSession>,
         host_id: Uuid,
     },
-    /// Framebuffer updated, widget should re-render
-    FrameUpdate(SessionId),
+    /// Timer tick — re-render the VNC framebuffer
+    RenderTick,
     /// VNC session disconnected
     Disconnected(SessionId),
     /// VNC connection error
     Error(String),
+    /// Key event to forward to VNC server
+    KeyEvent {
+        session_id: SessionId,
+        keysym: u32,
+        pressed: bool,
+    },
 }
 
 /// UI state messages
@@ -412,6 +418,8 @@ pub enum UiMessage {
     ToastTick,
     /// Keyboard event
     KeyboardEvent(iced::keyboard::Key, iced::keyboard::Modifiers),
+    /// Key released event (used for VNC)
+    KeyReleased(iced::keyboard::Key),
 }
 
 // ============================================================================

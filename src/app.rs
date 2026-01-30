@@ -14,7 +14,7 @@ use iced::keyboard;
 use crate::config::{
     HistoryConfig, HostsConfig, SettingsConfig, SnippetHistoryConfig, SnippetsConfig,
 };
-use crate::message::{Message, SessionId, SessionMessage, SidebarMenuItem, UiMessage};
+use crate::message::{Message, SessionId, SessionMessage, SidebarMenuItem, UiMessage, VncMessage};
 use crate::theme::{ScaledFonts, ThemeId, get_theme};
 use crate::views::dialogs::about_dialog::about_dialog_view;
 use crate::views::dialogs::host_dialog::host_dialog_view;
@@ -33,9 +33,9 @@ use crate::views::sftp::{
 use crate::views::sidebar::sidebar_view;
 use crate::views::snippet_grid::{SnippetPageContext, snippet_page_view};
 use crate::views::tabs::{Tab, tab_bar_view};
-use crate::views::vnc_view::vnc_viewer_view;
 use crate::views::terminal_view::terminal_view_with_status;
 use crate::views::toast::{ToastManager, toast_overlay_view};
+use crate::views::vnc_view::vnc_viewer_view;
 
 pub use self::managers::ActiveSession;
 use self::managers::{
@@ -447,8 +447,8 @@ impl Portal {
                 }
             }
             View::VncViewer(session_id) => {
-                if let Some(vnc_session) = self.vnc_sessions.get(session_id) {
-                    vnc_viewer_view(*session_id, &vnc_session.session, theme, fonts)
+                if let Some(vnc) = self.vnc_sessions.get(session_id) {
+                    vnc_viewer_view(*session_id, vnc, theme, fonts)
                 } else {
                     text("VNC session not found").into()
                 }
@@ -705,15 +705,14 @@ impl Portal {
     pub fn subscription(&self) -> Subscription<Message> {
         let mut subscriptions = vec![
             // Keyboard events
-            event::listen_with(|event, _status, _id| {
-                if let iced::Event::Keyboard(keyboard::Event::KeyPressed {
-                    key, modifiers, ..
-                }) = event
-                {
+            event::listen_with(|event, _status, _id| match event {
+                iced::Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => {
                     Some(Message::Ui(UiMessage::KeyboardEvent(key, modifiers)))
-                } else {
-                    None
                 }
+                iced::Event::Keyboard(keyboard::Event::KeyReleased { key, .. }) => {
+                    Some(Message::Ui(UiMessage::KeyReleased(key)))
+                }
+                _ => None,
             }),
             // Window resize events
             window::resize_events().map(|(_id, size)| Message::Ui(UiMessage::WindowResized(size))),
@@ -723,6 +722,14 @@ impl Portal {
         if self.toast_manager.has_toasts() {
             subscriptions.push(
                 time::every(Duration::from_millis(100)).map(|_| Message::Ui(UiMessage::ToastTick)),
+            );
+        }
+
+        // VNC render tick (~30fps, only when viewing VNC)
+        if matches!(self.active_view, View::VncViewer(_)) && !self.vnc_sessions.is_empty() {
+            subscriptions.push(
+                time::every(Duration::from_millis(33))
+                    .map(|_| Message::Vnc(VncMessage::RenderTick)),
             );
         }
 

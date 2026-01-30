@@ -5,19 +5,19 @@
 use iced::widget::{column, container, row, text};
 use iced::{Element, Fill};
 
+use crate::app::managers::session_manager::VncActiveSession;
 use crate::message::{Message, SessionId};
 use crate::theme::{ScaledFonts, Theme};
-use crate::vnc::VncSession;
-use crate::vnc::widget::vnc_framebuffer_image;
+use crate::vnc::widget::vnc_framebuffer;
 
 /// Build the VNC viewer view with toolbar and framebuffer display
 pub fn vnc_viewer_view<'a>(
     _session_id: SessionId,
-    vnc_session: &'a VncSession,
+    vnc: &'a VncActiveSession,
     theme: Theme,
     fonts: ScaledFonts,
 ) -> Element<'a, Message> {
-    let fb = vnc_session.framebuffer.lock();
+    let fb = vnc.session.framebuffer.lock();
     let resolution_text = format!("{}x{}", fb.width, fb.height);
     drop(fb);
 
@@ -26,7 +26,7 @@ pub fn vnc_viewer_view<'a>(
         row![
             text("VNC").size(fonts.label).color(theme.text_secondary),
             text(" | ").size(fonts.label).color(theme.text_muted),
-            text(&vnc_session.host_name)
+            text(&vnc.host_name)
                 .size(fonts.label)
                 .color(theme.text_primary),
             text(" | ").size(fonts.label).color(theme.text_muted),
@@ -44,8 +44,10 @@ pub fn vnc_viewer_view<'a>(
         ..Default::default()
     });
 
-    // Framebuffer
-    let framebuffer = container(vnc_framebuffer_image(vnc_session))
+    // Framebuffer — custom shader widget for flicker-free rendering
+    let fb_content: Element<'a, Message> = vnc_framebuffer(&vnc.session.framebuffer);
+
+    let framebuffer = container(fb_content)
         .width(Fill)
         .height(Fill)
         .align_x(iced::Alignment::Center)

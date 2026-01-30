@@ -479,14 +479,12 @@ pub fn host_dialog_view(state: &HostDialogState, theme: Theme) -> Element<'stati
     // Protocol picker
     let protocol_picker = column![
         text("Protocol").size(12).color(theme.text_secondary),
-        pick_list(
-            ProtocolChoice::ALL.as_slice(),
-            Some(protocol),
-            |choice| Message::Dialog(DialogMessage::FieldChanged(
+        pick_list(ProtocolChoice::ALL.as_slice(), Some(protocol), |choice| {
+            Message::Dialog(DialogMessage::FieldChanged(
                 HostDialogField::Protocol,
-                format!("{:?}", choice)
+                format!("{:?}", choice),
             ))
-        )
+        })
         .width(Length::Fill)
         .padding(8)
         .style(dialog_pick_list_style(theme))

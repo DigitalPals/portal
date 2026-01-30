@@ -62,9 +62,19 @@ pub fn handle_vnc(portal: &mut Portal, msg: VncMessage) -> Task<Message> {
 
             Task::none()
         }
-        VncMessage::FrameUpdate(_session_id) => {
-            // The widget will re-read the framebuffer on next draw.
-            // Iced will redraw because we received a message.
+        VncMessage::RenderTick => {
+            // The shader widget reads the framebuffer directly in draw().
+            // This tick just triggers a UI refresh so the shader re-renders.
+            Task::none()
+        }
+        VncMessage::KeyEvent {
+            session_id,
+            keysym,
+            pressed,
+        } => {
+            if let Some(vnc) = portal.vnc_sessions.get(&session_id) {
+                vnc.session.try_send_key(keysym, pressed);
+            }
             Task::none()
         }
         VncMessage::Disconnected(session_id) => {

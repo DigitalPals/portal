@@ -152,7 +152,7 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
             if let Some(dialog) = portal.dialogs.password_mut() {
                 let password = dialog.password.clone();
                 let host_id = dialog.host_id;
-                let is_ssh = dialog.is_ssh;
+                let connection_kind = dialog.connection_kind.clone();
                 let sftp_context = dialog.sftp_context.clone();
                 dialog.clear_password();
                 dialog.error = None;
@@ -163,29 +163,36 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
 
                     portal.dialogs.close();
 
-                    if is_ssh {
-                        // SSH connection with password
-                        let session_id = uuid::Uuid::new_v4();
-                        let should_detect_os =
-                            connection::should_detect_os(host.detected_os.as_ref());
-                        return connection::ssh_connect_tasks_with_password(
-                            host,
-                            session_id,
-                            host_id,
-                            should_detect_os,
-                            password,
-                        );
-                    } else if let Some(ctx) = sftp_context {
-                        // SFTP connection with password
-                        let sftp_session_id = uuid::Uuid::new_v4();
-                        return connection::sftp_connect_tasks_with_password(
-                            host,
-                            ctx.tab_id,
-                            ctx.pane_id,
-                            sftp_session_id,
-                            host_id,
-                            password,
-                        );
+                    use crate::views::dialogs::password_dialog::PasswordConnectionKind;
+                    match connection_kind {
+                        PasswordConnectionKind::Ssh => {
+                            let session_id = uuid::Uuid::new_v4();
+                            let should_detect_os =
+                                connection::should_detect_os(host.detected_os.as_ref());
+                            return connection::ssh_connect_tasks_with_password(
+                                host,
+                                session_id,
+                                host_id,
+                                should_detect_os,
+                                password,
+                            );
+                        }
+                        PasswordConnectionKind::Sftp => {
+                            if let Some(ctx) = sftp_context {
+                                let sftp_session_id = uuid::Uuid::new_v4();
+                                return connection::sftp_connect_tasks_with_password(
+                                    host,
+                                    ctx.tab_id,
+                                    ctx.pane_id,
+                                    sftp_session_id,
+                                    host_id,
+                                    password,
+                                );
+                            }
+                        }
+                        PasswordConnectionKind::Vnc => {
+                            return portal.connect_vnc_host_with_password(&host, password);
+                        }
                     }
                 }
             }
