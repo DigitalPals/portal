@@ -10,6 +10,7 @@ use crate::local::LocalSession;
 use crate::sftp::{FileEntry, SharedSftpSession};
 use crate::ssh::SshSession;
 use crate::ssh::host_key_verification::HostKeyVerificationRequest;
+use crate::vnc::VncSession;
 use crate::terminal::backend::TerminalEvent;
 use crate::theme::ThemeId;
 use crate::views::file_viewer::ViewerContent;
@@ -40,6 +41,7 @@ pub enum HostDialogField {
     KeyPath,
     Tags,
     Notes,
+    Protocol,
 }
 
 #[derive(Debug, Clone)]
@@ -355,6 +357,24 @@ pub enum FileViewerMessage {
     ImageZoom(SessionId, f32),
 }
 
+/// VNC session messages
+#[derive(Debug, Clone)]
+pub enum VncMessage {
+    /// VNC connection established
+    Connected {
+        session_id: SessionId,
+        host_name: String,
+        vnc_session: Arc<VncSession>,
+        host_id: Uuid,
+    },
+    /// Framebuffer updated, widget should re-render
+    FrameUpdate(SessionId),
+    /// VNC session disconnected
+    Disconnected(SessionId),
+    /// VNC connection error
+    Error(String),
+}
+
 /// UI state messages
 #[derive(Debug, Clone)]
 pub enum UiMessage {
@@ -417,6 +437,8 @@ pub enum Message {
     History(HistoryMessage),
     /// Snippet messages
     Snippet(SnippetMessage),
+    /// VNC session messages
+    Vnc(VncMessage),
     /// UI state messages
     Ui(UiMessage),
     /// No-op placeholder
@@ -466,6 +488,12 @@ impl From<HistoryMessage> for Message {
 impl From<SnippetMessage> for Message {
     fn from(msg: SnippetMessage) -> Self {
         Message::Snippet(msg)
+    }
+}
+
+impl From<VncMessage> for Message {
+    fn from(msg: VncMessage) -> Self {
+        Message::Vnc(msg)
     }
 }
 

@@ -10,7 +10,7 @@ pub fn search_input_id() -> iced::widget::Id {
 }
 
 use crate::app::{FocusSection, SidebarState};
-use crate::config::DetectedOs;
+use crate::config::{DetectedOs, Protocol};
 use crate::icons::{self, icon_with_color};
 use crate::message::{HostMessage, Message, UiMessage};
 use crate::theme::{
@@ -33,6 +33,7 @@ pub struct HostCard {
     pub name: String,
     pub hostname: String,
     pub detected_os: Option<DetectedOs>,
+    pub protocol: Protocol,
 }
 
 /// Calculate the number of columns based on available width
@@ -573,9 +574,13 @@ fn host_card(
         });
 
     // Host info
+    let protocol_label = match host.protocol {
+        Protocol::Ssh => "SSH",
+        Protocol::Vnc => "VNC",
+    };
     let os_text = match &host.detected_os {
-        Some(os) => format!("SSH, {}", os.display_name()),
-        None => "SSH".to_string(),
+        Some(os) => format!("{}, {}", protocol_label, os.display_name()),
+        None => protocol_label.to_string(),
     };
 
     let info = column![

@@ -3,6 +3,7 @@
 use iced::Task;
 
 use crate::app::Portal;
+use crate::config::Protocol;
 use crate::message::{HostMessage, Message};
 use crate::views::dialogs::host_dialog::HostDialogState;
 
@@ -12,7 +13,10 @@ pub fn handle_host(portal: &mut Portal, msg: HostMessage) -> Task<Message> {
         HostMessage::Connect(id) => {
             tracing::info!("Connect to host");
             if let Some(host) = portal.hosts_config.find_host(id).cloned() {
-                return portal.connect_to_host(&host);
+                return match host.protocol {
+                    Protocol::Vnc => portal.connect_vnc_host(&host),
+                    Protocol::Ssh => portal.connect_to_host(&host),
+                };
             }
             Task::none()
         }

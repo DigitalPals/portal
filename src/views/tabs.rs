@@ -27,6 +27,7 @@ pub enum TabType {
     Terminal,
     Sftp,
     FileViewer,
+    Vnc,
 }
 
 impl Tab {
@@ -44,6 +45,15 @@ impl Tab {
             id,
             title,
             tab_type: TabType::Sftp,
+            host_id,
+        }
+    }
+
+    pub fn new_vnc(id: Uuid, title: String, host_id: Option<Uuid>) -> Self {
+        Self {
+            id,
+            title,
+            tab_type: TabType::Vnc,
             host_id,
         }
     }
@@ -75,7 +85,7 @@ pub fn tab_bar_view<'a>(
     // Determine if we should use terminal background (seamless look)
     let use_terminal_bg = matches!(
         active_view,
-        View::Terminal(_) | View::DualSftp(_) | View::FileViewer(_)
+        View::Terminal(_) | View::DualSftp(_) | View::FileViewer(_) | View::VncViewer(_)
     );
     // Hamburger menu button for sidebar toggle
     let menu_icon = icons::ui::MENU;
@@ -191,6 +201,7 @@ fn tab_button<'a>(
             TabType::Terminal => icons::ui::TERMINAL,
             TabType::Sftp => icons::ui::FOLDER_CLOSED,
             TabType::FileViewer => icons::files::FILE_TEXT,
+            TabType::Vnc => icons::ui::SERVER,
         }
     };
     let icon = icon_with_color(icon_data, 14, text_icon_color);

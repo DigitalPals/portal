@@ -12,6 +12,7 @@ use crate::local::LocalSession;
 use crate::message::SessionId;
 use crate::ssh::SshSession;
 use crate::views::terminal_view::TerminalSession;
+use crate::vnc::VncSession;
 
 /// Backend type for a terminal session
 pub enum SessionBackend {
@@ -32,6 +33,13 @@ pub struct ActiveSession {
     pub status_message: Option<(String, Instant)>,
     /// Buffered output to process in small chunks for UI responsiveness
     pub pending_output: VecDeque<Vec<u8>>,
+}
+
+/// Active VNC session
+pub struct VncActiveSession {
+    pub session: Arc<VncSession>,
+    pub host_name: String,
+    pub session_start: Instant,
 }
 
 /// Manages SSH terminal sessions

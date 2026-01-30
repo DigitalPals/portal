@@ -493,6 +493,13 @@ fn handle_content_keyboard(
             }
             Task::none()
         }
+        View::VncViewer(_) => {
+            // VNC viewer - arrow left goes back to sidebar
+            if let Key::Named(keyboard::key::Named::ArrowLeft) = key {
+                portal.focus_section = FocusSection::Sidebar;
+            }
+            Task::none()
+        }
     }
 }
 

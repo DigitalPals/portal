@@ -26,6 +26,7 @@ pub(crate) mod message;
 pub(crate) mod security_log;
 pub(crate) mod sftp;
 pub(crate) mod terminal;
+pub(crate) mod vnc;
 pub(crate) mod theme;
 pub(crate) mod views;
 pub(crate) mod widgets;

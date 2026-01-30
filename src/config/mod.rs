@@ -10,7 +10,7 @@ use std::path::Path;
 use uuid::Uuid;
 
 pub use history::{HistoryConfig, HistoryEntry, SessionType};
-pub use hosts::{AuthMethod, DetectedOs, Host, HostsConfig};
+pub use hosts::{AuthMethod, DetectedOs, Host, HostsConfig, Protocol};
 pub use settings::SettingsConfig;
 pub use snippet_history::{HistoricalHostResult, SnippetExecutionEntry, SnippetHistoryConfig};
 pub use snippets::{Snippet, SnippetsConfig};

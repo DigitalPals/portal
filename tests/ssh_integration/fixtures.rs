@@ -227,6 +227,8 @@ impl SshTestEnvironment {
             port: self.server.port,
             username: self.server.username.clone(),
             auth,
+            protocol: portal::config::Protocol::Ssh,
+            vnc_port: None,
             group_id: None,
             notes: None,
             tags: vec![],

@@ -4,6 +4,15 @@ use uuid::Uuid;
 
 use crate::error::ConfigError;
 
+/// Connection protocol
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum Protocol {
+    #[default]
+    Ssh,
+    Vnc,
+}
+
 /// Authentication method for SSH connection
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -196,7 +205,7 @@ fn default_port() -> u16 {
     22
 }
 
-/// Single SSH host configuration
+/// Single host configuration (SSH or VNC)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Host {
     pub id: Uuid,
@@ -204,7 +213,14 @@ pub struct Host {
     pub hostname: String,
     #[serde(default = "default_port")]
     pub port: u16,
+    #[serde(default)]
     pub username: String,
+    /// Connection protocol (SSH or VNC)
+    #[serde(default)]
+    pub protocol: Protocol,
+    /// VNC port (defaults to 5900 when protocol is VNC)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vnc_port: Option<u16>,
     #[serde(default)]
     pub auth: AuthMethod,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -221,6 +237,13 @@ pub struct Host {
     /// Last successful connection timestamp
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_connected: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+impl Host {
+    /// Get the effective VNC port (vnc_port or default 5900)
+    pub fn effective_vnc_port(&self) -> u16 {
+        self.vnc_port.unwrap_or(5900)
+    }
 }
 
 /// Group/folder for organizing hosts
