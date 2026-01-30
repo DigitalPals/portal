@@ -12,7 +12,7 @@ pub fn key_to_keysym(key: &Key) -> Option<u32> {
             // For Unicode above 0xFF, use 0x01000000 + codepoint.
             let ch = c.chars().next()?;
             let cp = ch as u32;
-            if cp >= 0x20 && cp <= 0xFF {
+            if (0x20..=0xFF).contains(&cp) {
                 Some(cp)
             } else if cp > 0xFF {
                 Some(0x01000000 + cp)
