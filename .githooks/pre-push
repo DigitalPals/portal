@@ -1,0 +1,57 @@
+#!/bin/bash
+
+# Pre-push hook to run CI checks before pushing
+# This prevents pushing code that will fail GitHub Actions CI
+
+set -e
+
+echo "Running pre-push CI checks..."
+echo ""
+
+# On Linux, use nix's pkg-config and library paths so system crates
+# (glib, wayland, etc.) can be found, but keep the system rustc/cargo
+# to avoid version mismatches with the shared target directory.
+if [[ "$(uname)" != "Darwin" ]] && command -v nix &>/dev/null; then
+    nix_env="$(nix develop --command bash -c '
+        echo "NIX_PKG_CONFIG_PATH=$PKG_CONFIG_PATH"
+        echo "NIX_PKG_CONFIG=$(which pkg-config)"
+    ')"
+    eval "$nix_env"
+    export PKG_CONFIG_PATH="$NIX_PKG_CONFIG_PATH"
+    export PKG_CONFIG="$NIX_PKG_CONFIG"
+fi
+
+# Format check
+echo "==> Checking code formatting (cargo fmt --all --check)..."
+if ! cargo fmt --all --check; then
+    echo ""
+    echo "ERROR: Code formatting check failed!"
+    echo "Run 'cargo fmt --all' to fix formatting issues."
+    exit 1
+fi
+echo "    Format check passed."
+echo ""
+
+# Clippy
+echo "==> Running clippy (cargo clippy --all-targets -- -D warnings)..."
+if ! cargo clippy --all-targets -- -D warnings; then
+    echo ""
+    echo "ERROR: Clippy found warnings/errors!"
+    echo "Fix the issues reported above before pushing."
+    exit 1
+fi
+echo "    Clippy passed."
+echo ""
+
+# Tests
+echo "==> Running tests (cargo test)..."
+if ! cargo test; then
+    echo ""
+    echo "ERROR: Tests failed!"
+    echo "Fix the failing tests before pushing."
+    exit 1
+fi
+echo "    Tests passed."
+echo ""
+
+echo "All CI checks passed! Proceeding with push..."
