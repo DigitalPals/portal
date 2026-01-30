@@ -13,6 +13,14 @@ use super::common::{
     dialog_backdrop, dialog_input_style, primary_button_style, secondary_button_style,
 };
 
+/// What kind of connection this password dialog is for
+#[derive(Debug, Clone, PartialEq)]
+pub enum PasswordConnectionKind {
+    Ssh,
+    Sftp,
+    Vnc,
+}
+
 /// State for the password prompt dialog
 #[derive(Debug, Clone)]
 pub struct PasswordDialogState {
@@ -32,6 +40,8 @@ pub struct PasswordDialogState {
     pub host_id: Uuid,
     /// Whether this is for SSH (true) or SFTP (false)
     pub is_ssh: bool,
+    /// The connection kind
+    pub connection_kind: PasswordConnectionKind,
     /// For SFTP: the tab and pane IDs
     pub sftp_context: Option<SftpConnectionContext>,
 }
@@ -61,6 +71,7 @@ impl PasswordDialogState {
             error: None,
             host_id,
             is_ssh: true,
+            connection_kind: PasswordConnectionKind::Ssh,
             sftp_context: None,
         }
     }
@@ -84,7 +95,30 @@ impl PasswordDialogState {
             error: None,
             host_id,
             is_ssh: false,
+            connection_kind: PasswordConnectionKind::Sftp,
             sftp_context: Some(SftpConnectionContext { tab_id, pane_id }),
+        }
+    }
+
+    /// Create a new password dialog state for VNC connection
+    pub fn new_vnc(
+        host_name: String,
+        hostname: String,
+        port: u16,
+        username: String,
+        host_id: Uuid,
+    ) -> Self {
+        Self {
+            host_name,
+            hostname,
+            port,
+            username,
+            password: SecretString::from(String::new()),
+            error: None,
+            host_id,
+            is_ssh: false,
+            connection_kind: PasswordConnectionKind::Vnc,
+            sftp_context: None,
         }
     }
 

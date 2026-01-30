@@ -7,7 +7,7 @@ use crate::app::ActiveDialog;
 use crate::app::{FocusSection, Portal, SIDEBAR_AUTO_COLLAPSE_THRESHOLD, View};
 use crate::message::{
     DialogMessage, HistoryMessage, HostMessage, Message, SessionMessage, SftpMessage,
-    SidebarMenuItem, TabMessage, UiMessage,
+    SidebarMenuItem, TabMessage, UiMessage, VncMessage,
 };
 use crate::ssh::host_key_verification::HostKeyVerificationResponse;
 use crate::views::dialogs::host_dialog::host_dialog_field_id;
@@ -164,6 +164,19 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
             Task::none()
         }
         UiMessage::KeyboardEvent(key, modifiers) => handle_keyboard_event(portal, key, modifiers),
+        UiMessage::KeyReleased(key) => {
+            // Forward key release to VNC session if active
+            if let View::VncViewer(session_id) = portal.active_view {
+                if let Some(keysym) = crate::vnc::keysym::key_to_keysym(&key) {
+                    return Task::done(Message::Vnc(VncMessage::KeyEvent {
+                        session_id,
+                        keysym,
+                        pressed: false,
+                    }));
+                }
+            }
+            Task::none()
+        }
     }
 }
 
@@ -178,7 +191,21 @@ fn handle_keyboard_event(
         return handle_dialog_keyboard(portal, &key, &modifiers);
     }
 
-    // Priority 2: Terminal captured - only Ctrl+Escape exits
+    // Priority 2: VNC viewer — forward all keys to remote (except Ctrl+Shift combos for UI)
+    if let View::VncViewer(session_id) = portal.active_view {
+        // Allow Ctrl+Shift shortcuts for tab management etc.
+        if !(modifiers.control() && modifiers.shift()) {
+            if let Some(keysym) = crate::vnc::keysym::key_to_keysym(&key) {
+                return Task::done(Message::Vnc(VncMessage::KeyEvent {
+                    session_id,
+                    keysym,
+                    pressed: true,
+                }));
+            }
+        }
+    }
+
+    // Priority 3: Terminal captured - only Ctrl+Escape exits
     if portal.terminal_captured {
         // Ctrl+Escape exits captured mode
         if let Key::Named(keyboard::key::Named::Escape) = &key {
@@ -493,10 +520,14 @@ fn handle_content_keyboard(
             }
             Task::none()
         }
-        View::VncViewer(_) => {
-            // VNC viewer - arrow left goes back to sidebar
-            if let Key::Named(keyboard::key::Named::ArrowLeft) = key {
-                portal.focus_section = FocusSection::Sidebar;
+        View::VncViewer(session_id) => {
+            // Forward key press to VNC session
+            if let Some(keysym) = crate::vnc::keysym::key_to_keysym(key) {
+                return Task::done(Message::Vnc(VncMessage::KeyEvent {
+                    session_id: *session_id,
+                    keysym,
+                    pressed: true,
+                }));
             }
             Task::none()
         }

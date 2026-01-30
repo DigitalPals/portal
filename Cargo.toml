@@ -19,6 +19,13 @@ russh = "0.56.0"
 
 # VNC
 vnc-rs = "0.5"
+num-bigint = "0.4"
+num-traits = "0.2"
+num-integer = "0.1"
+aes = "0.8"
+md-5 = "0.10"
+rand = "0.8"
+bytemuck = { version = "1", features = ["derive"] }
 russh-sftp = "2.1.1"
 ssh-key = { version = "0.6", features = ["std"] }
 
