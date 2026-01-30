@@ -79,6 +79,20 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                             _ => dialog_state.auth_method,
                         };
                     }
+                    HostDialogField::Protocol => {
+                        use crate::views::dialogs::host_dialog::ProtocolChoice;
+                        dialog_state.protocol = match value.as_str() {
+                            "Ssh" => ProtocolChoice::Ssh,
+                            "Vnc" => {
+                                // Auto-set port to 5900 for VNC
+                                if dialog_state.port == "22" {
+                                    dialog_state.port = "5900".to_string();
+                                }
+                                ProtocolChoice::Vnc
+                            }
+                            _ => dialog_state.protocol,
+                        };
+                    }
                 }
             }
             Task::none()
@@ -290,6 +304,8 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                     hostname,
                     port,
                     username,
+                    protocol: crate::config::Protocol::Ssh,
+                    vnc_port: None,
                     auth,
                     group_id: None,
                     notes: None,

@@ -12,6 +12,7 @@ mod sftp;
 mod snippet;
 mod tab;
 mod ui;
+mod vnc;
 
 pub use dialog::handle_dialog;
 pub use file_viewer::handle_file_viewer;
@@ -22,3 +23,4 @@ pub use sftp::handle_sftp;
 pub use snippet::handle_snippet;
 pub use tab::handle_tab;
 pub use ui::handle_ui;
+pub use vnc::handle_vnc;

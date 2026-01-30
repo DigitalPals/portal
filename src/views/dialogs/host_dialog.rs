@@ -4,7 +4,7 @@ use iced::widget::{Space, button, column, pick_list, row, text, text_input};
 use iced::{Alignment, Element, Length};
 use uuid::Uuid;
 
-use crate::config::{AuthMethod, Host};
+use crate::config::{AuthMethod, Host, Protocol};
 use crate::message::{DialogMessage, HostDialogField, Message};
 use crate::theme::Theme;
 use crate::validation::{validate_hostname, validate_port, validate_username};
@@ -43,8 +43,31 @@ pub struct HostDialogState {
     pub key_path: String,
     pub tags: String,
     pub notes: String,
+    /// Connection protocol
+    pub protocol: ProtocolChoice,
     /// Validation errors by field name
     pub validation_errors: HashMap<String, String>,
+}
+
+/// Simplified protocol for the dropdown
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ProtocolChoice {
+    #[default]
+    Ssh,
+    Vnc,
+}
+
+impl std::fmt::Display for ProtocolChoice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ProtocolChoice::Ssh => write!(f, "SSH"),
+            ProtocolChoice::Vnc => write!(f, "VNC"),
+        }
+    }
+}
+
+impl ProtocolChoice {
+    pub const ALL: [ProtocolChoice; 2] = [ProtocolChoice::Ssh, ProtocolChoice::Vnc];
 }
 
 /// Simplified auth method for the dropdown
@@ -87,6 +110,7 @@ impl HostDialogState {
             key_path: String::new(),
             tags: String::new(),
             notes: String::new(),
+            protocol: ProtocolChoice::Ssh,
             validation_errors: HashMap::new(),
         }
     }
@@ -113,6 +137,10 @@ impl HostDialogState {
             },
             tags: host.tags.join(", "),
             notes: host.notes.clone().unwrap_or_default(),
+            protocol: match host.protocol {
+                Protocol::Ssh => ProtocolChoice::Ssh,
+                Protocol::Vnc => ProtocolChoice::Vnc,
+            },
             validation_errors: HashMap::new(),
         }
     }
@@ -201,12 +229,25 @@ impl HostDialogState {
             (Uuid::new_v4(), now)
         };
 
+        let protocol = match self.protocol {
+            ProtocolChoice::Ssh => Protocol::Ssh,
+            ProtocolChoice::Vnc => Protocol::Vnc,
+        };
+
+        let vnc_port = if protocol == Protocol::Vnc && port != 5900 {
+            Some(port)
+        } else {
+            None
+        };
+
         Some(Host {
             id,
             name: self.name.trim().to_string(),
             hostname: self.hostname.trim().to_string(),
             port,
             username,
+            protocol,
+            vnc_port,
             auth,
             group_id: None,
             notes,
@@ -252,6 +293,8 @@ pub fn host_dialog_view(state: &HostDialogState, theme: Theme) -> Element<'stati
     let tags_value = state.tags.clone();
     let notes_value = state.notes.clone();
     let auth_method = state.auth_method;
+    let protocol = state.protocol;
+    let is_vnc = protocol == ProtocolChoice::Vnc;
     let is_valid = state.is_valid();
     let username_placeholder = std::env::var("USER").unwrap_or_default();
 
@@ -433,27 +476,51 @@ pub fn host_dialog_view(state: &HostDialogState, theme: Theme) -> Element<'stati
         .spacing(8)
         .align_y(Alignment::Center);
 
-    // Form layout
-    let form = column![
+    // Protocol picker
+    let protocol_picker = column![
+        text("Protocol").size(12).color(theme.text_secondary),
+        pick_list(
+            ProtocolChoice::ALL.as_slice(),
+            Some(protocol),
+            |choice| Message::Dialog(DialogMessage::FieldChanged(
+                HostDialogField::Protocol,
+                format!("{:?}", choice)
+            ))
+        )
+        .width(Length::Fill)
+        .padding(8)
+        .style(dialog_pick_list_style(theme))
+        .menu_style(dialog_pick_list_menu_style(theme))
+    ]
+    .spacing(4);
+
+    // Form layout - conditionally show SSH-specific fields
+    let mut form = column![
         text(title).size(20).color(theme.text_primary),
         Space::new().height(16),
         name_input,
+        protocol_picker,
         row![
             column![hostname_input].width(Length::FillPortion(3)),
             column![port_input].width(Length::FillPortion(1)),
         ]
         .spacing(12),
-        username_input,
-        auth_picker,
-        key_path_section,
-        tags_input,
-        notes_input,
-        Space::new().height(16),
-        button_row,
     ]
     .spacing(12)
     .padding(24)
     .width(Length::Fixed(450.0));
+
+    // Only show SSH-specific fields when protocol is SSH
+    if !is_vnc {
+        form = form.push(username_input);
+        form = form.push(auth_picker);
+        form = form.push(key_path_section);
+    }
+
+    form = form.push(tags_input);
+    form = form.push(notes_input);
+    form = form.push(Space::new().height(16));
+    form = form.push(button_row);
 
     dialog_backdrop(form, theme)
 }

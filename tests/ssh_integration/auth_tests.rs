@@ -248,6 +248,8 @@ async fn test_connection_timeout() {
         port: 22,
         username: "testuser".to_string(),
         auth: AuthMethod::Password,
+        protocol: portal::config::Protocol::Ssh,
+        vnc_port: None,
         group_id: None,
         notes: None,
         tags: vec![],

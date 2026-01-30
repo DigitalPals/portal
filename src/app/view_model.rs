@@ -33,6 +33,7 @@ pub(super) fn host_cards(hosts_config: &HostsConfig) -> Vec<HostCard> {
             name: host.name.clone(),
             hostname: host.hostname.clone(),
             detected_os: host.detected_os.clone(),
+            protocol: host.protocol.clone(),
         })
         .collect()
 }

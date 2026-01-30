@@ -33,13 +33,14 @@ use crate::views::sftp::{
 use crate::views::sidebar::sidebar_view;
 use crate::views::snippet_grid::{SnippetPageContext, snippet_page_view};
 use crate::views::tabs::{Tab, tab_bar_view};
+use crate::views::vnc_view::vnc_viewer_view;
 use crate::views::terminal_view::terminal_view_with_status;
 use crate::views::toast::{ToastManager, toast_overlay_view};
 
 pub use self::managers::ActiveSession;
 use self::managers::{
     ActiveDialog, DialogManager, FileViewerManager, SessionManager, SftpManager,
-    SnippetExecutionManager,
+    SnippetExecutionManager, VncActiveSession,
 };
 use self::view_model::{filter_group_cards, filter_host_cards, group_cards, host_cards};
 
@@ -54,6 +55,7 @@ pub enum View {
     Terminal(SessionId),
     DualSftp(SessionId),   // Dual-pane SFTP browser
     FileViewer(SessionId), // In-app file viewer
+    VncViewer(SessionId),  // VNC remote desktop viewer
     Settings,              // Full-page settings view
     Snippets,              // Snippets page with execution
 }
@@ -159,6 +161,9 @@ pub struct Portal {
     sftp: SftpManager,
     file_viewers: FileViewerManager,
     dialogs: DialogManager,
+
+    // VNC sessions (separate from terminal sessions)
+    pub(crate) vnc_sessions: std::collections::HashMap<SessionId, VncActiveSession>,
 
     // Theme preference
     theme_id: ThemeId,
@@ -296,6 +301,7 @@ impl Portal {
             sftp: SftpManager::new(),
             file_viewers: FileViewerManager::new(),
             dialogs: DialogManager::new(),
+            vnc_sessions: std::collections::HashMap::new(),
             theme_id: settings_config.theme,
             system_ui_scale,
             ui_scale_override: settings_config.ui_scale,
@@ -342,6 +348,7 @@ impl Portal {
             Message::Host(msg) => update::handle_host(self, msg),
             Message::History(msg) => update::handle_history(self, msg),
             Message::Snippet(msg) => update::handle_snippet(self, msg),
+            Message::Vnc(msg) => update::handle_vnc(self, msg),
             Message::Ui(msg) => update::handle_ui(self, msg),
             Message::Noop => Task::none(),
         }
@@ -437,6 +444,13 @@ impl Portal {
                     file_viewer_view(state, theme)
                 } else {
                     text("File viewer not found").into()
+                }
+            }
+            View::VncViewer(session_id) => {
+                if let Some(vnc_session) = self.vnc_sessions.get(session_id) {
+                    vnc_viewer_view(*session_id, &vnc_session.session, theme, fonts)
+                } else {
+                    text("VNC session not found").into()
                 }
             }
             View::Snippets => {
