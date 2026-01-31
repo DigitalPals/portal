@@ -142,7 +142,8 @@ jobs:
           appimage_path=$(ls Portal-*.AppImage | head -n 1)
           mv "$appimage_path" portal-${{ needs.prepare.outputs.version }}-${{ matrix.name }}.AppImage
 
-      - name: Package
+      - name: Package tarball
+        if: runner.os == 'Linux'
         shell: bash
         run: |
           cd target/${{ matrix.target }}/release
@@ -155,11 +156,7 @@ jobs:
           name: portal-${{ matrix.name }}
           if-no-files-found: ignore
           path: |
-            portal-${{ needs.prepare.outputs.version }}-${{ matrix.name }}.tar.gz
-            portal-${{ needs.prepare.outputs.version }}-${{ matrix.name }}.app.zip
-            portal-${{ needs.prepare.outputs.version }}-${{ matrix.name }}.deb
-            portal-${{ needs.prepare.outputs.version }}-${{ matrix.name }}.rpm
-            portal-${{ needs.prepare.outputs.version }}-${{ matrix.name }}.AppImage
+            portal-${{ needs.prepare.outputs.version }}-${{ matrix.name }}.*
 
   nix-build:
     name: Nix Build (Cachix)

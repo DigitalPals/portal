@@ -165,5 +165,5 @@ The VNC widget uses a custom wgpu shader (`src/vnc/widget.rs`) with a `FrameBuff
 |----------|-----------|
 | Linux x86_64 | `.tar.gz`, `.deb`, `.rpm`, `.AppImage` |
 | Linux arm64 | `.tar.gz`, `.deb`, `.rpm` |
-| macOS x86_64 | `.app.zip`, `.tar.gz` |
-| macOS arm64 | `.app.zip`, `.tar.gz` |
+| macOS x86_64 | `.app.zip` |
+| macOS arm64 | `.app.zip` |
