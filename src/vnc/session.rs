@@ -443,7 +443,11 @@ struct NegotiatedStream {
 impl NegotiatedStream {
     /// Perform version + auth negotiation, then wrap the stream for vnc-rs.
     /// Returns the negotiated stream and an optional detected OS based on RFB handshake signals.
-    async fn negotiate(mut tcp: TcpStream, username: &str, password: &str) -> Result<(Self, Option<DetectedOs>), String> {
+    async fn negotiate(
+        mut tcp: TcpStream,
+        username: &str,
+        password: &str,
+    ) -> Result<(Self, Option<DetectedOs>), String> {
         // Read server's 12-byte RFB version string
         let mut server_version = [0u8; 12];
         tcp.read_exact(&mut server_version)
@@ -460,12 +464,15 @@ impl NegotiatedStream {
 
         if is_standard {
             // Standard version — let vnc-rs handle everything normally
-            return Ok((Self {
-                inner: tcp,
-                prefix: server_version.to_vec(),
-                prefix_offset: 0,
-                drop_write_bytes: 0,
-            }, None));
+            return Ok((
+                Self {
+                    inner: tcp,
+                    prefix: server_version.to_vec(),
+                    prefix_offset: 0,
+                    drop_write_bytes: 0,
+                },
+                None,
+            ));
         }
 
         // Non-standard RFB version (e.g. macOS 003.889) is a strong macOS signal
@@ -519,13 +526,16 @@ impl NegotiatedStream {
             let mut prefix = b"RFB 003.008\n".to_vec();
             prefix.push(num_types[0]);
             prefix.extend_from_slice(&types);
-            return Ok((Self {
-                inner: tcp,
-                prefix,
-                prefix_offset: 0,
-                // vnc-rs will write: 12 bytes version response (goes to server, fine)
-                drop_write_bytes: 0,
-            }, detected_os));
+            return Ok((
+                Self {
+                    inner: tcp,
+                    prefix,
+                    prefix_offset: 0,
+                    // vnc-rs will write: 12 bytes version response (goes to server, fine)
+                    drop_write_bytes: 0,
+                },
+                detected_os,
+            ));
         }
 
         // Apple ARD auth (type 30)
@@ -557,12 +567,15 @@ impl NegotiatedStream {
             //    1 byte:  security type selection (we must drop)
             // Total: 13 bytes to silently discard
             // ARD (type 30) is macOS-only
-            return Ok((Self {
-                inner: tcp,
-                prefix,
-                prefix_offset: 0,
-                drop_write_bytes: 13,
-            }, Some(DetectedOs::MacOS)));
+            return Ok((
+                Self {
+                    inner: tcp,
+                    prefix,
+                    prefix_offset: 0,
+                    drop_write_bytes: 13,
+                },
+                Some(DetectedOs::MacOS),
+            ));
         }
 
         Err(format!(
@@ -666,7 +679,14 @@ impl VncSession {
         password: Option<String>,
         host_name: String,
         vnc_settings: VncSettings,
-    ) -> Result<(Arc<Self>, mpsc::Receiver<VncSessionEvent>, Option<DetectedOs>), String> {
+    ) -> Result<
+        (
+            Arc<Self>,
+            mpsc::Receiver<VncSessionEvent>,
+            Option<DetectedOs>,
+        ),
+        String,
+    > {
         let debug_logs = std::env::var_os("PORTAL_VNC_DEBUG").is_some();
         tracing::info!(
             "VNC connect to {}:{} (user set: {}, debug_logs: {})",
