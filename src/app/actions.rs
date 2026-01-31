@@ -84,7 +84,9 @@ impl Portal {
 
         self.tabs.retain(|t| t.id != tab_id);
         self.sessions.remove(tab_id);
-        self.vnc_sessions.remove(&tab_id);
+        if let Some(vnc) = self.vnc_sessions.remove(&tab_id) {
+            vnc.session.disconnect();
+        }
         if let Some(viewer_state) = self.file_viewers.remove(tab_id) {
             if let FileSource::Remote { temp_path, .. } = viewer_state.file_source {
                 if let Some(temp_dir) = temp_path.parent().map(|path| path.to_path_buf()) {
