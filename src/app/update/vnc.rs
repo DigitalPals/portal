@@ -2,8 +2,8 @@
 
 use iced::Task;
 
-use crate::app::managers::session_manager::VncActiveSession;
 use crate::app::Portal;
+use crate::app::managers::session_manager::VncActiveSession;
 use crate::message::{Message, VncMessage};
 use crate::views::tabs::Tab;
 use crate::views::toast::Toast;

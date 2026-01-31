@@ -436,7 +436,8 @@ fn handle_tabbar_keyboard(
             portal.ui.tab_focus_index = portal.ui.tab_focus_index.saturating_sub(1);
         }
         Key::Named(keyboard::key::Named::ArrowRight) => {
-            portal.ui.tab_focus_index = (portal.ui.tab_focus_index + 1).min(tab_count.saturating_sub(1));
+            portal.ui.tab_focus_index =
+                (portal.ui.tab_focus_index + 1).min(tab_count.saturating_sub(1));
         }
         Key::Named(keyboard::key::Named::Home) => {
             portal.ui.tab_focus_index = 0;
@@ -554,8 +555,10 @@ fn handle_host_grid_keyboard(
     }
 
     // Calculate column count for 2D navigation
-    let columns =
-        crate::views::host_grid::calculate_columns(portal.ui.window_size.width, portal.ui.sidebar_state);
+    let columns = crate::views::host_grid::calculate_columns(
+        portal.ui.window_size.width,
+        portal.ui.sidebar_state,
+    );
 
     match key {
         Key::Named(keyboard::key::Named::ArrowUp) => {

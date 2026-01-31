@@ -515,7 +515,8 @@ impl Portal {
             }
             View::HostGrid => {
                 // Calculate responsive column count
-                let column_count = calculate_columns(self.ui.window_size.width, self.ui.sidebar_state);
+                let column_count =
+                    calculate_columns(self.ui.window_size.width, self.ui.sidebar_state);
 
                 // Show content based on sidebar selection
                 match self.ui.sidebar_selection {
@@ -690,7 +691,9 @@ impl Portal {
 
     /// Get the effective UI scale (user override or system default)
     pub fn effective_ui_scale(&self) -> f32 {
-        self.prefs.ui_scale_override.unwrap_or(self.prefs.system_ui_scale)
+        self.prefs
+            .ui_scale_override
+            .unwrap_or(self.prefs.system_ui_scale)
     }
 
     /// Get the system-detected UI scale

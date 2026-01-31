@@ -256,7 +256,8 @@ pub fn handle_snippet(portal: &mut Portal, msg: SnippetMessage) -> Task<Message>
 
             // If not found in active, try last result
             if !toggled {
-                if let Some(execution) = portal.snippets.executions.get_last_result_mut(snippet_id) {
+                if let Some(execution) = portal.snippets.executions.get_last_result_mut(snippet_id)
+                {
                     if let Some(result) = execution.get_host_result_mut(host_id) {
                         result.expanded = !result.expanded;
                     }
