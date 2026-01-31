@@ -21,20 +21,60 @@ use super::services::{connection, file_viewer, history};
 use super::{Portal, View};
 
 impl Portal {
-    pub(super) fn set_active_tab(&mut self, tab_id: Uuid) {
+    fn hide_sidebar_for_session(&mut self) {
+        if self.ui.sidebar_state != crate::app::SidebarState::Hidden {
+            self.ui.sidebar_state_before_session = Some(self.ui.sidebar_state);
+        }
+        self.ui.sidebar_state = crate::app::SidebarState::Hidden;
+    }
+
+    pub(super) fn restore_sidebar_after_session(&mut self) {
+        if let Some(saved_state) = self.ui.sidebar_state_before_session.take() {
+            self.ui.sidebar_state = saved_state;
+        }
+    }
+
+    pub(super) fn enter_host_grid(&mut self) {
+        self.ui.active_view = View::HostGrid;
+        self.ui.terminal_captured = false;
+    }
+
+    pub(super) fn enter_terminal_view(&mut self, tab_id: Uuid, auto_hide_sidebar: bool) {
         self.active_tab = Some(tab_id);
+        self.ui.active_view = View::Terminal(tab_id);
+        self.ui.terminal_captured = true;
+        if auto_hide_sidebar {
+            self.hide_sidebar_for_session();
+        }
+    }
+
+    pub(super) fn enter_sftp_view(&mut self, tab_id: Uuid) {
+        self.active_tab = Some(tab_id);
+        self.ui.active_view = View::DualSftp(tab_id);
+        self.ui.terminal_captured = false;
+    }
+
+    pub(super) fn enter_file_viewer_view(&mut self, tab_id: Uuid) {
+        self.active_tab = Some(tab_id);
+        self.ui.active_view = View::FileViewer(tab_id);
+        self.ui.terminal_captured = false;
+    }
+
+    pub(super) fn enter_vnc_view(&mut self, tab_id: Uuid) {
+        self.active_tab = Some(tab_id);
+        self.ui.active_view = View::VncViewer(tab_id);
+        self.ui.terminal_captured = false;
+    }
+
+    pub(super) fn set_active_tab(&mut self, tab_id: Uuid) {
         if self.sessions.contains(tab_id) {
-            self.active_view = View::Terminal(tab_id);
-            self.terminal_captured = true;
+            self.enter_terminal_view(tab_id, false);
         } else if self.sftp.contains_tab(tab_id) {
-            self.active_view = View::DualSftp(tab_id);
-            self.terminal_captured = false;
+            self.enter_sftp_view(tab_id);
         } else if self.file_viewers.contains(tab_id) {
-            self.active_view = View::FileViewer(tab_id);
-            self.terminal_captured = false;
+            self.enter_file_viewer_view(tab_id);
         } else if self.vnc_sessions.contains_key(&tab_id) {
-            self.active_view = View::VncViewer(tab_id);
-            self.terminal_captured = false;
+            self.enter_vnc_view(tab_id);
         }
     }
 
@@ -60,7 +100,7 @@ impl Portal {
             if !still_used {
                 self.sftp.remove_connection(session_id);
                 if let Some(entry_id) = self.sftp.remove_history_entry(session_id) {
-                    if history::mark_entry_disconnected(&mut self.history_config, entry_id) {
+                    if history::mark_entry_disconnected(&mut self.config.history, entry_id) {
                         history_changed = true;
                     }
                 }
@@ -68,7 +108,7 @@ impl Portal {
         }
 
         if history_changed {
-            if let Err(e) = self.history_config.save() {
+            if let Err(e) = self.config.history.save() {
                 tracing::error!("Failed to save history config: {}", e);
             }
         }
@@ -78,15 +118,10 @@ impl Portal {
                 self.set_active_tab(last_tab.id);
             } else {
                 self.active_tab = None;
-                self.active_view = View::HostGrid;
-                self.sidebar_selection = crate::message::SidebarMenuItem::Hosts;
-                // Restore sidebar state if returning from terminal
-                if let Some(saved_state) = self.sidebar_state_before_session.take() {
-                    self.sidebar_state = saved_state;
-                }
-                // Reset keyboard navigation state when returning to host grid
-                self.terminal_captured = false;
-                self.focus_section = crate::app::FocusSection::Content;
+                self.ui.sidebar_selection = crate::message::SidebarMenuItem::Hosts;
+                self.restore_sidebar_after_session();
+                self.enter_host_grid();
+                self.ui.focus_section = crate::app::FocusSection::Content;
             }
         }
     }
@@ -164,7 +199,7 @@ impl Portal {
         let password_str = Some(password.expose_secret().to_string());
 
         let (msg_tx, msg_rx) = mpsc::channel::<Message>(256);
-        let vnc_settings = self.vnc_settings.clone();
+        let vnc_settings = self.prefs.vnc_settings.clone();
 
         let connect_task = Task::perform(
             async move {
@@ -424,8 +459,7 @@ impl Portal {
                         // Create tab
                         let tab = Tab::new_file_viewer(viewer_id, file_name);
                         self.tabs.push(tab);
-                        self.active_tab = Some(viewer_id);
-                        self.active_view = View::FileViewer(viewer_id);
+                        self.enter_file_viewer_view(viewer_id);
 
                         return load_task;
                     }

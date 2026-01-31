@@ -22,6 +22,38 @@ const SSH_KEEPALIVE_INTERVAL_SECS: u64 = 60;
 
 static KNOWN_HOSTS_MANAGER: OnceLock<Arc<Mutex<KnownHostsManager>>> = OnceLock::new();
 
+enum SshAuth {
+    None,
+    Password(SecretString),
+    Passphrase(SecretString),
+}
+
+impl SshAuth {
+    fn split(self) -> (Option<SecretString>, Option<SecretString>) {
+        match self {
+            SshAuth::None => (None, None),
+            SshAuth::Password(password) => (Some(password), None),
+            SshAuth::Passphrase(passphrase) => (None, Some(passphrase)),
+        }
+    }
+}
+
+enum SftpAuth {
+    None,
+    Password(SecretString),
+    Passphrase(SecretString),
+}
+
+impl SftpAuth {
+    fn split(self) -> (Option<SecretString>, Option<SecretString>) {
+        match self {
+            SftpAuth::None => (None, None),
+            SftpAuth::Password(password) => (Some(password), None),
+            SftpAuth::Passphrase(passphrase) => (None, Some(passphrase)),
+        }
+    }
+}
+
 pub fn shared_known_hosts_manager() -> Arc<Mutex<KnownHostsManager>> {
     KNOWN_HOSTS_MANAGER
         .get_or_init(|| Arc::new(Mutex::new(KnownHostsManager::new())))
@@ -36,15 +68,8 @@ pub fn should_detect_os(detected_os: Option<&DetectedOs>) -> bool {
     }
 }
 
-pub fn ssh_connect_tasks(
-    host: Arc<Host>,
-    session_id: SessionId,
-    host_id: Uuid,
-    should_detect_os: bool,
-) -> Task<Message> {
-    let (event_tx, event_rx) = mpsc::channel::<SshEvent>(SSH_EVENT_CHANNEL_CAPACITY);
-
-    let event_listener = Task::run(
+fn ssh_event_listener(session_id: SessionId, event_rx: mpsc::Receiver<SshEvent>) -> Task<Message> {
+    Task::run(
         stream::unfold(event_rx, |mut rx| async move {
             rx.recv().await.map(|event| (event, rx))
         }),
@@ -56,11 +81,37 @@ pub fn ssh_connect_tasks(
             ),
             SshEvent::Connected => Message::Noop,
         },
-    );
+    )
+}
+
+fn sftp_event_listener(event_rx: mpsc::Receiver<SshEvent>) -> Task<Message> {
+    Task::run(
+        stream::unfold(event_rx, |mut rx| async move {
+            rx.recv().await.map(|event| (event, rx))
+        }),
+        move |event| match event {
+            SshEvent::HostKeyVerification(request) => Message::Dialog(
+                DialogMessage::HostKeyVerification(VerificationRequestWrapper(Some(request))),
+            ),
+            _ => Message::Noop,
+        },
+    )
+}
+
+fn ssh_connect_tasks_with_auth(
+    host: Arc<Host>,
+    session_id: SessionId,
+    host_id: Uuid,
+    should_detect_os: bool,
+    auth: SshAuth,
+) -> Task<Message> {
+    let (event_tx, event_rx) = mpsc::channel::<SshEvent>(SSH_EVENT_CHANNEL_CAPACITY);
+    let event_listener = ssh_event_listener(session_id, event_rx);
 
     let known_hosts = shared_known_hosts_manager();
     let ssh_client = SshClient::with_known_hosts(SSH_KEEPALIVE_INTERVAL_SECS, known_hosts);
     let host_for_task = Arc::clone(&host);
+    let (password, passphrase) = auth.split();
     let connect_task = Task::perform(
         async move {
             let result = ssh_client
@@ -69,8 +120,8 @@ pub fn ssh_connect_tasks(
                     (80, 24),
                     event_tx,
                     Duration::from_secs(30),
-                    None,
-                    None,
+                    password,
+                    passphrase,
                     should_detect_os,
                 )
                 .await;
@@ -90,6 +141,15 @@ pub fn ssh_connect_tasks(
     );
 
     Task::batch([event_listener, connect_task])
+}
+
+pub fn ssh_connect_tasks(
+    host: Arc<Host>,
+    session_id: SessionId,
+    host_id: Uuid,
+    should_detect_os: bool,
+) -> Task<Message> {
+    ssh_connect_tasks_with_auth(host, session_id, host_id, should_detect_os, SshAuth::None)
 }
 
 /// SSH connection tasks with password authentication
@@ -100,54 +160,13 @@ pub fn ssh_connect_tasks_with_password(
     should_detect_os: bool,
     password: SecretString,
 ) -> Task<Message> {
-    let (event_tx, event_rx) = mpsc::channel::<SshEvent>(SSH_EVENT_CHANNEL_CAPACITY);
-
-    let event_listener = Task::run(
-        stream::unfold(event_rx, |mut rx| async move {
-            rx.recv().await.map(|event| (event, rx))
-        }),
-        move |event| match event {
-            SshEvent::Data(data) => Message::Session(SessionMessage::Data(session_id, data)),
-            SshEvent::Disconnected => Message::Session(SessionMessage::Disconnected(session_id)),
-            SshEvent::HostKeyVerification(request) => Message::Dialog(
-                DialogMessage::HostKeyVerification(VerificationRequestWrapper(Some(request))),
-            ),
-            SshEvent::Connected => Message::Noop,
-        },
-    );
-
-    let known_hosts = shared_known_hosts_manager();
-    let ssh_client = SshClient::with_known_hosts(SSH_KEEPALIVE_INTERVAL_SECS, known_hosts);
-    let host_for_task = Arc::clone(&host);
-    let connect_task = Task::perform(
-        async move {
-            let result = ssh_client
-                .connect(
-                    &host_for_task,
-                    (80, 24),
-                    event_tx,
-                    Duration::from_secs(30),
-                    Some(password),
-                    None,
-                    should_detect_os,
-                )
-                .await;
-
-            (session_id, host_id, host_for_task, result, should_detect_os)
-        },
-        |(session_id, host_id, host, result, should_detect_os)| match result {
-            Ok((ssh_session, detected_os)) => Message::Session(SessionMessage::Connected {
-                session_id,
-                host_name: host.name.clone(),
-                ssh_session,
-                host_id,
-                detected_os,
-            }),
-            Err(e) => map_ssh_connect_error(session_id, host_id, &host, should_detect_os, e),
-        },
-    );
-
-    Task::batch([event_listener, connect_task])
+    ssh_connect_tasks_with_auth(
+        host,
+        session_id,
+        host_id,
+        should_detect_os,
+        SshAuth::Password(password),
+    )
 }
 
 /// SSH connection tasks with key passphrase authentication
@@ -158,54 +177,13 @@ pub fn ssh_connect_tasks_with_passphrase(
     should_detect_os: bool,
     passphrase: SecretString,
 ) -> Task<Message> {
-    let (event_tx, event_rx) = mpsc::channel::<SshEvent>(SSH_EVENT_CHANNEL_CAPACITY);
-
-    let event_listener = Task::run(
-        stream::unfold(event_rx, |mut rx| async move {
-            rx.recv().await.map(|event| (event, rx))
-        }),
-        move |event| match event {
-            SshEvent::Data(data) => Message::Session(SessionMessage::Data(session_id, data)),
-            SshEvent::Disconnected => Message::Session(SessionMessage::Disconnected(session_id)),
-            SshEvent::HostKeyVerification(request) => Message::Dialog(
-                DialogMessage::HostKeyVerification(VerificationRequestWrapper(Some(request))),
-            ),
-            SshEvent::Connected => Message::Noop,
-        },
-    );
-
-    let known_hosts = shared_known_hosts_manager();
-    let ssh_client = SshClient::with_known_hosts(SSH_KEEPALIVE_INTERVAL_SECS, known_hosts);
-    let host_for_task = Arc::clone(&host);
-    let connect_task = Task::perform(
-        async move {
-            let result = ssh_client
-                .connect(
-                    &host_for_task,
-                    (80, 24),
-                    event_tx,
-                    Duration::from_secs(30),
-                    None,
-                    Some(passphrase),
-                    should_detect_os,
-                )
-                .await;
-
-            (session_id, host_id, host_for_task, result, should_detect_os)
-        },
-        |(session_id, host_id, host, result, should_detect_os)| match result {
-            Ok((ssh_session, detected_os)) => Message::Session(SessionMessage::Connected {
-                session_id,
-                host_name: host.name.clone(),
-                ssh_session,
-                host_id,
-                detected_os,
-            }),
-            Err(e) => map_ssh_connect_error(session_id, host_id, &host, should_detect_os, e),
-        },
-    );
-
-    Task::batch([event_listener, connect_task])
+    ssh_connect_tasks_with_auth(
+        host,
+        session_id,
+        host_id,
+        should_detect_os,
+        SshAuth::Passphrase(passphrase),
+    )
 }
 
 pub fn sftp_connect_tasks(
@@ -215,51 +193,14 @@ pub fn sftp_connect_tasks(
     sftp_session_id: SessionId,
     host_id: Uuid,
 ) -> Task<Message> {
-    let (event_tx, event_rx) = mpsc::channel::<SshEvent>(SSH_EVENT_CHANNEL_CAPACITY);
-    let known_hosts = shared_known_hosts_manager();
-    let sftp_client = SftpClient::with_known_hosts(SSH_KEEPALIVE_INTERVAL_SECS, known_hosts);
-
-    let event_listener = Task::run(
-        stream::unfold(event_rx, |mut rx| async move {
-            rx.recv().await.map(|event| (event, rx))
-        }),
-        move |event| match event {
-            SshEvent::HostKeyVerification(request) => Message::Dialog(
-                DialogMessage::HostKeyVerification(VerificationRequestWrapper(Some(request))),
-            ),
-            _ => Message::Noop,
-        },
-    );
-
-    let host_for_task = Arc::clone(&host);
-    let connect_task = Task::perform(
-        async move {
-            let result = sftp_client
-                .connect(
-                    &host_for_task,
-                    event_tx,
-                    Duration::from_secs(30),
-                    None,
-                    None,
-                )
-                .await;
-
-            (tab_id, pane_id, sftp_session_id, host_for_task, result)
-        },
-        move |(tab_id, pane_id, sftp_session_id, host, result)| match result {
-            Ok(sftp_session) => Message::Sftp(SftpMessage::Connected {
-                tab_id,
-                pane_id,
-                sftp_session_id,
-                host_id,
-                host_name: host.name.clone(),
-                sftp_session,
-            }),
-            Err(e) => map_sftp_connect_error(tab_id, pane_id, sftp_session_id, host_id, &host, e),
-        },
-    );
-
-    Task::batch([event_listener, connect_task])
+    sftp_connect_tasks_with_auth(
+        host,
+        tab_id,
+        pane_id,
+        sftp_session_id,
+        host_id,
+        SftpAuth::None,
+    )
 }
 
 /// SFTP connection tasks with password authentication
@@ -271,51 +212,14 @@ pub fn sftp_connect_tasks_with_password(
     host_id: Uuid,
     password: SecretString,
 ) -> Task<Message> {
-    let (event_tx, event_rx) = mpsc::channel::<SshEvent>(SSH_EVENT_CHANNEL_CAPACITY);
-    let known_hosts = shared_known_hosts_manager();
-    let sftp_client = SftpClient::with_known_hosts(SSH_KEEPALIVE_INTERVAL_SECS, known_hosts);
-
-    let event_listener = Task::run(
-        stream::unfold(event_rx, |mut rx| async move {
-            rx.recv().await.map(|event| (event, rx))
-        }),
-        move |event| match event {
-            SshEvent::HostKeyVerification(request) => Message::Dialog(
-                DialogMessage::HostKeyVerification(VerificationRequestWrapper(Some(request))),
-            ),
-            _ => Message::Noop,
-        },
-    );
-
-    let host_for_task = Arc::clone(&host);
-    let connect_task = Task::perform(
-        async move {
-            let result = sftp_client
-                .connect(
-                    &host_for_task,
-                    event_tx,
-                    Duration::from_secs(30),
-                    Some(password),
-                    None,
-                )
-                .await;
-
-            (tab_id, pane_id, sftp_session_id, host_for_task, result)
-        },
-        move |(tab_id, pane_id, sftp_session_id, host, result)| match result {
-            Ok(sftp_session) => Message::Sftp(SftpMessage::Connected {
-                tab_id,
-                pane_id,
-                sftp_session_id,
-                host_id,
-                host_name: host.name.clone(),
-                sftp_session,
-            }),
-            Err(e) => map_sftp_connect_error(tab_id, pane_id, sftp_session_id, host_id, &host, e),
-        },
-    );
-
-    Task::batch([event_listener, connect_task])
+    sftp_connect_tasks_with_auth(
+        host,
+        tab_id,
+        pane_id,
+        sftp_session_id,
+        host_id,
+        SftpAuth::Password(password),
+    )
 }
 
 /// SFTP connection tasks with key passphrase authentication
@@ -327,23 +231,31 @@ pub fn sftp_connect_tasks_with_passphrase(
     host_id: Uuid,
     passphrase: SecretString,
 ) -> Task<Message> {
+    sftp_connect_tasks_with_auth(
+        host,
+        tab_id,
+        pane_id,
+        sftp_session_id,
+        host_id,
+        SftpAuth::Passphrase(passphrase),
+    )
+}
+
+fn sftp_connect_tasks_with_auth(
+    host: Arc<Host>,
+    tab_id: SessionId,
+    pane_id: PaneId,
+    sftp_session_id: SessionId,
+    host_id: Uuid,
+    auth: SftpAuth,
+) -> Task<Message> {
     let (event_tx, event_rx) = mpsc::channel::<SshEvent>(SSH_EVENT_CHANNEL_CAPACITY);
     let known_hosts = shared_known_hosts_manager();
     let sftp_client = SftpClient::with_known_hosts(SSH_KEEPALIVE_INTERVAL_SECS, known_hosts);
-
-    let event_listener = Task::run(
-        stream::unfold(event_rx, |mut rx| async move {
-            rx.recv().await.map(|event| (event, rx))
-        }),
-        move |event| match event {
-            SshEvent::HostKeyVerification(request) => Message::Dialog(
-                DialogMessage::HostKeyVerification(VerificationRequestWrapper(Some(request))),
-            ),
-            _ => Message::Noop,
-        },
-    );
+    let event_listener = sftp_event_listener(event_rx);
 
     let host_for_task = Arc::clone(&host);
+    let (password, passphrase) = auth.split();
     let connect_task = Task::perform(
         async move {
             let result = sftp_client
@@ -351,8 +263,8 @@ pub fn sftp_connect_tasks_with_passphrase(
                     &host_for_task,
                     event_tx,
                     Duration::from_secs(30),
-                    None,
-                    Some(passphrase),
+                    password,
+                    passphrase,
                 )
                 .await;
 

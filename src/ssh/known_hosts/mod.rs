@@ -1,21 +1,16 @@
-use std::borrow::Cow;
 use std::collections::HashSet;
 use std::path::PathBuf;
 
-use data_encoding::BASE64_MIME;
-use hmac::{Hmac, Mac};
 use russh::keys::{self, HashAlg, PublicKey};
-use sha1::Sha1;
 
 use crate::config::{paths, write_atomic};
 use crate::error::SshError;
 
-#[derive(Default)]
-struct HostKeyScan {
-    keys: Vec<PublicKey>,
-    revoked_keys: Vec<PublicKey>,
-    line_numbers: Vec<usize>,
-}
+mod matchers;
+mod scan;
+
+#[cfg(test)]
+pub(crate) use matchers::glob_match;
 
 /// Result of checking a host key
 #[derive(Debug, Clone)]
@@ -101,8 +96,8 @@ impl KnownHostsManager {
         Ok(())
     }
 
-    fn scan_known_hosts_for_host(&self, host: &str, port: u16) -> HostKeyScan {
-        let mut scan = HostKeyScan::default();
+    fn scan_known_hosts_for_host(&self, host: &str, port: u16) -> scan::HostKeyScan {
+        let mut scan = scan::HostKeyScan::default();
         self.scan_known_hosts(host, port, &mut scan);
         scan
     }
@@ -232,7 +227,7 @@ impl KnownHostsManager {
         })
     }
 
-    fn scan_known_hosts(&self, host: &str, port: u16, scan: &mut HostKeyScan) {
+    fn scan_known_hosts(&self, host: &str, port: u16, scan: &mut scan::HostKeyScan) {
         for path in self.known_hosts_paths() {
             match self.scan_known_hosts_path(host, port, &path) {
                 Ok(result) => {
@@ -251,192 +246,9 @@ impl KnownHostsManager {
         host: &str,
         port: u16,
         path: &PathBuf,
-    ) -> Result<HostKeyScan, SshError> {
-        if !path.exists() {
-            return Ok(HostKeyScan::default());
-        }
-
-        let content = std::fs::read_to_string(path).map_err(|e| {
-            SshError::HostKeyVerification(format!(
-                "Failed to read known_hosts {}: {}",
-                path.display(),
-                e
-            ))
-        })?;
-
-        let host_port = if port == 22 {
-            Cow::Borrowed(host)
-        } else {
-            Cow::Owned(format!("[{}]:{}", host, port))
-        };
-
-        let mut scan = HostKeyScan::default();
-
-        for (index, line) in content.lines().enumerate() {
-            let trimmed = line.trim();
-            if trimmed.is_empty() || trimmed.starts_with('#') {
-                continue;
-            }
-
-            let (marker, rest) = if let Some(stripped) = trimmed.strip_prefix('@') {
-                match stripped.split_once(' ') {
-                    Some((marker, rest)) => (Some(marker), rest.trim_start()),
-                    None => continue,
-                }
-            } else {
-                (None, trimmed)
-            };
-
-            let mut parts = rest.split_whitespace();
-            let Some(hosts_field) = parts.next() else {
-                continue;
-            };
-            let Some(_key_type) = parts.next() else {
-                continue;
-            };
-            let Some(key_data) = parts.next() else {
-                continue;
-            };
-
-            if !self.host_matches(&host_port, host, hosts_field) {
-                continue;
-            }
-
-            let key = match keys::parse_public_key_base64(key_data) {
-                Ok(key) => key,
-                Err(e) => {
-                    tracing::debug!(
-                        "Failed to parse known_hosts key in {} line {}: {}",
-                        path.display(),
-                        index + 1,
-                        e
-                    );
-                    continue;
-                }
-            };
-
-            match marker {
-                Some("revoked") => {
-                    scan.revoked_keys.push(key);
-                }
-                Some("cert-authority") => {
-                    continue;
-                }
-                Some(_) => {
-                    continue;
-                }
-                None => {
-                    scan.keys.push(key);
-                    scan.line_numbers.push(index + 1);
-                }
-            }
-        }
-
-        Ok(scan)
+    ) -> Result<scan::HostKeyScan, SshError> {
+        scan::scan_known_hosts_path(host, port, path)
     }
-
-    fn host_matches(&self, host_port: &str, host: &str, host_field: &str) -> bool {
-        let mut matched = false;
-
-        for raw_entry in host_field.split(',') {
-            let entry = raw_entry.trim();
-            if entry.is_empty() {
-                continue;
-            }
-
-            let (negated, pattern) = entry
-                .strip_prefix('!')
-                .map(|p| (true, p))
-                .unwrap_or((false, entry));
-
-            let is_match = self.match_host_pattern(host_port, host, pattern);
-            if negated {
-                if is_match {
-                    return false;
-                }
-                continue;
-            }
-
-            if is_match {
-                matched = true;
-            }
-        }
-
-        matched
-    }
-
-    fn match_host_pattern(&self, host_port: &str, host: &str, pattern: &str) -> bool {
-        if pattern.starts_with("|1|") {
-            return self.match_hashed_host(host_port, pattern);
-        }
-
-        if pattern.contains('*') || pattern.contains('?') {
-            return glob_match(pattern, host) || glob_match(pattern, host_port);
-        }
-
-        pattern == host || pattern == host_port
-    }
-
-    fn match_hashed_host(&self, host_port: &str, pattern: &str) -> bool {
-        let mut parts = pattern.split('|').skip(2);
-        let Some(salt) = parts.next() else {
-            return false;
-        };
-        let Some(hash) = parts.next() else {
-            return false;
-        };
-
-        let Ok(salt) = BASE64_MIME.decode(salt.as_bytes()) else {
-            return false;
-        };
-        let Ok(hash) = BASE64_MIME.decode(hash.as_bytes()) else {
-            return false;
-        };
-
-        let Ok(mut hmac) = Hmac::<Sha1>::new_from_slice(&salt) else {
-            return false;
-        };
-        hmac.update(host_port.as_bytes());
-        hmac.verify_slice(&hash).is_ok()
-    }
-}
-
-fn glob_match(pattern: &str, text: &str) -> bool {
-    let (mut p_idx, mut t_idx) = (0usize, 0usize);
-    let mut star_idx = None;
-    let mut match_idx = 0usize;
-    let p_bytes = pattern.as_bytes();
-    let t_bytes = text.as_bytes();
-
-    while t_idx < t_bytes.len() {
-        if p_idx < p_bytes.len() && (p_bytes[p_idx] == b'?' || p_bytes[p_idx] == t_bytes[t_idx]) {
-            p_idx += 1;
-            t_idx += 1;
-            continue;
-        }
-
-        if p_idx < p_bytes.len() && p_bytes[p_idx] == b'*' {
-            star_idx = Some(p_idx);
-            match_idx = t_idx;
-            p_idx += 1;
-            continue;
-        }
-
-        if let Some(star_pos) = star_idx {
-            p_idx = star_pos + 1;
-            match_idx += 1;
-            t_idx = match_idx;
-            continue;
-        }
-
-        return false;
-    }
-
-    while p_idx < p_bytes.len() && p_bytes[p_idx] == b'*' {
-        p_idx += 1;
-    }
-
-    p_idx == p_bytes.len()
 }
 
 impl Default for KnownHostsManager {

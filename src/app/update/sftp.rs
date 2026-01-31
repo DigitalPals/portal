@@ -3,7 +3,7 @@
 use iced::Task;
 use uuid::Uuid;
 
-use crate::app::{Portal, Tab, View};
+use crate::app::{Portal, Tab};
 use crate::config::SettingsConfig;
 use crate::message::{Message, SftpMessage};
 use crate::views::sftp::state::ColumnResizeDrag;
@@ -17,14 +17,13 @@ pub fn handle_sftp(portal: &mut Portal, msg: SftpMessage) -> Task<Message> {
             let tab_id = Uuid::new_v4();
             let dual_state = DualPaneSftpState::new_with_column_widths(
                 tab_id,
-                portal.sftp_column_widths.clone(),
+                portal.prefs.sftp_column_widths.clone(),
             );
             portal.sftp.insert_tab(tab_id, dual_state);
 
             let tab = Tab::new_sftp(tab_id, "File Browser".to_string(), None);
             portal.tabs.push(tab);
-            portal.active_tab = Some(tab_id);
-            portal.active_view = View::DualSftp(tab_id);
+            portal.enter_sftp_view(tab_id);
 
             let left_task = portal.load_dual_pane_directory(tab_id, PaneId::Left);
             let right_task = portal.load_dual_pane_directory(tab_id, PaneId::Right);
@@ -115,7 +114,7 @@ pub fn handle_sftp(portal: &mut Portal, msg: SftpMessage) -> Task<Message> {
                 tab_state.close_actions_menus();
             }
             tracing::info!("Connecting to host for pane {:?}", pane_id);
-            if let Some(host) = portal.hosts_config.find_host(host_id).cloned() {
+            if let Some(host) = portal.config.hosts.find_host(host_id).cloned() {
                 return portal.connect_sftp_for_pane(tab_id, pane_id, &host);
             }
             Task::none()
@@ -131,7 +130,7 @@ pub fn handle_sftp(portal: &mut Portal, msg: SftpMessage) -> Task<Message> {
             tracing::info!("SFTP connected for pane {:?}", pane_id);
             portal.sftp.clear_pending_connection();
 
-            if let Some(host) = portal.hosts_config.find_host(host_id) {
+            if let Some(host) = portal.config.hosts.find_host(host_id) {
                 let entry = crate::config::HistoryEntry::new(
                     host.id,
                     host.name.clone(),
@@ -140,9 +139,9 @@ pub fn handle_sftp(portal: &mut Portal, msg: SftpMessage) -> Task<Message> {
                     crate::config::SessionType::Sftp,
                 );
                 let entry_id = entry.id;
-                portal.history_config.add_entry(entry);
+                portal.config.history.add_entry(entry);
                 portal.sftp.insert_history_entry(sftp_session_id, entry_id);
-                if let Err(e) = portal.history_config.save() {
+                if let Err(e) = portal.config.history.save() {
                     tracing::error!("Failed to save history config: {}", e);
                 }
             }
@@ -413,11 +412,11 @@ pub fn handle_sftp(portal: &mut Portal, msg: SftpMessage) -> Task<Message> {
                 if let Some(ref drag) = tab_state.column_resize_drag {
                     // Update the app's column widths from the active pane and persist to settings
                     let pane = tab_state.pane(drag.pane_id);
-                    portal.sftp_column_widths = pane.column_widths.clone();
+                    portal.prefs.sftp_column_widths = pane.column_widths.clone();
 
                     // Save to disk
                     let mut settings = SettingsConfig::load().unwrap_or_default();
-                    settings.sftp_column_widths = portal.sftp_column_widths.clone();
+                    settings.sftp_column_widths = portal.prefs.sftp_column_widths.clone();
                     if let Err(e) = settings.save() {
                         tracing::error!("Failed to save column widths: {}", e);
                     }

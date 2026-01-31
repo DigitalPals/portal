@@ -3,7 +3,7 @@
 use iced::Task;
 
 use crate::app::managers::session_manager::VncActiveSession;
-use crate::app::{Portal, View};
+use crate::app::Portal;
 use crate::message::{Message, VncMessage};
 use crate::views::tabs::Tab;
 use crate::views::toast::Toast;
@@ -21,19 +21,19 @@ pub fn handle_vnc(portal: &mut Portal, msg: VncMessage) -> Task<Message> {
             tracing::info!("VNC connected to {}", host_name);
 
             // Update host with detected OS and last_connected
-            if let Some(host) = portal.hosts_config.find_host_mut(host_id) {
+            if let Some(host) = portal.config.hosts.find_host_mut(host_id) {
                 if let Some(os) = detected_os {
                     host.detected_os = Some(os);
                 }
                 host.last_connected = Some(chrono::Utc::now());
                 host.updated_at = chrono::Utc::now();
-                if let Err(e) = portal.hosts_config.save() {
+                if let Err(e) = portal.config.hosts.save() {
                     tracing::error!("Failed to save host config: {}", e);
                 }
             }
 
             // Create history entry
-            if let Some(host) = portal.hosts_config.find_host(host_id) {
+            if let Some(host) = portal.config.hosts.find_host(host_id) {
                 let entry = crate::config::HistoryEntry::new(
                     host.id,
                     host.name.clone(),
@@ -41,8 +41,8 @@ pub fn handle_vnc(portal: &mut Portal, msg: VncMessage) -> Task<Message> {
                     host.username.clone(),
                     crate::config::SessionType::Ssh, // Reuse SSH type for now
                 );
-                portal.history_config.add_entry(entry);
-                if let Err(e) = portal.history_config.save() {
+                portal.config.history.add_entry(entry);
+                if let Err(e) = portal.config.history.save() {
                     tracing::error!("Failed to save history config: {}", e);
                 }
             }
@@ -57,7 +57,7 @@ pub fn handle_vnc(portal: &mut Portal, msg: VncMessage) -> Task<Message> {
                 },
             );
 
-            if portal.vnc_settings.remote_resize {
+            if portal.prefs.vnc_settings.remote_resize {
                 if let Some((w, h)) = portal.vnc_target_size() {
                     if let Some(vnc) = portal.vnc_sessions.get(&session_id) {
                         vnc.session.try_request_desktop_size(w, h);
@@ -68,9 +68,7 @@ pub fn handle_vnc(portal: &mut Portal, msg: VncMessage) -> Task<Message> {
             // Create tab
             let tab = Tab::new_vnc(session_id, host_name, Some(host_id));
             portal.tabs.push(tab);
-            portal.active_tab = Some(session_id);
-            portal.active_view = View::VncViewer(session_id);
-            portal.terminal_captured = false;
+            portal.enter_vnc_view(session_id);
 
             Task::none()
         }

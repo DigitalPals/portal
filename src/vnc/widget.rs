@@ -12,7 +12,7 @@ use iced::{Element, Length, Rectangle};
 use parking_lot::Mutex;
 
 use crate::message::Message;
-use crate::vnc::session::FrameBuffer;
+use crate::vnc::framebuffer::FrameBuffer;
 
 /// Create a VNC framebuffer element using a custom shader widget.
 ///

@@ -2,7 +2,7 @@
 
 use iced::Task;
 
-use crate::app::{Portal, View};
+use crate::app::Portal;
 use crate::message::{Message, TabMessage};
 
 /// Handle tab management messages
@@ -20,15 +20,12 @@ pub fn handle_tab(portal: &mut Portal, msg: TabMessage) -> Task<Message> {
         }
         TabMessage::New => {
             tracing::info!("New tab requested");
-            portal.active_view = View::HostGrid;
-            // Restore sidebar state if returning from terminal
-            if let Some(saved_state) = portal.sidebar_state_before_session.take() {
-                portal.sidebar_state = saved_state;
-            }
+            portal.restore_sidebar_after_session();
+            portal.enter_host_grid();
             Task::none()
         }
         TabMessage::Hover(id) => {
-            portal.hovered_tab = id;
+            portal.ui.hovered_tab = id;
             Task::none()
         }
     }

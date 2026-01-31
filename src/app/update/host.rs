@@ -12,7 +12,7 @@ pub fn handle_host(portal: &mut Portal, msg: HostMessage) -> Task<Message> {
     match msg {
         HostMessage::Connect(id) => {
             tracing::info!("Connect to host");
-            if let Some(host) = portal.hosts_config.find_host(id).cloned() {
+            if let Some(host) = portal.config.hosts.find_host(id).cloned() {
                 return match host.protocol {
                     Protocol::Vnc => portal.connect_vnc_host(&host),
                     Protocol::Ssh => portal.connect_to_host(&host),
@@ -25,13 +25,13 @@ pub fn handle_host(portal: &mut Portal, msg: HostMessage) -> Task<Message> {
             Task::none()
         }
         HostMessage::Edit(id) => {
-            if let Some(host) = portal.hosts_config.find_host(id) {
+            if let Some(host) = portal.config.hosts.find_host(id) {
                 portal.dialogs.open_host(HostDialogState::from_host(host));
             }
             Task::none()
         }
         HostMessage::Hover(id) => {
-            portal.hovered_host = id;
+            portal.ui.hovered_host = id;
             Task::none()
         }
         HostMessage::QuickConnect => {

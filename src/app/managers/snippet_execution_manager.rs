@@ -108,6 +108,7 @@ impl SnippetExecution {
 }
 
 /// Manages snippet executions and their results
+#[derive(Debug)]
 pub struct SnippetExecutionManager {
     /// Currently active execution per snippet (only one per snippet at a time)
     active: HashMap<Uuid, SnippetExecution>,
