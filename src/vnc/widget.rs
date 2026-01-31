@@ -61,6 +61,9 @@ struct VncMouseWrapper<'a> {
 struct VncMouseState {
     /// RFB button mask: bit0=left, bit1=middle, bit2=right
     button_mask: u8,
+    /// Last known coordinates (for sending release when cursor is outside widget)
+    last_x: u16,
+    last_y: u16,
 }
 
 impl<'a> VncMouseWrapper<'a> {
@@ -238,6 +241,8 @@ impl<'a> advanced::Widget<Message, iced::Theme, iced::Renderer> for VncMouseWrap
                             _ => {}
                         }
                         if let Some((x, y)) = self.map_coordinates(&bounds, pos.x, pos.y) {
+                            state.last_x = x;
+                            state.last_y = y;
                             shell.publish(Message::Vnc(VncMessage::MouseEvent {
                                 session_id: self.session_id,
                                 x,
@@ -248,26 +253,32 @@ impl<'a> advanced::Widget<Message, iced::Theme, iced::Renderer> for VncMouseWrap
                     }
                 }
                 iced::mouse::Event::ButtonReleased(btn) => {
-                    if let Some(pos) = position {
-                        match btn {
-                            iced::mouse::Button::Left => state.button_mask &= !1,
-                            iced::mouse::Button::Middle => state.button_mask &= !2,
-                            iced::mouse::Button::Right => state.button_mask &= !4,
-                            _ => {}
-                        }
-                        if let Some((x, y)) = self.map_coordinates(&bounds, pos.x, pos.y) {
-                            shell.publish(Message::Vnc(VncMessage::MouseEvent {
-                                session_id: self.session_id,
-                                x,
-                                y,
-                                buttons: state.button_mask,
-                            }));
-                        }
+                    // Always update button_mask and send release, even if cursor
+                    // is outside the widget, to prevent stuck buttons on the server.
+                    match btn {
+                        iced::mouse::Button::Left => state.button_mask &= !1,
+                        iced::mouse::Button::Middle => state.button_mask &= !2,
+                        iced::mouse::Button::Right => state.button_mask &= !4,
+                        _ => {}
                     }
+                    let (x, y) = if let Some(pos) = position {
+                        self.map_coordinates(&bounds, pos.x, pos.y)
+                            .unwrap_or((state.last_x, state.last_y))
+                    } else {
+                        (state.last_x, state.last_y)
+                    };
+                    shell.publish(Message::Vnc(VncMessage::MouseEvent {
+                        session_id: self.session_id,
+                        x,
+                        y,
+                        buttons: state.button_mask,
+                    }));
                 }
                 iced::mouse::Event::CursorMoved { .. } => {
                     if let Some(pos) = position {
                         if let Some((x, y)) = self.map_coordinates(&bounds, pos.x, pos.y) {
+                            state.last_x = x;
+                            state.last_y = y;
                             shell.publish(Message::Vnc(VncMessage::MouseEvent {
                                 session_id: self.session_id,
                                 x,

@@ -10,6 +10,7 @@ pub enum SessionType {
     Ssh,
     Sftp,
     Local,
+    Vnc,
 }
 
 impl SessionType {
@@ -18,6 +19,7 @@ impl SessionType {
             SessionType::Ssh => "SSH",
             SessionType::Sftp => "SFTP",
             SessionType::Local => "Local",
+            SessionType::Vnc => "VNC",
         }
     }
 }

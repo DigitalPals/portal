@@ -52,7 +52,6 @@ mod ard {
     use aes::cipher::{BlockEncrypt, KeyInit};
     use md5::{Digest, Md5};
     use num_bigint::BigUint;
-    use num_traits::One;
     use rand::RngCore;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpStream;
@@ -159,19 +158,6 @@ mod ard {
         Ok(())
     }
 
-    /// Ensure the private key is at least 1 and less than prime-1
-    #[allow(dead_code)]
-    fn clamp_private_key(key: &BigUint, prime: &BigUint) -> BigUint {
-        let one = BigUint::one();
-        let max = prime - &one;
-        if key < &one {
-            one
-        } else if key > &max {
-            max
-        } else {
-            key.clone()
-        }
-    }
 }
 
 /// A wrapper around TcpStream that handles RFB version negotiation and
@@ -449,9 +435,13 @@ impl VncSession {
             debug_logs
         );
         let addr = format!("{}:{}", hostname, port);
-        let tcp = TcpStream::connect(&addr)
-            .await
-            .map_err(|e| format!("Failed to connect to {}: {}", addr, e))?;
+        let tcp = tokio::time::timeout(
+            Duration::from_secs(15),
+            TcpStream::connect(&addr),
+        )
+        .await
+        .map_err(|_| format!("Connection to {} timed out after 15s", addr))?
+        .map_err(|e| format!("Failed to connect to {}: {}", addr, e))?;
         let is_private = tcp
             .peer_addr()
             .ok()

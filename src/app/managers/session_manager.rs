@@ -57,6 +57,8 @@ pub struct VncActiveSession {
     pub monitors: Vec<VncScreen>,
     /// Currently selected monitor (None = full desktop)
     pub selected_monitor: Option<usize>,
+    /// History entry ID for marking disconnection
+    pub history_entry_id: uuid::Uuid,
 }
 
 /// Manages SSH terminal sessions
