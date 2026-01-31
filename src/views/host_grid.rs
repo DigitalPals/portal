@@ -578,16 +578,43 @@ fn host_card(
         Protocol::Ssh => "SSH",
         Protocol::Vnc => "VNC",
     };
-    let os_text = match &host.detected_os {
-        Some(os) => format!("{}, {}", protocol_label, os.display_name()),
-        None => protocol_label.to_string(),
+    let badge_color = match host.protocol {
+        Protocol::Ssh => iced::Color::from_rgb8(59, 130, 246),
+        Protocol::Vnc => iced::Color::from_rgb8(139, 92, 246),
+    };
+    let badge = container(
+        text(protocol_label)
+            .size(fonts.label)
+            .color(iced::Color::WHITE),
+    )
+    .padding(Padding::from([2, 8]))
+    .style(move |_| container::Style {
+        background: Some(badge_color.into()),
+        border: iced::Border {
+            radius: 4.0.into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+
+    let detail_row: Element<'static, Message> = match &host.detected_os {
+        Some(os) => row![
+            badge,
+            text(os.display_name().to_string())
+                .size(fonts.label)
+                .color(theme.text_secondary)
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center)
+        .into(),
+        None => badge.into(),
     };
 
     let info = column![
         text(host.name.clone())
             .size(fonts.section)
             .color(iced::Color::WHITE),
-        text(os_text).size(fonts.label).color(theme.text_secondary),
+        detail_row,
     ]
     .spacing(4);
 
