@@ -7,12 +7,13 @@
 
 use std::sync::Arc;
 
+use iced::advanced::{self, layout, renderer, widget};
 use iced::widget::shader;
-use iced::{Element, Length, Rectangle};
+use iced::{Element, Length, Rectangle, Size};
 use parking_lot::Mutex;
 
 use crate::config::settings::VncScalingMode;
-use crate::message::Message;
+use crate::message::{Message, SessionId, VncMessage};
 use crate::vnc::framebuffer::FrameBuffer;
 
 /// Create a VNC framebuffer element using a custom shader widget.
@@ -32,6 +33,312 @@ pub fn vnc_framebuffer<'a>(
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
+}
+
+/// Create a VNC framebuffer element wrapped with mouse event handling.
+pub fn vnc_framebuffer_interactive<'a>(
+    framebuffer: &Arc<Mutex<FrameBuffer>>,
+    scaling_mode: VncScalingMode,
+    session_id: SessionId,
+    fb_width: u32,
+    fb_height: u32,
+) -> Element<'a, Message> {
+    let inner = vnc_framebuffer(framebuffer, scaling_mode);
+    VncMouseWrapper::new(inner, session_id, scaling_mode, fb_width, fb_height).into()
+}
+
+/// Widget wrapper that intercepts mouse events and maps them to VNC coordinates.
+struct VncMouseWrapper<'a> {
+    inner: Element<'a, Message>,
+    session_id: SessionId,
+    scaling_mode: VncScalingMode,
+    fb_width: u32,
+    fb_height: u32,
+}
+
+/// State for tracking button mask across mouse events.
+#[derive(Default)]
+struct VncMouseState {
+    /// RFB button mask: bit0=left, bit1=middle, bit2=right
+    button_mask: u8,
+}
+
+impl<'a> VncMouseWrapper<'a> {
+    fn new(
+        inner: Element<'a, Message>,
+        session_id: SessionId,
+        scaling_mode: VncScalingMode,
+        fb_width: u32,
+        fb_height: u32,
+    ) -> Self {
+        Self {
+            inner,
+            session_id,
+            scaling_mode,
+            fb_width,
+            fb_height,
+        }
+    }
+
+    /// Map widget-relative coordinates to framebuffer coordinates.
+    fn map_coordinates(&self, bounds: &Rectangle, x: f32, y: f32) -> Option<(u16, u16)> {
+        if self.fb_width == 0 || self.fb_height == 0 || bounds.width <= 0.0 || bounds.height <= 0.0
+        {
+            return None;
+        }
+
+        let (fb_x, fb_y) = match self.scaling_mode {
+            VncScalingMode::Stretch => {
+                let fx = (x / bounds.width) * self.fb_width as f32;
+                let fy = (y / bounds.height) * self.fb_height as f32;
+                (fx, fy)
+            }
+            VncScalingMode::Fit => {
+                let view_aspect = bounds.width / bounds.height;
+                let fb_aspect = self.fb_width as f32 / self.fb_height as f32;
+
+                let (render_w, render_h, offset_x, offset_y) = if fb_aspect > view_aspect {
+                    // Framebuffer wider — fit width, letterbox height
+                    let rw = bounds.width;
+                    let rh = bounds.width / fb_aspect;
+                    (rw, rh, 0.0, (bounds.height - rh) / 2.0)
+                } else {
+                    // Framebuffer taller — fit height, pillarbox width
+                    let rh = bounds.height;
+                    let rw = bounds.height * fb_aspect;
+                    (rw, rh, (bounds.width - rw) / 2.0, 0.0)
+                };
+
+                let local_x = x - offset_x;
+                let local_y = y - offset_y;
+                if local_x < 0.0 || local_y < 0.0 || local_x > render_w || local_y > render_h {
+                    return None;
+                }
+                let fx = (local_x / render_w) * self.fb_width as f32;
+                let fy = (local_y / render_h) * self.fb_height as f32;
+                (fx, fy)
+            }
+            VncScalingMode::Actual => {
+                // 1:1 mapping, centered
+                let render_w = (self.fb_width as f32).min(bounds.width);
+                let render_h = (self.fb_height as f32).min(bounds.height);
+                let offset_x = (bounds.width - render_w) / 2.0;
+                let offset_y = (bounds.height - render_h) / 2.0;
+
+                let local_x = x - offset_x;
+                let local_y = y - offset_y;
+                if local_x < 0.0 || local_y < 0.0 || local_x > render_w || local_y > render_h {
+                    return None;
+                }
+                (local_x, local_y)
+            }
+        };
+
+        let clamped_x = fb_x.clamp(0.0, (self.fb_width - 1) as f32) as u16;
+        let clamped_y = fb_y.clamp(0.0, (self.fb_height - 1) as f32) as u16;
+        Some((clamped_x, clamped_y))
+    }
+}
+
+impl<'a> From<VncMouseWrapper<'a>> for Element<'a, Message> {
+    fn from(wrapper: VncMouseWrapper<'a>) -> Self {
+        Element::new(wrapper)
+    }
+}
+
+impl<'a> advanced::Widget<Message, iced::Theme, iced::Renderer>
+    for VncMouseWrapper<'a>
+{
+    fn tag(&self) -> widget::tree::Tag {
+        widget::tree::Tag::of::<VncMouseState>()
+    }
+
+    fn state(&self) -> widget::tree::State {
+        widget::tree::State::new(VncMouseState::default())
+    }
+
+    fn children(&self) -> Vec<widget::Tree> {
+        vec![widget::Tree::new(&self.inner)]
+    }
+
+    fn diff(&self, tree: &mut widget::Tree) {
+        tree.diff_children(std::slice::from_ref(&self.inner));
+    }
+
+    fn size(&self) -> Size<Length> {
+        Size::new(Length::Fill, Length::Fill)
+    }
+
+    fn layout(
+        &mut self,
+        tree: &mut widget::Tree,
+        renderer: &iced::Renderer,
+        limits: &layout::Limits,
+    ) -> layout::Node {
+        self.inner
+            .as_widget_mut()
+            .layout(&mut tree.children[0], renderer, limits)
+    }
+
+    fn draw(
+        &self,
+        tree: &widget::Tree,
+        renderer: &mut iced::Renderer,
+        theme: &iced::Theme,
+        style: &renderer::Style,
+        layout: layout::Layout<'_>,
+        cursor: iced::mouse::Cursor,
+        viewport: &Rectangle,
+    ) {
+        self.inner.as_widget().draw(
+            &tree.children[0],
+            renderer,
+            theme,
+            style,
+            layout,
+            cursor,
+            viewport,
+        );
+    }
+
+    fn update(
+        &mut self,
+        tree: &mut widget::Tree,
+        event: &iced::Event,
+        layout: layout::Layout<'_>,
+        cursor: iced::mouse::Cursor,
+        renderer: &iced::Renderer,
+        clipboard: &mut dyn advanced::Clipboard,
+        shell: &mut advanced::Shell<'_, Message>,
+        viewport: &Rectangle,
+    ) {
+        // Let the inner widget handle the event first
+        self.inner.as_widget_mut().update(
+            &mut tree.children[0],
+            event,
+            layout,
+            cursor,
+            renderer,
+            clipboard,
+            shell,
+            viewport,
+        );
+
+        let bounds = layout.bounds();
+        let state = tree.state.downcast_mut::<VncMouseState>();
+
+        match event {
+            iced::Event::Mouse(mouse_event) => {
+                let position = cursor.position_in(bounds);
+
+                match mouse_event {
+                    iced::mouse::Event::ButtonPressed(btn) => {
+                        if let Some(pos) = position {
+                            match btn {
+                                iced::mouse::Button::Left => state.button_mask |= 1,
+                                iced::mouse::Button::Middle => state.button_mask |= 2,
+                                iced::mouse::Button::Right => state.button_mask |= 4,
+                                _ => {}
+                            }
+                            if let Some((x, y)) =
+                                self.map_coordinates(&bounds, pos.x, pos.y)
+                            {
+                                shell.publish(Message::Vnc(VncMessage::MouseEvent {
+                                    session_id: self.session_id,
+                                    x,
+                                    y,
+                                    buttons: state.button_mask,
+                                }));
+                            }
+                        }
+                    }
+                    iced::mouse::Event::ButtonReleased(btn) => {
+                        if let Some(pos) = position {
+                            match btn {
+                                iced::mouse::Button::Left => state.button_mask &= !1,
+                                iced::mouse::Button::Middle => state.button_mask &= !2,
+                                iced::mouse::Button::Right => state.button_mask &= !4,
+                                _ => {}
+                            }
+                            if let Some((x, y)) =
+                                self.map_coordinates(&bounds, pos.x, pos.y)
+                            {
+                                shell.publish(Message::Vnc(VncMessage::MouseEvent {
+                                    session_id: self.session_id,
+                                    x,
+                                    y,
+                                    buttons: state.button_mask,
+                                }));
+                            }
+                        }
+                    }
+                    iced::mouse::Event::CursorMoved { .. } => {
+                        if let Some(pos) = position {
+                            if let Some((x, y)) =
+                                self.map_coordinates(&bounds, pos.x, pos.y)
+                            {
+                                shell.publish(Message::Vnc(VncMessage::MouseEvent {
+                                    session_id: self.session_id,
+                                    x,
+                                    y,
+                                    buttons: state.button_mask,
+                                }));
+                            }
+                        }
+                    }
+                    iced::mouse::Event::WheelScrolled { delta } => {
+                        if let Some(pos) = position {
+                            if let Some((x, y)) =
+                                self.map_coordinates(&bounds, pos.x, pos.y)
+                            {
+                                // Scroll: bit3=up, bit4=down
+                                let scroll_y = match delta {
+                                    iced::mouse::ScrollDelta::Lines { y, .. } => *y,
+                                    iced::mouse::ScrollDelta::Pixels { y, .. } => {
+                                        if *y > 0.0 { 1.0 } else if *y < 0.0 { -1.0 } else { 0.0 }
+                                    }
+                                };
+                                if scroll_y != 0.0 {
+                                    let scroll_btn = if scroll_y > 0.0 { 8 } else { 16 };
+                                    // Press scroll button
+                                    shell.publish(Message::Vnc(VncMessage::MouseEvent {
+                                        session_id: self.session_id,
+                                        x,
+                                        y,
+                                        buttons: state.button_mask | scroll_btn,
+                                    }));
+                                    // Release scroll button
+                                    shell.publish(Message::Vnc(VncMessage::MouseEvent {
+                                        session_id: self.session_id,
+                                        x,
+                                        y,
+                                        buttons: state.button_mask,
+                                    }));
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn mouse_interaction(
+        &self,
+        _tree: &widget::Tree,
+        layout: layout::Layout<'_>,
+        cursor: iced::mouse::Cursor,
+        _viewport: &Rectangle,
+        _renderer: &iced::Renderer,
+    ) -> iced::mouse::Interaction {
+        if cursor.is_over(layout.bounds()) {
+            iced::mouse::Interaction::Crosshair
+        } else {
+            iced::mouse::Interaction::default()
+        }
+    }
 }
 
 /// The shader program that reads the VNC framebuffer and renders it.

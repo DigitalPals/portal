@@ -397,6 +397,39 @@ pub enum VncMessage {
     ScreenshotSaved(String),
     /// Cycle scaling mode
     CycleScalingMode,
+    /// Mouse event from VNC widget (position + button mask)
+    MouseEvent {
+        session_id: SessionId,
+        x: u16,
+        y: u16,
+        buttons: u8,
+    },
+    /// Toggle keyboard passthrough mode
+    ToggleKeyboardPassthrough,
+    /// Quality level changed (adaptive quality)
+    QualityChanged(SessionId, QualityLevel),
+    /// Monitors discovered on remote desktop
+    MonitorsDiscovered(SessionId, Vec<VncScreen>),
+    /// Select a specific monitor to view
+    SelectMonitor(SessionId, Option<usize>),
+}
+
+/// VNC connection quality level
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QualityLevel {
+    High,
+    Medium,
+    Low,
+}
+
+/// VNC remote screen/monitor info
+#[derive(Debug, Clone)]
+pub struct VncScreen {
+    pub id: u32,
+    pub x: u16,
+    pub y: u16,
+    pub width: u16,
+    pub height: u16,
 }
 
 /// UI state messages

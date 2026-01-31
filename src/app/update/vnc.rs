@@ -60,6 +60,10 @@ pub fn handle_vnc(portal: &mut Portal, msg: VncMessage) -> Task<Message> {
                     fps_last_check: now,
                     current_fps: 0.0,
                     fullscreen: false,
+                    keyboard_passthrough: false,
+                    quality_level: crate::message::QualityLevel::High,
+                    monitors: Vec::new(),
+                    selected_monitor: None,
                 },
             );
 
@@ -217,6 +221,43 @@ pub fn handle_vnc(portal: &mut Portal, msg: VncMessage) -> Task<Message> {
             portal
                 .toast_manager
                 .push(Toast::success(format!("Screenshot saved: {}", path)));
+            Task::none()
+        }
+        VncMessage::MouseEvent {
+            session_id,
+            x,
+            y,
+            buttons,
+        } => {
+            if let Some(vnc) = portal.vnc_sessions.get(&session_id) {
+                vnc.session.try_send_mouse(x, y, buttons);
+            }
+            Task::none()
+        }
+        VncMessage::ToggleKeyboardPassthrough => {
+            if let crate::app::View::VncViewer(session_id) = portal.ui.active_view {
+                if let Some(vnc) = portal.vnc_sessions.get_mut(&session_id) {
+                    vnc.keyboard_passthrough = !vnc.keyboard_passthrough;
+                }
+            }
+            Task::none()
+        }
+        VncMessage::QualityChanged(session_id, level) => {
+            if let Some(vnc) = portal.vnc_sessions.get_mut(&session_id) {
+                vnc.quality_level = level;
+            }
+            Task::none()
+        }
+        VncMessage::MonitorsDiscovered(session_id, screens) => {
+            if let Some(vnc) = portal.vnc_sessions.get_mut(&session_id) {
+                vnc.monitors = screens;
+            }
+            Task::none()
+        }
+        VncMessage::SelectMonitor(session_id, monitor_idx) => {
+            if let Some(vnc) = portal.vnc_sessions.get_mut(&session_id) {
+                vnc.selected_monitor = monitor_idx;
+            }
             Task::none()
         }
         VncMessage::CycleScalingMode => {

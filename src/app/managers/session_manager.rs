@@ -12,6 +12,7 @@ use crate::local::LocalSession;
 use crate::message::SessionId;
 use crate::ssh::SshSession;
 use crate::views::terminal_view::TerminalSession;
+use crate::message::{QualityLevel, VncScreen};
 use crate::vnc::VncSession;
 
 /// Backend type for a terminal session
@@ -48,6 +49,14 @@ pub struct VncActiveSession {
     pub current_fps: f32,
     /// Whether fullscreen mode is active
     pub fullscreen: bool,
+    /// Whether keyboard passthrough is active (all keys go to VNC)
+    pub keyboard_passthrough: bool,
+    /// Current adaptive quality level
+    pub quality_level: QualityLevel,
+    /// Discovered remote monitors
+    pub monitors: Vec<VncScreen>,
+    /// Currently selected monitor (None = full desktop)
+    pub selected_monitor: Option<usize>,
 }
 
 /// Manages SSH terminal sessions

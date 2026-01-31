@@ -5,7 +5,9 @@
 mod encoding;
 pub mod framebuffer;
 pub mod keysym;
+mod monitor;
 mod net;
+pub mod quality;
 pub mod session;
 pub mod widget;
 
