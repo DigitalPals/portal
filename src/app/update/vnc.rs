@@ -16,15 +16,19 @@ pub fn handle_vnc(portal: &mut Portal, msg: VncMessage) -> Task<Message> {
             host_name,
             vnc_session,
             host_id,
+            detected_os,
         } => {
             tracing::info!("VNC connected to {}", host_name);
 
-            // Update last_connected on host
+            // Update host with detected OS and last_connected
             if let Some(host) = portal.hosts_config.find_host_mut(host_id) {
+                if let Some(os) = detected_os {
+                    host.detected_os = Some(os);
+                }
                 host.last_connected = Some(chrono::Utc::now());
                 host.updated_at = chrono::Utc::now();
                 if let Err(e) = portal.hosts_config.save() {
-                    tracing::error!("Failed to save host connection time: {}", e);
+                    tracing::error!("Failed to save host config: {}", e);
                 }
             }
 

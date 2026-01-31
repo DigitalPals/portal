@@ -178,13 +178,14 @@ impl Portal {
                 )
                 .await
                 {
-                    Ok((vnc_session, mut event_rx)) => {
+                    Ok((vnc_session, mut event_rx, detected_os)) => {
                         let _ = msg_tx
                             .send(Message::Vnc(VncMessage::Connected {
                                 session_id,
                                 host_name: vnc_session.host_name.clone(),
                                 vnc_session,
                                 host_id,
+                                detected_os,
                             }))
                             .await;
 

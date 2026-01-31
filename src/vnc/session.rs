@@ -18,6 +18,7 @@ use tokio::sync::mpsc;
 use vnc::client::VncClient;
 use vnc::{PixelFormat, VncEncoding, VncEvent, X11Event};
 
+use crate::config::DetectedOs;
 use crate::config::settings::{VncEncodingPreference, VncSettings};
 
 fn is_private_ip(ip: IpAddr) -> bool {
@@ -441,7 +442,8 @@ struct NegotiatedStream {
 
 impl NegotiatedStream {
     /// Perform version + auth negotiation, then wrap the stream for vnc-rs.
-    async fn negotiate(mut tcp: TcpStream, username: &str, password: &str) -> Result<Self, String> {
+    /// Returns the negotiated stream and an optional detected OS based on RFB handshake signals.
+    async fn negotiate(mut tcp: TcpStream, username: &str, password: &str) -> Result<(Self, Option<DetectedOs>), String> {
         // Read server's 12-byte RFB version string
         let mut server_version = [0u8; 12];
         tcp.read_exact(&mut server_version)
@@ -458,13 +460,16 @@ impl NegotiatedStream {
 
         if is_standard {
             // Standard version — let vnc-rs handle everything normally
-            return Ok(Self {
+            return Ok((Self {
                 inner: tcp,
                 prefix: server_version.to_vec(),
                 prefix_offset: 0,
                 drop_write_bytes: 0,
-            });
+            }, None));
         }
+
+        // Non-standard RFB version (e.g. macOS 003.889) is a strong macOS signal
+        let has_nonstandard_version = true;
 
         // Non-standard version (e.g., macOS 003.889).
         // Echo server's version back to satisfy the server.
@@ -505,16 +510,22 @@ impl NegotiatedStream {
         if types.contains(&2) || types.contains(&1) {
             // Standard auth available — feed the security type list to vnc-rs
             // and let it handle auth normally.
+            // Non-standard version still suggests macOS Screen Sharing
+            let detected_os = if has_nonstandard_version {
+                Some(DetectedOs::MacOS)
+            } else {
+                None
+            };
             let mut prefix = b"RFB 003.008\n".to_vec();
             prefix.push(num_types[0]);
             prefix.extend_from_slice(&types);
-            return Ok(Self {
+            return Ok((Self {
                 inner: tcp,
                 prefix,
                 prefix_offset: 0,
                 // vnc-rs will write: 12 bytes version response (goes to server, fine)
                 drop_write_bytes: 0,
-            });
+            }, detected_os));
         }
 
         // Apple ARD auth (type 30)
@@ -545,12 +556,13 @@ impl NegotiatedStream {
             //   12 bytes: version string (we must drop — server doesn't expect it)
             //    1 byte:  security type selection (we must drop)
             // Total: 13 bytes to silently discard
-            return Ok(Self {
+            // ARD (type 30) is macOS-only
+            return Ok((Self {
                 inner: tcp,
                 prefix,
                 prefix_offset: 0,
                 drop_write_bytes: 13,
-            });
+            }, Some(DetectedOs::MacOS)));
         }
 
         Err(format!(
@@ -654,7 +666,7 @@ impl VncSession {
         password: Option<String>,
         host_name: String,
         vnc_settings: VncSettings,
-    ) -> Result<(Arc<Self>, mpsc::Receiver<VncSessionEvent>), String> {
+    ) -> Result<(Arc<Self>, mpsc::Receiver<VncSessionEvent>, Option<DetectedOs>), String> {
         let debug_logs = std::env::var_os("PORTAL_VNC_DEBUG").is_some();
         tracing::info!(
             "VNC connect to {}:{} (user set: {}, debug_logs: {})",
@@ -677,7 +689,7 @@ impl VncSession {
         let pass = password.as_deref().unwrap_or("");
 
         // Handle version negotiation + auth (including macOS ARD)
-        let stream = NegotiatedStream::negotiate(tcp, user, pass).await?;
+        let (stream, detected_os) = NegotiatedStream::negotiate(tcp, user, pass).await?;
 
         let pw = password.clone().unwrap_or_default();
         let pixel_format = pixel_format_from_depth(vnc_settings.color_depth);
@@ -751,7 +763,7 @@ impl VncSession {
             vnc_settings.max_events_per_tick,
         ));
 
-        Ok((session, event_rx))
+        Ok((session, event_rx, detected_os))
     }
 
     /// Background task: poll VNC events and forward input
