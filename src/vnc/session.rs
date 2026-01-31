@@ -157,7 +157,6 @@ mod ard {
         tracing::info!("ARD authentication succeeded");
         Ok(())
     }
-
 }
 
 /// A wrapper around TcpStream that handles RFB version negotiation and
@@ -435,13 +434,10 @@ impl VncSession {
             debug_logs
         );
         let addr = format!("{}:{}", hostname, port);
-        let tcp = tokio::time::timeout(
-            Duration::from_secs(15),
-            TcpStream::connect(&addr),
-        )
-        .await
-        .map_err(|_| format!("Connection to {} timed out after 15s", addr))?
-        .map_err(|e| format!("Failed to connect to {}: {}", addr, e))?;
+        let tcp = tokio::time::timeout(Duration::from_secs(15), TcpStream::connect(&addr))
+            .await
+            .map_err(|_| format!("Connection to {} timed out after 15s", addr))?
+            .map_err(|e| format!("Failed to connect to {}: {}", addr, e))?;
         let is_private = tcp
             .peer_addr()
             .ok()

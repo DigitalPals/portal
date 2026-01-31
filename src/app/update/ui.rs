@@ -331,10 +331,10 @@ fn handle_keyboard_event(
         // sees the correct modifier state even in non-passthrough mode.
         if let Key::Named(named) = &key {
             let modifier_keysym = match named {
-                keyboard::key::Named::Shift => Some(0xFFE1),   // XK_Shift_L
+                keyboard::key::Named::Shift => Some(0xFFE1), // XK_Shift_L
                 keyboard::key::Named::Control => Some(0xFFE3), // XK_Control_L
-                keyboard::key::Named::Alt => Some(0xFFE9),     // XK_Alt_L
-                keyboard::key::Named::Super => Some(0xFFEB),   // XK_Super_L
+                keyboard::key::Named::Alt => Some(0xFFE9),   // XK_Alt_L
+                keyboard::key::Named::Super => Some(0xFFEB), // XK_Super_L
                 _ => None,
             };
             if let Some(keysym) = modifier_keysym {
