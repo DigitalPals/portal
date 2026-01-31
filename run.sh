@@ -28,10 +28,10 @@ run)
   run_cargo run --release
   ;;
 dev)
-  echo "Running Portal in dev mode (release build with debug env)..."
+  echo "Running Portal in dev mode (fast release build)..."
   export PORTAL_VNC_DEBUG="${PORTAL_VNC_DEBUG:-1}"
   export PORTAL_VNC_COLOR_DEPTH="${PORTAL_VNC_COLOR_DEPTH:-16}"
-  run_cargo run --release
+  run_cargo run --profile dev-release
   ;;
 check)
   echo "Checking Portal..."
