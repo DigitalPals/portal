@@ -409,6 +409,8 @@ pub struct VncSession {
     refresh_rate_limit: Duration,
     /// Last time a refresh was requested
     last_refresh_sent: Mutex<Instant>,
+    /// Handle to the event loop task, aborted on disconnect
+    event_loop_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 impl std::fmt::Debug for VncSession {
@@ -520,10 +522,11 @@ impl VncSession {
             last_resize_size: Mutex::new((0, 0)),
             refresh_rate_limit: Duration::from_millis(100),
             last_refresh_sent: Mutex::new(now - Duration::from_millis(500)),
+            event_loop_handle: Mutex::new(None),
         });
 
         // Spawn the VNC event polling loop
-        tokio::spawn(Self::event_loop(
+        let handle = tokio::spawn(Self::event_loop(
             vnc,
             framebuffer,
             event_tx,
@@ -533,6 +536,7 @@ impl VncSession {
             vnc_settings.refresh_fps,
             vnc_settings.max_events_per_tick,
         ));
+        *session.event_loop_handle.lock() = Some(handle);
 
         Ok((session, event_rx, detected_os))
     }
@@ -933,7 +937,8 @@ impl VncSession {
 
     /// Disconnect the session
     pub fn disconnect(&self) {
-        // Dropping the input_tx will cause the input forwarding task to end,
-        // which will cascade to close the VNC connection
+        if let Some(handle) = self.event_loop_handle.lock().take() {
+            handle.abort();
+        }
     }
 }
