@@ -3,6 +3,11 @@ set -e
 
 cd "$(dirname "$0")"
 
+# Default wgpu backend on Linux (override by setting WGPU_BACKEND)
+if [[ "$(uname)" != "Darwin" ]]; then
+  export WGPU_BACKEND="${WGPU_BACKEND:-vulkan,gl}"
+fi
+
 # Use nix develop on Linux, direct cargo on macOS
 run_cargo() {
   if [[ "$(uname)" == "Darwin" ]]; then
@@ -23,8 +28,10 @@ run)
   run_cargo run --release
   ;;
 dev)
-  echo "Running Portal in debug mode..."
-  run_cargo run
+  echo "Running Portal in dev mode (release build with debug env)..."
+  export PORTAL_VNC_DEBUG="${PORTAL_VNC_DEBUG:-1}"
+  export PORTAL_VNC_COLOR_DEPTH="${PORTAL_VNC_COLOR_DEPTH:-16}"
+  run_cargo run --release
   ;;
 check)
   echo "Checking Portal..."

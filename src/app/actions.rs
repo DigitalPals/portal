@@ -164,6 +164,7 @@ impl Portal {
         let password_str = Some(password.expose_secret().to_string());
 
         let (msg_tx, msg_rx) = mpsc::channel::<Message>(256);
+        let vnc_settings = self.vnc_settings.clone();
 
         let connect_task = Task::perform(
             async move {
@@ -173,6 +174,7 @@ impl Portal {
                     username,
                     password_str,
                     host_name.clone(),
+                    vnc_settings,
                 )
                 .await
                 {

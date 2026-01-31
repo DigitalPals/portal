@@ -53,6 +53,14 @@ pub fn handle_vnc(portal: &mut Portal, msg: VncMessage) -> Task<Message> {
                 },
             );
 
+            if portal.vnc_settings.remote_resize {
+                if let Some((w, h)) = portal.vnc_target_size() {
+                    if let Some(vnc) = portal.vnc_sessions.get(&session_id) {
+                        vnc.session.try_request_desktop_size(w, h);
+                    }
+                }
+            }
+
             // Create tab
             let tab = Tab::new_vnc(session_id, host_name, Some(host_id));
             portal.tabs.push(tab);
@@ -74,6 +82,7 @@ pub fn handle_vnc(portal: &mut Portal, msg: VncMessage) -> Task<Message> {
         } => {
             if let Some(vnc) = portal.vnc_sessions.get(&session_id) {
                 vnc.session.try_send_key(keysym, pressed);
+                vnc.session.try_request_refresh();
             }
             Task::none()
         }

@@ -37,9 +37,7 @@ struct VncProgram {
 /// Primitive carrying framebuffer snapshot to the GPU pipeline.
 #[derive(Debug)]
 struct VncPrimitive {
-    pixels: Vec<u8>,
-    width: u32,
-    height: u32,
+    framebuffer: Arc<Mutex<FrameBuffer>>,
 }
 
 /// The wgpu pipeline that owns the texture and renders it.
@@ -53,6 +51,9 @@ struct VncPipeline {
     /// Current texture dimensions (to detect when resize is needed)
     tex_width: u32,
     tex_height: u32,
+    /// Reusable staging buffer to avoid per-frame allocation when copying
+    /// dirty pixels out of the framebuffer before GPU upload
+    staging_buf: Vec<u8>,
 }
 
 use iced::wgpu;
@@ -145,7 +146,7 @@ impl VncPipeline {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8Unorm,
+            format: wgpu::TextureFormat::Bgra8Unorm,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         })
@@ -186,55 +187,92 @@ impl shader::Primitive for VncPrimitive {
         _bounds: &Rectangle,
         _viewport: &shader::Viewport,
     ) {
-        if self.width == 0 || self.height == 0 {
-            return;
-        }
+        // Snapshot the framebuffer under the lock, then release it before
+        // calling write_texture. This prevents the GPU upload from blocking
+        // the VNC event loop which also needs the framebuffer lock to apply
+        // incoming pixel updates (~2000+ tiles/sec at 4K).
+        let snapshot = {
+            let mut fb = self.framebuffer.lock();
+            if fb.width == 0 || fb.height == 0 {
+                return;
+            }
 
-        let expected = (self.width * self.height * 4) as usize;
-        if self.pixels.len() != expected {
-            return;
-        }
+            let expected = (fb.width * fb.height * 4) as usize;
+            if fb.pixels.len() != expected {
+                return;
+            }
 
-        // Recreate texture if dimensions changed
-        if self.width != pipeline.tex_width || self.height != pipeline.tex_height {
-            pipeline.texture = VncPipeline::create_texture(device, self.width, self.height);
-            pipeline.bind_group = VncPipeline::create_bind_group(
-                device,
-                &pipeline.bind_group_layout,
-                &pipeline.texture,
-                &pipeline.sampler,
-            );
-            pipeline.tex_width = self.width;
-            pipeline.tex_height = self.height;
-        }
+            // Recreate texture if dimensions changed
+            if fb.width != pipeline.tex_width || fb.height != pipeline.tex_height {
+                pipeline.texture = VncPipeline::create_texture(device, fb.width, fb.height);
+                pipeline.bind_group = VncPipeline::create_bind_group(
+                    device,
+                    &pipeline.bind_group_layout,
+                    &pipeline.texture,
+                    &pipeline.sampler,
+                );
+                pipeline.tex_width = fb.width;
+                pipeline.tex_height = fb.height;
+            }
 
-        // Upload pixel data in-place — no new Handle IDs, no cache eviction
+            let Some(dirty) = fb.dirty.take() else {
+                return;
+            };
+
+            let stride = fb.width as usize * 4;
+            let x = dirty.x.min(fb.width);
+            let y = dirty.y.min(fb.height);
+            let w = dirty.width.min(fb.width.saturating_sub(x));
+            let h = dirty.height.min(fb.height.saturating_sub(y));
+            if w == 0 || h == 0 {
+                return;
+            }
+
+            let offset = (y as usize * stride) + (x as usize * 4);
+            let len = ((h - 1) as usize * stride) + (w as usize * 4);
+            let end = offset.saturating_add(len);
+            if end > fb.pixels.len() {
+                return;
+            }
+
+            // Copy the dirty region into the reusable staging buffer
+            // so we can release the lock before the GPU upload
+            let data_len = end - offset;
+            pipeline.staging_buf.clear();
+            pipeline.staging_buf.reserve(data_len);
+            pipeline
+                .staging_buf
+                .extend_from_slice(&fb.pixels[offset..end]);
+            (stride as u32, x, y, w, h)
+        };
+        // framebuffer lock released here
+
+        let (stride, x, y, w, h) = snapshot;
+
+        // Upload pixel data to GPU — this may block briefly for DMA/staging
+        // but no longer holds the framebuffer lock
         queue.write_texture(
             wgpu::TexelCopyTextureInfo {
                 texture: &pipeline.texture,
                 mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
+                origin: wgpu::Origin3d { x, y, z: 0 },
                 aspect: wgpu::TextureAspect::All,
             },
-            &self.pixels,
+            &pipeline.staging_buf,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
-                bytes_per_row: Some(4 * self.width),
-                rows_per_image: Some(self.height),
+                bytes_per_row: Some(stride),
+                rows_per_image: Some(h),
             },
             wgpu::Extent3d {
-                width: self.width,
-                height: self.height,
+                width: w,
+                height: h,
                 depth_or_array_layers: 1,
             },
         );
     }
 
     fn draw(&self, pipeline: &Self::Pipeline, render_pass: &mut wgpu::RenderPass<'_>) -> bool {
-        if self.width == 0 || self.height == 0 {
-            return true;
-        }
-
         render_pass.set_pipeline(&pipeline.pipeline);
         render_pass.set_bind_group(0, &pipeline.bind_group, &[]);
         render_pass.set_vertex_buffer(0, pipeline.vertex_buffer.slice(..));
@@ -355,6 +393,7 @@ impl shader::Pipeline for VncPipeline {
             vertex_buffer,
             tex_width: 1,
             tex_height: 1,
+            staging_buf: Vec::new(),
         }
     }
 }
@@ -369,11 +408,8 @@ impl shader::Program<Message> for VncProgram {
         _cursor: iced::mouse::Cursor,
         _bounds: Rectangle,
     ) -> Self::Primitive {
-        let fb = self.framebuffer.lock();
         VncPrimitive {
-            pixels: fb.pixels.clone(),
-            width: fb.width,
-            height: fb.height,
+            framebuffer: self.framebuffer.clone(),
         }
     }
 }
