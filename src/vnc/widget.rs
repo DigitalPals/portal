@@ -146,9 +146,7 @@ impl<'a> From<VncMouseWrapper<'a>> for Element<'a, Message> {
     }
 }
 
-impl<'a> advanced::Widget<Message, iced::Theme, iced::Renderer>
-    for VncMouseWrapper<'a>
-{
+impl<'a> advanced::Widget<Message, iced::Theme, iced::Renderer> for VncMouseWrapper<'a> {
     fn tag(&self) -> widget::tree::Tag {
         widget::tree::Tag::of::<VncMouseState>()
     }
@@ -227,101 +225,96 @@ impl<'a> advanced::Widget<Message, iced::Theme, iced::Renderer>
         let bounds = layout.bounds();
         let state = tree.state.downcast_mut::<VncMouseState>();
 
-        match event {
-            iced::Event::Mouse(mouse_event) => {
-                let position = cursor.position_in(bounds);
+        if let iced::Event::Mouse(mouse_event) = event {
+            let position = cursor.position_in(bounds);
 
-                match mouse_event {
-                    iced::mouse::Event::ButtonPressed(btn) => {
-                        if let Some(pos) = position {
-                            match btn {
-                                iced::mouse::Button::Left => state.button_mask |= 1,
-                                iced::mouse::Button::Middle => state.button_mask |= 2,
-                                iced::mouse::Button::Right => state.button_mask |= 4,
-                                _ => {}
-                            }
-                            if let Some((x, y)) =
-                                self.map_coordinates(&bounds, pos.x, pos.y)
-                            {
-                                shell.publish(Message::Vnc(VncMessage::MouseEvent {
-                                    session_id: self.session_id,
-                                    x,
-                                    y,
-                                    buttons: state.button_mask,
-                                }));
-                            }
+            match mouse_event {
+                iced::mouse::Event::ButtonPressed(btn) => {
+                    if let Some(pos) = position {
+                        match btn {
+                            iced::mouse::Button::Left => state.button_mask |= 1,
+                            iced::mouse::Button::Middle => state.button_mask |= 2,
+                            iced::mouse::Button::Right => state.button_mask |= 4,
+                            _ => {}
+                        }
+                        if let Some((x, y)) = self.map_coordinates(&bounds, pos.x, pos.y) {
+                            shell.publish(Message::Vnc(VncMessage::MouseEvent {
+                                session_id: self.session_id,
+                                x,
+                                y,
+                                buttons: state.button_mask,
+                            }));
                         }
                     }
-                    iced::mouse::Event::ButtonReleased(btn) => {
-                        if let Some(pos) = position {
-                            match btn {
-                                iced::mouse::Button::Left => state.button_mask &= !1,
-                                iced::mouse::Button::Middle => state.button_mask &= !2,
-                                iced::mouse::Button::Right => state.button_mask &= !4,
-                                _ => {}
-                            }
-                            if let Some((x, y)) =
-                                self.map_coordinates(&bounds, pos.x, pos.y)
-                            {
-                                shell.publish(Message::Vnc(VncMessage::MouseEvent {
-                                    session_id: self.session_id,
-                                    x,
-                                    y,
-                                    buttons: state.button_mask,
-                                }));
-                            }
-                        }
-                    }
-                    iced::mouse::Event::CursorMoved { .. } => {
-                        if let Some(pos) = position {
-                            if let Some((x, y)) =
-                                self.map_coordinates(&bounds, pos.x, pos.y)
-                            {
-                                shell.publish(Message::Vnc(VncMessage::MouseEvent {
-                                    session_id: self.session_id,
-                                    x,
-                                    y,
-                                    buttons: state.button_mask,
-                                }));
-                            }
-                        }
-                    }
-                    iced::mouse::Event::WheelScrolled { delta } => {
-                        if let Some(pos) = position {
-                            if let Some((x, y)) =
-                                self.map_coordinates(&bounds, pos.x, pos.y)
-                            {
-                                // Scroll: bit3=up, bit4=down
-                                let scroll_y = match delta {
-                                    iced::mouse::ScrollDelta::Lines { y, .. } => *y,
-                                    iced::mouse::ScrollDelta::Pixels { y, .. } => {
-                                        if *y > 0.0 { 1.0 } else if *y < 0.0 { -1.0 } else { 0.0 }
-                                    }
-                                };
-                                if scroll_y != 0.0 {
-                                    let scroll_btn = if scroll_y > 0.0 { 8 } else { 16 };
-                                    // Press scroll button
-                                    shell.publish(Message::Vnc(VncMessage::MouseEvent {
-                                        session_id: self.session_id,
-                                        x,
-                                        y,
-                                        buttons: state.button_mask | scroll_btn,
-                                    }));
-                                    // Release scroll button
-                                    shell.publish(Message::Vnc(VncMessage::MouseEvent {
-                                        session_id: self.session_id,
-                                        x,
-                                        y,
-                                        buttons: state.button_mask,
-                                    }));
-                                }
-                            }
-                        }
-                    }
-                    _ => {}
                 }
+                iced::mouse::Event::ButtonReleased(btn) => {
+                    if let Some(pos) = position {
+                        match btn {
+                            iced::mouse::Button::Left => state.button_mask &= !1,
+                            iced::mouse::Button::Middle => state.button_mask &= !2,
+                            iced::mouse::Button::Right => state.button_mask &= !4,
+                            _ => {}
+                        }
+                        if let Some((x, y)) = self.map_coordinates(&bounds, pos.x, pos.y) {
+                            shell.publish(Message::Vnc(VncMessage::MouseEvent {
+                                session_id: self.session_id,
+                                x,
+                                y,
+                                buttons: state.button_mask,
+                            }));
+                        }
+                    }
+                }
+                iced::mouse::Event::CursorMoved { .. } => {
+                    if let Some(pos) = position {
+                        if let Some((x, y)) = self.map_coordinates(&bounds, pos.x, pos.y) {
+                            shell.publish(Message::Vnc(VncMessage::MouseEvent {
+                                session_id: self.session_id,
+                                x,
+                                y,
+                                buttons: state.button_mask,
+                            }));
+                        }
+                    }
+                }
+                iced::mouse::Event::WheelScrolled { delta } => {
+                    if let Some(pos) = position {
+                        if let Some((x, y)) = self.map_coordinates(&bounds, pos.x, pos.y) {
+                            // Scroll: bit3=up, bit4=down
+                            let scroll_y = match delta {
+                                iced::mouse::ScrollDelta::Lines { y, .. } => *y,
+                                iced::mouse::ScrollDelta::Pixels { y, .. } => {
+                                    if *y > 0.0 {
+                                        1.0
+                                    } else if *y < 0.0 {
+                                        -1.0
+                                    } else {
+                                        0.0
+                                    }
+                                }
+                            };
+                            if scroll_y != 0.0 {
+                                let scroll_btn = if scroll_y > 0.0 { 8 } else { 16 };
+                                // Press scroll button
+                                shell.publish(Message::Vnc(VncMessage::MouseEvent {
+                                    session_id: self.session_id,
+                                    x,
+                                    y,
+                                    buttons: state.button_mask | scroll_btn,
+                                }));
+                                // Release scroll button
+                                shell.publish(Message::Vnc(VncMessage::MouseEvent {
+                                    session_id: self.session_id,
+                                    x,
+                                    y,
+                                    buttons: state.button_mask,
+                                }));
+                            }
+                        }
+                    }
+                }
+                _ => {}
             }
-            _ => {}
         }
     }
 
