@@ -145,6 +145,8 @@ pub enum X11Event {
     /// Only Latin-1 character set is allowed
     ///
     CopyText(String),
+    /// Request a full (non-incremental) framebuffer update
+    FullRefresh,
     /// Request a remote desktop resize (if supported by server)
     SetDesktopSize { width: u16, height: u16 },
 }
