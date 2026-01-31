@@ -10,9 +10,9 @@ use uuid::Uuid;
 
 use crate::local::LocalSession;
 use crate::message::SessionId;
+use crate::message::{QualityLevel, VncScreen};
 use crate::ssh::SshSession;
 use crate::views::terminal_view::TerminalSession;
-use crate::message::{QualityLevel, VncScreen};
 use crate::vnc::VncSession;
 
 /// Backend type for a terminal session

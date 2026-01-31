@@ -37,7 +37,12 @@ impl MonitorLayout {
 
     /// Get UV coordinates for a specific monitor relative to the full framebuffer.
     /// Returns (u_min, v_min, u_max, v_max).
-    pub fn monitor_uv(&self, index: usize, fb_width: u32, fb_height: u32) -> Option<(f32, f32, f32, f32)> {
+    pub fn monitor_uv(
+        &self,
+        index: usize,
+        fb_width: u32,
+        fb_height: u32,
+    ) -> Option<(f32, f32, f32, f32)> {
         let screen = self.screens.get(index)?;
         if fb_width == 0 || fb_height == 0 {
             return None;

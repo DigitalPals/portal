@@ -7,9 +7,9 @@ use iced::{Element, Fill};
 
 use crate::app::managers::session_manager::VncActiveSession;
 use crate::config::settings::VncScalingMode;
+use crate::message::QualityLevel;
 use crate::message::{Message, SessionId, VncMessage};
 use crate::theme::{ScaledFonts, Theme};
-use crate::message::QualityLevel;
 use crate::vnc::widget::vnc_framebuffer_interactive;
 
 /// X11 keysym constants for special keys
@@ -210,8 +210,13 @@ pub fn vnc_viewer_view<'a>(
     });
 
     // Framebuffer — custom shader widget with mouse event handling
-    let fb_content: Element<'a, Message> =
-        vnc_framebuffer_interactive(&vnc.session.framebuffer, scaling_mode, session_id, fb_width, fb_height);
+    let fb_content: Element<'a, Message> = vnc_framebuffer_interactive(
+        &vnc.session.framebuffer,
+        scaling_mode,
+        session_id,
+        fb_width,
+        fb_height,
+    );
 
     let framebuffer = container(fb_content)
         .width(Fill)
