@@ -4,7 +4,7 @@
 
 # Portal
 
-**A modern, fast SSH client for macOS and Linux**
+**A modern, fast SSH and VNC client for macOS and Linux**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](https://www.rust-lang.org/)
@@ -20,7 +20,7 @@
 
 ---
 
-Portal is a native SSH client built for speed and simplicity. Manage your servers with an intuitive interface that's equally comfortable with keyboard shortcuts or mouse navigation. Built with Rust for native performance, with full Wayland support on Linux.
+Portal is a native SSH and VNC client built for speed and simplicity. Manage your servers with an intuitive interface that's equally comfortable with keyboard shortcuts or mouse navigation. Built with Rust for native performance, with full Wayland support on Linux.
 
 ## Highlights
 
@@ -35,6 +35,8 @@ Portal is a native SSH client built for speed and simplicity. Manage your server
 **`::` Beautiful Themes** — Choose from 5 built-in themes including the popular Catppuccin palette in both light and dark variants.
 
 **`/>` Command Snippets** — Save frequently used commands and insert them into any session with a click. Never retype complex commands.
+
+**`[]` VNC Remote Desktop** — Connect to VNC servers with GPU-accelerated rendering. Supports multiple encodings, ARD authentication, and multi-monitor displays.
 
 ## Features
 
@@ -75,6 +77,19 @@ Portal is a native SSH client built for speed and simplicity. Manage your server
 - **PDF viewer** — Read PDF documents with page navigation
 - **Markdown preview** — Toggle between edit and rendered preview
 - **In-app editing** — Make quick edits without leaving Portal
+
+### VNC Remote Desktop
+
+- **GPU-accelerated rendering** — Custom wgpu shader for efficient framebuffer display
+- **Multiple encodings** — Tight, ZRLE, CopyRect, and Raw with automatic selection
+- **ARD authentication** — Apple Remote Desktop support for macOS Screen Sharing
+- **Multi-monitor support** — Discover and select individual displays
+- **Scaling modes** — Fit, Actual (1:1), and Stretch modes
+- **Keyboard passthrough** — Forward all keystrokes to the remote desktop
+- **Special key toolbar** — Send Ctrl+Alt+Del, Alt+Tab, Super, Print Screen, and more
+- **Clipboard sharing** — Bidirectional clipboard between local and remote
+- **Screenshot capture** — Save the current VNC view to a file
+- **Adaptive quality** — FPS tracking with configurable refresh rate, encoding, and color depth
 
 ### Customization
 
@@ -185,6 +200,13 @@ Environment variables:
   string to disable file logging.
 - `PORTAL_MAX_COMMAND_OUTPUT_BYTES` (optional) - cap command output collected
   from SSH exec calls. Default: 4194304 (4 MiB).
+- `PORTAL_VNC_ENCODING` (optional) - VNC encoding preference: `auto`, `tight`, `zrle`, or `raw`. Default: `auto`.
+- `PORTAL_VNC_COLOR_DEPTH` (optional) - color depth in bits: `16` or `32`. Default: `32`.
+- `PORTAL_VNC_REFRESH_FPS` (optional) - framebuffer refresh rate, 1-60. Default: `10`.
+- `PORTAL_VNC_POINTER_INTERVAL_MS` (optional) - minimum interval between pointer events in ms. Default: `16`.
+- `PORTAL_VNC_MAX_EVENTS_PER_TICK` (optional) - max VNC events per poll, 1-1024. Default: `64`.
+- `PORTAL_VNC_REMOTE_RESIZE` (optional) - request remote desktop resize. Default: `false`.
+- `PORTAL_VNC_DEBUG` (optional) - enable VNC debug logging.
 
 Example:
 
@@ -257,6 +279,10 @@ That's it. You're in.
 | `Ctrl+Tab` | Switch to next tab |
 | `Ctrl+Shift+Tab` | Switch to previous tab |
 | `Ctrl+W` | Close current tab |
+| `F11` | Toggle fullscreen (VNC) |
+| `Ctrl+Shift+S` | Capture screenshot (VNC) |
+| `Ctrl+Shift+V` | Paste clipboard to VNC server |
+| `Ctrl+Shift+Escape` | Release keyboard passthrough (VNC) |
 
 ## Built With
 
@@ -264,6 +290,7 @@ That's it. You're in.
 - [Iced](https://iced.rs/) — Cross-platform GUI framework
 - [Alacritty Terminal](https://github.com/alacritty/alacritty) — Terminal emulation
 - [Russh](https://github.com/warp-tech/russh) — SSH protocol implementation
+- [vnc-rs](https://github.com/niclas3640/vnc-rs) — VNC client implementation (vendored)
 
 ## Configuration
 
@@ -273,10 +300,10 @@ Portal stores configuration in your platform's config directory:
 - **macOS:** `~/Library/Application Support/portal/`
 
 Configuration files:
-- `hosts.toml` — Saved host definitions
+- `hosts.toml` — Saved host definitions (SSH and VNC protocols)
 - `snippets.toml` — Command snippets
 - `snippet_history.toml` — Snippet execution history (`enabled`, `store_command`, `store_output`, `redact_output`)
-- `settings.toml` — Theme and font preferences
+- `settings.toml` — Theme, font preferences, and VNC settings (encoding, color depth, refresh rate, scaling mode)
 - `history.toml` — Connection history
 - `known_hosts` — SSH host key storage
 
