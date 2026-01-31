@@ -40,6 +40,14 @@ pub struct VncActiveSession {
     pub session: Arc<VncSession>,
     pub host_name: String,
     pub session_start: Instant,
+    /// Frame counter for FPS calculation
+    pub frame_count: u32,
+    /// Last time FPS was calculated
+    pub fps_last_check: Instant,
+    /// Current estimated FPS
+    pub current_fps: f32,
+    /// Whether fullscreen mode is active
+    pub fullscreen: bool,
 }
 
 /// Manages SSH terminal sessions

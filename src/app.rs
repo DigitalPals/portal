@@ -466,7 +466,13 @@ impl Portal {
             }
             View::VncViewer(session_id) => {
                 if let Some(vnc) = self.vnc_sessions.get(session_id) {
-                    vnc_viewer_view(*session_id, vnc, theme, fonts)
+                    vnc_viewer_view(
+                        *session_id,
+                        vnc,
+                        theme,
+                        fonts,
+                        self.prefs.vnc_settings.scaling_mode,
+                    )
                 } else {
                     text("VNC session not found").into()
                 }
@@ -562,6 +568,16 @@ impl Portal {
             }
         };
 
+        // Check if VNC is in fullscreen mode
+        let vnc_fullscreen = if let View::VncViewer(sid) = &self.ui.active_view {
+            self.vnc_sessions
+                .get(sid)
+                .map(|v| v.fullscreen)
+                .unwrap_or(false)
+        } else {
+            false
+        };
+
         // Tab bar - always visible at full width (Termius-style)
         // Uses terminal background color when in terminal/sftp/file viewer for seamless look
         let header: Element<'_, Message> = tab_bar_view(
@@ -577,12 +593,16 @@ impl Portal {
             self.ui.hovered_tab,
         );
 
-        // Content row: sidebar | main content
-        let content_row = row![sidebar, main_content].width(Fill).height(Fill);
+        // In VNC fullscreen mode, skip sidebar and tab bar
+        let main_layout: Element<'_, Message> = if vnc_fullscreen {
+            main_content
+        } else {
+            // Content row: sidebar | main content
+            let content_row = row![sidebar, main_content].width(Fill).height(Fill);
 
-        // Full layout: tab bar on top, then sidebar+content below (Termius-style)
-        let main_layout: Element<'_, Message> =
-            column![header, content_row].width(Fill).height(Fill).into();
+            // Full layout: tab bar on top, then sidebar+content below (Termius-style)
+            column![header, content_row].width(Fill).height(Fill).into()
+        };
 
         // Overlay dialog if open - host key dialog takes priority as it's connection-critical
         let with_dialog: Element<'_, Message> = match self.dialogs.active() {

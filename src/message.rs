@@ -380,6 +380,23 @@ pub enum VncMessage {
         keysym: u32,
         pressed: bool,
     },
+    /// Server sent clipboard text
+    ClipboardReceived(SessionId, String),
+    /// Send clipboard text to VNC server
+    ClipboardSend(SessionId, String),
+    /// Send a special key combination (e.g., Ctrl+Alt+Del)
+    SendSpecialKeys {
+        session_id: SessionId,
+        keysyms: Vec<u32>,
+    },
+    /// Toggle fullscreen mode
+    ToggleFullscreen,
+    /// Capture screenshot of current VNC session
+    CaptureScreenshot(SessionId),
+    /// Screenshot saved successfully
+    ScreenshotSaved(String),
+    /// Cycle scaling mode
+    CycleScalingMode,
 }
 
 /// UI state messages

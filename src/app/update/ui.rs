@@ -193,6 +193,34 @@ fn handle_keyboard_event(
 
     // Priority 2: VNC viewer — forward all keys to remote (except Ctrl+Shift combos for UI)
     if let View::VncViewer(session_id) = portal.ui.active_view {
+        // F11 toggles fullscreen
+        if let Key::Named(keyboard::key::Named::F11) = &key {
+            return Task::done(Message::Vnc(VncMessage::ToggleFullscreen));
+        }
+
+        // Ctrl+Shift shortcuts for VNC-specific actions
+        if modifiers.control() && modifiers.shift() {
+            if let Key::Character(c) = &key {
+                match c.as_str() {
+                    // Ctrl+Shift+S: Screenshot
+                    "s" | "S" => {
+                        return Task::done(Message::Vnc(VncMessage::CaptureScreenshot(session_id)));
+                    }
+                    // Ctrl+Shift+V: Paste clipboard to VNC
+                    "v" | "V" => {
+                        return iced::clipboard::read().map(move |contents| {
+                            if let Some(text) = contents {
+                                Message::Vnc(VncMessage::ClipboardSend(session_id, text))
+                            } else {
+                                Message::Noop
+                            }
+                        });
+                    }
+                    _ => {} // Fall through to global shortcuts
+                }
+            }
+        }
+
         // Allow Ctrl+Shift shortcuts for tab management etc.
         if !(modifiers.control() && modifiers.shift()) {
             if let Some(keysym) = crate::vnc::keysym::key_to_keysym(&key) {

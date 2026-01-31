@@ -232,6 +232,9 @@ impl Portal {
                                     Message::Vnc(VncMessage::Disconnected(session_id))
                                 }
                                 VncSessionEvent::Bell => continue,
+                                VncSessionEvent::ClipboardText(text) => {
+                                    Message::Vnc(VncMessage::ClipboardReceived(session_id, text))
+                                }
                             };
                             if msg_tx.send(msg).await.is_err() {
                                 break;
