@@ -28,12 +28,7 @@ impl FrameBuffer {
             width,
             height,
             pixels: vec![0; (width * height * 4) as usize],
-            dirty: Some(DirtyRect {
-                x: 0,
-                y: 0,
-                width,
-                height,
-            }),
+            dirty: None,
         }
     }
 
@@ -146,11 +141,11 @@ impl FrameBuffer {
         self.width = width;
         self.height = height;
         self.pixels = vec![0; (width * height * 4) as usize];
-        self.dirty = Some(DirtyRect {
-            x: 0,
-            y: 0,
-            width,
-            height,
-        });
+        // Don't mark dirty here — the pixels are all black (zeroed) and
+        // uploading them causes a black flash before real pixel data arrives.
+        // The GPU texture will still be recreated on the next prepare() call
+        // via the dimension mismatch check, and real pixel data from the
+        // server will set the dirty flag when it arrives.
+        self.dirty = None;
     }
 }

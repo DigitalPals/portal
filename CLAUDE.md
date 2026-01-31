@@ -88,6 +88,12 @@ Config stored in platform-specific directory (`~/.config/portal/` on Linux):
 - `settings.toml` - Theme, font size
 - `known_hosts` - SSH host key storage
 
+### VNC Framebuffer Rendering
+
+The VNC widget uses a custom wgpu shader (`src/vnc/widget.rs`) with a `FrameBuffer` (`src/vnc/framebuffer.rs`) holding BGRA pixels. The `prepare()` method uploads dirty regions to the GPU texture.
+
+**Important invariant**: `FrameBuffer::new()` and `FrameBuffer::resize()` must NOT mark the framebuffer as dirty. Their pixels are all-black placeholders — uploading them causes a black flash before real server data arrives. Instead, `prepare()` detects texture dimension mismatches and forces a full upload of the current pixel buffer when recreating the GPU texture, ensuring the texture always has valid content.
+
 ## Key Patterns
 
 - **Single-threaded UI with async backend**: Tokio for I/O, communication via messages
