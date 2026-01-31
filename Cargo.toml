@@ -78,6 +78,11 @@ opt-level = 2
 lto = true
 codegen-units = 1
 
+[profile.dev-release]
+inherits = "release"
+lto = "thin"
+codegen-units = 16
+
 [patch.crates-io]
 vnc-rs = { path = "vendor/vnc-rs" }
 
