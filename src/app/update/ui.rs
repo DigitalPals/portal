@@ -153,6 +153,15 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
                     SidebarState::Expanded
                 };
             }
+            if portal.vnc_settings.remote_resize {
+                if let View::VncViewer(session_id) = portal.active_view {
+                    if let Some(vnc) = portal.vnc_sessions.get(&session_id) {
+                        if let Some((w, h)) = portal.vnc_target_size() {
+                            vnc.session.try_request_desktop_size(w, h);
+                        }
+                    }
+                }
+            }
             Task::none()
         }
         UiMessage::ToastDismiss(id) => {

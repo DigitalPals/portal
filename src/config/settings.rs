@@ -5,6 +5,124 @@ use crate::fonts::TerminalFont;
 use crate::theme::ThemeId;
 use crate::views::sftp::ColumnWidths;
 
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum VncEncodingPreference {
+    #[default]
+    Auto,
+    Tight,
+    Zrle,
+    Raw,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VncSettings {
+    /// Preferred encoding selection
+    #[serde(default)]
+    pub encoding: VncEncodingPreference,
+
+    /// Preferred color depth (bits per pixel)
+    #[serde(default = "default_vnc_color_depth")]
+    pub color_depth: u8,
+
+    /// Refresh rate for VNC updates (frames per second)
+    #[serde(default = "default_vnc_refresh_fps")]
+    pub refresh_fps: u32,
+
+    /// Max number of VNC events processed per poll tick
+    #[serde(default = "default_vnc_max_events_per_tick")]
+    pub max_events_per_tick: usize,
+
+    /// Minimum interval between pointer events (ms)
+    #[serde(default = "default_vnc_pointer_interval_ms")]
+    pub pointer_interval_ms: u64,
+
+    /// Request remote desktop resize based on client window size
+    #[serde(default = "default_vnc_remote_resize")]
+    pub remote_resize: bool,
+}
+
+impl Default for VncSettings {
+    fn default() -> Self {
+        Self {
+            encoding: VncEncodingPreference::default(),
+            color_depth: default_vnc_color_depth(),
+            refresh_fps: default_vnc_refresh_fps(),
+            max_events_per_tick: default_vnc_max_events_per_tick(),
+            pointer_interval_ms: default_vnc_pointer_interval_ms(),
+            remote_resize: default_vnc_remote_resize(),
+        }
+    }
+}
+
+impl VncSettings {
+    pub fn apply_env_overrides(mut self) -> Self {
+        if let Ok(raw) = std::env::var("PORTAL_VNC_ENCODING") {
+            let value = raw.trim().to_lowercase();
+            self.encoding = match value.as_str() {
+                "auto" => VncEncodingPreference::Auto,
+                "tight" => VncEncodingPreference::Tight,
+                "zrle" => VncEncodingPreference::Zrle,
+                "raw" => VncEncodingPreference::Raw,
+                _ => self.encoding,
+            };
+        }
+
+        if let Ok(raw) = std::env::var("PORTAL_VNC_COLOR_DEPTH") {
+            if let Ok(bits) = raw.trim().parse::<u8>() {
+                if matches!(bits, 16 | 32) {
+                    self.color_depth = bits;
+                }
+            }
+        }
+
+        if let Ok(raw) = std::env::var("PORTAL_VNC_REFRESH_FPS") {
+            if let Ok(fps) = raw.trim().parse::<u32>() {
+                self.refresh_fps = fps.clamp(1, 60);
+            }
+        }
+
+        if let Ok(raw) = std::env::var("PORTAL_VNC_MAX_EVENTS_PER_TICK") {
+            if let Ok(count) = raw.trim().parse::<usize>() {
+                self.max_events_per_tick = count.clamp(1, 1024);
+            }
+        }
+
+        if let Ok(raw) = std::env::var("PORTAL_VNC_POINTER_INTERVAL_MS") {
+            if let Ok(ms) = raw.trim().parse::<u64>() {
+                self.pointer_interval_ms = ms.min(1000);
+            }
+        }
+
+        if let Ok(raw) = std::env::var("PORTAL_VNC_REMOTE_RESIZE") {
+            let value = raw.trim().to_lowercase();
+            self.remote_resize = matches!(value.as_str(), "1" | "true" | "yes" | "on");
+        }
+
+        self
+    }
+}
+
+fn default_vnc_refresh_fps() -> u32 {
+    10
+}
+
+fn default_vnc_color_depth() -> u8 {
+    32
+}
+
+fn default_vnc_max_events_per_tick() -> usize {
+    64
+}
+
+fn default_vnc_pointer_interval_ms() -> u64 {
+    16
+}
+
+fn default_vnc_remote_resize() -> bool {
+    false
+}
+
 /// Application settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SettingsConfig {
@@ -29,6 +147,10 @@ pub struct SettingsConfig {
     #[serde(default)]
     pub sftp_column_widths: ColumnWidths,
 
+    /// VNC settings
+    #[serde(default)]
+    pub vnc: VncSettings,
+
     /// Legacy dark_mode field for migration (read-only, not serialized)
     #[serde(default, skip_serializing)]
     dark_mode: Option<bool>,
@@ -46,6 +168,7 @@ impl Default for SettingsConfig {
             theme: ThemeId::default(),
             ui_scale: None,
             sftp_column_widths: ColumnWidths::default(),
+            vnc: VncSettings::default(),
             dark_mode: None,
         }
     }

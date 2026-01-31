@@ -179,6 +179,9 @@ pub struct Portal {
     // SFTP settings
     sftp_column_widths: crate::views::sftp::ColumnWidths,
 
+    // VNC settings
+    vnc_settings: crate::config::settings::VncSettings,
+
     // Data from config
     hosts_config: HostsConfig,
     snippets_config: SnippetsConfig,
@@ -308,6 +311,7 @@ impl Portal {
             terminal_font_size: settings_config.terminal_font_size,
             terminal_font: settings_config.terminal_font,
             sftp_column_widths: settings_config.sftp_column_widths,
+            vnc_settings: settings_config.vnc.apply_env_overrides(),
             hosts_config,
             snippets_config,
             history_config,
@@ -683,6 +687,18 @@ impl Portal {
         self.ui_scale_override.is_some()
     }
 
+    /// Compute a best-effort target size for VNC remote resize.
+    pub fn vnc_target_size(&self) -> Option<(u16, u16)> {
+        let scale = self.effective_ui_scale();
+        let width = (self.window_size.width * scale).round();
+        let height = ((self.window_size.height - 32.0).max(1.0) * scale).round();
+
+        let width = width.clamp(320.0, 8192.0) as u16;
+        let height = height.clamp(240.0, 8192.0) as u16;
+
+        Some((width, height))
+    }
+
     /// Save settings to config file
     pub(crate) fn save_settings(&self) {
         let mut settings = SettingsConfig::default();
@@ -690,6 +706,7 @@ impl Portal {
         settings.terminal_font = self.terminal_font;
         settings.theme = self.theme_id;
         settings.ui_scale = self.ui_scale_override;
+        settings.vnc = self.vnc_settings.clone();
         if let Err(e) = settings.save() {
             tracing::error!("Failed to save settings: {}", e);
         }
@@ -727,8 +744,10 @@ impl Portal {
 
         // VNC render tick (~30fps, only when viewing VNC)
         if matches!(self.active_view, View::VncViewer(_)) && !self.vnc_sessions.is_empty() {
+            let fps = self.vnc_settings.refresh_fps.clamp(1, 60);
+            let interval_ms = (1000u64 / fps as u64).max(1);
             subscriptions.push(
-                time::every(Duration::from_millis(33))
+                time::every(Duration::from_millis(interval_ms))
                     .map(|_| Message::Vnc(VncMessage::RenderTick)),
             );
         }

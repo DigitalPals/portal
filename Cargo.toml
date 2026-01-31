@@ -68,9 +68,18 @@ image = "0.25"            # Image format support
 [target.'cfg(target_os = "linux")'.dependencies]
 gio = "0.20"              # For GNOME GSettings access (UI scale detection)
 
+# Dev profile: optimize dependencies (flate2, image, vnc-rs) but keep
+# the main crate debuggable. Without this, ZRLE decompression and pixel
+# conversion at 4K are 10-50x slower than release.
+[profile.dev.package."*"]
+opt-level = 2
+
 [profile.release]
 lto = true
 codegen-units = 1
+
+[patch.crates-io]
+vnc-rs = { path = "vendor/vnc-rs" }
 
 [package.metadata.bundle]
 name = "Portal"

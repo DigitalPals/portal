@@ -9,6 +9,9 @@ fn main() -> iced::Result {
     let _guard = portal::logging::init_logging(log_dir);
 
     tracing::info!("Starting Portal SSH Client");
+    if let Some(dir) = portal::config::paths::log_dir() {
+        tracing::info!("Logging to {}", dir.display());
+    }
 
     iced::application(Portal::new, Portal::update, Portal::view)
         .title("Portal")

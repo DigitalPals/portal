@@ -6643,8 +6643,6 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 [[package]]
 name = "vnc-rs"
 version = "0.5.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77222ac63ae4879780ab76e92ad28b383f001f34440bb1abefde821dfa911e9b"
 dependencies = [
  "async_io_stream",
  "flate2",

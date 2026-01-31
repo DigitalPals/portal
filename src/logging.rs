@@ -14,7 +14,15 @@ pub fn init_logging(log_dir: Option<PathBuf>) -> Option<WorkerGuard> {
     } else {
         tracing::Level::WARN
     };
-    let env_filter = EnvFilter::from_default_env().add_directive(default_level.into());
+    let mut env_filter = EnvFilter::from_default_env().add_directive(default_level.into());
+    if std::env::var_os("PORTAL_VNC_DEBUG").is_some() {
+        if let Ok(directive) = "portal::vnc=debug".parse() {
+            env_filter = env_filter.add_directive(directive);
+        }
+        if let Ok(directive) = "portal::app::update::vnc=debug".parse() {
+            env_filter = env_filter.add_directive(directive);
+        }
+    }
 
     let console_layer = fmt::layer().with_target(true).with_thread_ids(false);
 
