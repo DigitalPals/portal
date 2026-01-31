@@ -259,7 +259,7 @@ impl Default for KnownHostsManager {
 
 #[cfg(test)]
 mod tests {
-    use super::{HostKeyStatus, KnownHostsManager, glob_match};
+    use super::{HostKeyStatus, KnownHostsManager, glob_match, matchers};
     use russh::keys;
     use std::fs;
     use std::path::PathBuf;
@@ -795,34 +795,46 @@ mod tests {
 
     #[test]
     fn host_matches_exact() {
-        let manager = KnownHostsManager::with_paths(None, None);
-        assert!(manager.host_matches("example.com", "example.com", "example.com"));
-        assert!(!manager.host_matches("other.com", "other.com", "example.com"));
+        assert!(matchers::host_matches(
+            "example.com",
+            "example.com",
+            "example.com"
+        ));
+        assert!(!matchers::host_matches(
+            "other.com",
+            "other.com",
+            "example.com"
+        ));
     }
 
     #[test]
     fn host_matches_with_port_format() {
-        let manager = KnownHostsManager::with_paths(None, None);
-        assert!(manager.host_matches("[example.com]:2222", "example.com", "[example.com]:2222"));
+        assert!(matchers::host_matches(
+            "[example.com]:2222",
+            "example.com",
+            "[example.com]:2222"
+        ));
     }
 
     #[test]
     fn host_matches_comma_separated() {
-        let manager = KnownHostsManager::with_paths(None, None);
-        assert!(manager.host_matches("host2.com", "host2.com", "host1.com,host2.com,host3.com"));
+        assert!(matchers::host_matches(
+            "host2.com",
+            "host2.com",
+            "host1.com,host2.com,host3.com"
+        ));
     }
 
     #[test]
     fn host_matches_negation() {
-        let manager = KnownHostsManager::with_paths(None, None);
         // bad.example.com is negated, so should not match
-        assert!(!manager.host_matches(
+        assert!(!matchers::host_matches(
             "bad.example.com",
             "bad.example.com",
             "!bad.example.com,*.example.com"
         ));
         // good.example.com matches the wildcard
-        assert!(manager.host_matches(
+        assert!(matchers::host_matches(
             "good.example.com",
             "good.example.com",
             "!bad.example.com,*.example.com"
@@ -831,8 +843,11 @@ mod tests {
 
     #[test]
     fn host_matches_empty_entries_ignored() {
-        let manager = KnownHostsManager::with_paths(None, None);
-        assert!(manager.host_matches("example.com", "example.com", ",example.com,"));
+        assert!(matchers::host_matches(
+            "example.com",
+            "example.com",
+            ",example.com,"
+        ));
     }
 
     // === add_host_key / update_host_key tests ===
@@ -926,16 +941,17 @@ mod tests {
 
     #[test]
     fn match_hashed_host_invalid_format() {
-        let manager = KnownHostsManager::with_paths(None, None);
         // Invalid format (not enough parts)
-        assert!(!manager.match_hashed_host("example.com", "|1|"));
-        assert!(!manager.match_hashed_host("example.com", "|1|salt"));
+        assert!(!matchers::match_hashed_host("example.com", "|1|"));
+        assert!(!matchers::match_hashed_host("example.com", "|1|salt"));
     }
 
     #[test]
     fn match_hashed_host_invalid_base64() {
-        let manager = KnownHostsManager::with_paths(None, None);
         // Invalid base64 in salt or hash
-        assert!(!manager.match_hashed_host("example.com", "|1|!!!invalid!!!|hash"));
+        assert!(!matchers::match_hashed_host(
+            "example.com",
+            "|1|!!!invalid!!!|hash"
+        ));
     }
 }

@@ -44,7 +44,7 @@ fn match_host_pattern(host_port: &str, host: &str, pattern: &str) -> bool {
     pattern == host || pattern == host_port
 }
 
-fn match_hashed_host(host_port: &str, pattern: &str) -> bool {
+pub(crate) fn match_hashed_host(host_port: &str, pattern: &str) -> bool {
     let mut parts = pattern.split('|').skip(2);
     let Some(salt) = parts.next() else {
         return false;
