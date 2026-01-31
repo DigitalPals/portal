@@ -14,7 +14,7 @@ use parking_lot::Mutex;
 
 use crate::config::settings::VncScalingMode;
 use crate::message::{Message, SessionId, VncMessage};
-use crate::vnc::framebuffer::FrameBuffer;
+use crate::vnc::framebuffer::{DirtyRect, FrameBuffer};
 
 /// Create a VNC framebuffer element using a custom shader widget.
 ///
@@ -521,7 +521,9 @@ impl shader::Primitive for VncPrimitive {
             }
 
             // Recreate texture if dimensions changed
-            if fb.width != pipeline.tex_width || fb.height != pipeline.tex_height {
+            let texture_recreated =
+                fb.width != pipeline.tex_width || fb.height != pipeline.tex_height;
+            if texture_recreated {
                 pipeline.texture = VncPipeline::create_texture(device, fb.width, fb.height);
                 pipeline.bind_group = VncPipeline::create_bind_group(
                     device,
@@ -533,8 +535,21 @@ impl shader::Primitive for VncPrimitive {
                 pipeline.tex_height = fb.height;
             }
 
-            let Some(dirty) = fb.dirty.take() else {
-                return;
+            // If the texture was just recreated, force a full upload so we don't
+            // render an uninitialized (black) texture before real data arrives.
+            let dirty = if texture_recreated {
+                fb.dirty.take();
+                DirtyRect {
+                    x: 0,
+                    y: 0,
+                    width: fb.width,
+                    height: fb.height,
+                }
+            } else {
+                let Some(dirty) = fb.dirty.take() else {
+                    return;
+                };
+                dirty
             };
 
             let stride = fb.width as usize * 4;
