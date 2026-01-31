@@ -366,6 +366,7 @@ pub enum VncMessage {
         host_name: String,
         vnc_session: Arc<VncSession>,
         host_id: Uuid,
+        detected_os: Option<DetectedOs>,
     },
     /// Timer tick — re-render the VNC framebuffer
     RenderTick,
