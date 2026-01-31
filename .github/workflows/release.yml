@@ -116,7 +116,7 @@ jobs:
       - name: Package DEB
         if: runner.os == 'Linux'
         run: |
-          cargo deb --target ${{ matrix.target }} --no-build
+          cargo deb --target ${{ matrix.target }} --no-build --no-strip
           deb_path=$(ls target/${{ matrix.target }}/debian/*.deb | head -n 1)
           mv "$deb_path" portal-${{ needs.prepare.outputs.version }}-${{ matrix.name }}.deb
 
