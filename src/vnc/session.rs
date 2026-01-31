@@ -581,6 +581,12 @@ impl VncSession {
         let last_event_at = Arc::new(Mutex::new(Instant::now()));
         let last_event_at_refresh = last_event_at.clone();
 
+        // Request a full (non-incremental) framebuffer update to ensure we
+        // get the complete screen contents now that the event loop is running.
+        if let Err(e) = vnc.input(X11Event::FullRefresh).await {
+            tracing::warn!("VNC initial full refresh failed: {}", e);
+        }
+
         // Spawn refresh task — only sends refresh requests when the event
         // stream has been idle, avoiding redundant full-screen redraws
         let vnc_refresh = vnc.clone();
@@ -641,6 +647,11 @@ impl VncSession {
                     let _ = event_tx
                         .send(VncSessionEvent::ResolutionChanged(w, h))
                         .await;
+                    // Request full framebuffer after resolution change to
+                    // repopulate the screen (resize clears to black).
+                    if let Err(e) = vnc.input(X11Event::FullRefresh).await {
+                        tracing::warn!("VNC full refresh after resize failed: {}", e);
+                    }
                     if debug_logs {
                         stats_events += 1;
                         stats_last_update = Instant::now();
@@ -840,6 +851,16 @@ impl VncSession {
     }
 
     /// Request a framebuffer refresh (best-effort, rate-limited)
+    pub fn try_request_full_refresh(&self) {
+        if let Err(err) = self.input_tx.try_send(X11Event::FullRefresh) {
+            if self.debug_logs {
+                tracing::debug!("VNC full refresh request dropped: {}", err);
+            }
+        } else if self.debug_logs {
+            tracing::debug!("VNC full refresh requested");
+        }
+    }
+
     pub fn try_request_refresh(&self) {
         let now = Instant::now();
         let mut last = self.last_refresh_sent.lock();
