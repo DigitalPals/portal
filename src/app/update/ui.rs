@@ -164,10 +164,15 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
             Task::none()
         }
         UiMessage::KeyboardEvent(key, modifiers) => handle_keyboard_event(portal, key, modifiers),
-        UiMessage::KeyReleased(key) => {
+        UiMessage::KeyReleased(key, _modifiers) => {
             // Forward key release to VNC session if active
             if let View::VncViewer(session_id) = portal.ui.active_view {
                 if let Some(keysym) = crate::vnc::keysym::key_to_keysym(&key) {
+                    tracing::debug!(
+                        "VNC key release: key={:?} keysym=0x{:04X}",
+                        key,
+                        keysym
+                    );
                     return Task::done(Message::Vnc(VncMessage::KeyEvent {
                         session_id,
                         keysym,
@@ -208,9 +213,23 @@ fn handle_keyboard_event(
             return Task::done(Message::Vnc(VncMessage::ToggleKeyboardPassthrough));
         }
 
-        // In passthrough mode, forward ALL keys to VNC (no local shortcuts)
+        // In passthrough mode, forward ALL keys to VNC (no local shortcuts).
+        // Shift/Ctrl/etc are forwarded as separate key events, so send the
+        // base (lowercase) keysym for characters — the server applies modifiers.
         if passthrough {
-            if let Some(keysym) = crate::vnc::keysym::key_to_keysym(&key) {
+            let passthrough_key = if let Key::Character(c) = &key {
+                let lower: String = c.to_lowercase();
+                Key::Character(lower.into())
+            } else {
+                key.clone()
+            };
+            if let Some(keysym) = crate::vnc::keysym::key_to_keysym(&passthrough_key) {
+                tracing::debug!(
+                    "VNC passthrough key press: original={:?} mapped={:?} keysym=0x{:04X}",
+                    key,
+                    passthrough_key,
+                    keysym
+                );
                 return Task::done(Message::Vnc(VncMessage::KeyEvent {
                     session_id,
                     keysym,
@@ -248,9 +267,15 @@ fn handle_keyboard_event(
             }
         }
 
-        // Allow Ctrl+Shift shortcuts for tab management etc.
+        // Forward remaining keys to VNC (except Ctrl+Shift combos for tab management etc.)
         if !(modifiers.control() && modifiers.shift()) {
             if let Some(keysym) = crate::vnc::keysym::key_to_keysym(&key) {
+                tracing::debug!(
+                    "VNC non-passthrough key press: key={:?} modifiers={:?} keysym=0x{:04X}",
+                    key,
+                    modifiers,
+                    keysym
+                );
                 return Task::done(Message::Vnc(VncMessage::KeyEvent {
                     session_id,
                     keysym,

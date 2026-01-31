@@ -103,6 +103,12 @@ pub fn handle_vnc(portal: &mut Portal, msg: VncMessage) -> Task<Message> {
             pressed,
         } => {
             if let Some(vnc) = portal.vnc_sessions.get(&session_id) {
+                tracing::debug!(
+                    "VNC key event: keysym=0x{:04X} pressed={} char={:?}",
+                    keysym,
+                    pressed,
+                    char::from_u32(keysym).filter(|c| c.is_ascii_graphic())
+                );
                 vnc.session.try_send_key(keysym, pressed);
                 vnc.session.try_request_refresh();
             }

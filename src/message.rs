@@ -470,7 +470,7 @@ pub enum UiMessage {
     /// Keyboard event
     KeyboardEvent(iced::keyboard::Key, iced::keyboard::Modifiers),
     /// Key released event (used for VNC)
-    KeyReleased(iced::keyboard::Key),
+    KeyReleased(iced::keyboard::Key, iced::keyboard::Modifiers),
 }
 
 // ============================================================================
