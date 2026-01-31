@@ -1,6 +1,6 @@
 [package]
 name = "portal"
-version = "0.6.0"
+version = "0.6.1"
 edition = "2024"
 description = "A modern SSH client with GUI"
 authors = ["John"]
@@ -95,6 +95,7 @@ short_description = "A modern SSH client with GUI"
 
 [package.metadata.deb]
 assets = [
+  ["target/release/portal", "usr/bin/portal", "755"],
   ["assets/app-icons/portal.desktop", "usr/share/applications/portal.desktop", "644"],
   ["assets/app-icons/portal.svg", "usr/share/icons/hicolor/scalable/apps/portal.svg", "644"],
   ["assets/app-icons/png/portal-128.png", "usr/share/icons/hicolor/128x128/apps/portal.png", "644"],
@@ -105,6 +106,7 @@ depends = ["libwayland-client0", "libxkbcommon0", "libvulkan1"]
 
 [package.metadata.generate-rpm]
 assets = [
+  { source = "target/release/portal", dest = "/usr/bin/portal", mode = "755" },
   { source = "assets/app-icons/portal.desktop", dest = "/usr/share/applications/portal.desktop", mode = "644" },
   { source = "assets/app-icons/portal.svg", dest = "/usr/share/icons/hicolor/scalable/apps/portal.svg", mode = "644" },
   { source = "assets/app-icons/png/portal-128.png", dest = "/usr/share/icons/hicolor/128x128/apps/portal.png", mode = "644" },
