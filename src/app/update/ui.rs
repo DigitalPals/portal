@@ -167,10 +167,24 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
         UiMessage::KeyReleased(key, _modifiers) => {
             // Forward key release to VNC session if active
             if let View::VncViewer(session_id) = portal.ui.active_view {
-                if let Some(keysym) = crate::vnc::keysym::key_to_keysym(&key) {
+                let passthrough = portal
+                    .vnc_sessions
+                    .get(&session_id)
+                    .map(|v| v.keyboard_passthrough)
+                    .unwrap_or(false);
+                let effective_key = if passthrough {
+                    if let Key::Character(c) = &key {
+                        Key::Character(c.to_lowercase().into())
+                    } else {
+                        key
+                    }
+                } else {
+                    key
+                };
+                if let Some(keysym) = crate::vnc::keysym::key_to_keysym(&effective_key) {
                     tracing::debug!(
                         "VNC key release: key={:?} keysym=0x{:04X}",
-                        key,
+                        effective_key,
                         keysym
                     );
                     return Task::done(Message::Vnc(VncMessage::KeyEvent {
@@ -268,11 +282,47 @@ fn handle_keyboard_event(
         }
 
         // Forward remaining keys to VNC (except Ctrl+Shift combos for tab management etc.)
+        // When Shift is held, Iced may still report lowercase characters on some
+        // platforms. Uppercase single ASCII letters so the correct keysym is sent.
         if !(modifiers.control() && modifiers.shift()) {
-            if let Some(keysym) = crate::vnc::keysym::key_to_keysym(&key) {
+            let effective_key = if modifiers.shift() {
+                if let Key::Character(c) = &key {
+                    match c.chars().next() {
+                        Some(ch) if ch.is_ascii_lowercase() => {
+                            Key::Character(ch.to_ascii_uppercase().to_string().into())
+                        }
+                        Some(ch) => {
+                            // Map US-layout shifted characters (e.g. '2' -> '@')
+                            let shifted = match ch {
+                                '1' => '!', '2' => '@', '3' => '#', '4' => '$',
+                                '5' => '%', '6' => '^', '7' => '&', '8' => '*',
+                                '9' => '(', '0' => ')',
+                                '-' => '_', '=' => '+',
+                                '[' => '{', ']' => '}', '\\' => '|',
+                                ';' => ':', '\'' => '"',
+                                ',' => '<', '.' => '>', '/' => '?',
+                                '`' => '~',
+                                _ => ch,
+                            };
+                            if shifted != ch {
+                                Key::Character(shifted.to_string().into())
+                            } else {
+                                key.clone()
+                            }
+                        }
+                        _ => key.clone(),
+                    }
+                } else {
+                    key.clone()
+                }
+            } else {
+                key.clone()
+            };
+            if let Some(keysym) = crate::vnc::keysym::key_to_keysym(&effective_key) {
                 tracing::debug!(
-                    "VNC non-passthrough key press: key={:?} modifiers={:?} keysym=0x{:04X}",
+                    "VNC non-passthrough key press: key={:?} effective={:?} modifiers={:?} keysym=0x{:04X}",
                     key,
+                    effective_key,
                     modifiers,
                     keysym
                 );
