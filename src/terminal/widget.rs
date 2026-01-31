@@ -20,8 +20,8 @@ use iced::{Background, Border, Color, Element, Event, Length, Rectangle, Shadow,
 use parking_lot::Mutex;
 
 use super::backend::{CursorInfo, EventProxy, RenderCell};
-use super::colors::{DEFAULT_BG, DEFAULT_FG, ansi_to_iced_themed};
 use super::block_elements::render_block_element;
+use super::colors::{DEFAULT_BG, DEFAULT_FG, ansi_to_iced_themed};
 use crate::fonts::{JETBRAINS_MONO_NERD, TerminalFont};
 use crate::theme::TerminalColors;
 

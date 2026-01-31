@@ -82,15 +82,7 @@ impl FrameBuffer {
     }
 
     /// Apply a 16-bit RGB565 image update to the framebuffer (little-endian unless big_endian is true)
-    pub fn apply_raw_565(
-        &mut self,
-        x: u32,
-        y: u32,
-        w: u32,
-        h: u32,
-        data: &[u8],
-        big_endian: bool,
-    ) {
+    pub fn apply_raw_565(&mut self, x: u32, y: u32, w: u32, h: u32, data: &[u8], big_endian: bool) {
         let stride = self.width as usize * 4;
         let row_bytes = w as usize * 2;
         for row in 0..h as usize {
@@ -127,15 +119,7 @@ impl FrameBuffer {
     }
 
     /// Apply a copy rect operation
-    pub fn apply_copy(
-        &mut self,
-        dst_x: u32,
-        dst_y: u32,
-        src_x: u32,
-        src_y: u32,
-        w: u32,
-        h: u32,
-    ) {
+    pub fn apply_copy(&mut self, dst_x: u32, dst_y: u32, src_x: u32, src_y: u32, w: u32, h: u32) {
         let stride = self.width as usize * 4;
         let mut temp = vec![0u8; w as usize * 4];
         for row in 0..h as usize {
