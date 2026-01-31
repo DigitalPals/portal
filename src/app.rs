@@ -765,8 +765,8 @@ impl Portal {
                 iced::Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => {
                     Some(Message::Ui(UiMessage::KeyboardEvent(key, modifiers)))
                 }
-                iced::Event::Keyboard(keyboard::Event::KeyReleased { key, .. }) => {
-                    Some(Message::Ui(UiMessage::KeyReleased(key)))
+                iced::Event::Keyboard(keyboard::Event::KeyReleased { key, modifiers, .. }) => {
+                    Some(Message::Ui(UiMessage::KeyReleased(key, modifiers)))
                 }
                 _ => None,
             }),
