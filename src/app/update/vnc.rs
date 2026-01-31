@@ -34,14 +34,16 @@ pub fn handle_vnc(portal: &mut Portal, msg: VncMessage) -> Task<Message> {
             }
 
             // Create history entry
+            let mut history_entry_id = uuid::Uuid::nil();
             if let Some(host) = portal.config.hosts.find_host(host_id) {
                 let entry = crate::config::HistoryEntry::new(
                     host.id,
                     host.name.clone(),
                     host.hostname.clone(),
                     host.username.clone(),
-                    crate::config::SessionType::Ssh, // Reuse SSH type for now
+                    crate::config::SessionType::Vnc,
                 );
+                history_entry_id = entry.id;
                 portal.config.history.add_entry(entry);
                 if let Err(e) = portal.config.history.save() {
                     tracing::error!("Failed to save history config: {}", e);
@@ -64,6 +66,7 @@ pub fn handle_vnc(portal: &mut Portal, msg: VncMessage) -> Task<Message> {
                     quality_level: crate::message::QualityLevel::High,
                     monitors: Vec::new(),
                     selected_monitor: None,
+                    history_entry_id,
                 },
             );
 
@@ -116,7 +119,15 @@ pub fn handle_vnc(portal: &mut Portal, msg: VncMessage) -> Task<Message> {
         }
         VncMessage::Disconnected(session_id) => {
             tracing::info!("VNC disconnected: {}", session_id);
-            portal.vnc_sessions.remove(&session_id);
+            if let Some(vnc) = portal.vnc_sessions.remove(&session_id) {
+                portal
+                    .config
+                    .history
+                    .mark_disconnected(vnc.history_entry_id);
+                if let Err(e) = portal.config.history.save() {
+                    tracing::error!("Failed to save history config: {}", e);
+                }
+            }
             portal.close_tab(session_id);
             portal
                 .toast_manager

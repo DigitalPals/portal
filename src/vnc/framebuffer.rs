@@ -94,7 +94,7 @@ impl FrameBuffer {
             let mut dst = dst_offset;
             for col in 0..w as usize {
                 let idx = src_offset + col * 2;
-                if idx + 1 >= data.len() || dst + 3 >= self.pixels.len() {
+                if idx + 1 >= data.len() || dst + 4 > self.pixels.len() {
                     break;
                 }
                 let pixel = if big_endian {
@@ -122,7 +122,14 @@ impl FrameBuffer {
     pub fn apply_copy(&mut self, dst_x: u32, dst_y: u32, src_x: u32, src_y: u32, w: u32, h: u32) {
         let stride = self.width as usize * 4;
         let mut temp = vec![0u8; w as usize * 4];
-        for row in 0..h as usize {
+        // Iterate in reverse row order when dst overlaps src below,
+        // to avoid overwriting source data before it's copied.
+        let rows: Box<dyn Iterator<Item = usize>> = if dst_y > src_y {
+            Box::new((0..h as usize).rev())
+        } else {
+            Box::new(0..h as usize)
+        };
+        for row in rows {
             let src_offset = (src_y as usize + row) * stride + src_x as usize * 4;
             let dst_offset = (dst_y as usize + row) * stride + dst_x as usize * 4;
             let len = w as usize * 4;

@@ -164,7 +164,7 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
             Task::none()
         }
         UiMessage::KeyboardEvent(key, modifiers) => handle_keyboard_event(portal, key, modifiers),
-        UiMessage::KeyReleased(key, _modifiers) => {
+        UiMessage::KeyReleased(key, modifiers) => {
             // Forward key release to VNC session if active
             if let View::VncViewer(session_id) = portal.ui.active_view {
                 let passthrough = portal
@@ -179,7 +179,53 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
                         key
                     }
                 } else {
-                    key
+                    // Apply the same Shift mapping as key press so we release
+                    // the correct keysym (avoids phantom key stuck on server).
+                    if modifiers.shift() {
+                        if let Key::Character(c) = &key {
+                            match c.chars().next() {
+                                Some(ch) if ch.is_ascii_lowercase() => {
+                                    Key::Character(ch.to_ascii_uppercase().to_string().into())
+                                }
+                                Some(ch) => {
+                                    let shifted = match ch {
+                                        '1' => '!',
+                                        '2' => '@',
+                                        '3' => '#',
+                                        '4' => '$',
+                                        '5' => '%',
+                                        '6' => '^',
+                                        '7' => '&',
+                                        '8' => '*',
+                                        '9' => '(',
+                                        '0' => ')',
+                                        '-' => '_',
+                                        '=' => '+',
+                                        '[' => '{',
+                                        ']' => '}',
+                                        '\\' => '|',
+                                        ';' => ':',
+                                        '\'' => '"',
+                                        ',' => '<',
+                                        '.' => '>',
+                                        '/' => '?',
+                                        '`' => '~',
+                                        _ => ch,
+                                    };
+                                    if shifted != ch {
+                                        Key::Character(shifted.to_string().into())
+                                    } else {
+                                        key.clone()
+                                    }
+                                }
+                                _ => key.clone(),
+                            }
+                        } else {
+                            key
+                        }
+                    } else {
+                        key
+                    }
                 };
                 if let Some(keysym) = crate::vnc::keysym::key_to_keysym(&effective_key) {
                     tracing::debug!(
@@ -281,9 +327,30 @@ fn handle_keyboard_event(
             }
         }
 
+        // Forward modifier key presses (Shift, Ctrl, Alt) to VNC so the remote
+        // sees the correct modifier state even in non-passthrough mode.
+        if let Key::Named(named) = &key {
+            let modifier_keysym = match named {
+                keyboard::key::Named::Shift => Some(0xFFE1),   // XK_Shift_L
+                keyboard::key::Named::Control => Some(0xFFE3), // XK_Control_L
+                keyboard::key::Named::Alt => Some(0xFFE9),     // XK_Alt_L
+                keyboard::key::Named::Super => Some(0xFFEB),   // XK_Super_L
+                _ => None,
+            };
+            if let Some(keysym) = modifier_keysym {
+                return Task::done(Message::Vnc(VncMessage::KeyEvent {
+                    session_id,
+                    keysym,
+                    pressed: true,
+                }));
+            }
+        }
+
         // Forward remaining keys to VNC (except Ctrl+Shift combos for tab management etc.)
         // When Shift is held, Iced may still report lowercase characters on some
         // platforms. Uppercase single ASCII letters so the correct keysym is sent.
+        // NOTE: The Shift+key mapping assumes US QWERTY layout. Passthrough mode
+        // is recommended for non-US layouts since it delegates layout handling to the server.
         if !(modifiers.control() && modifiers.shift()) {
             let effective_key = if modifiers.shift() {
                 if let Key::Character(c) = &key {

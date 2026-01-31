@@ -217,6 +217,7 @@ fn build_entry_card(
         SessionType::Ssh => icons::ui::TERMINAL,
         SessionType::Sftp => icons::ui::HARD_DRIVE,
         SessionType::Local => icons::ui::TERMINAL,
+        SessionType::Vnc => icons::ui::TERMINAL,
     };
 
     let (icon_data, icon_bg) = if entry.host_id.is_nil() {
