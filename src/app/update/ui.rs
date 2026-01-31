@@ -193,6 +193,33 @@ fn handle_keyboard_event(
 
     // Priority 2: VNC viewer — forward all keys to remote (except Ctrl+Shift combos for UI)
     if let View::VncViewer(session_id) = portal.ui.active_view {
+        let passthrough = portal
+            .vnc_sessions
+            .get(&session_id)
+            .map(|v| v.keyboard_passthrough)
+            .unwrap_or(false);
+
+        // Ctrl+Shift+Escape: escape hatch to toggle keyboard passthrough off
+        if passthrough
+            && modifiers.control()
+            && modifiers.shift()
+            && matches!(&key, Key::Named(keyboard::key::Named::Escape))
+        {
+            return Task::done(Message::Vnc(VncMessage::ToggleKeyboardPassthrough));
+        }
+
+        // In passthrough mode, forward ALL keys to VNC (no local shortcuts)
+        if passthrough {
+            if let Some(keysym) = crate::vnc::keysym::key_to_keysym(&key) {
+                return Task::done(Message::Vnc(VncMessage::KeyEvent {
+                    session_id,
+                    keysym,
+                    pressed: true,
+                }));
+            }
+            return Task::none();
+        }
+
         // F11 toggles fullscreen
         if let Key::Named(keyboard::key::Named::F11) = &key {
             return Task::done(Message::Vnc(VncMessage::ToggleFullscreen));

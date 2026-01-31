@@ -881,6 +881,26 @@ impl VncSession {
         }
     }
 
+    /// Send a mouse event synchronously (non-blocking, for use from widget events)
+    pub fn try_send_mouse(&self, x: u16, y: u16, buttons: u8) {
+        if self.mouse_rate_limit > Duration::ZERO {
+            let now = Instant::now();
+            let mut last = self.last_mouse_sent.lock();
+            if now.duration_since(*last) < self.mouse_rate_limit {
+                return;
+            }
+            *last = now;
+        }
+        if let Err(err) = self
+            .input_tx
+            .try_send(X11Event::PointerEvent((x, y, buttons).into()))
+        {
+            if self.debug_logs {
+                tracing::debug!("VNC mouse event dropped: {}", err);
+            }
+        }
+    }
+
     /// Send clipboard text to the VNC server
     pub async fn send_clipboard(&self, text: String) {
         if let Err(err) = self.input_tx.send(X11Event::CopyText(text)).await {
