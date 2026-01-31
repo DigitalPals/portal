@@ -64,6 +64,7 @@ impl Portal {
         self.active_tab = Some(tab_id);
         self.ui.active_view = View::VncViewer(tab_id);
         self.ui.terminal_captured = false;
+        self.hide_sidebar_for_session();
     }
 
     pub(super) fn set_active_tab(&mut self, tab_id: Uuid) {
