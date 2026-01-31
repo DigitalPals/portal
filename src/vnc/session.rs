@@ -32,6 +32,8 @@ pub enum VncSessionEvent {
     Disconnected,
     /// Bell notification
     Bell,
+    /// Server sent clipboard text
+    ClipboardText(String),
 }
 
 // ── Apple Remote Desktop (ARD) authentication ───────────────────────────────
@@ -748,7 +750,11 @@ impl VncSession {
                     }
                 }
                 VncEvent::SetCursor(_rect, _data) => {}
-                VncEvent::Text(_text) => {}
+                VncEvent::Text(text) => {
+                    if !text.is_empty() {
+                        let _ = event_tx.send(VncSessionEvent::ClipboardText(text)).await;
+                    }
+                }
                 _ => {}
             }
 
@@ -871,6 +877,15 @@ impl VncSession {
         {
             if self.debug_logs {
                 tracing::debug!("VNC key event dropped: {}", err);
+            }
+        }
+    }
+
+    /// Send clipboard text to the VNC server
+    pub async fn send_clipboard(&self, text: String) {
+        if let Err(err) = self.input_tx.send(X11Event::CopyText(text)).await {
+            if self.debug_logs {
+                tracing::debug!("VNC clipboard send failed: {}", err);
             }
         }
     }

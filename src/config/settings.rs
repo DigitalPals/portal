@@ -15,6 +15,15 @@ pub enum VncEncodingPreference {
     Raw,
 }
 
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum VncScalingMode {
+    #[default]
+    Fit,
+    Actual,
+    Stretch,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VncSettings {
     /// Preferred encoding selection
@@ -40,6 +49,14 @@ pub struct VncSettings {
     /// Request remote desktop resize based on client window size
     #[serde(default = "default_vnc_remote_resize")]
     pub remote_resize: bool,
+
+    /// Enable bidirectional clipboard sharing
+    #[serde(default = "default_vnc_clipboard_sharing")]
+    pub clipboard_sharing: bool,
+
+    /// Scaling mode for VNC display
+    #[serde(default)]
+    pub scaling_mode: VncScalingMode,
 }
 
 impl Default for VncSettings {
@@ -51,6 +68,8 @@ impl Default for VncSettings {
             max_events_per_tick: default_vnc_max_events_per_tick(),
             pointer_interval_ms: default_vnc_pointer_interval_ms(),
             remote_resize: default_vnc_remote_resize(),
+            clipboard_sharing: default_vnc_clipboard_sharing(),
+            scaling_mode: VncScalingMode::default(),
         }
     }
 }
@@ -121,6 +140,10 @@ fn default_vnc_pointer_interval_ms() -> u64 {
 
 fn default_vnc_remote_resize() -> bool {
     false
+}
+
+fn default_vnc_clipboard_sharing() -> bool {
+    true
 }
 
 /// Application settings

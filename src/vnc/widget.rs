@@ -11,6 +11,7 @@ use iced::widget::shader;
 use iced::{Element, Length, Rectangle};
 use parking_lot::Mutex;
 
+use crate::config::settings::VncScalingMode;
 use crate::message::Message;
 use crate::vnc::framebuffer::FrameBuffer;
 
@@ -18,9 +19,13 @@ use crate::vnc::framebuffer::FrameBuffer;
 ///
 /// The shader updates the GPU texture in-place each frame, avoiding
 /// the flicker that the Image widget causes with new Handle IDs.
-pub fn vnc_framebuffer<'a>(framebuffer: &Arc<Mutex<FrameBuffer>>) -> Element<'a, Message> {
+pub fn vnc_framebuffer<'a>(
+    framebuffer: &Arc<Mutex<FrameBuffer>>,
+    scaling_mode: VncScalingMode,
+) -> Element<'a, Message> {
     let program = VncProgram {
         framebuffer: framebuffer.clone(),
+        scaling_mode,
     };
 
     shader::Shader::new(program)
@@ -32,12 +37,14 @@ pub fn vnc_framebuffer<'a>(framebuffer: &Arc<Mutex<FrameBuffer>>) -> Element<'a,
 /// The shader program that reads the VNC framebuffer and renders it.
 struct VncProgram {
     framebuffer: Arc<Mutex<FrameBuffer>>,
+    scaling_mode: VncScalingMode,
 }
 
 /// Primitive carrying framebuffer snapshot to the GPU pipeline.
 #[derive(Debug)]
 struct VncPrimitive {
     framebuffer: Arc<Mutex<FrameBuffer>>,
+    scaling_mode: VncScalingMode,
 }
 
 /// The wgpu pipeline that owns the texture and renders it.
@@ -184,7 +191,7 @@ impl shader::Primitive for VncPrimitive {
         pipeline: &mut Self::Pipeline,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        _bounds: &Rectangle,
+        bounds: &Rectangle,
         _viewport: &shader::Viewport,
     ) {
         // Snapshot the framebuffer under the lock, then release it before
@@ -270,6 +277,71 @@ impl shader::Primitive for VncPrimitive {
                 depth_or_array_layers: 1,
             },
         );
+
+        // Update vertex positions based on scaling mode
+        let (sx, sy) = match self.scaling_mode {
+            VncScalingMode::Stretch => (1.0f32, 1.0f32),
+            VncScalingMode::Fit => {
+                if bounds.width > 0.0
+                    && bounds.height > 0.0
+                    && pipeline.tex_width > 0
+                    && pipeline.tex_height > 0
+                {
+                    let view_aspect = bounds.width / bounds.height;
+                    let fb_aspect = pipeline.tex_width as f32 / pipeline.tex_height as f32;
+                    if fb_aspect > view_aspect {
+                        // Framebuffer wider than view — fit width, letterbox height
+                        (1.0, view_aspect / fb_aspect)
+                    } else {
+                        // Framebuffer taller — fit height, pillarbox width
+                        (fb_aspect / view_aspect, 1.0)
+                    }
+                } else {
+                    (1.0, 1.0)
+                }
+            }
+            VncScalingMode::Actual => {
+                if bounds.width > 0.0
+                    && bounds.height > 0.0
+                    && pipeline.tex_width > 0
+                    && pipeline.tex_height > 0
+                {
+                    let sx = (pipeline.tex_width as f32 / bounds.width).min(1.0);
+                    let sy = (pipeline.tex_height as f32 / bounds.height).min(1.0);
+                    (sx, sy)
+                } else {
+                    (1.0, 1.0)
+                }
+            }
+        };
+
+        let vertices = [
+            Vertex {
+                position: [-sx, -sy],
+                tex_coords: [0.0, 1.0],
+            },
+            Vertex {
+                position: [sx, -sy],
+                tex_coords: [1.0, 1.0],
+            },
+            Vertex {
+                position: [-sx, sy],
+                tex_coords: [0.0, 0.0],
+            },
+            Vertex {
+                position: [sx, -sy],
+                tex_coords: [1.0, 1.0],
+            },
+            Vertex {
+                position: [sx, sy],
+                tex_coords: [1.0, 0.0],
+            },
+            Vertex {
+                position: [-sx, sy],
+                tex_coords: [0.0, 0.0],
+            },
+        ];
+        queue.write_buffer(&pipeline.vertex_buffer, 0, bytemuck::cast_slice(&vertices));
     }
 
     fn draw(&self, pipeline: &Self::Pipeline, render_pass: &mut wgpu::RenderPass<'_>) -> bool {
@@ -381,7 +453,7 @@ impl shader::Pipeline for VncPipeline {
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("vnc_vertex_buffer"),
             contents: bytemuck::cast_slice(QUAD_VERTICES),
-            usage: wgpu::BufferUsages::VERTEX,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
         });
 
         Self {
@@ -410,6 +482,7 @@ impl shader::Program<Message> for VncProgram {
     ) -> Self::Primitive {
         VncPrimitive {
             framebuffer: self.framebuffer.clone(),
+            scaling_mode: self.scaling_mode,
         }
     }
 }

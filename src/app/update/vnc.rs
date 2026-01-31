@@ -4,6 +4,7 @@ use iced::Task;
 
 use crate::app::Portal;
 use crate::app::managers::session_manager::VncActiveSession;
+use crate::config::settings::VncScalingMode;
 use crate::message::{Message, VncMessage};
 use crate::views::tabs::Tab;
 use crate::views::toast::Toast;
@@ -48,12 +49,17 @@ pub fn handle_vnc(portal: &mut Portal, msg: VncMessage) -> Task<Message> {
             }
 
             // Store VNC session
+            let now = std::time::Instant::now();
             portal.vnc_sessions.insert(
                 session_id,
                 VncActiveSession {
                     session: vnc_session,
                     host_name: host_name.clone(),
-                    session_start: std::time::Instant::now(),
+                    session_start: now,
+                    frame_count: 0,
+                    fps_last_check: now,
+                    current_fps: 0.0,
+                    fullscreen: false,
                 },
             );
 
@@ -73,8 +79,18 @@ pub fn handle_vnc(portal: &mut Portal, msg: VncMessage) -> Task<Message> {
             Task::none()
         }
         VncMessage::RenderTick => {
-            // The shader widget reads the framebuffer directly in draw().
-            // This tick just triggers a UI refresh so the shader re-renders.
+            // Update FPS counter for the active VNC session
+            if let crate::app::View::VncViewer(session_id) = portal.ui.active_view {
+                if let Some(vnc) = portal.vnc_sessions.get_mut(&session_id) {
+                    vnc.frame_count += 1;
+                    let elapsed = vnc.fps_last_check.elapsed();
+                    if elapsed.as_secs_f32() >= 1.0 {
+                        vnc.current_fps = vnc.frame_count as f32 / elapsed.as_secs_f32();
+                        vnc.frame_count = 0;
+                        vnc.fps_last_check = std::time::Instant::now();
+                    }
+                }
+            }
             Task::none()
         }
         VncMessage::KeyEvent {
@@ -102,6 +118,114 @@ pub fn handle_vnc(portal: &mut Portal, msg: VncMessage) -> Task<Message> {
             portal
                 .toast_manager
                 .push(Toast::error(format!("VNC: {}", err)));
+            Task::none()
+        }
+        VncMessage::ClipboardReceived(_session_id, text) => {
+            if portal.prefs.vnc_settings.clipboard_sharing {
+                // Write to system clipboard via iced
+                return iced::clipboard::write(text);
+            }
+            Task::none()
+        }
+        VncMessage::ClipboardSend(session_id, text) => {
+            if portal.prefs.vnc_settings.clipboard_sharing {
+                if let Some(vnc) = portal.vnc_sessions.get(&session_id) {
+                    let session = vnc.session.clone();
+                    return Task::perform(
+                        async move { session.send_clipboard(text).await },
+                        |_| Message::Noop,
+                    );
+                }
+            }
+            Task::none()
+        }
+        VncMessage::SendSpecialKeys {
+            session_id,
+            keysyms,
+        } => {
+            if let Some(vnc) = portal.vnc_sessions.get(&session_id) {
+                // Press all keys, then release in reverse order
+                for &keysym in &keysyms {
+                    vnc.session.try_send_key(keysym, true);
+                }
+                for &keysym in keysyms.iter().rev() {
+                    vnc.session.try_send_key(keysym, false);
+                }
+                vnc.session.try_request_refresh();
+            }
+            Task::none()
+        }
+        VncMessage::ToggleFullscreen => {
+            if let crate::app::View::VncViewer(session_id) = portal.ui.active_view {
+                if let Some(vnc) = portal.vnc_sessions.get_mut(&session_id) {
+                    vnc.fullscreen = !vnc.fullscreen;
+                    if vnc.fullscreen {
+                        portal.ui.sidebar_state_before_session = Some(portal.ui.sidebar_state);
+                        portal.ui.sidebar_state = crate::app::SidebarState::Hidden;
+                    } else {
+                        portal.restore_sidebar_after_session();
+                    }
+                }
+            }
+            Task::none()
+        }
+        VncMessage::CaptureScreenshot(session_id) => {
+            if let Some(vnc) = portal.vnc_sessions.get(&session_id) {
+                let fb = vnc.session.framebuffer.clone();
+                let host_name = vnc.host_name.clone();
+                return Task::perform(
+                    async move {
+                        let (width, height, pixels) = {
+                            let fb = fb.lock();
+                            (fb.width, fb.height, fb.pixels.clone())
+                        };
+                        if width == 0 || height == 0 {
+                            return Err("Empty framebuffer".to_string());
+                        }
+                        // Convert BGRA to RGBA for PNG encoding
+                        let mut rgba = pixels;
+                        for chunk in rgba.chunks_exact_mut(4) {
+                            chunk.swap(0, 2);
+                        }
+
+                        // Save to user's pictures directory or home
+                        let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
+                        let filename = format!("vnc_{}_{}.png", host_name, timestamp);
+                        let dir = directories::UserDirs::new()
+                            .and_then(|d| d.picture_dir().map(|p| p.to_path_buf()))
+                            .unwrap_or_else(|| {
+                                directories::UserDirs::new()
+                                    .map(|d| d.home_dir().to_path_buf())
+                                    .unwrap_or_else(|| std::path::PathBuf::from("."))
+                            });
+                        let path = dir.join(&filename);
+
+                        image::save_buffer(&path, &rgba, width, height, image::ColorType::Rgba8)
+                            .map_err(|e| format!("Failed to save screenshot: {}", e))?;
+
+                        Ok(path.display().to_string())
+                    },
+                    |result| match result {
+                        Ok(path) => Message::Vnc(VncMessage::ScreenshotSaved(path)),
+                        Err(e) => Message::Vnc(VncMessage::Error(e)),
+                    },
+                );
+            }
+            Task::none()
+        }
+        VncMessage::ScreenshotSaved(path) => {
+            portal
+                .toast_manager
+                .push(Toast::success(format!("Screenshot saved: {}", path)));
+            Task::none()
+        }
+        VncMessage::CycleScalingMode => {
+            portal.prefs.vnc_settings.scaling_mode = match portal.prefs.vnc_settings.scaling_mode {
+                VncScalingMode::Fit => VncScalingMode::Actual,
+                VncScalingMode::Actual => VncScalingMode::Stretch,
+                VncScalingMode::Stretch => VncScalingMode::Fit,
+            };
+            portal.save_settings();
             Task::none()
         }
     }
