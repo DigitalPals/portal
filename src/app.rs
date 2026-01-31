@@ -89,6 +89,59 @@ impl SidebarState {
     }
 }
 
+/// Aggregated UI/navigation state for the app.
+#[derive(Debug)]
+pub struct UiState {
+    pub active_view: View,
+    pub search_query: String,
+    pub hovered_host: Option<Uuid>,
+    pub hovered_tab: Option<Uuid>,
+    pub sidebar_state: SidebarState,
+    pub sidebar_state_before_session: Option<SidebarState>, // Saved state before hiding for terminal
+    pub sidebar_selection: SidebarMenuItem,
+    pub window_size: iced::Size,
+    pub sidebar_manually_set: bool, // True if user manually changed sidebar state
+    pub focus_section: FocusSection,
+    pub sidebar_focus_index: usize,
+    pub tab_focus_index: usize,
+    pub host_grid_focus_index: Option<usize>,
+    pub history_focus_index: Option<usize>,
+    pub terminal_captured: bool,
+}
+
+/// User preference state (theme, fonts, sizing).
+#[derive(Debug)]
+pub struct PreferencesState {
+    pub theme_id: ThemeId,
+    pub system_ui_scale: f32,           // Detected at startup, read-only
+    pub ui_scale_override: Option<f32>, // User override from settings
+    pub terminal_font_size: f32,
+    pub terminal_font: crate::fonts::TerminalFont,
+    pub sftp_column_widths: crate::views::sftp::ColumnWidths,
+    pub vnc_settings: crate::config::settings::VncSettings,
+}
+
+/// Configuration-backed state.
+#[derive(Debug)]
+pub struct ConfigState {
+    pub hosts: HostsConfig,
+    pub snippets: SnippetsConfig,
+    pub history: HistoryConfig,
+    pub snippet_history: SnippetHistoryConfig,
+}
+
+/// Snippets page state.
+#[derive(Debug)]
+pub struct SnippetUiState {
+    pub executions: SnippetExecutionManager,
+    pub search_query: String,
+    pub editing: Option<SnippetEditState>,
+    pub hovered_snippet: Option<Uuid>,
+    pub selected_snippet: Option<Uuid>,
+    /// Currently viewed history entry (None = show current execution)
+    pub viewed_history_entry: Option<Uuid>,
+}
+
 /// State for editing a snippet (name, command, description, selected hosts)
 #[derive(Debug, Clone)]
 pub struct SnippetEditState {
@@ -142,16 +195,7 @@ impl Default for SnippetEditState {
 /// Main application state
 pub struct Portal {
     // UI state
-    active_view: View,
-    search_query: String,
-    hovered_host: Option<Uuid>,
-    hovered_tab: Option<Uuid>,
-
-    // Sidebar state
-    sidebar_state: SidebarState,
-    sidebar_state_before_session: Option<SidebarState>, // Saved state before hiding for terminal
-    sidebar_selection: SidebarMenuItem,
-
+    ui: UiState,
     // Tab management
     tabs: Vec<Tab>,
     active_tab: Option<Uuid>,
@@ -165,52 +209,15 @@ pub struct Portal {
     // VNC sessions (separate from terminal sessions)
     pub(crate) vnc_sessions: std::collections::HashMap<SessionId, VncActiveSession>,
 
-    // Theme preference
-    theme_id: ThemeId,
-
-    // UI scale settings
-    system_ui_scale: f32,           // Detected at startup, read-only
-    ui_scale_override: Option<f32>, // User override from settings
-
-    // Terminal settings
-    terminal_font_size: f32,
-    terminal_font: crate::fonts::TerminalFont,
-
-    // SFTP settings
-    sftp_column_widths: crate::views::sftp::ColumnWidths,
-
-    // VNC settings
-    vnc_settings: crate::config::settings::VncSettings,
-
-    // Data from config
-    hosts_config: HostsConfig,
-    snippets_config: SnippetsConfig,
-    history_config: HistoryConfig,
-    snippet_history: SnippetHistoryConfig,
+    // Preferences and config
+    prefs: PreferencesState,
+    config: ConfigState,
 
     // Toast notifications
     toast_manager: ToastManager,
 
-    // Responsive layout
-    window_size: iced::Size,
-    sidebar_manually_set: bool, // True if user manually changed sidebar state
-
-    // Keyboard navigation focus state
-    focus_section: FocusSection,
-    sidebar_focus_index: usize,
-    tab_focus_index: usize,
-    host_grid_focus_index: Option<usize>,
-    history_focus_index: Option<usize>,
-    terminal_captured: bool,
-
     // Snippets page state
-    snippet_executions: SnippetExecutionManager,
-    snippet_search_query: String,
-    snippet_editing: Option<SnippetEditState>,
-    hovered_snippet: Option<Uuid>,
-    selected_snippet: Option<Uuid>,
-    /// Currently viewed history entry (None = show current execution)
-    viewed_history_entry: Option<Uuid>,
+    snippets: SnippetUiState,
 }
 
 impl Portal {
@@ -291,13 +298,24 @@ impl Portal {
         tracing::info!("System UI scale: {}", system_ui_scale);
 
         let app = Self {
-            active_view: View::HostGrid,
-            search_query: String::new(),
-            hovered_host: None,
-            hovered_tab: None,
-            sidebar_state: SidebarState::Expanded,
-            sidebar_state_before_session: None,
-            sidebar_selection: SidebarMenuItem::Hosts,
+            ui: UiState {
+                active_view: View::HostGrid,
+                search_query: String::new(),
+                hovered_host: None,
+                hovered_tab: None,
+                sidebar_state: SidebarState::Expanded,
+                sidebar_state_before_session: None,
+                sidebar_selection: SidebarMenuItem::Hosts,
+                window_size: iced::Size::new(1200.0, 800.0),
+                sidebar_manually_set: false,
+                // Focus navigation state
+                focus_section: FocusSection::Content,
+                sidebar_focus_index: 0,
+                tab_focus_index: 0,
+                host_grid_focus_index: None,
+                history_focus_index: None,
+                terminal_captured: false,
+            },
             tabs: Vec::new(),
             active_tab: None,
             sessions: SessionManager::new(),
@@ -305,35 +323,30 @@ impl Portal {
             file_viewers: FileViewerManager::new(),
             dialogs: DialogManager::new(),
             vnc_sessions: std::collections::HashMap::new(),
-            theme_id: settings_config.theme,
-            system_ui_scale,
-            ui_scale_override: settings_config.ui_scale,
-            terminal_font_size: settings_config.terminal_font_size,
-            terminal_font: settings_config.terminal_font,
-            sftp_column_widths: settings_config.sftp_column_widths,
-            vnc_settings: settings_config.vnc.apply_env_overrides(),
-            hosts_config,
-            snippets_config,
-            history_config,
-            snippet_history,
+            prefs: PreferencesState {
+                theme_id: settings_config.theme,
+                system_ui_scale,
+                ui_scale_override: settings_config.ui_scale,
+                terminal_font_size: settings_config.terminal_font_size,
+                terminal_font: settings_config.terminal_font,
+                sftp_column_widths: settings_config.sftp_column_widths,
+                vnc_settings: settings_config.vnc.apply_env_overrides(),
+            },
+            config: ConfigState {
+                hosts: hosts_config,
+                snippets: snippets_config,
+                history: history_config,
+                snippet_history,
+            },
             toast_manager: ToastManager::new(),
-            window_size: iced::Size::new(1200.0, 800.0),
-            sidebar_manually_set: false,
-            // Focus navigation state
-            focus_section: FocusSection::Content,
-            sidebar_focus_index: 0,
-            tab_focus_index: 0,
-            host_grid_focus_index: None,
-            history_focus_index: None,
-            terminal_captured: false,
-
-            // Snippets page state
-            snippet_executions: SnippetExecutionManager::new(),
-            snippet_search_query: String::new(),
-            snippet_editing: None,
-            hovered_snippet: None,
-            selected_snippet: None,
-            viewed_history_entry: None,
+            snippets: SnippetUiState {
+                executions: SnippetExecutionManager::new(),
+                search_query: String::new(),
+                editing: None,
+                hovered_snippet: None,
+                selected_snippet: None,
+                viewed_history_entry: None,
+            },
         };
 
         // Focus the search input on startup
@@ -360,39 +373,39 @@ impl Portal {
 
     /// Build the view
     pub fn view(&self) -> Element<'_, Message> {
-        let all_cards = host_cards(&self.hosts_config);
-        let all_groups = group_cards(&self.hosts_config);
+        let all_cards = host_cards(&self.config.hosts);
+        let all_groups = group_cards(&self.config.hosts);
 
         // Filter based on search
-        let filtered_cards = filter_host_cards(&self.search_query, all_cards);
-        let filtered_groups = filter_group_cards(&self.search_query, all_groups);
+        let filtered_cards = filter_host_cards(&self.ui.search_query, all_cards);
+        let filtered_groups = filter_group_cards(&self.ui.search_query, all_groups);
 
-        let theme = get_theme(self.theme_id);
+        let theme = get_theme(self.prefs.theme_id);
         let fonts = ScaledFonts::new(self.effective_ui_scale());
 
         // Sidebar (new collapsible icon menu)
         let sidebar = sidebar_view(
             theme,
             fonts,
-            self.sidebar_state,
-            self.sidebar_selection,
-            self.focus_section,
-            self.sidebar_focus_index,
+            self.ui.sidebar_state,
+            self.ui.sidebar_selection,
+            self.ui.focus_section,
+            self.ui.sidebar_focus_index,
         );
 
         // Main content - prioritize active sessions over sidebar selection
-        let main_content: Element<'_, Message> = match &self.active_view {
+        let main_content: Element<'_, Message> = match &self.ui.active_view {
             View::Settings => settings_page_view(
                 SettingsPageContext {
-                    current_theme: self.theme_id,
-                    terminal_font_size: self.terminal_font_size,
-                    terminal_font: self.terminal_font,
-                    snippet_history_enabled: self.snippet_history.enabled,
-                    snippet_store_command: self.snippet_history.store_command,
-                    snippet_store_output: self.snippet_history.store_output,
-                    snippet_redact_output: self.snippet_history.redact_output,
+                    current_theme: self.prefs.theme_id,
+                    terminal_font_size: self.prefs.terminal_font_size,
+                    terminal_font: self.prefs.terminal_font,
+                    snippet_history_enabled: self.config.snippet_history.enabled,
+                    snippet_store_command: self.config.snippet_history.store_command,
+                    snippet_store_output: self.config.snippet_history.store_output,
+                    snippet_redact_output: self.config.snippet_history.redact_output,
                     ui_scale: self.effective_ui_scale(),
-                    system_ui_scale: self.system_ui_scale,
+                    system_ui_scale: self.prefs.system_ui_scale,
                     has_ui_scale_override: self.has_ui_scale_override(),
                 },
                 theme,
@@ -416,8 +429,8 @@ impl Portal {
                         session.session_start,
                         &session.host_name,
                         status_message,
-                        self.terminal_font_size,
-                        self.terminal_font,
+                        self.prefs.terminal_font_size,
+                        self.prefs.terminal_font,
                         move |_sid, bytes| {
                             Message::Session(SessionMessage::Input(session_id, bytes))
                         },
@@ -433,7 +446,8 @@ impl Portal {
                 if let Some(state) = self.sftp.get_tab(*tab_id) {
                     // Build available sources list for dropdown
                     let available_hosts: Vec<_> = self
-                        .hosts_config
+                        .config
+                        .hosts
                         .hosts
                         .iter()
                         .map(|h| (h.id, h.name.clone()))
@@ -460,85 +474,87 @@ impl Portal {
             View::Snippets => {
                 // Check if results panel will be visible
                 let results_panel_visible = self
+                    .snippets
                     .selected_snippet
                     .map(|id| {
-                        self.snippet_executions.get_active(id).is_some()
-                            || self.snippet_executions.get_last_result(id).is_some()
+                        self.snippets.executions.get_active(id).is_some()
+                            || self.snippets.executions.get_last_result(id).is_some()
                     })
                     .unwrap_or(false);
 
                 // Calculate responsive column count for snippet grid
                 let column_count = crate::views::snippet_grid::calculate_columns(
-                    self.window_size.width,
-                    self.sidebar_state,
+                    self.ui.window_size.width,
+                    self.ui.sidebar_state,
                     results_panel_visible,
                 );
 
                 // Collect available hosts for the edit form
                 let hosts: Vec<_> = self
-                    .hosts_config
+                    .config
+                    .hosts
                     .hosts
                     .iter()
                     .map(|h| (h.id, h.name.clone(), h.detected_os.clone()))
                     .collect();
 
                 snippet_page_view(SnippetPageContext {
-                    snippets: &self.snippets_config.snippets,
-                    search_query: &self.snippet_search_query,
-                    editing: self.snippet_editing.as_ref(),
+                    snippets: &self.config.snippets.snippets,
+                    search_query: &self.snippets.search_query,
+                    editing: self.snippets.editing.as_ref(),
                     hosts: &hosts,
-                    executions: &self.snippet_executions,
-                    snippet_history: &self.snippet_history,
+                    executions: &self.snippets.executions,
+                    snippet_history: &self.config.snippet_history,
                     column_count,
                     theme,
                     fonts,
-                    hovered_snippet: self.hovered_snippet,
-                    selected_snippet: self.selected_snippet,
-                    viewed_history_entry: self.viewed_history_entry,
+                    hovered_snippet: self.snippets.hovered_snippet,
+                    selected_snippet: self.snippets.selected_snippet,
+                    viewed_history_entry: self.snippets.viewed_history_entry,
                 })
             }
             View::HostGrid => {
                 // Calculate responsive column count
-                let column_count = calculate_columns(self.window_size.width, self.sidebar_state);
+                let column_count = calculate_columns(self.ui.window_size.width, self.ui.sidebar_state);
 
                 // Show content based on sidebar selection
-                match self.sidebar_selection {
+                match self.ui.sidebar_selection {
                     SidebarMenuItem::Hosts | SidebarMenuItem::Sftp => {
                         // SFTP now opens directly into dual-pane view, so show hosts grid as fallback
                         host_grid_view(
-                            &self.search_query,
+                            &self.ui.search_query,
                             filtered_groups,
                             filtered_cards,
                             column_count,
                             theme,
                             fonts,
-                            self.focus_section,
-                            self.host_grid_focus_index,
-                            self.hovered_host,
+                            self.ui.focus_section,
+                            self.ui.host_grid_focus_index,
+                            self.ui.hovered_host,
                         )
                     }
                     SidebarMenuItem::History => history_view(
-                        &self.history_config,
-                        &self.hosts_config,
+                        &self.config.history,
+                        &self.config.hosts,
                         theme,
                         fonts,
-                        self.focus_section,
-                        self.history_focus_index,
+                        self.ui.focus_section,
+                        self.ui.history_focus_index,
                     ),
                     SidebarMenuItem::Snippets
                     | SidebarMenuItem::Settings
                     | SidebarMenuItem::About => {
                         // These open dialogs or pages, show hosts grid as fallback
                         host_grid_view(
-                            &self.search_query,
+                            &self.ui.search_query,
                             filtered_groups,
                             filtered_cards,
                             column_count,
                             theme,
                             fonts,
-                            self.focus_section,
-                            self.host_grid_focus_index,
-                            self.hovered_host,
+                            self.ui.focus_section,
+                            self.ui.host_grid_focus_index,
+                            self.ui.hovered_host,
                         )
                     }
                 }
@@ -550,14 +566,14 @@ impl Portal {
         let header: Element<'_, Message> = tab_bar_view(
             &self.tabs,
             self.active_tab,
-            self.sidebar_state,
+            self.ui.sidebar_state,
             theme,
             fonts,
-            self.focus_section,
-            self.tab_focus_index,
-            &self.active_view,
-            &self.hosts_config,
-            self.hovered_tab,
+            self.ui.focus_section,
+            self.ui.tab_focus_index,
+            &self.ui.active_view,
+            &self.config.hosts,
+            self.ui.hovered_tab,
         );
 
         // Content row: sidebar | main content
@@ -617,7 +633,7 @@ impl Portal {
                 if sftp_state.context_menu.visible {
                     stack![
                         with_actions_dismiss,
-                        sftp_context_menu_overlay(sftp_state, theme, fonts, self.window_size)
+                        sftp_context_menu_overlay(sftp_state, theme, fonts, self.ui.window_size)
                     ]
                     .into()
                 } else {
@@ -654,8 +670,8 @@ impl Portal {
 
     /// Theme based on theme_id preference
     pub fn theme(&self) -> IcedTheme {
-        let theme = get_theme(self.theme_id);
-        if self.theme_id.is_dark() {
+        let theme = get_theme(self.prefs.theme_id);
+        if self.prefs.theme_id.is_dark() {
             let palette = iced::theme::Palette {
                 background: theme.background,
                 text: theme.text_primary,
@@ -674,24 +690,24 @@ impl Portal {
 
     /// Get the effective UI scale (user override or system default)
     pub fn effective_ui_scale(&self) -> f32 {
-        self.ui_scale_override.unwrap_or(self.system_ui_scale)
+        self.prefs.ui_scale_override.unwrap_or(self.prefs.system_ui_scale)
     }
 
     /// Get the system-detected UI scale
     pub fn system_ui_scale(&self) -> f32 {
-        self.system_ui_scale
+        self.prefs.system_ui_scale
     }
 
     /// Check if user has overridden the UI scale
     pub fn has_ui_scale_override(&self) -> bool {
-        self.ui_scale_override.is_some()
+        self.prefs.ui_scale_override.is_some()
     }
 
     /// Compute a best-effort target size for VNC remote resize.
     pub fn vnc_target_size(&self) -> Option<(u16, u16)> {
         let scale = self.effective_ui_scale();
-        let width = (self.window_size.width * scale).round();
-        let height = ((self.window_size.height - 32.0).max(1.0) * scale).round();
+        let width = (self.ui.window_size.width * scale).round();
+        let height = ((self.ui.window_size.height - 32.0).max(1.0) * scale).round();
 
         let width = width.clamp(320.0, 8192.0) as u16;
         let height = height.clamp(240.0, 8192.0) as u16;
@@ -702,18 +718,18 @@ impl Portal {
     /// Save settings to config file
     pub(crate) fn save_settings(&self) {
         let mut settings = SettingsConfig::default();
-        settings.terminal_font_size = self.terminal_font_size;
-        settings.terminal_font = self.terminal_font;
-        settings.theme = self.theme_id;
-        settings.ui_scale = self.ui_scale_override;
-        settings.vnc = self.vnc_settings.clone();
+        settings.terminal_font_size = self.prefs.terminal_font_size;
+        settings.terminal_font = self.prefs.terminal_font;
+        settings.theme = self.prefs.theme_id;
+        settings.ui_scale = self.prefs.ui_scale_override;
+        settings.vnc = self.prefs.vnc_settings.clone();
         if let Err(e) = settings.save() {
             tracing::error!("Failed to save settings: {}", e);
         }
     }
 
     pub(crate) fn save_snippet_history(&self) {
-        if let Err(e) = self.snippet_history.save() {
+        if let Err(e) = self.config.snippet_history.save() {
             tracing::error!("Failed to save snippet history: {}", e);
         }
     }
@@ -743,8 +759,8 @@ impl Portal {
         }
 
         // VNC render tick (~30fps, only when viewing VNC)
-        if matches!(self.active_view, View::VncViewer(_)) && !self.vnc_sessions.is_empty() {
-            let fps = self.vnc_settings.refresh_fps.clamp(1, 60);
+        if matches!(self.ui.active_view, View::VncViewer(_)) && !self.vnc_sessions.is_empty() {
+            let fps = self.prefs.vnc_settings.refresh_fps.clamp(1, 60);
             let interval_ms = (1000u64 / fps as u64).max(1);
             subscriptions.push(
                 time::every(Duration::from_millis(interval_ms))
@@ -753,7 +769,7 @@ impl Portal {
         }
 
         // Session duration tick (only when viewing a terminal)
-        if matches!(self.active_view, View::Terminal(_)) && !self.sessions.is_empty() {
+        if matches!(self.ui.active_view, View::Terminal(_)) && !self.sessions.is_empty() {
             subscriptions.push(
                 time::every(Duration::from_secs(1))
                     .map(|_| Message::Session(SessionMessage::DurationTick)),

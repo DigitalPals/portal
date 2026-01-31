@@ -8,8 +8,8 @@ use std::time::Instant;
 use uuid::Uuid;
 
 use crate::app::managers::{ActiveSession, SessionBackend};
-use crate::app::{Portal, Tab, View};
-use crate::message::{Message, SessionMessage};
+use crate::app::{Portal, Tab};
+use crate::message::{Message, SessionId, SessionMessage};
 use crate::terminal::backend::TerminalEvent;
 use crate::views::terminal_view::TerminalSession;
 use crate::views::toast::Toast;
@@ -17,6 +17,46 @@ use crate::views::toast::Toast;
 /// Maximum bytes to buffer before dropping oldest data.
 /// 16MB is generous - if we hit this, data is arriving faster than humanly readable.
 const MAX_PENDING_OUTPUT_BYTES: usize = 16 * 1024 * 1024;
+
+fn start_terminal_session(
+    portal: &mut Portal,
+    session_id: SessionId,
+    backend: SessionBackend,
+    host_name: String,
+    host_id: Option<Uuid>,
+    history_entry_id: Uuid,
+) -> Task<Message> {
+    // Create terminal session
+    let (terminal, terminal_events) = TerminalSession::new(&host_name);
+
+    // Store the active session
+    portal.sessions.insert(
+        session_id,
+        ActiveSession {
+            backend,
+            terminal,
+            session_start: Instant::now(),
+            host_name: host_name.clone(),
+            history_entry_id,
+            status_message: None,
+            pending_output: VecDeque::new(),
+        },
+    );
+
+    // Create a new tab for this session
+    let tab = Tab::new_terminal(session_id, host_name, host_id);
+    portal.tabs.push(tab);
+
+    // Switch to terminal view and hide sidebar
+    portal.enter_terminal_view(session_id, true);
+
+    Task::run(
+        stream::unfold(terminal_events, |mut rx| async move {
+            rx.recv().await.map(|event| (event, rx))
+        }),
+        move |event| Message::Session(SessionMessage::TerminalEvent(session_id, event)),
+    )
+}
 
 /// Handle terminal session messages
 pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message> {
@@ -32,27 +72,27 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
 
             // Update host with detected OS if available
             if let Some(os) = detected_os {
-                if let Some(host) = portal.hosts_config.find_host_mut(host_id) {
+                if let Some(host) = portal.config.hosts.find_host_mut(host_id) {
                     host.detected_os = Some(os);
                     host.last_connected = Some(chrono::Utc::now());
                     host.updated_at = chrono::Utc::now();
-                    if let Err(e) = portal.hosts_config.save() {
+                    if let Err(e) = portal.config.hosts.save() {
                         tracing::error!("Failed to save hosts config with detected OS: {}", e);
                     }
                 }
             } else {
                 // Just update last_connected
-                if let Some(host) = portal.hosts_config.find_host_mut(host_id) {
+                if let Some(host) = portal.config.hosts.find_host_mut(host_id) {
                     host.last_connected = Some(chrono::Utc::now());
                     host.updated_at = chrono::Utc::now();
-                    if let Err(e) = portal.hosts_config.save() {
+                    if let Err(e) = portal.config.hosts.save() {
                         tracing::error!("Failed to save host connection time: {}", e);
                     }
                 }
             }
 
             // Create history entry for this connection
-            let history_entry_id = if let Some(host) = portal.hosts_config.find_host(host_id) {
+            let history_entry_id = if let Some(host) = portal.config.hosts.find_host(host_id) {
                 let entry = crate::config::HistoryEntry::new(
                     host.id,
                     host.name.clone(),
@@ -61,8 +101,8 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                     crate::config::SessionType::Ssh,
                 );
                 let entry_id = entry.id;
-                portal.history_config.add_entry(entry);
-                if let Err(e) = portal.history_config.save() {
+                portal.config.history.add_entry(entry);
+                if let Err(e) = portal.config.history.save() {
                     tracing::error!("Failed to save history config: {}", e);
                 }
                 entry_id
@@ -70,45 +110,13 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                 Uuid::new_v4()
             };
 
-            // Create terminal session for this connection
-            let (terminal, terminal_events) = TerminalSession::new(&host_name);
-
-            // Store the active session
-            portal.sessions.insert(
+            start_terminal_session(
+                portal,
                 session_id,
-                ActiveSession {
-                    backend: SessionBackend::Ssh(ssh_session),
-                    terminal,
-                    session_start: Instant::now(),
-                    host_name: host_name.clone(),
-                    history_entry_id,
-                    status_message: None,
-                    pending_output: VecDeque::new(),
-                },
-            );
-
-            // Create a new tab for this session
-            let tab = Tab::new_terminal(session_id, host_name, Some(host_id));
-            portal.tabs.push(tab);
-            portal.active_tab = Some(session_id);
-
-            // Switch to terminal view
-            portal.active_view = View::Terminal(session_id);
-
-            // Auto-capture keyboard for terminal
-            portal.terminal_captured = true;
-
-            // Auto-hide sidebar for immersive terminal experience (save previous state)
-            if portal.sidebar_state != crate::app::SidebarState::Hidden {
-                portal.sidebar_state_before_session = Some(portal.sidebar_state);
-            }
-            portal.sidebar_state = crate::app::SidebarState::Hidden;
-
-            Task::run(
-                stream::unfold(terminal_events, |mut rx| async move {
-                    rx.recv().await.map(|event| (event, rx))
-                }),
-                move |event| Message::Session(SessionMessage::TerminalEvent(session_id, event)),
+                SessionBackend::Ssh(ssh_session),
+                host_name,
+                Some(host_id),
+                history_entry_id,
             )
         }
         SessionMessage::LocalConnected {
@@ -120,50 +128,18 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
             // Create history entry for this local session
             let entry = crate::config::HistoryEntry::new_local();
             let history_entry_id = entry.id;
-            portal.history_config.add_entry(entry);
-            if let Err(e) = portal.history_config.save() {
+            portal.config.history.add_entry(entry);
+            if let Err(e) = portal.config.history.save() {
                 tracing::error!("Failed to save history config: {}", e);
             }
 
-            // Create terminal session
-            let (terminal, terminal_events) = TerminalSession::new("Local Terminal");
-
-            // Store the active session
-            portal.sessions.insert(
+            start_terminal_session(
+                portal,
                 session_id,
-                ActiveSession {
-                    backend: SessionBackend::Local(local_session),
-                    terminal,
-                    session_start: Instant::now(),
-                    host_name: "Local Terminal".to_string(),
-                    history_entry_id,
-                    status_message: None,
-                    pending_output: VecDeque::new(),
-                },
-            );
-
-            // Create a new tab for this session (no host_id for local terminal)
-            let tab = Tab::new_terminal(session_id, "Local Terminal".to_string(), None);
-            portal.tabs.push(tab);
-            portal.active_tab = Some(session_id);
-
-            // Switch to terminal view
-            portal.active_view = View::Terminal(session_id);
-
-            // Auto-capture keyboard for terminal
-            portal.terminal_captured = true;
-
-            // Auto-hide sidebar for immersive terminal experience (save previous state)
-            if portal.sidebar_state != crate::app::SidebarState::Hidden {
-                portal.sidebar_state_before_session = Some(portal.sidebar_state);
-            }
-            portal.sidebar_state = crate::app::SidebarState::Hidden;
-
-            Task::run(
-                stream::unfold(terminal_events, |mut rx| async move {
-                    rx.recv().await.map(|event| (event, rx))
-                }),
-                move |event| Message::Session(SessionMessage::TerminalEvent(session_id, event)),
+                SessionBackend::Local(local_session),
+                "Local Terminal".to_string(),
+                None,
+                history_entry_id,
             )
         }
         SessionMessage::Data(session_id, data) => {
@@ -214,9 +190,10 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
             tracing::info!("Terminal session disconnected");
             if let Some(session) = portal.sessions.get(session_id) {
                 portal
-                    .history_config
+                    .config
+                    .history
                     .mark_disconnected(session.history_entry_id);
-                if let Err(e) = portal.history_config.save() {
+                if let Err(e) = portal.config.history.save() {
                     tracing::error!("Failed to save history config: {}", e);
                 }
             }

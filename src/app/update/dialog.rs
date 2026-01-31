@@ -28,7 +28,7 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                 if let Some(host) = dialog_state.to_host() {
                     // Preserve created_at for edits
                     let host = if let Some(existing_id) = editing_id {
-                        if let Some(existing) = portal.hosts_config.find_host(existing_id) {
+                        if let Some(existing) = portal.config.hosts.find_host(existing_id) {
                             Host {
                                 created_at: existing.created_at,
                                 ..host
@@ -42,17 +42,17 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
 
                     let is_edit = editing_id.is_some();
                     if is_edit {
-                        if let Err(e) = portal.hosts_config.update_host(host.clone()) {
+                        if let Err(e) = portal.config.hosts.update_host(host.clone()) {
                             tracing::error!("Failed to update host: {}", e);
                         } else {
                             tracing::info!("Updated host");
                         }
                     } else {
-                        portal.hosts_config.add_host(host.clone());
+                        portal.config.hosts.add_host(host.clone());
                         tracing::info!("Added host");
                     }
 
-                    if let Err(e) = portal.hosts_config.save() {
+                    if let Err(e) = portal.config.hosts.save() {
                         tracing::error!("Failed to save config: {}", e);
                     }
                     portal.dialogs.close();
@@ -158,7 +158,7 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                 dialog.error = None;
 
                 // Find the host and start connection with password
-                if let Some(host) = portal.hosts_config.find_host(host_id) {
+                if let Some(host) = portal.config.hosts.find_host(host_id) {
                     let host = std::sync::Arc::new(host.clone());
 
                     portal.dialogs.close();
@@ -232,7 +232,7 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                 dialog.error = None;
 
                 // Find the host and start connection with passphrase
-                if let Some(host) = portal.hosts_config.find_host(host_id) {
+                if let Some(host) = portal.config.hosts.find_host(host_id) {
                     let host = std::sync::Arc::new(host.clone());
                     portal.dialogs.close();
 

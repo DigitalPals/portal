@@ -18,59 +18,59 @@ pub fn handle_snippet(portal: &mut Portal, msg: SnippetMessage) -> Task<Message>
     match msg {
         // Page navigation
         SnippetMessage::SearchChanged(query) => {
-            portal.snippet_search_query = query;
+            portal.snippets.search_query = query;
             Task::none()
         }
 
         SnippetMessage::Hover(id) => {
-            portal.hovered_snippet = id;
+            portal.snippets.hovered_snippet = id;
             Task::none()
         }
 
         SnippetMessage::Select(id) => {
-            portal.selected_snippet = Some(id);
+            portal.snippets.selected_snippet = Some(id);
             Task::none()
         }
 
         SnippetMessage::Deselect => {
-            portal.selected_snippet = None;
-            portal.viewed_history_entry = None;
+            portal.snippets.selected_snippet = None;
+            portal.snippets.viewed_history_entry = None;
             Task::none()
         }
 
         // CRUD operations (page-based)
         SnippetMessage::New => {
-            portal.snippet_editing = Some(SnippetEditState::new());
+            portal.snippets.editing = Some(SnippetEditState::new());
             Task::none()
         }
 
         SnippetMessage::Edit(id) => {
-            if let Some(snippet) = portal.snippets_config.find_snippet(id) {
-                portal.snippet_editing = Some(SnippetEditState::from_snippet(snippet));
+            if let Some(snippet) = portal.config.snippets.find_snippet(id) {
+                portal.snippets.editing = Some(SnippetEditState::from_snippet(snippet));
             }
             Task::none()
         }
 
         SnippetMessage::Delete(id) => {
-            if portal.snippets_config.delete_snippet(id).is_err() {
+            if portal.config.snippets.delete_snippet(id).is_err() {
                 portal
                     .toast_manager
                     .push(Toast::warning("Snippet not found"));
             }
-            if let Err(e) = portal.snippets_config.save() {
+            if let Err(e) = portal.config.snippets.save() {
                 tracing::error!("Failed to save snippets config: {}", e);
                 portal
                     .toast_manager
                     .push(Toast::error("Failed to save changes"));
             }
-            portal.snippet_editing = None;
-            portal.selected_snippet = None;
-            portal.snippet_executions.clear_results(id);
+            portal.snippets.editing = None;
+            portal.snippets.selected_snippet = None;
+            portal.snippets.executions.clear_results(id);
             Task::none()
         }
 
         SnippetMessage::FieldChanged(field, value) => {
-            if let Some(edit) = &mut portal.snippet_editing {
+            if let Some(edit) = &mut portal.snippets.editing {
                 match field {
                     SnippetField::Name => edit.name = value,
                     SnippetField::Command => edit.command = value,
@@ -81,7 +81,7 @@ pub fn handle_snippet(portal: &mut Portal, msg: SnippetMessage) -> Task<Message>
         }
 
         SnippetMessage::ToggleHost(host_id, checked) => {
-            if let Some(edit) = &mut portal.snippet_editing {
+            if let Some(edit) = &mut portal.snippets.editing {
                 if checked {
                     edit.selected_hosts.insert(host_id);
                 } else {
@@ -92,19 +92,19 @@ pub fn handle_snippet(portal: &mut Portal, msg: SnippetMessage) -> Task<Message>
         }
 
         SnippetMessage::EditCancel => {
-            portal.snippet_editing = None;
+            portal.snippets.editing = None;
             Task::none()
         }
 
         SnippetMessage::Save => {
-            if let Some(edit) = portal.snippet_editing.take() {
+            if let Some(edit) = portal.snippets.editing.take() {
                 if edit.is_valid() {
                     let now = chrono::Utc::now();
                     let host_ids: Vec<Uuid> = edit.selected_hosts.into_iter().collect();
 
                     if let Some(id) = edit.snippet_id {
                         // Update existing
-                        if let Some(snippet) = portal.snippets_config.find_snippet_mut(id) {
+                        if let Some(snippet) = portal.config.snippets.find_snippet_mut(id) {
                             snippet.name = edit.name.trim().to_string();
                             snippet.command = edit.command.trim().to_string();
                             snippet.description = if edit.description.trim().is_empty() {
@@ -125,9 +125,9 @@ pub fn handle_snippet(portal: &mut Portal, msg: SnippetMessage) -> Task<Message>
                             snippet.description = Some(edit.description.trim().to_string());
                         }
                         snippet.host_ids = host_ids;
-                        portal.snippets_config.add_snippet(snippet);
+                        portal.config.snippets.add_snippet(snippet);
                     }
-                    if let Err(e) = portal.snippets_config.save() {
+                    if let Err(e) = portal.config.snippets.save() {
                         tracing::error!("Failed to save snippets config: {}", e);
                         portal
                             .toast_manager
@@ -147,7 +147,7 @@ pub fn handle_snippet(portal: &mut Portal, msg: SnippetMessage) -> Task<Message>
             result,
             duration_ms,
         } => {
-            if let Some(execution) = portal.snippet_executions.get_active_mut(snippet_id) {
+            if let Some(execution) = portal.snippets.executions.get_active_mut(snippet_id) {
                 if let Some(host_result) = execution.get_host_result_mut(host_id) {
                     host_result.duration = Duration::from_millis(duration_ms);
                     match result {
@@ -208,19 +208,19 @@ pub fn handle_snippet(portal: &mut Portal, msg: SnippetMessage) -> Task<Message>
                         })
                         .collect();
 
-                    if let Some(history_entry) = portal.snippet_history.build_entry(
+                    if let Some(history_entry) = portal.config.snippet_history.build_entry(
                         snippet_id,
                         name.clone(),
                         command,
                         history_results,
                     ) {
-                        portal.snippet_history.add_entry(history_entry);
-                        if let Err(e) = portal.snippet_history.save() {
+                        portal.config.snippet_history.add_entry(history_entry);
+                        if let Err(e) = portal.config.snippet_history.save() {
                             tracing::warn!("Failed to save snippet history: {}", e);
                         }
                     }
 
-                    portal.snippet_executions.complete_execution(snippet_id);
+                    portal.snippets.executions.complete_execution(snippet_id);
 
                     // Show toast notification
                     if failed == 0 {
@@ -243,7 +243,7 @@ pub fn handle_snippet(portal: &mut Portal, msg: SnippetMessage) -> Task<Message>
         SnippetMessage::ToggleResultExpand(snippet_id, host_id) => {
             // Check active execution first, then fall back to last result
             let toggled =
-                if let Some(execution) = portal.snippet_executions.get_active_mut(snippet_id) {
+                if let Some(execution) = portal.snippets.executions.get_active_mut(snippet_id) {
                     if let Some(result) = execution.get_host_result_mut(host_id) {
                         result.expanded = !result.expanded;
                         true
@@ -256,7 +256,7 @@ pub fn handle_snippet(portal: &mut Portal, msg: SnippetMessage) -> Task<Message>
 
             // If not found in active, try last result
             if !toggled {
-                if let Some(execution) = portal.snippet_executions.get_last_result_mut(snippet_id) {
+                if let Some(execution) = portal.snippets.executions.get_last_result_mut(snippet_id) {
                     if let Some(result) = execution.get_host_result_mut(host_id) {
                         result.expanded = !result.expanded;
                     }
@@ -266,12 +266,12 @@ pub fn handle_snippet(portal: &mut Portal, msg: SnippetMessage) -> Task<Message>
         }
 
         SnippetMessage::ViewHistoryEntry(entry_id) => {
-            portal.viewed_history_entry = Some(entry_id);
+            portal.snippets.viewed_history_entry = Some(entry_id);
             Task::none()
         }
 
         SnippetMessage::ViewCurrentResults => {
-            portal.viewed_history_entry = None;
+            portal.snippets.viewed_history_entry = None;
             Task::none()
         }
     }
@@ -279,7 +279,7 @@ pub fn handle_snippet(portal: &mut Portal, msg: SnippetMessage) -> Task<Message>
 
 /// Handle running a snippet on multiple hosts
 fn handle_run(portal: &mut Portal, snippet_id: Uuid) -> Task<Message> {
-    let Some(snippet) = portal.snippets_config.find_snippet(snippet_id) else {
+    let Some(snippet) = portal.config.snippets.find_snippet(snippet_id) else {
         portal
             .toast_manager
             .push(Toast::warning("Snippet not found"));
@@ -294,9 +294,9 @@ fn handle_run(portal: &mut Portal, snippet_id: Uuid) -> Task<Message> {
     }
 
     // Auto-select the snippet to show results panel
-    portal.selected_snippet = Some(snippet_id);
+    portal.snippets.selected_snippet = Some(snippet_id);
     // Clear any history view to show current execution
-    portal.viewed_history_entry = None;
+    portal.snippets.viewed_history_entry = None;
 
     // Collect host info
     let hosts_info: Vec<(Uuid, String, Host)> = snippet
@@ -304,7 +304,8 @@ fn handle_run(portal: &mut Portal, snippet_id: Uuid) -> Task<Message> {
         .iter()
         .filter_map(|&hid| {
             portal
-                .hosts_config
+                .config
+                .hosts
                 .find_host(hid)
                 .map(|h| (hid, h.name.clone(), h.clone()))
         })
@@ -327,10 +328,10 @@ fn handle_run(portal: &mut Portal, snippet_id: Uuid) -> Task<Message> {
             .map(|(id, name, _)| (*id, name.clone()))
             .collect(),
     );
-    portal.snippet_executions.start_execution(execution);
+    portal.snippets.executions.start_execution(execution);
 
     // Mark all hosts as running
-    if let Some(exec) = portal.snippet_executions.get_active_mut(snippet_id) {
+    if let Some(exec) = portal.snippets.executions.get_active_mut(snippet_id) {
         for result in &mut exec.host_results {
             result.status = ExecutionStatus::Running;
         }

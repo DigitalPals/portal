@@ -18,13 +18,13 @@ use crate::views::toast::Toast;
 pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
     match msg {
         UiMessage::SearchChanged(query) => {
-            portal.search_query = query;
+            portal.ui.search_query = query;
             Task::none()
         }
         UiMessage::FolderToggle(id) => {
-            if let Some(group) = portal.hosts_config.find_group_mut(id) {
+            if let Some(group) = portal.config.hosts.find_group_mut(id) {
                 group.collapsed = !group.collapsed;
-                if let Err(e) = portal.hosts_config.save() {
+                if let Err(e) = portal.config.hosts.save() {
                     tracing::error!("Failed to save config: {}", e);
                 }
             }
@@ -33,7 +33,7 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
         UiMessage::SidebarItemSelect(item) => {
             // Auto-close pristine SFTP tab when navigating away (not when staying on SFTP)
             if item != SidebarMenuItem::Sftp {
-                if let View::DualSftp(tab_id) = portal.active_view {
+                if let View::DualSftp(tab_id) = portal.ui.active_view {
                     if let Some(state) = portal.sftp.get_tab(tab_id) {
                         if state.is_pristine() {
                             portal.close_tab(tab_id);
@@ -43,25 +43,19 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
             }
 
             // Release keyboard capture when navigating via sidebar
-            portal.terminal_captured = false;
+            portal.ui.terminal_captured = false;
 
-            portal.sidebar_selection = item;
+            portal.ui.sidebar_selection = item;
             tracing::info!("Sidebar item selected");
             match item {
                 SidebarMenuItem::Hosts => {
-                    portal.active_view = View::HostGrid;
-                    // Restore sidebar state if returning from terminal
-                    if let Some(saved_state) = portal.sidebar_state_before_session.take() {
-                        portal.sidebar_state = saved_state;
-                    }
+                    portal.restore_sidebar_after_session();
+                    portal.enter_host_grid();
                     return iced::widget::operation::focus(crate::app::search_input_id());
                 }
                 SidebarMenuItem::History => {
-                    portal.active_view = View::HostGrid;
-                    // Restore sidebar state if returning from terminal
-                    if let Some(saved_state) = portal.sidebar_state_before_session.take() {
-                        portal.sidebar_state = saved_state;
-                    }
+                    portal.restore_sidebar_after_session();
+                    portal.enter_host_grid();
                 }
                 SidebarMenuItem::Sftp => {
                     if let Some(tab_id) = portal.sftp.first_tab_id() {
@@ -72,16 +66,13 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
                 }
                 SidebarMenuItem::Settings => {
                     // Open settings page view instead of dialog
-                    portal.active_view = View::Settings;
+                    portal.ui.active_view = View::Settings;
                 }
                 SidebarMenuItem::Snippets => {
                     // Navigate to snippets page
-                    portal.active_view = View::Snippets;
-                    portal.snippet_editing = None;
-                    // Restore sidebar state if returning from terminal
-                    if let Some(saved_state) = portal.sidebar_state_before_session.take() {
-                        portal.sidebar_state = saved_state;
-                    }
+                    portal.ui.active_view = View::Snippets;
+                    portal.snippets.editing = None;
+                    portal.restore_sidebar_after_session();
                 }
                 SidebarMenuItem::About => {
                     portal.dialogs.open_about();
@@ -90,71 +81,71 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
             Task::none()
         }
         UiMessage::SidebarToggleCollapse => {
-            portal.sidebar_state = portal.sidebar_state.next();
-            portal.sidebar_manually_set = true;
+            portal.ui.sidebar_state = portal.ui.sidebar_state.next();
+            portal.ui.sidebar_manually_set = true;
             tracing::info!("Sidebar state updated (manual)");
             Task::none()
         }
         UiMessage::ThemeChange(theme_id) => {
-            portal.theme_id = theme_id;
+            portal.prefs.theme_id = theme_id;
             portal.save_settings();
             Task::none()
         }
         UiMessage::FontChange(font) => {
             tracing::info!("Font changed");
-            portal.terminal_font = font;
+            portal.prefs.terminal_font = font;
             portal.save_settings();
             Task::none()
         }
         UiMessage::FontSizeChange(size) => {
-            portal.terminal_font_size = size;
+            portal.prefs.terminal_font_size = size;
             portal.save_settings();
             Task::none()
         }
         UiMessage::UiScaleChange(scale) => {
             // Clamp scale to valid range (0.8 to 1.5)
             let clamped_scale = scale.clamp(0.8, 1.5);
-            portal.ui_scale_override = Some(clamped_scale);
+            portal.prefs.ui_scale_override = Some(clamped_scale);
             portal.save_settings();
             Task::none()
         }
         UiMessage::UiScaleReset => {
-            portal.ui_scale_override = None;
+            portal.prefs.ui_scale_override = None;
             portal.save_settings();
             Task::none()
         }
         UiMessage::SnippetHistoryEnabled(enabled) => {
-            portal.snippet_history.enabled = enabled;
+            portal.config.snippet_history.enabled = enabled;
             portal.save_snippet_history();
             Task::none()
         }
         UiMessage::SnippetHistoryStoreCommand(store_command) => {
-            portal.snippet_history.store_command = store_command;
+            portal.config.snippet_history.store_command = store_command;
             portal.save_snippet_history();
             Task::none()
         }
         UiMessage::SnippetHistoryStoreOutput(store_output) => {
-            portal.snippet_history.store_output = store_output;
+            portal.config.snippet_history.store_output = store_output;
             portal.save_snippet_history();
             Task::none()
         }
         UiMessage::SnippetHistoryRedactOutput(redact_output) => {
-            portal.snippet_history.redact_output = redact_output;
+            portal.config.snippet_history.redact_output = redact_output;
             portal.save_snippet_history();
             Task::none()
         }
         UiMessage::WindowResized(size) => {
-            portal.window_size = size;
-            if !portal.sidebar_manually_set {
+            portal.ui.window_size = size;
+            if !portal.ui.sidebar_manually_set {
                 use crate::app::SidebarState;
-                portal.sidebar_state = if size.width < SIDEBAR_AUTO_COLLAPSE_THRESHOLD {
+                portal.ui.sidebar_state = if size.width < SIDEBAR_AUTO_COLLAPSE_THRESHOLD {
                     SidebarState::IconsOnly
                 } else {
                     SidebarState::Expanded
                 };
             }
-            if portal.vnc_settings.remote_resize {
-                if let View::VncViewer(session_id) = portal.active_view {
+            if portal.prefs.vnc_settings.remote_resize {
+                if let View::VncViewer(session_id) = portal.ui.active_view {
                     if let Some(vnc) = portal.vnc_sessions.get(&session_id) {
                         if let Some((w, h)) = portal.vnc_target_size() {
                             vnc.session.try_request_desktop_size(w, h);
@@ -175,7 +166,7 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
         UiMessage::KeyboardEvent(key, modifiers) => handle_keyboard_event(portal, key, modifiers),
         UiMessage::KeyReleased(key) => {
             // Forward key release to VNC session if active
-            if let View::VncViewer(session_id) = portal.active_view {
+            if let View::VncViewer(session_id) = portal.ui.active_view {
                 if let Some(keysym) = crate::vnc::keysym::key_to_keysym(&key) {
                     return Task::done(Message::Vnc(VncMessage::KeyEvent {
                         session_id,
@@ -201,7 +192,7 @@ fn handle_keyboard_event(
     }
 
     // Priority 2: VNC viewer — forward all keys to remote (except Ctrl+Shift combos for UI)
-    if let View::VncViewer(session_id) = portal.active_view {
+    if let View::VncViewer(session_id) = portal.ui.active_view {
         // Allow Ctrl+Shift shortcuts for tab management etc.
         if !(modifiers.control() && modifiers.shift()) {
             if let Some(keysym) = crate::vnc::keysym::key_to_keysym(&key) {
@@ -215,12 +206,12 @@ fn handle_keyboard_event(
     }
 
     // Priority 3: Terminal captured - only Ctrl+Escape exits
-    if portal.terminal_captured {
+    if portal.ui.terminal_captured {
         // Ctrl+Escape exits captured mode
         if let Key::Named(keyboard::key::Named::Escape) = &key {
             if modifiers.control() {
-                portal.terminal_captured = false;
-                portal.focus_section = FocusSection::Content;
+                portal.ui.terminal_captured = false;
+                portal.ui.focus_section = FocusSection::Content;
                 return Task::none();
             }
         }
@@ -241,17 +232,17 @@ fn handle_keyboard_event(
     match (&key, modifiers.control(), modifiers.shift()) {
         // F1 - Focus Sidebar
         (Key::Named(keyboard::key::Named::F1), false, false) => {
-            portal.focus_section = FocusSection::Sidebar;
+            portal.ui.focus_section = FocusSection::Sidebar;
             return Task::none();
         }
         // F2 - Focus Tab Bar
         (Key::Named(keyboard::key::Named::F2), false, false) => {
-            portal.focus_section = FocusSection::TabBar;
+            portal.ui.focus_section = FocusSection::TabBar;
             return Task::none();
         }
         // F3 - Focus Content
         (Key::Named(keyboard::key::Named::F3), false, false) => {
-            portal.focus_section = FocusSection::Content;
+            portal.ui.focus_section = FocusSection::Content;
             return Task::none();
         }
         // Escape - close context menus, or exit terminal capture indication
@@ -265,12 +256,9 @@ fn handle_keyboard_event(
         }
         // Ctrl+N - new tab / go to host grid
         (Key::Character(c), true, false) if c.as_str() == "n" => {
-            portal.active_view = View::HostGrid;
-            portal.focus_section = FocusSection::Content;
-            // Restore sidebar state if returning from terminal
-            if let Some(saved_state) = portal.sidebar_state_before_session.take() {
-                portal.sidebar_state = saved_state;
-            }
+            portal.restore_sidebar_after_session();
+            portal.enter_host_grid();
+            portal.ui.focus_section = FocusSection::Content;
             return Task::none();
         }
         // Ctrl+W - close current tab
@@ -290,7 +278,7 @@ fn handle_keyboard_event(
         }
         // Ctrl+Shift+K - Install SSH key on remote server
         (Key::Character(c), true, true) if c.as_str() == "k" || c.as_str() == "K" => {
-            if let View::Terminal(session_id) = portal.active_view {
+            if let View::Terminal(session_id) = portal.ui.active_view {
                 if portal.sessions.contains(session_id) {
                     return portal.update(Message::Session(SessionMessage::InstallKey(session_id)));
                 }
@@ -301,7 +289,7 @@ fn handle_keyboard_event(
     }
 
     // Priority 4: Section-specific navigation
-    match portal.focus_section {
+    match portal.ui.focus_section {
         FocusSection::Sidebar => handle_sidebar_keyboard(portal, &key, &modifiers),
         FocusSection::TabBar => handle_tabbar_keyboard(portal, &key, &modifiers),
         FocusSection::Content => handle_content_keyboard(portal, &key, &modifiers),
@@ -398,23 +386,23 @@ fn handle_sidebar_keyboard(
 ) -> Task<Message> {
     match key {
         Key::Named(keyboard::key::Named::ArrowUp) => {
-            portal.sidebar_focus_index = portal.sidebar_focus_index.saturating_sub(1);
+            portal.ui.sidebar_focus_index = portal.ui.sidebar_focus_index.saturating_sub(1);
         }
         Key::Named(keyboard::key::Named::ArrowDown) => {
-            portal.sidebar_focus_index =
-                (portal.sidebar_focus_index + 1).min(SIDEBAR_MENU_COUNT - 1);
+            portal.ui.sidebar_focus_index =
+                (portal.ui.sidebar_focus_index + 1).min(SIDEBAR_MENU_COUNT - 1);
         }
         Key::Named(keyboard::key::Named::Home) => {
-            portal.sidebar_focus_index = 0;
+            portal.ui.sidebar_focus_index = 0;
         }
         Key::Named(keyboard::key::Named::End) => {
-            portal.sidebar_focus_index = SIDEBAR_MENU_COUNT - 1;
+            portal.ui.sidebar_focus_index = SIDEBAR_MENU_COUNT - 1;
         }
         Key::Named(keyboard::key::Named::ArrowRight) => {
-            portal.focus_section = FocusSection::Content;
+            portal.ui.focus_section = FocusSection::Content;
         }
         Key::Named(keyboard::key::Named::Enter | keyboard::key::Named::Space) => {
-            let item = match portal.sidebar_focus_index {
+            let item = match portal.ui.sidebar_focus_index {
                 0 => SidebarMenuItem::Hosts,
                 1 => SidebarMenuItem::Sftp,
                 2 => SidebarMenuItem::Snippets,
@@ -439,34 +427,34 @@ fn handle_tabbar_keyboard(
     let tab_count = portal.tabs.len();
     if tab_count == 0 {
         // No tabs - switch to content
-        portal.focus_section = FocusSection::Content;
+        portal.ui.focus_section = FocusSection::Content;
         return Task::none();
     }
 
     match key {
         Key::Named(keyboard::key::Named::ArrowLeft) => {
-            portal.tab_focus_index = portal.tab_focus_index.saturating_sub(1);
+            portal.ui.tab_focus_index = portal.ui.tab_focus_index.saturating_sub(1);
         }
         Key::Named(keyboard::key::Named::ArrowRight) => {
-            portal.tab_focus_index = (portal.tab_focus_index + 1).min(tab_count.saturating_sub(1));
+            portal.ui.tab_focus_index = (portal.ui.tab_focus_index + 1).min(tab_count.saturating_sub(1));
         }
         Key::Named(keyboard::key::Named::Home) => {
-            portal.tab_focus_index = 0;
+            portal.ui.tab_focus_index = 0;
         }
         Key::Named(keyboard::key::Named::End) => {
-            portal.tab_focus_index = tab_count.saturating_sub(1);
+            portal.ui.tab_focus_index = tab_count.saturating_sub(1);
         }
         Key::Named(keyboard::key::Named::ArrowDown) => {
-            portal.focus_section = FocusSection::Content;
+            portal.ui.focus_section = FocusSection::Content;
         }
         Key::Named(keyboard::key::Named::Enter | keyboard::key::Named::Space) => {
-            if let Some(tab) = portal.tabs.get(portal.tab_focus_index) {
+            if let Some(tab) = portal.tabs.get(portal.ui.tab_focus_index) {
                 let tab_id = tab.id;
                 return portal.update(Message::Tab(TabMessage::Select(tab_id)));
             }
         }
         Key::Named(keyboard::key::Named::Delete) => {
-            if let Some(tab) = portal.tabs.get(portal.tab_focus_index) {
+            if let Some(tab) = portal.tabs.get(portal.ui.tab_focus_index) {
                 let tab_id = tab.id;
                 return portal.update(Message::Tab(TabMessage::Close(tab_id)));
             }
@@ -482,15 +470,15 @@ fn handle_content_keyboard(
     key: &Key,
     modifiers: &keyboard::Modifiers,
 ) -> Task<Message> {
-    match &portal.active_view {
+    match &portal.ui.active_view {
         View::Settings => {
             // Settings page - arrow left goes back to sidebar
             if let Key::Named(keyboard::key::Named::ArrowLeft) = key {
-                portal.focus_section = FocusSection::Sidebar;
+                portal.ui.focus_section = FocusSection::Sidebar;
             }
             Task::none()
         }
-        View::HostGrid => match portal.sidebar_selection {
+        View::HostGrid => match portal.ui.sidebar_selection {
             SidebarMenuItem::Hosts
             | SidebarMenuItem::Sftp
             | SidebarMenuItem::Snippets
@@ -502,14 +490,14 @@ fn handle_content_keyboard(
             // When terminal_captured is false (after Ctrl+Escape), allow keyboard navigation
             match key {
                 Key::Named(keyboard::key::Named::ArrowUp) => {
-                    portal.focus_section = FocusSection::TabBar;
+                    portal.ui.focus_section = FocusSection::TabBar;
                 }
                 Key::Named(keyboard::key::Named::ArrowLeft) => {
-                    portal.focus_section = FocusSection::Sidebar;
+                    portal.ui.focus_section = FocusSection::Sidebar;
                 }
                 _ => {
                     // Re-capture terminal on any other key press
-                    portal.terminal_captured = true;
+                    portal.ui.terminal_captured = true;
                 }
             }
             Task::none()
@@ -518,14 +506,14 @@ fn handle_content_keyboard(
         View::FileViewer(_) => {
             // File viewer keyboard - arrow left goes back to sidebar
             if let Key::Named(keyboard::key::Named::ArrowLeft) = key {
-                portal.focus_section = FocusSection::Sidebar;
+                portal.ui.focus_section = FocusSection::Sidebar;
             }
             Task::none()
         }
         View::Snippets => {
             // Snippets page - arrow left goes back to sidebar
             if let Key::Named(keyboard::key::Named::ArrowLeft) = key {
-                portal.focus_section = FocusSection::Sidebar;
+                portal.ui.focus_section = FocusSection::Sidebar;
             }
             Task::none()
         }
@@ -550,15 +538,15 @@ fn handle_host_grid_keyboard(
     _modifiers: &keyboard::Modifiers,
 ) -> Task<Message> {
     // Count total items (groups + hosts)
-    let group_count = portal.hosts_config.groups.len();
-    let host_count = portal.hosts_config.hosts.len();
+    let group_count = portal.config.hosts.groups.len();
+    let host_count = portal.config.hosts.hosts.len();
     let total_items = group_count + host_count;
 
     if total_items == 0 {
         // "/" focuses search even when empty
         if let Key::Character(c) = key {
             if c.as_str() == "/" {
-                portal.host_grid_focus_index = None; // Clear grid focus when focusing search
+                portal.ui.host_grid_focus_index = None; // Clear grid focus when focusing search
                 return iced::widget::operation::focus(crate::views::host_grid::search_input_id());
             }
         }
@@ -567,81 +555,81 @@ fn handle_host_grid_keyboard(
 
     // Calculate column count for 2D navigation
     let columns =
-        crate::views::host_grid::calculate_columns(portal.window_size.width, portal.sidebar_state);
+        crate::views::host_grid::calculate_columns(portal.ui.window_size.width, portal.ui.sidebar_state);
 
     match key {
         Key::Named(keyboard::key::Named::ArrowUp) => {
-            if let Some(idx) = portal.host_grid_focus_index {
+            if let Some(idx) = portal.ui.host_grid_focus_index {
                 if idx >= columns {
-                    portal.host_grid_focus_index = Some(idx - columns);
+                    portal.ui.host_grid_focus_index = Some(idx - columns);
                 } else {
                     // At top row - move focus to tabs
-                    portal.focus_section = FocusSection::TabBar;
+                    portal.ui.focus_section = FocusSection::TabBar;
                 }
             } else {
-                portal.host_grid_focus_index = Some(0);
+                portal.ui.host_grid_focus_index = Some(0);
             }
             // Unfocus search input when navigating with arrows
             return iced::widget::operation::focus(iced::widget::Id::unique());
         }
         Key::Named(keyboard::key::Named::ArrowDown) => {
-            if let Some(idx) = portal.host_grid_focus_index {
+            if let Some(idx) = portal.ui.host_grid_focus_index {
                 let new_idx = idx + columns;
                 if new_idx < total_items {
-                    portal.host_grid_focus_index = Some(new_idx);
+                    portal.ui.host_grid_focus_index = Some(new_idx);
                 }
             } else {
-                portal.host_grid_focus_index = Some(0);
+                portal.ui.host_grid_focus_index = Some(0);
             }
             // Unfocus search input when navigating with arrows
             return iced::widget::operation::focus(iced::widget::Id::unique());
         }
         Key::Named(keyboard::key::Named::ArrowLeft) => {
-            if let Some(idx) = portal.host_grid_focus_index {
+            if let Some(idx) = portal.ui.host_grid_focus_index {
                 if idx > 0 {
-                    portal.host_grid_focus_index = Some(idx - 1);
+                    portal.ui.host_grid_focus_index = Some(idx - 1);
                 } else {
-                    portal.focus_section = FocusSection::Sidebar;
+                    portal.ui.focus_section = FocusSection::Sidebar;
                 }
             } else {
-                portal.focus_section = FocusSection::Sidebar;
+                portal.ui.focus_section = FocusSection::Sidebar;
             }
             // Unfocus search input when navigating with arrows
             return iced::widget::operation::focus(iced::widget::Id::unique());
         }
         Key::Named(keyboard::key::Named::ArrowRight) => {
-            if let Some(idx) = portal.host_grid_focus_index {
+            if let Some(idx) = portal.ui.host_grid_focus_index {
                 if idx + 1 < total_items {
-                    portal.host_grid_focus_index = Some(idx + 1);
+                    portal.ui.host_grid_focus_index = Some(idx + 1);
                 }
             } else {
-                portal.host_grid_focus_index = Some(0);
+                portal.ui.host_grid_focus_index = Some(0);
             }
             // Unfocus search input when navigating with arrows
             return iced::widget::operation::focus(iced::widget::Id::unique());
         }
         Key::Named(keyboard::key::Named::Home) => {
-            portal.host_grid_focus_index = Some(0);
+            portal.ui.host_grid_focus_index = Some(0);
             return iced::widget::operation::focus(iced::widget::Id::unique());
         }
         Key::Named(keyboard::key::Named::End) => {
-            portal.host_grid_focus_index = Some(total_items.saturating_sub(1));
+            portal.ui.host_grid_focus_index = Some(total_items.saturating_sub(1));
             return iced::widget::operation::focus(iced::widget::Id::unique());
         }
         Key::Named(keyboard::key::Named::Enter | keyboard::key::Named::Space) => {
             // Only activate if we have a focused card (not the search input)
-            if let Some(idx) = portal.host_grid_focus_index {
+            if let Some(idx) = portal.ui.host_grid_focus_index {
                 // First come groups, then hosts
                 if idx < group_count {
                     // Toggle group
-                    if let Some(group) = portal.hosts_config.groups.get(idx) {
+                    if let Some(group) = portal.config.hosts.groups.get(idx) {
                         let group_id = group.id;
                         return portal.update(Message::Ui(UiMessage::FolderToggle(group_id)));
                     }
                 } else {
                     // Connect to host
                     let host_idx = idx - group_count;
-                    if let Some(host) = portal.hosts_config.hosts.get(host_idx) {
+                    if let Some(host) = portal.config.hosts.hosts.get(host_idx) {
                         let host_id = host.id;
                         return portal.update(Message::Host(HostMessage::Connect(host_id)));
                     }
@@ -650,7 +638,7 @@ fn handle_host_grid_keyboard(
             // No card focused - don't handle Enter (let search input handle it)
         }
         Key::Character(c) if c.as_str() == "/" => {
-            portal.host_grid_focus_index = None; // Clear grid focus when focusing search
+            portal.ui.host_grid_focus_index = None; // Clear grid focus when focusing search
             return iced::widget::operation::focus(crate::views::host_grid::search_input_id());
         }
         _ => {}
@@ -664,38 +652,38 @@ fn handle_history_keyboard(
     key: &Key,
     _modifiers: &keyboard::Modifiers,
 ) -> Task<Message> {
-    let entry_count = portal.history_config.entries.len();
+    let entry_count = portal.config.history.entries.len();
     if entry_count == 0 {
         return Task::none();
     }
 
     match key {
         Key::Named(keyboard::key::Named::ArrowUp) => {
-            if let Some(idx) = portal.history_focus_index {
-                portal.history_focus_index = Some(idx.saturating_sub(1));
+            if let Some(idx) = portal.ui.history_focus_index {
+                portal.ui.history_focus_index = Some(idx.saturating_sub(1));
             } else {
-                portal.history_focus_index = Some(0);
+                portal.ui.history_focus_index = Some(0);
             }
         }
         Key::Named(keyboard::key::Named::ArrowDown) => {
-            if let Some(idx) = portal.history_focus_index {
-                portal.history_focus_index = Some((idx + 1).min(entry_count - 1));
+            if let Some(idx) = portal.ui.history_focus_index {
+                portal.ui.history_focus_index = Some((idx + 1).min(entry_count - 1));
             } else {
-                portal.history_focus_index = Some(0);
+                portal.ui.history_focus_index = Some(0);
             }
         }
         Key::Named(keyboard::key::Named::Home) => {
-            portal.history_focus_index = Some(0);
+            portal.ui.history_focus_index = Some(0);
         }
         Key::Named(keyboard::key::Named::End) => {
-            portal.history_focus_index = Some(entry_count.saturating_sub(1));
+            portal.ui.history_focus_index = Some(entry_count.saturating_sub(1));
         }
         Key::Named(keyboard::key::Named::ArrowLeft) => {
-            portal.focus_section = FocusSection::Sidebar;
+            portal.ui.focus_section = FocusSection::Sidebar;
         }
         Key::Named(keyboard::key::Named::Enter | keyboard::key::Named::Space) => {
-            if let Some(idx) = portal.history_focus_index {
-                if let Some(entry) = portal.history_config.entries.get(idx) {
+            if let Some(idx) = portal.ui.history_focus_index {
+                if let Some(entry) = portal.config.history.entries.get(idx) {
                     let host_id = entry.host_id;
                     return portal.update(Message::History(HistoryMessage::Reconnect(host_id)));
                 }
@@ -828,7 +816,7 @@ fn handle_sftp_keyboard(
                 return Task::none();
             };
             if active_pane == PaneId::Left {
-                portal.focus_section = FocusSection::Sidebar;
+                portal.ui.focus_section = FocusSection::Sidebar;
             } else {
                 state.active_pane = PaneId::Left;
             }
