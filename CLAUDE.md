@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Portal is a cross-platform SSH client with GUI built in Rust using the Iced framework. It features terminal emulation (via alacritty_terminal), SFTP file browsing with dual-pane interface, host management with groups, and dark/light themes.
+Portal is a cross-platform SSH and VNC client with GUI built in Rust using the Iced framework. It features terminal emulation (via alacritty_terminal), SFTP file browsing with dual-pane interface, VNC remote desktop with GPU-accelerated rendering, host management with groups, and dark/light themes.
 
 ## Build Commands
 
@@ -38,6 +38,7 @@ pub enum Message {
     Host(HostMessage),         // Host operations
     History(HistoryMessage),   // Connection history
     Snippet(SnippetMessage),   // Command snippets
+    Vnc(VncMessage),           // VNC remote desktop sessions
     Ui(UiMessage),             // UI state changes
     Noop,
 }
@@ -52,6 +53,7 @@ State is split into specialized managers (fields on Portal struct):
 - **SessionManager** (`src/app/managers/session_manager.rs`): SSH terminal sessions, maps SessionId -> ActiveSession
 - **SftpManager** (`src/app/managers/sftp_manager.rs`): SFTP tabs, dual-pane state, connection pool
 - **DialogManager** (`src/app/managers/dialog_manager.rs`): Enforces single-dialog constraint, manages Host/Settings/Snippets/HostKey dialogs
+- **VNC sessions** (`Portal::vnc_sessions`): `HashMap<SessionId, VncActiveSession>` for active VNC connections, including framebuffer state, FPS tracking, and scaling mode
 
 ### Key Module Organization
 
@@ -67,7 +69,8 @@ src/
 ├── ssh/                # russh-based SSH client, auth, host key verification
 ├── sftp/               # SFTP client wrapping russh-sftp
 ├── terminal/           # Custom Iced widget using alacritty_terminal
-└── views/              # UI views (host_grid, sidebar, terminal_view, sftp/, dialogs/)
+├── vnc/                # VNC client: session, framebuffer, widget (wgpu shader), keysym mapping, quality tracking, monitor discovery
+└── views/              # UI views (host_grid, sidebar, terminal_view, sftp/, vnc_view, dialogs/)
 ```
 
 ### Data Flow Example: SSH Connection
@@ -79,13 +82,23 @@ src/
 5. On success -> `SessionMessage::Connected` creates terminal and tab
 6. Terminal receives data via `SessionMessage::Data`
 
+### Data Flow Example: VNC Connection
+
+1. User selects VNC host -> `HostMessage::Connect(Uuid)`
+2. `handle_host()` detects VNC protocol, opens password dialog
+3. After password entry -> `Portal::connect_vnc_host_with_password()`
+4. Async task spawns `VncSession::connect()` (TCP + VNC/ARD auth)
+5. On success -> `VncMessage::Connected` creates `VncActiveSession` and tab
+6. Event loop polls framebuffer updates on `VncMessage::RenderTick`
+7. Mouse/keyboard events forwarded via `VncMessage::MouseEvent` / `VncMessage::KeyEvent`
+
 ### Configuration
 
 Config stored in platform-specific directory (`~/.config/portal/` on Linux):
-- `hosts.toml` - SSH host definitions with groups
+- `hosts.toml` - SSH and VNC host definitions with groups
 - `snippets.toml` - Command snippets
 - `history.toml` - Connection history
-- `settings.toml` - Theme, font size
+- `settings.toml` - Theme, font size, VNC settings (encoding, color depth, refresh rate, scaling mode)
 - `known_hosts` - SSH host key storage
 
 ### VNC Framebuffer Rendering
@@ -109,6 +122,7 @@ The VNC widget uses a custom wgpu shader (`src/vnc/widget.rs`) with a `FrameBuff
 - **GUI**: Iced 0.14
 - **Terminal**: alacritty_terminal 0.25
 - **SSH**: russh 0.56, russh-sftp 2.1
+- **VNC**: vnc-rs 0.5 (vendored, with ARD authentication support)
 - **Async**: Tokio (full features)
 
 ## Release Process
