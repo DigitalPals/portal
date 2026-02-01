@@ -18,12 +18,34 @@ use crate::theme::{
     SIDEBAR_WIDTH, SIDEBAR_WIDTH_COLLAPSED, ScaledFonts, Theme,
 };
 
+/// Format a timestamp as a relative time string (e.g. "2h ago", "3d ago")
+fn format_relative_time(dt: &chrono::DateTime<chrono::Utc>) -> String {
+    let now = chrono::Utc::now();
+    let duration = now.signed_duration_since(*dt);
+
+    if duration.num_minutes() < 1 {
+        "just now".to_string()
+    } else if duration.num_minutes() < 60 {
+        format!("{}m ago", duration.num_minutes())
+    } else if duration.num_hours() < 24 {
+        format!("{}h ago", duration.num_hours())
+    } else if duration.num_days() < 30 {
+        format!("{}d ago", duration.num_days())
+    } else if duration.num_days() < 365 {
+        let months = duration.num_days() / 30;
+        format!("{}mo ago", months)
+    } else {
+        let years = duration.num_days() / 365;
+        format!("{}y ago", years)
+    }
+}
+
 /// Group card data for the grid view
 #[derive(Debug, Clone)]
 pub struct GroupCard {
     pub id: Uuid,
     pub name: String,
-    pub host_count: usize,
+    pub collapsed: bool,
 }
 
 /// Host card data for the grid view
@@ -34,6 +56,8 @@ pub struct HostCard {
     pub hostname: String,
     pub detected_os: Option<DetectedOs>,
     pub protocol: Protocol,
+    pub last_connected: Option<chrono::DateTime<chrono::Utc>>,
+    pub group_id: Option<Uuid>,
 }
 
 /// Calculate the number of columns based on available width
@@ -222,44 +246,65 @@ pub fn host_grid_view(
         .spacing(24)
         .padding(Padding::new(24.0).top(16.0).bottom(24.0));
 
-    // Check emptiness before moving
-    let groups_len = groups.len();
     let groups_empty = groups.is_empty();
     let hosts_empty = hosts.is_empty();
 
-    // Groups section (if any groups exist)
-    if !groups_empty {
-        let groups_section = build_groups_section(
-            groups,
-            column_count,
-            theme,
-            fonts,
-            focus_section,
-            focus_index,
-        );
-        content = content.push(groups_section);
-    }
-
-    // Hosts section
     if hosts_empty && groups_empty {
         content = content.push(empty_state(theme, fonts));
-    } else if !hosts_empty {
-        // Adjust focus index for hosts (groups come first)
-        let host_focus_index = if focus_section == FocusSection::Content {
-            focus_index.and_then(|idx| idx.checked_sub(groups_len))
-        } else {
-            None
-        };
-        let hosts_section = build_hosts_section(
-            hosts,
-            column_count,
-            theme,
-            fonts,
-            focus_section,
-            host_focus_index,
-            hovered_host,
-        );
-        content = content.push(hosts_section);
+    } else {
+        // Track global focus index across all hosts
+        let mut global_idx: usize = 0;
+
+        // Render each group with its hosts inline
+        for group in &groups {
+            let group_hosts: Vec<&HostCard> = hosts
+                .iter()
+                .filter(|h| h.group_id == Some(group.id))
+                .collect();
+
+            // Group section header
+            let header = build_group_header(group, group_hosts.len(), theme, fonts);
+            content = content.push(header);
+
+            // Render hosts if not collapsed
+            if !group.collapsed {
+                let section = build_host_cards_grid(
+                    &group_hosts,
+                    column_count,
+                    theme,
+                    fonts,
+                    focus_section,
+                    focus_index,
+                    hovered_host,
+                    global_idx,
+                );
+                content = content.push(section);
+            }
+            global_idx += group_hosts.len();
+        }
+
+        // Ungrouped hosts
+        let ungrouped: Vec<&HostCard> = hosts.iter().filter(|h| h.group_id.is_none()).collect();
+        if !ungrouped.is_empty() {
+            if !groups_empty {
+                let header_text = format!("Ungrouped  ({} hosts)", ungrouped.len());
+                let header = text(header_text)
+                    .size(fonts.section)
+                    .color(theme.text_muted);
+                content = content.push(header);
+            }
+            let section = build_host_cards_grid(
+                &ungrouped,
+                column_count,
+                theme,
+                fonts,
+                focus_section,
+                focus_index,
+                hovered_host,
+                global_idx,
+            );
+            content = content.push(section);
+        }
     }
 
     let scrollable_content = iced::widget::scrollable(content)
@@ -318,67 +363,101 @@ pub fn host_grid_view(
         .into()
 }
 
-/// Build the groups section
-fn build_groups_section(
-    groups: Vec<GroupCard>,
-    column_count: usize,
+/// Build a group section header (clickable to collapse/expand)
+fn build_group_header(
+    group: &GroupCard,
+    host_count: usize,
     theme: Theme,
     fonts: ScaledFonts,
-    focus_section: FocusSection,
-    focus_index: Option<usize>,
 ) -> Element<'static, Message> {
-    let section_header = text("Groups").size(fonts.section).color(theme.text_primary);
+    let group_id = group.id;
+    let collapsed = group.collapsed;
 
-    // Build grid of group cards (dynamic columns)
-    let mut rows: Vec<Element<'static, Message>> = Vec::new();
-    let mut current_row: Vec<Element<'static, Message>> = Vec::new();
+    let chevron_icon = if collapsed {
+        icons::ui::CHEVRON_RIGHT
+    } else {
+        icons::ui::CHEVRON_DOWN
+    };
 
-    for (idx, group) in groups.into_iter().enumerate() {
-        let is_focused = focus_section == FocusSection::Content && focus_index == Some(idx);
-        current_row.push(group_card(group, theme, fonts, is_focused));
+    let count_text = if host_count == 1 {
+        "1 host".to_string()
+    } else {
+        format!("{} hosts", host_count)
+    };
 
-        if current_row.len() >= column_count {
-            rows.push(
-                Row::with_children(std::mem::take(&mut current_row))
-                    .spacing(GRID_SPACING)
-                    .into(),
-            );
+    let header_content = row![
+        icon_with_color(icons::ui::FOLDER_CLOSED, 16, theme.accent),
+        text(group.name.clone())
+            .size(fonts.section)
+            .color(theme.text_primary),
+        text(format!("({})", count_text))
+            .size(fonts.label)
+            .color(theme.text_muted),
+        Space::new().width(Length::Fill),
+        icon_with_color(chevron_icon, 14, theme.text_muted),
+    ]
+    .spacing(8)
+    .align_y(Alignment::Center);
+
+    let header_btn = button(
+        container(header_content)
+            .padding(Padding::from([8, 4]))
+            .width(Length::Fill),
+    )
+    .style(move |_theme, status| {
+        let bg = match status {
+            button::Status::Hovered => theme.hover,
+            _ => iced::Color::TRANSPARENT,
+        };
+        button::Style {
+            background: Some(bg.into()),
+            text_color: theme.text_primary,
+            border: iced::Border {
+                radius: 6.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
         }
-    }
+    })
+    .padding(0)
+    .width(Length::Fill)
+    .on_press(Message::Ui(UiMessage::FolderToggle(group_id)));
 
-    // Add remaining cards in the last row
-    if !current_row.is_empty() {
-        while current_row.len() < column_count {
-            current_row.push(container(text("")).width(Length::FillPortion(1)).into());
-        }
-        rows.push(Row::with_children(current_row).spacing(GRID_SPACING).into());
-    }
-
-    let grid = Column::with_children(rows).spacing(GRID_SPACING);
-
-    column![section_header, grid].spacing(12).into()
+    // Subtle bottom border
+    container(header_btn)
+        .width(Length::Fill)
+        .style(move |_theme| container::Style {
+            border: iced::Border {
+                color: theme.border,
+                width: 0.0,
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .into()
 }
 
-/// Build the hosts section
-fn build_hosts_section(
-    hosts: Vec<HostCard>,
+/// Build a grid of host cards from a slice of host references
+#[allow(clippy::too_many_arguments)]
+fn build_host_cards_grid(
+    hosts: &[&HostCard],
     column_count: usize,
     theme: Theme,
     fonts: ScaledFonts,
     focus_section: FocusSection,
     focus_index: Option<usize>,
     hovered_host: Option<Uuid>,
+    global_offset: usize,
 ) -> Element<'static, Message> {
-    let section_header = text("Hosts").size(fonts.section).color(theme.text_primary);
-
-    // Build grid of host cards (dynamic columns)
     let mut rows: Vec<Element<'static, Message>> = Vec::new();
     let mut current_row: Vec<Element<'static, Message>> = Vec::new();
 
-    for (idx, host) in hosts.into_iter().enumerate() {
-        let is_focused = focus_section == FocusSection::Content && focus_index == Some(idx);
+    for (idx, host) in hosts.iter().enumerate() {
+        let global_idx = global_offset + idx;
+        let is_focused =
+            focus_section == FocusSection::Content && focus_index == Some(global_idx);
         let is_hovered = hovered_host == Some(host.id);
-        current_row.push(host_card(host, theme, fonts, is_focused, is_hovered));
+        current_row.push(host_card((*host).clone(), theme, fonts, is_focused, is_hovered));
 
         if current_row.len() >= column_count {
             rows.push(
@@ -389,7 +468,6 @@ fn build_hosts_section(
         }
     }
 
-    // Add remaining cards in the last row
     if !current_row.is_empty() {
         while current_row.len() < column_count {
             current_row.push(container(text("")).width(Length::FillPortion(1)).into());
@@ -397,103 +475,7 @@ fn build_hosts_section(
         rows.push(Row::with_children(current_row).spacing(GRID_SPACING).into());
     }
 
-    let grid = Column::with_children(rows).spacing(GRID_SPACING);
-
-    column![section_header, grid].spacing(12).into()
-}
-
-/// Single group card
-fn group_card(
-    group: GroupCard,
-    theme: Theme,
-    fonts: ScaledFonts,
-    is_focused: bool,
-) -> Element<'static, Message> {
-    let group_id = group.id;
-
-    // Folder icon with vibrant accent background
-    let icon_widget = container(icon_with_color(
-        icons::ui::FOLDER_CLOSED,
-        18,
-        iced::Color::WHITE,
-    ))
-    .width(40)
-    .height(40)
-    .align_x(Alignment::Center)
-    .align_y(Alignment::Center)
-    .style(move |_theme| container::Style {
-        background: Some(theme.accent.into()),
-        border: iced::Border {
-            radius: CARD_BORDER_RADIUS.into(),
-            ..Default::default()
-        },
-        ..Default::default()
-    });
-
-    // Group info
-    let host_text = if group.host_count == 1 {
-        "1 host".to_string()
-    } else {
-        format!("{} hosts", group.host_count)
-    };
-
-    let info = column![
-        text(group.name)
-            .size(fonts.section)
-            .color(theme.text_primary),
-        text(host_text)
-            .size(fonts.label)
-            .color(theme.text_secondary),
-    ]
-    .spacing(4);
-
-    let card_content = row![icon_widget, info]
-        .spacing(14)
-        .align_y(Alignment::Center);
-
-    button(
-        container(card_content)
-            .padding(10)
-            .width(Length::Fill)
-            .height(Length::Fixed(CARD_HEIGHT))
-            .align_y(Alignment::Center),
-    )
-    .style(move |_theme, status| {
-        let card_bg = theme.surface;
-        let bg = match (status, is_focused) {
-            (_, true) => theme.hover,
-            (button::Status::Hovered, _) => theme.hover,
-            _ => card_bg,
-        };
-        let border = if is_focused {
-            iced::Border {
-                color: theme.focus_ring,
-                width: 2.0,
-                radius: CARD_BORDER_RADIUS.into(),
-            }
-        } else {
-            iced::Border {
-                radius: CARD_BORDER_RADIUS.into(),
-                ..Default::default()
-            }
-        };
-        button::Style {
-            background: Some(bg.into()),
-            text_color: theme.text_primary,
-            border,
-            shadow: iced::Shadow {
-                color: iced::Color::from_rgba8(0, 0, 0, 0.15),
-                offset: iced::Vector::new(0.0, 2.0),
-                blur_radius: 4.0,
-            },
-            ..Default::default()
-        }
-    })
-    .padding(0)
-    .width(Length::FillPortion(1))
-    .height(Length::Fixed(CARD_HEIGHT))
-    .on_press(Message::Ui(UiMessage::FolderToggle(group_id)))
-    .into()
+    Column::with_children(rows).spacing(GRID_SPACING).into()
 }
 
 /// Get the icon data for a detected OS
@@ -597,18 +579,30 @@ fn host_card(
         ..Default::default()
     });
 
-    let detail_row: Element<'static, Message> = match &host.detected_os {
-        Some(os) => row![
-            badge,
+    // Detail row with OS and last connected
+    let last_connected_text = match &host.last_connected {
+        Some(dt) => format_relative_time(dt),
+        None => "never".to_string(),
+    };
+
+    let mut detail_row = Row::new().spacing(6).align_y(Alignment::Center);
+    if let Some(os) = &host.detected_os {
+        detail_row = detail_row.push(
             text(os.display_name().to_string())
                 .size(fonts.label)
-                .color(theme.text_secondary)
-        ]
-        .spacing(6)
-        .align_y(Alignment::Center)
-        .into(),
-        None => badge.into(),
-    };
+                .color(theme.text_secondary),
+        );
+        detail_row = detail_row.push(
+            text("·")
+                .size(fonts.label)
+                .color(theme.text_muted),
+        );
+    }
+    detail_row = detail_row.push(
+        text(last_connected_text)
+            .size(fonts.label)
+            .color(theme.text_secondary),
+    );
 
     let info = column![
         text(host.name.clone())
@@ -617,6 +611,10 @@ fn host_card(
         detail_row,
     ]
     .spacing(4);
+
+    // Protocol badge (top-right)
+    let top_right = column![badge]
+        .align_x(Alignment::End);
 
     // Edit button - only visible on hover
     // Use fixed dimensions (16px icon + 8px padding each side = 32px)
@@ -646,10 +644,16 @@ fn host_card(
         Space::new().width(32).height(32).into()
     };
 
+    // Right side: badge at top, edit button below
+    let right_side: Element<'static, Message> = column![top_right, edit_button]
+        .spacing(4)
+        .align_x(Alignment::End)
+        .into();
+
     let card_content = row![
         icon_widget,
         container(info).width(Length::Fill),
-        edit_button,
+        right_side,
     ]
     .spacing(14)
     .align_y(Alignment::Center);

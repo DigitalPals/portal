@@ -334,7 +334,7 @@ pub const CARD_BORDER_RADIUS: f32 = 12.0;
 pub const MIN_CARD_WIDTH: f32 = 260.0;
 
 /// Fixed card height for consistent tile heights
-pub const CARD_HEIGHT: f32 = 56.0;
+pub const CARD_HEIGHT: f32 = 72.0;
 
 /// Grid spacing between cards
 pub const GRID_SPACING: f32 = 12.0;
