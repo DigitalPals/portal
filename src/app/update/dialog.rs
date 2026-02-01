@@ -171,6 +171,13 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                     portal.dialogs.close();
 
                     use crate::views::dialogs::password_dialog::PasswordConnectionKind;
+                    let protocol_label = match &connection_kind {
+                        PasswordConnectionKind::Ssh => "SSH",
+                        PasswordConnectionKind::Sftp => "SFTP",
+                        PasswordConnectionKind::Vnc => "VNC",
+                    };
+                    portal.dialogs.open_connecting(host.name.clone(), protocol_label);
+
                     match connection_kind {
                         PasswordConnectionKind::Ssh => {
                             let session_id = uuid::Uuid::new_v4();

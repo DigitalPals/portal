@@ -128,6 +128,7 @@ pub fn handle_sftp(portal: &mut Portal, msg: SftpMessage) -> Task<Message> {
             sftp_session,
         } => {
             tracing::info!("SFTP connected for pane {:?}", pane_id);
+            portal.dialogs.close_connecting();
             portal.sftp.clear_pending_connection();
 
             if let Some(host) = portal.config.hosts.find_host(host_id) {

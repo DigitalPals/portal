@@ -193,6 +193,8 @@ impl Portal {
         use crate::vnc::session::VncSessionEvent;
         use secrecy::ExposeSecret;
 
+        self.dialogs.open_connecting(host.name.clone(), "VNC");
+
         let session_id = Uuid::new_v4();
         let hostname = host.hostname.clone();
         let port = host.effective_vnc_port();
@@ -275,6 +277,8 @@ impl Portal {
             self.dialogs.open_password(password_dialog);
             return Task::none();
         }
+
+        self.dialogs.open_connecting(host.name.clone(), "SSH");
 
         // Use Arc to avoid multiple deep clones of Host data
         let host = Arc::new(host.clone());
