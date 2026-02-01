@@ -188,6 +188,8 @@ pub enum DialogMessage {
     HostKeyAccept,
     /// User rejected host key
     HostKeyReject,
+    /// Password dialog: username text changed (for VNC when no username configured)
+    PasswordUsernameChanged(String),
     /// Password dialog: password text changed
     PasswordChanged(SecretString),
     /// Password dialog: user submitted password

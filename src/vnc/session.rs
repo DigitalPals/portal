@@ -382,8 +382,6 @@ pub struct VncSession {
     mouse_rate_limit: Duration,
     /// Last time a pointer event was sent
     last_mouse_sent: Mutex<Instant>,
-    /// Enable verbose VNC logs
-    debug_logs: bool,
     /// Minimum interval between resize requests
     resize_rate_limit: Duration,
     /// Last time a resize was requested
@@ -425,13 +423,11 @@ impl VncSession {
         ),
         String,
     > {
-        let debug_logs = std::env::var_os("PORTAL_VNC_DEBUG").is_some();
         tracing::info!(
-            "VNC connect to {}:{} (user set: {}, debug_logs: {})",
+            "VNC connect to {}:{} (user set: {})",
             hostname,
             port,
             username.as_ref().map(|u| !u.is_empty()).unwrap_or(false),
-            debug_logs
         );
         let addr = format!("{}:{}", hostname, port);
         let tcp = tokio::time::timeout(Duration::from_secs(15), TcpStream::connect(&addr))
@@ -460,19 +456,6 @@ impl VncSession {
             allow_tight,
             include_cursor,
         );
-        tracing::info!(
-            "VNC encodings: {:?} (preference: {:?}, private: {}, cursor: {})",
-            encodings,
-            vnc_settings.encoding,
-            is_private,
-            include_cursor
-        );
-        tracing::info!(
-            "VNC pixel format: {} bpp (allow_tight: {})",
-            pixel_format.bits_per_pixel,
-            allow_tight
-        );
-
         let mut connector = vnc::client::VncConnector::new(stream)
             .set_auth_method(async move { Ok(pw) })
             .allow_shared(true)
@@ -502,7 +485,6 @@ impl VncSession {
             host_name,
             mouse_rate_limit: Duration::from_millis(vnc_settings.pointer_interval_ms),
             last_mouse_sent: Mutex::new(now),
-            debug_logs,
             resize_rate_limit: Duration::from_millis(100),
             last_resize_sent: Mutex::new(now - Duration::from_millis(500)),
             last_resize_size: Mutex::new((0, 0)),
@@ -517,7 +499,6 @@ impl VncSession {
             framebuffer,
             event_tx,
             input_rx,
-            debug_logs,
             pixel_format,
             vnc_settings.refresh_fps,
             vnc_settings.max_events_per_tick,
@@ -539,7 +520,6 @@ impl VncSession {
         framebuffer: Arc<Mutex<FrameBuffer>>,
         event_tx: mpsc::Sender<VncSessionEvent>,
         mut input_rx: mpsc::Receiver<X11Event>,
-        debug_logs: bool,
         pixel_format: PixelFormat,
         refresh_fps: u32,
         _max_events_per_tick: usize,
@@ -595,18 +575,6 @@ impl VncSession {
             }
         });
 
-        // Optional stats logging
-        let mut stats_events: u64 = 0;
-        let mut stats_raw_rects: u64 = 0;
-        let mut stats_copy_rects: u64 = 0;
-        let mut stats_jpeg_rects: u64 = 0;
-        let mut stats_bytes_raw: u64 = 0;
-        let mut stats_bytes_jpeg: u64 = 0;
-        let mut stats_apply_raw_ms: u64 = 0;
-        let mut stats_jpeg_decode_ms: u64 = 0;
-        let mut stats_last_update = Instant::now();
-        let mut stats_print_at = Instant::now() + Duration::from_secs(2);
-
         // Main event loop — recv_event() blocks (yields) until a VNC event is
         // available, which releases the VncClient async mutex so the input and
         // refresh tasks can make progress concurrently.
@@ -642,46 +610,29 @@ impl VncSession {
                     if let Err(e) = vnc.input(X11Event::FullRefresh).await {
                         tracing::warn!("VNC full refresh after resize failed: {}", e);
                     }
-                    if debug_logs {
-                        stats_events += 1;
-                        stats_last_update = Instant::now();
-                    }
                 }
                 VncEvent::RawImage(rect, data) => {
-                    let t0 = Instant::now();
-                    {
-                        let mut fb = framebuffer.lock();
-                        if raw_bpp == 2 {
-                            fb.apply_raw_565(
-                                rect.x as u32,
-                                rect.y as u32,
-                                rect.width as u32,
-                                rect.height as u32,
-                                &data,
-                                raw_big_endian,
-                            );
-                        } else {
-                            fb.apply_raw(
-                                rect.x as u32,
-                                rect.y as u32,
-                                rect.width as u32,
-                                rect.height as u32,
-                                &data,
-                            );
-                        }
-                    }
-                    if debug_logs {
-                        let dt = t0.elapsed();
-                        stats_apply_raw_ms += dt.as_millis() as u64;
-                        stats_events += 1;
-                        stats_raw_rects += 1;
-                        stats_bytes_raw += data.len() as u64;
-                        stats_last_update = Instant::now();
+                    let mut fb = framebuffer.lock();
+                    if raw_bpp == 2 {
+                        fb.apply_raw_565(
+                            rect.x as u32,
+                            rect.y as u32,
+                            rect.width as u32,
+                            rect.height as u32,
+                            &data,
+                            raw_big_endian,
+                        );
+                    } else {
+                        fb.apply_raw(
+                            rect.x as u32,
+                            rect.y as u32,
+                            rect.width as u32,
+                            rect.height as u32,
+                            &data,
+                        );
                     }
                 }
                 VncEvent::JpegImage(rect, data) => {
-                    let decode_start = Instant::now();
-                    let jpeg_len = data.len();
                     let rx = rect.x as u32;
                     let ry = rect.y as u32;
                     let rw = rect.width;
@@ -711,16 +662,7 @@ impl VncSession {
                     })
                     .await
                     {
-                        Ok(Ok(())) => {
-                            if debug_logs {
-                                let dt = decode_start.elapsed();
-                                stats_jpeg_decode_ms += dt.as_millis() as u64;
-                                stats_events += 1;
-                                stats_jpeg_rects += 1;
-                                stats_bytes_jpeg += jpeg_len as u64;
-                                stats_last_update = Instant::now();
-                            }
-                        }
+                        Ok(Ok(())) => {}
                         Ok(Err(e)) => {
                             tracing::error!("VNC JPEG decode error: {}", e);
                         }
@@ -738,17 +680,9 @@ impl VncSession {
                         dst.width as u32,
                         dst.height as u32,
                     );
-                    if debug_logs {
-                        stats_events += 1;
-                        stats_copy_rects += 1;
-                        stats_last_update = Instant::now();
-                    }
                 }
                 VncEvent::Bell => {
                     let _ = event_tx.send(VncSessionEvent::Bell).await;
-                    if debug_logs {
-                        stats_events += 1;
-                    }
                 }
                 VncEvent::SetCursor(_rect, _data) => {}
                 VncEvent::Text(text) => {
@@ -757,35 +691,6 @@ impl VncSession {
                     }
                 }
                 _ => {}
-            }
-
-            // Periodic stats logging
-            if debug_logs {
-                let now = Instant::now();
-                if now >= stats_print_at {
-                    let since_update = stats_last_update.elapsed().as_millis();
-                    tracing::debug!(
-                        "VNC stats: events={} raw_rects={} copy_rects={} jpeg_rects={} bytes_raw={} bytes_jpeg={} apply_raw_ms={} jpeg_decode_ms={} last_update_ms={}",
-                        stats_events,
-                        stats_raw_rects,
-                        stats_copy_rects,
-                        stats_jpeg_rects,
-                        stats_bytes_raw,
-                        stats_bytes_jpeg,
-                        stats_apply_raw_ms,
-                        stats_jpeg_decode_ms,
-                        since_update,
-                    );
-                    stats_events = 0;
-                    stats_raw_rects = 0;
-                    stats_copy_rects = 0;
-                    stats_jpeg_rects = 0;
-                    stats_bytes_raw = 0;
-                    stats_bytes_jpeg = 0;
-                    stats_apply_raw_ms = 0;
-                    stats_jpeg_decode_ms = 0;
-                    stats_print_at = now + Duration::from_secs(2);
-                }
             }
         }
 
@@ -828,27 +733,14 @@ impl VncSession {
 
         *last_sent = now;
         *last_size = (width, height);
-        if let Err(err) = self
+        let _ = self
             .input_tx
-            .try_send(X11Event::SetDesktopSize { width, height })
-        {
-            if self.debug_logs {
-                tracing::debug!("VNC resize request dropped: {}", err);
-            }
-        } else if self.debug_logs {
-            tracing::debug!("VNC resize requested: {}x{}", width, height);
-        }
+            .try_send(X11Event::SetDesktopSize { width, height });
     }
 
     /// Request a framebuffer refresh (best-effort, rate-limited)
     pub fn try_request_full_refresh(&self) {
-        if let Err(err) = self.input_tx.try_send(X11Event::FullRefresh) {
-            if self.debug_logs {
-                tracing::debug!("VNC full refresh request dropped: {}", err);
-            }
-        } else if self.debug_logs {
-            tracing::debug!("VNC full refresh requested");
-        }
+        let _ = self.input_tx.try_send(X11Event::FullRefresh);
     }
 
     pub fn try_request_refresh(&self) {
@@ -858,38 +750,22 @@ impl VncSession {
             return;
         }
         *last = now;
-        if let Err(err) = self.input_tx.try_send(X11Event::Refresh) {
-            if self.debug_logs {
-                tracing::debug!("VNC refresh request dropped: {}", err);
-            }
-        } else if self.debug_logs {
-            tracing::debug!("VNC refresh requested");
-        }
+        let _ = self.input_tx.try_send(X11Event::Refresh);
     }
 
     /// Send a key event to the VNC server (async)
     pub async fn send_key(&self, keysym: u32, pressed: bool) {
-        if let Err(err) = self
+        let _ = self
             .input_tx
             .send(X11Event::KeyEvent((keysym, pressed).into()))
-            .await
-        {
-            if self.debug_logs {
-                tracing::debug!("VNC key event send failed: {}", err);
-            }
-        }
+            .await;
     }
 
     /// Send a key event synchronously (non-blocking, for use from update handlers)
     pub fn try_send_key(&self, keysym: u32, pressed: bool) {
-        if let Err(err) = self
+        let _ = self
             .input_tx
-            .try_send(X11Event::KeyEvent((keysym, pressed).into()))
-        {
-            if self.debug_logs {
-                tracing::debug!("VNC key event dropped: {}", err);
-            }
-        }
+            .try_send(X11Event::KeyEvent((keysym, pressed).into()));
     }
 
     /// Send a mouse event synchronously (non-blocking, for use from widget events)
@@ -902,23 +778,14 @@ impl VncSession {
             }
             *last = now;
         }
-        if let Err(err) = self
+        let _ = self
             .input_tx
-            .try_send(X11Event::PointerEvent((x, y, buttons).into()))
-        {
-            if self.debug_logs {
-                tracing::debug!("VNC mouse event dropped: {}", err);
-            }
-        }
+            .try_send(X11Event::PointerEvent((x, y, buttons).into()));
     }
 
     /// Send clipboard text to the VNC server
     pub async fn send_clipboard(&self, text: String) {
-        if let Err(err) = self.input_tx.send(X11Event::CopyText(text)).await {
-            if self.debug_logs {
-                tracing::debug!("VNC clipboard send failed: {}", err);
-            }
-        }
+        let _ = self.input_tx.send(X11Event::CopyText(text)).await;
     }
 
     /// Disconnect the session

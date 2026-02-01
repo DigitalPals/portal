@@ -334,7 +334,7 @@ pub const CARD_BORDER_RADIUS: f32 = 12.0;
 pub const MIN_CARD_WIDTH: f32 = 260.0;
 
 /// Fixed card height for consistent tile heights
-pub const CARD_HEIGHT: f32 = 56.0;
+pub const CARD_HEIGHT: f32 = 72.0;
 
 /// Grid spacing between cards
 pub const GRID_SPACING: f32 = 12.0;
@@ -378,37 +378,37 @@ pub const STATUS_PARTIAL: Color = Color::from_rgb(
 // These are the base sizes before UI scaling is applied
 
 /// Page headers (Settings, About page titles)
-pub const FONT_SIZE_PAGE_TITLE: f32 = 28.0;
+pub const FONT_SIZE_PAGE_TITLE: f32 = 30.8;
 
 /// Dialog titles
-pub const FONT_SIZE_DIALOG_TITLE: f32 = 20.0;
+pub const FONT_SIZE_DIALOG_TITLE: f32 = 22.0;
 
 /// Empty state headings (large centered messages)
-pub const FONT_SIZE_HEADING: f32 = 18.0;
+pub const FONT_SIZE_HEADING: f32 = 19.8;
 
 /// Section headers (Groups, Hosts, Snippets, History, Results)
-pub const FONT_SIZE_SECTION: f32 = 13.0;
+pub const FONT_SIZE_SECTION: f32 = 14.3;
 
 /// Body text, primary readable content
-pub const FONT_SIZE_BODY: f32 = 13.0;
+pub const FONT_SIZE_BODY: f32 = 14.3;
 
 /// Button text in primary/secondary buttons
-pub const FONT_SIZE_BUTTON: f32 = 14.0;
+pub const FONT_SIZE_BUTTON: f32 = 15.4;
 
 /// Small button text, menu items, inline buttons
-pub const FONT_SIZE_BUTTON_SMALL: f32 = 13.0;
+pub const FONT_SIZE_BUTTON_SMALL: f32 = 14.3;
 
 /// Secondary info, descriptions, form field labels
-pub const FONT_SIZE_LABEL: f32 = 9.0;
+pub const FONT_SIZE_LABEL: f32 = 9.9;
 
 /// Metadata, timestamps, status bar, keyboard shortcuts
-pub const FONT_SIZE_CAPTION: f32 = 12.0;
+pub const FONT_SIZE_CAPTION: f32 = 13.2;
 
 /// Very small text (badges, fingerprints, tiny labels)
-pub const FONT_SIZE_SMALL: f32 = 11.0;
+pub const FONT_SIZE_SMALL: f32 = 12.1;
 
 /// Monospace code display (ASCII logos)
-pub const FONT_SIZE_MONO_TINY: f32 = 10.0;
+pub const FONT_SIZE_MONO_TINY: f32 = 11.0;
 
 /// Scaled font sizes for UI elements.
 ///

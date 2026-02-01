@@ -4,6 +4,7 @@
 //! can be open at a time and simplifying state management.
 
 use crate::views::dialogs::about_dialog::AboutDialogState;
+use crate::views::dialogs::connecting_dialog::ConnectingDialogState;
 use crate::views::dialogs::host_dialog::HostDialogState;
 use crate::views::dialogs::host_key_dialog::HostKeyDialogState;
 use crate::views::dialogs::passphrase_dialog::PassphraseDialogState;
@@ -28,6 +29,8 @@ pub enum ActiveDialog {
     PassphrasePrompt(PassphraseDialogState),
     /// Quick connect dialog for ad-hoc connections
     QuickConnect(QuickConnectDialogState),
+    /// Connecting progress dialog
+    Connecting(ConnectingDialogState),
 }
 
 /// Manages the active dialog state
@@ -151,6 +154,20 @@ impl DialogManager {
     /// Open the quick connect dialog
     pub fn open_quick_connect(&mut self) {
         self.active = ActiveDialog::QuickConnect(QuickConnectDialogState::new());
+    }
+
+    // ---- Connecting dialog operations ----
+
+    /// Open the connecting dialog
+    pub fn open_connecting(&mut self, host_name: String, protocol: &str) {
+        self.active = ActiveDialog::Connecting(ConnectingDialogState::new(host_name, protocol));
+    }
+
+    /// Close the dialog only if it's the connecting dialog
+    pub fn close_connecting(&mut self) {
+        if matches!(self.active, ActiveDialog::Connecting(_)) {
+            self.active = ActiveDialog::None;
+        }
     }
 
     /// Get mutable quick connect dialog state if it's the active dialog

@@ -213,6 +213,21 @@ pub fn password_dialog_view(
         content_items.push(Space::new().height(8).into());
     }
 
+    // Show username field for VNC connections
+    if state.connection_kind == PasswordConnectionKind::Vnc {
+        let username_label = text("Username").size(12).color(theme.text_muted);
+        let username_input = text_input("Enter username...", &state.username)
+            .size(14)
+            .padding(10)
+            .width(Length::Fill)
+            .style(dialog_input_style(theme))
+            .on_input(|s| Message::Dialog(DialogMessage::PasswordUsernameChanged(s)));
+        content_items.push(username_label.into());
+        content_items.push(Space::new().height(4).into());
+        content_items.push(username_input.into());
+        content_items.push(Space::new().height(8).into());
+    }
+
     content_items.extend([
         password_label.into(),
         Space::new().height(4).into(),

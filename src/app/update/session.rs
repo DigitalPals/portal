@@ -69,6 +69,7 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
             detected_os,
         } => {
             tracing::info!("SSH connected");
+            portal.dialogs.close_connecting();
 
             // Update host with detected OS if available
             if let Some(os) = detected_os {
@@ -202,6 +203,7 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
         }
         SessionMessage::Error(error) => {
             tracing::error!("Session error: {}", error);
+            portal.dialogs.close_connecting();
             portal.toast_manager.push(Toast::error(error));
             Task::none()
         }

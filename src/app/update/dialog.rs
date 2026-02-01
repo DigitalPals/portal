@@ -140,6 +140,12 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
             portal.dialogs.close();
             Task::none()
         }
+        DialogMessage::PasswordUsernameChanged(username) => {
+            if let Some(dialog) = portal.dialogs.password_mut() {
+                dialog.username = username;
+            }
+            Task::none()
+        }
         DialogMessage::PasswordChanged(password) => {
             if let Some(dialog) = portal.dialogs.password_mut() {
                 dialog.password = password;
@@ -154,6 +160,7 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                 let host_id = dialog.host_id;
                 let connection_kind = dialog.connection_kind.clone();
                 let sftp_context = dialog.sftp_context.clone();
+                let dialog_username = dialog.username.clone();
                 dialog.clear_password();
                 dialog.error = None;
 
@@ -164,6 +171,15 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                     portal.dialogs.close();
 
                     use crate::views::dialogs::password_dialog::PasswordConnectionKind;
+                    let protocol_label = match &connection_kind {
+                        PasswordConnectionKind::Ssh => "SSH",
+                        PasswordConnectionKind::Sftp => "SFTP",
+                        PasswordConnectionKind::Vnc => "VNC",
+                    };
+                    portal
+                        .dialogs
+                        .open_connecting(host.name.clone(), protocol_label);
+
                     match connection_kind {
                         PasswordConnectionKind::Ssh => {
                             let session_id = uuid::Uuid::new_v4();
@@ -191,6 +207,13 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                             }
                         }
                         PasswordConnectionKind::Vnc => {
+                            // Use username from dialog (user may have edited it)
+                            if host.username != dialog_username {
+                                let mut host_with_username = (*host).clone();
+                                host_with_username.username = dialog_username;
+                                let host = std::sync::Arc::new(host_with_username);
+                                return portal.connect_vnc_host_with_password(&host, password);
+                            }
                             return portal.connect_vnc_host_with_password(&host, password);
                         }
                     }

@@ -6,19 +6,10 @@ pub(super) fn group_cards(hosts_config: &HostsConfig) -> Vec<GroupCard> {
     hosts_config
         .groups
         .iter()
-        .map(|group| {
-            // Count hosts in this group
-            let host_count = hosts_config
-                .hosts
-                .iter()
-                .filter(|h| h.group_id == Some(group.id))
-                .count();
-
-            GroupCard {
-                id: group.id,
-                name: group.name.clone(),
-                host_count,
-            }
+        .map(|group| GroupCard {
+            id: group.id,
+            name: group.name.clone(),
+            collapsed: group.collapsed,
         })
         .collect()
 }
@@ -34,6 +25,8 @@ pub(super) fn host_cards(hosts_config: &HostsConfig) -> Vec<HostCard> {
             hostname: host.hostname.clone(),
             detected_os: host.detected_os.clone(),
             protocol: host.protocol.clone(),
+            last_connected: host.last_connected,
+            group_id: host.group_id,
         })
         .collect()
 }
