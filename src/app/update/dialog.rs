@@ -176,7 +176,9 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                         PasswordConnectionKind::Sftp => "SFTP",
                         PasswordConnectionKind::Vnc => "VNC",
                     };
-                    portal.dialogs.open_connecting(host.name.clone(), protocol_label);
+                    portal
+                        .dialogs
+                        .open_connecting(host.name.clone(), protocol_label);
 
                     match connection_kind {
                         PasswordConnectionKind::Ssh => {
@@ -210,8 +212,7 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                                 let mut host_with_username = (*host).clone();
                                 host_with_username.username = dialog_username;
                                 let host = std::sync::Arc::new(host_with_username);
-                                return portal
-                                    .connect_vnc_host_with_password(&host, password);
+                                return portal.connect_vnc_host_with_password(&host, password);
                             }
                             return portal.connect_vnc_host_with_password(&host, password);
                         }

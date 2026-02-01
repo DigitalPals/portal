@@ -30,12 +30,9 @@ pub fn connecting_dialog_view(
     theme: Theme,
 ) -> Element<'static, Message> {
     let content = column![
-        text(format!(
-            "Connecting to {}...",
-            state.host_name
-        ))
-        .size(16)
-        .color(theme.text_primary),
+        text(format!("Connecting to {}...", state.host_name))
+            .size(16)
+            .color(theme.text_primary),
         text(format!("Establishing {} connection", state.protocol))
             .size(13)
             .color(theme.text_secondary),

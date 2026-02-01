@@ -82,6 +82,7 @@ pub fn about_dialog_view(
         ("Iced", "Cross-platform GUI framework"),
         ("Alacritty Terminal", "Terminal emulation"),
         ("Russh", "SSH protocol implementation"),
+        ("vnc-rs", "VNC protocol implementation"),
         ("Tokio", "Async runtime"),
     ];
 

@@ -454,10 +454,15 @@ fn build_host_cards_grid(
 
     for (idx, host) in hosts.iter().enumerate() {
         let global_idx = global_offset + idx;
-        let is_focused =
-            focus_section == FocusSection::Content && focus_index == Some(global_idx);
+        let is_focused = focus_section == FocusSection::Content && focus_index == Some(global_idx);
         let is_hovered = hovered_host == Some(host.id);
-        current_row.push(host_card((*host).clone(), theme, fonts, is_focused, is_hovered));
+        current_row.push(host_card(
+            (*host).clone(),
+            theme,
+            fonts,
+            is_focused,
+            is_hovered,
+        ));
 
         if current_row.len() >= column_count {
             rows.push(
@@ -592,11 +597,7 @@ fn host_card(
                 .size(fonts.label)
                 .color(theme.text_secondary),
         );
-        detail_row = detail_row.push(
-            text("·")
-                .size(fonts.label)
-                .color(theme.text_muted),
-        );
+        detail_row = detail_row.push(text("·").size(fonts.label).color(theme.text_muted));
     }
     detail_row = detail_row.push(
         text(last_connected_text)
@@ -613,8 +614,7 @@ fn host_card(
     .spacing(4);
 
     // Protocol badge (top-right)
-    let top_right = column![badge]
-        .align_x(Alignment::End);
+    let top_right = column![badge].align_x(Alignment::End);
 
     // Edit button - only visible on hover
     // Use fixed dimensions (16px icon + 8px padding each side = 32px)
@@ -650,13 +650,9 @@ fn host_card(
         .align_x(Alignment::End)
         .into();
 
-    let card_content = row![
-        icon_widget,
-        container(info).width(Length::Fill),
-        right_side,
-    ]
-    .spacing(14)
-    .align_y(Alignment::Center);
+    let card_content = row![icon_widget, container(info).width(Length::Fill), right_side,]
+        .spacing(14)
+        .align_y(Alignment::Center);
 
     let card_button = button(
         container(card_content)
