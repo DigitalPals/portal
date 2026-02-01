@@ -508,9 +508,9 @@ pub fn host_dialog_view(state: &HostDialogState, theme: Theme) -> Element<'stati
     .padding(24)
     .width(Length::Fixed(450.0));
 
-    // Only show SSH-specific fields when protocol is SSH
+    // Username is shown for both SSH and VNC; auth fields are SSH-only
+    form = form.push(username_input);
     if !is_vnc {
-        form = form.push(username_input);
         form = form.push(auth_picker);
         form = form.push(key_path_section);
     }
