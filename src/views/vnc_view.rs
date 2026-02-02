@@ -345,9 +345,7 @@ fn vnc_pick_list_style(
 }
 
 /// Menu style for VNC toolbar Send Keys dropdown
-fn vnc_pick_list_menu_style(
-    theme: Theme,
-) -> impl Fn(&iced::Theme) -> iced::overlay::menu::Style {
+fn vnc_pick_list_menu_style(theme: Theme) -> impl Fn(&iced::Theme) -> iced::overlay::menu::Style {
     move |_t| iced::overlay::menu::Style {
         background: theme.surface.into(),
         text_color: theme.text_primary,
