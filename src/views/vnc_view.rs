@@ -1,8 +1,8 @@
 //! VNC viewer view
 //!
-//! Renders the VNC framebuffer with toolbar, status bar, and special key buttons.
+//! Renders the VNC framebuffer with toolbar and special key dropdown.
 
-use iced::widget::{button, column, container, row, stack, text};
+use iced::widget::{button, column, container, pick_list, row, stack, text};
 use iced::{Element, Fill};
 
 use crate::app::managers::session_manager::VncActiveSession;
@@ -11,6 +11,49 @@ use crate::message::QualityLevel;
 use crate::message::{Message, SessionId, VncMessage};
 use crate::theme::{ScaledFonts, Theme};
 use crate::vnc::widget::vnc_framebuffer_interactive;
+
+/// Special key combinations available in the Send Keys dropdown
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SendKeyOption {
+    CtrlAltDel,
+    AltTab,
+    Super,
+    PrtSc,
+    CtrlAltF1,
+}
+
+impl SendKeyOption {
+    const ALL: &[SendKeyOption] = &[
+        SendKeyOption::CtrlAltDel,
+        SendKeyOption::AltTab,
+        SendKeyOption::Super,
+        SendKeyOption::PrtSc,
+        SendKeyOption::CtrlAltF1,
+    ];
+
+    /// Return the keysyms for this key combination
+    fn keysyms(self) -> Vec<u32> {
+        match self {
+            SendKeyOption::CtrlAltDel => vec![keysyms::CONTROL_L, keysyms::ALT_L, keysyms::DELETE],
+            SendKeyOption::AltTab => vec![keysyms::ALT_L, keysyms::TAB],
+            SendKeyOption::Super => vec![keysyms::SUPER_L],
+            SendKeyOption::PrtSc => vec![keysyms::PRINT],
+            SendKeyOption::CtrlAltF1 => vec![keysyms::CONTROL_L, keysyms::ALT_L, keysyms::F1],
+        }
+    }
+}
+
+impl std::fmt::Display for SendKeyOption {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SendKeyOption::CtrlAltDel => write!(f, "Ctrl+Alt+Del"),
+            SendKeyOption::AltTab => write!(f, "Alt+Tab"),
+            SendKeyOption::Super => write!(f, "Super"),
+            SendKeyOption::PrtSc => write!(f, "PrtSc"),
+            SendKeyOption::CtrlAltF1 => write!(f, "Ctrl+Alt+F1"),
+        }
+    }
+}
 
 /// X11 keysym constants for special keys
 mod keysyms {
@@ -57,95 +100,51 @@ pub fn vnc_viewer_view<'a>(
     };
     let fps_text = format!("{:.0} fps", fps);
 
-    // Status bar
-    let status_bar = container(
+    // Single consolidated toolbar
+    let send_keys_picker: Element<'a, Message> = {
+        let sid = session_id;
+        pick_list(
+            SendKeyOption::ALL,
+            None::<SendKeyOption>,
+            move |option: SendKeyOption| {
+                Message::Vnc(VncMessage::SendSpecialKeys {
+                    session_id: sid,
+                    keysyms: option.keysyms(),
+                })
+            },
+        )
+        .placeholder("Send Keys")
+        .text_size(fonts.small)
+        .padding([2, 6])
+        .style(vnc_pick_list_style(theme))
+        .menu_style(vnc_pick_list_menu_style(theme))
+        .into()
+    };
+
+    let toolbar = container(
         row![
-            text("VNC").size(fonts.label).color(theme.text_secondary),
-            text(" | ").size(fonts.label).color(theme.text_muted),
-            text(&vnc.host_name)
-                .size(fonts.label)
-                .color(theme.text_primary),
-            text(" | ").size(fonts.label).color(theme.text_muted),
+            // Status group: resolution, fps, scaling, quality
             text(resolution_text)
-                .size(fonts.label)
+                .size(fonts.small)
                 .color(theme.text_secondary),
-            text(" | ").size(fonts.label).color(theme.text_muted),
-            text(fps_text).size(fonts.label).color(fps_color),
-            text(" | ").size(fonts.label).color(theme.text_muted),
-            vnc_status_button(
+            text(fps_text).size(fonts.small).color(fps_color),
+            vnc_action_button(
                 scaling_label,
                 Message::Vnc(VncMessage::CycleScalingMode),
                 theme,
                 fonts
             ),
-            text(" | ").size(fonts.label).color(theme.text_muted),
             {
                 let (quality_label, quality_color) = match vnc.quality_level {
                     QualityLevel::High => ("● High", iced::Color::from_rgb8(0x40, 0xa0, 0x2b)),
                     QualityLevel::Medium => ("● Med", iced::Color::from_rgb8(0xdf, 0x8e, 0x1d)),
                     QualityLevel::Low => ("● Low", iced::Color::from_rgb8(0xd2, 0x0f, 0x39)),
                 };
-                text(quality_label).size(fonts.label).color(quality_color)
+                text(quality_label).size(fonts.small).color(quality_color)
             },
-        ]
-        .spacing(4)
-        .align_y(iced::Alignment::Center),
-    )
-    .padding([4, 12])
-    .width(Fill)
-    .style(move |_| iced::widget::container::Style {
-        background: Some(theme.surface.into()),
-        ..Default::default()
-    });
-
-    // Special keys toolbar
-    let special_keys_bar = container(
-        row![
-            vnc_action_button(
-                "Ctrl+Alt+Del",
-                Message::Vnc(VncMessage::SendSpecialKeys {
-                    session_id,
-                    keysyms: vec![keysyms::CONTROL_L, keysyms::ALT_L, keysyms::DELETE],
-                }),
-                theme,
-                fonts,
-            ),
-            vnc_action_button(
-                "Alt+Tab",
-                Message::Vnc(VncMessage::SendSpecialKeys {
-                    session_id,
-                    keysyms: vec![keysyms::ALT_L, keysyms::TAB],
-                }),
-                theme,
-                fonts,
-            ),
-            vnc_action_button(
-                "Super",
-                Message::Vnc(VncMessage::SendSpecialKeys {
-                    session_id,
-                    keysyms: vec![keysyms::SUPER_L],
-                }),
-                theme,
-                fonts,
-            ),
-            vnc_action_button(
-                "PrtSc",
-                Message::Vnc(VncMessage::SendSpecialKeys {
-                    session_id,
-                    keysyms: vec![keysyms::PRINT],
-                }),
-                theme,
-                fonts,
-            ),
-            vnc_action_button(
-                "Ctrl+Alt+F1",
-                Message::Vnc(VncMessage::SendSpecialKeys {
-                    session_id,
-                    keysyms: vec![keysyms::CONTROL_L, keysyms::ALT_L, keysyms::F1],
-                }),
-                theme,
-                fonts,
-            ),
+            text("|").size(fonts.small).color(theme.text_muted),
+            // Send Keys dropdown + Grab KB
+            send_keys_picker,
             vnc_action_button(
                 if vnc.keyboard_passthrough {
                     "Release KB"
@@ -156,6 +155,7 @@ pub fn vnc_viewer_view<'a>(
                 theme,
                 fonts,
             ),
+            text("|").size(fonts.small).color(theme.text_muted),
             // Spacer
             iced::widget::Space::new().width(Fill),
             // Monitor selector (only if multiple monitors detected)
@@ -199,10 +199,10 @@ pub fn vnc_viewer_view<'a>(
                 fonts,
             ),
         ]
-        .spacing(4)
+        .spacing(6)
         .align_y(iced::Alignment::Center),
     )
-    .padding([2, 12])
+    .padding([3, 12])
     .width(Fill)
     .style(move |_| iced::widget::container::Style {
         background: Some(theme.surface.into()),
@@ -256,7 +256,7 @@ pub fn vnc_viewer_view<'a>(
         .height(Fill)
         .into()
     } else {
-        column![status_bar, special_keys_bar, framebuffer]
+        column![toolbar, framebuffer]
             .width(Fill)
             .height(Fill)
             .into()
@@ -321,31 +321,43 @@ fn vnc_action_button_owned<'a>(
         .into()
 }
 
-/// Small status bar button (for scaling mode toggle etc.)
-fn vnc_status_button<'a>(
-    label: &'a str,
-    on_press: Message,
+/// Pick list style for VNC toolbar Send Keys dropdown
+fn vnc_pick_list_style(
     theme: Theme,
-    fonts: ScaledFonts,
-) -> Element<'a, Message> {
-    button(text(label).size(fonts.label).color(theme.text_secondary))
-        .on_press(on_press)
-        .padding([1, 6])
-        .style(move |_t, status| {
-            let bg = match status {
-                button::Status::Hovered => theme.hover,
-                _ => iced::Color::TRANSPARENT,
-            };
-            button::Style {
-                background: Some(bg.into()),
-                border: iced::Border {
-                    radius: 3.0.into(),
-                    width: 1.0,
-                    color: theme.border,
-                },
-                text_color: theme.text_secondary,
-                ..Default::default()
-            }
-        })
-        .into()
+) -> impl Fn(&iced::Theme, pick_list::Status) -> pick_list::Style {
+    move |_t, status| {
+        let bg = match status {
+            pick_list::Status::Hovered | pick_list::Status::Opened { .. } => theme.hover,
+            _ => theme.surface,
+        };
+        pick_list::Style {
+            background: bg.into(),
+            text_color: theme.text_secondary,
+            placeholder_color: theme.text_secondary,
+            handle_color: theme.text_muted,
+            border: iced::Border {
+                radius: 3.0.into(),
+                width: 1.0,
+                color: theme.border,
+            },
+        }
+    }
+}
+
+/// Menu style for VNC toolbar Send Keys dropdown
+fn vnc_pick_list_menu_style(
+    theme: Theme,
+) -> impl Fn(&iced::Theme) -> iced::overlay::menu::Style {
+    move |_t| iced::overlay::menu::Style {
+        background: theme.surface.into(),
+        text_color: theme.text_primary,
+        selected_text_color: theme.text_primary,
+        selected_background: theme.accent.into(),
+        border: iced::Border {
+            radius: 4.0.into(),
+            width: 1.0,
+            color: theme.border,
+        },
+        shadow: iced::Shadow::default(),
+    }
 }
