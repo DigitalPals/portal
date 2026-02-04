@@ -99,6 +99,10 @@ jobs:
         if: runner.os == 'macOS'
         run: cargo bundle --release --target ${{ matrix.target }}
 
+      - name: Sign macOS app (ad-hoc)
+        if: runner.os == 'macOS'
+        run: codesign --deep --force -s - target/${{ matrix.target }}/release/bundle/osx/Portal.app
+
       - name: Package macOS app
         if: runner.os == 'macOS'
         run: |
