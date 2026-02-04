@@ -392,9 +392,6 @@ pub const FONT_SIZE_SECTION: f32 = 14.3;
 /// Body text, primary readable content
 pub const FONT_SIZE_BODY: f32 = 14.3;
 
-/// Button text in primary/secondary buttons
-pub const FONT_SIZE_BUTTON: f32 = 15.4;
-
 /// Small button text, menu items, inline buttons
 pub const FONT_SIZE_BUTTON_SMALL: f32 = 14.3;
 
@@ -415,7 +412,6 @@ pub const FONT_SIZE_MONO_TINY: f32 = 11.0;
 /// This struct holds all font sizes after applying the UI scale factor.
 /// Use `ScaledFonts::new(scale)` to create an instance with the appropriate scaling.
 #[derive(Debug, Clone, Copy)]
-#[allow(dead_code)]
 pub struct ScaledFonts {
     /// Page headers (Settings, About page titles)
     pub page_title: f32,
@@ -427,8 +423,6 @@ pub struct ScaledFonts {
     pub section: f32,
     /// Body text, primary readable content
     pub body: f32,
-    /// Button text in primary/secondary buttons
-    pub button: f32,
     /// Small button text, menu items, inline buttons
     pub button_small: f32,
     /// Secondary info, descriptions, form field labels
@@ -453,7 +447,6 @@ impl ScaledFonts {
             heading: (FONT_SIZE_HEADING * scale).round(),
             section: (FONT_SIZE_SECTION * scale).round(),
             body: (FONT_SIZE_BODY * scale).round(),
-            button: (FONT_SIZE_BUTTON * scale).round(),
             button_small: (FONT_SIZE_BUTTON_SMALL * scale).round(),
             label: (FONT_SIZE_LABEL * scale).round(),
             caption: (FONT_SIZE_CAPTION * scale).round(),
@@ -461,23 +454,4 @@ impl ScaledFonts {
             mono_tiny: (FONT_SIZE_MONO_TINY * scale).round(),
         }
     }
-
-    /// Create scaled fonts with no scaling (scale = 1.0).
-    pub fn default_scale() -> Self {
-        Self::new(1.0)
-    }
-}
-
-impl Default for ScaledFonts {
-    fn default() -> Self {
-        Self::default_scale()
-    }
-}
-
-/// Get a scaled font size from a base size and scale factor.
-/// This is a convenience function for views that need to scale individual sizes.
-#[inline]
-#[allow(dead_code)]
-pub fn scaled_font_size(base: f32, scale: f32) -> f32 {
-    (base * scale).round()
 }
