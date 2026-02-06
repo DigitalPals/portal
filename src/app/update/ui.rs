@@ -4,8 +4,8 @@ use iced::Task;
 use iced::keyboard::{self, Key};
 
 use crate::app::ActiveDialog;
-use crate::app::{FocusSection, Portal, SIDEBAR_AUTO_COLLAPSE_THRESHOLD, View};
 use crate::app::services;
+use crate::app::{FocusSection, Portal, SIDEBAR_AUTO_COLLAPSE_THRESHOLD, View};
 use crate::keybindings::AppAction;
 use crate::message::{
     DialogMessage, HistoryMessage, HostMessage, Message, SessionMessage, SftpMessage,
