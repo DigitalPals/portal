@@ -16,25 +16,33 @@
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::sync::{OnceLock, RwLock};
 
 use chrono::Local;
 use tracing::{info, warn};
 
 /// Path to the security audit log file, if enabled
-static AUDIT_LOG_PATH: OnceLock<Option<PathBuf>> = OnceLock::new();
+static AUDIT_LOG_PATH: OnceLock<RwLock<Option<PathBuf>>> = OnceLock::new();
 
 /// Initialize the security audit log file path.
 ///
-/// Call this once at startup with the desired log path, or None to disable file logging.
+/// Call this at startup and whenever the user changes the setting.
 pub fn init_audit_log(path: Option<PathBuf>) {
-    let _ = AUDIT_LOG_PATH.get_or_init(|| path);
+    let lock = AUDIT_LOG_PATH.get_or_init(|| RwLock::new(None));
+    if let Ok(mut guard) = lock.write() {
+        *guard = path;
+    }
 }
 
 /// Write an entry to the audit log file, if configured.
 fn write_audit_entry(entry: &str) {
-    if let Some(Some(path)) = AUDIT_LOG_PATH.get() {
-        if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(path) {
+    let path = AUDIT_LOG_PATH
+        .get()
+        .and_then(|lock| lock.read().ok().map(|guard| guard.clone()))
+        .flatten();
+
+    if let Some(path) = path {
+        if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&path) {
             let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
             let _ = writeln!(file, "[{}] {}", timestamp, entry);
         }

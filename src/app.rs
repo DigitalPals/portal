@@ -132,6 +132,8 @@ pub struct PreferencesState {
     pub session_logging_enabled: bool,
     pub session_log_dir: Option<std::path::PathBuf>,
     pub session_log_format: crate::config::settings::SessionLogFormat,
+    pub security_audit_enabled: bool,
+    pub security_audit_dir: Option<std::path::PathBuf>,
     pub keybindings: KeybindingsConfig,
 }
 
@@ -355,6 +357,8 @@ impl Portal {
                 session_logging_enabled: settings_config.session_logging_enabled,
                 session_log_dir: settings_config.session_log_dir,
                 session_log_format: settings_config.session_log_format,
+                security_audit_enabled: settings_config.security_audit_enabled,
+                security_audit_dir: settings_config.security_audit_dir.clone(),
                 keybindings: settings_config.keybindings.clone(),
             },
             config: ConfigState {
@@ -379,7 +383,10 @@ impl Portal {
 
         // Initialize security audit logging if enabled
         if settings_config.security_audit_enabled {
-            let audit_path = settings_config.security_audit_dir.as_ref().map(|dir| {
+            let audit_dir = settings_config.security_audit_dir.clone().or_else(|| {
+                crate::config::paths::config_dir().map(|dir| dir.join("logs").join("security"))
+            });
+            let audit_path = audit_dir.as_ref().map(|dir| {
                 // Create directory if it doesn't exist
                 let _ = std::fs::create_dir_all(dir);
                 dir.join("audit.log")
@@ -450,6 +457,19 @@ impl Portal {
                     has_ui_scale_override: self.has_ui_scale_override(),
                     session_logging_enabled: self.prefs.session_logging_enabled,
                     credential_timeout: self.prefs.credential_timeout,
+                    security_audit_enabled: self.prefs.security_audit_enabled,
+                    security_audit_log_location: self
+                        .prefs
+                        .security_audit_dir
+                        .as_ref()
+                        .cloned()
+                        .or_else(|| {
+                            crate::config::paths::config_dir()
+                                .map(|dir| dir.join("logs").join("security"))
+                        })
+                        .map(|d| d.join("audit.log"))
+                        .map(|p| p.to_string_lossy().to_string())
+                        .unwrap_or_else(|| "Not available".to_string()),
                 },
                 theme,
                 fonts,
@@ -847,6 +867,8 @@ impl Portal {
         settings.session_logging_enabled = self.prefs.session_logging_enabled;
         settings.session_log_dir = self.prefs.session_log_dir.clone();
         settings.session_log_format = self.prefs.session_log_format;
+        settings.security_audit_enabled = self.prefs.security_audit_enabled;
+        settings.security_audit_dir = self.prefs.security_audit_dir.clone();
         settings.keybindings = self.prefs.keybindings.clone();
         if let Err(e) = settings.save() {
             tracing::error!("Failed to save settings: {}", e);

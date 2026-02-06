@@ -149,6 +149,31 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
             services::connection::init_passphrase_cache(clamped);
             Task::none()
         }
+        UiMessage::SecurityAuditLoggingEnabled(enabled) => {
+            portal.prefs.security_audit_enabled = enabled;
+
+            if enabled {
+                if portal.prefs.security_audit_dir.is_none() {
+                    portal.prefs.security_audit_dir = crate::config::paths::config_dir()
+                        .map(|dir| dir.join("logs").join("security"));
+                }
+
+                portal.save_settings();
+
+                let audit_path = portal.prefs.security_audit_dir.as_ref().map(|dir| {
+                    let _ = std::fs::create_dir_all(dir);
+                    dir.join("audit.log")
+                });
+                crate::security_log::init_audit_log(audit_path);
+                tracing::info!("Security audit logging enabled");
+            } else {
+                portal.save_settings();
+                crate::security_log::init_audit_log(None);
+                tracing::info!("Security audit logging disabled");
+            }
+
+            Task::none()
+        }
         UiMessage::WindowResized(size) => {
             portal.ui.window_size = size;
             if !portal.ui.sidebar_manually_set {

@@ -520,6 +520,8 @@ pub enum UiMessage {
     SessionLoggingEnabled(bool),
     /// Credential cache timeout changed (seconds, 0 = disabled)
     CredentialTimeoutChange(u64),
+    /// Security audit logging enabled/disabled (writes security events to an audit log file)
+    SecurityAuditLoggingEnabled(bool),
     /// Window resized
     WindowResized(iced::Size),
     /// Dismiss toast notification

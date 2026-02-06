@@ -20,6 +20,9 @@ pub struct SettingsPageContext {
     pub session_logging_enabled: bool,
     /// Credential cache timeout in seconds (0 = disabled)
     pub credential_timeout: u64,
+    pub security_audit_enabled: bool,
+    /// Read-only display of the audit log file path.
+    pub security_audit_log_location: String,
     /// Effective UI scale (user override or system default)
     pub ui_scale: f32,
     /// System-detected UI scale
@@ -79,7 +82,24 @@ pub fn settings_page_view(
         "Security",
         theme,
         fonts,
-        vec![credential_timeout_setting(context.credential_timeout, theme, fonts)],
+        vec![
+            credential_timeout_setting(context.credential_timeout, theme, fonts),
+            toggle_setting(
+                "Security audit logging",
+                "Write security events (auth, host key, connections) to an on-disk audit log",
+                context.security_audit_enabled,
+                |value| Message::Ui(UiMessage::SecurityAuditLoggingEnabled(value)),
+                theme,
+                fonts,
+            ),
+            read_only_setting(
+                "Audit log location",
+                "Where security audit logs are stored",
+                context.security_audit_log_location,
+                theme,
+                fonts,
+            ),
+        ],
     );
 
     // === Snippet History Section ===
@@ -573,6 +593,30 @@ where
             column![label_text, Space::new().height(4), description_text].spacing(0),
             Space::new().width(Length::Fill),
             toggle_button,
+        ]
+        .align_y(Alignment::Center),
+    ]
+    .spacing(0)
+    .into()
+}
+
+fn read_only_setting(
+    label: &'static str,
+    description: &'static str,
+    value: String,
+    theme: Theme,
+    fonts: ScaledFonts,
+) -> Element<'static, Message> {
+    let label_text = text(label).size(fonts.body).color(theme.text_primary);
+    let description_text = text(description).size(fonts.label).color(theme.text_muted);
+
+    let value_text = text(value).size(fonts.label).color(theme.text_secondary);
+
+    column![
+        row![
+            column![label_text, Space::new().height(4), description_text].spacing(0),
+            Space::new().width(Length::Fill),
+            value_text,
         ]
         .align_y(Alignment::Center),
     ]
