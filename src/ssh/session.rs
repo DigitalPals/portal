@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
@@ -12,6 +13,7 @@ use uuid::Uuid;
 
 use crate::config::{PortForward, PortForwardKind};
 use crate::error::SshError;
+use crate::security_log;
 
 use super::SshEvent;
 
@@ -36,6 +38,9 @@ pub struct SshSession {
     handle: Arc<Mutex<Handle<ClientHandler>>>,
     forward_handles: Arc<Mutex<HashMap<Uuid, ForwardHandle>>>,
     remote_forwards: Arc<Mutex<HashMap<Uuid, PortForward>>>,
+    host: String,
+    port: u16,
+    disconnect_logged: Arc<AtomicBool>,
 }
 
 const DEFAULT_COMMAND_OUTPUT_LIMIT: usize = 4 * 1024 * 1024;
@@ -67,12 +72,17 @@ impl SshSession {
         mut channel: Channel<russh::client::Msg>,
         event_tx: mpsc::Sender<SshEvent>,
         remote_forwards: Arc<Mutex<HashMap<Uuid, PortForward>>>,
+        host: String,
+        port: u16,
     ) -> Self {
         let (command_tx, mut command_rx) = mpsc::channel::<ChannelCommand>(256);
+        let disconnect_logged = Arc::new(AtomicBool::new(false));
 
         // Wrap handle in Arc<Mutex> so it can be shared
         let handle = Arc::new(Mutex::new(handle));
         let handle_for_task = handle.clone();
+        let disconnect_logged_for_task = disconnect_logged.clone();
+        let host_for_task = host.clone();
 
         // Spawn task that owns the channel, keeping the connection alive
         tokio::spawn(async move {
@@ -99,10 +109,28 @@ impl SshSession {
                             }
                             Some(ChannelMsg::Eof) => {
                                 let _ = event_tx.send(SshEvent::Disconnected { clean: clean_exit }).await;
+                                if !disconnect_logged_for_task
+                                    .swap(true, Ordering::SeqCst)
+                                {
+                                    security_log::log_ssh_disconnect(
+                                        &host_for_task,
+                                        port,
+                                        clean_exit,
+                                    );
+                                }
                                 break;
                             }
                             Some(ChannelMsg::Close) => {
                                 let _ = event_tx.send(SshEvent::Disconnected { clean: clean_exit }).await;
+                                if !disconnect_logged_for_task
+                                    .swap(true, Ordering::SeqCst)
+                                {
+                                    security_log::log_ssh_disconnect(
+                                        &host_for_task,
+                                        port,
+                                        clean_exit,
+                                    );
+                                }
                                 break;
                             }
                             Some(ChannelMsg::ExitStatus { exit_status }) => {
@@ -114,6 +142,11 @@ impl SshSession {
                             None => {
                                 // Connection dropped unexpectedly (no EOF/Close received)
                                 let _ = event_tx.send(SshEvent::Disconnected { clean: false }).await;
+                                if !disconnect_logged_for_task
+                                    .swap(true, Ordering::SeqCst)
+                                {
+                                    security_log::log_ssh_disconnect(&host_for_task, port, false);
+                                }
                                 break;
                             }
                         }
@@ -146,6 +179,9 @@ impl SshSession {
             handle,
             forward_handles: Arc::new(Mutex::new(HashMap::new())),
             remote_forwards,
+            host,
+            port,
+            disconnect_logged,
         }
     }
 
@@ -617,6 +653,9 @@ pub async fn spawn_agent_forwarding(
 
 impl Drop for SshSession {
     fn drop(&mut self) {
+        if !self.disconnect_logged.swap(true, Ordering::SeqCst) {
+            security_log::log_ssh_disconnect(&self.host, self.port, false);
+        }
         tracing::debug!("SSH session cleanup: closing command channel");
         let (replacement_tx, _replacement_rx) = mpsc::channel(1);
         let _ = std::mem::replace(&mut self.command_tx, replacement_tx);

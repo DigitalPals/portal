@@ -209,11 +209,19 @@ impl SshClient {
             .await
             .map_err(|e| SshError::Channel(format!("Shell request failed: {}", e)))?;
 
+        security_log::log_ssh_connect(&host.hostname, host.port, &host.username);
         let _ = event_tx.send(SshEvent::Connected).await;
 
         // Session spawns its own reader task in new()
         // Use the same remote_forwards registry that was given to the handler
-        let session = Arc::new(SshSession::new(handle, channel, event_tx, remote_forwards));
+        let session = Arc::new(SshSession::new(
+            handle,
+            channel,
+            event_tx,
+            remote_forwards,
+            host.hostname.clone(),
+            host.port,
+        ));
 
         Ok((session, detected_os))
     }

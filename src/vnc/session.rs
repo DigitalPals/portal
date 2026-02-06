@@ -6,6 +6,7 @@
 
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
@@ -19,6 +20,7 @@ use vnc::{PixelFormat, VncEvent, X11Event};
 
 use crate::config::DetectedOs;
 use crate::config::settings::VncSettings;
+use crate::security_log;
 use crate::vnc::encoding::{build_encodings, pixel_format_from_depth};
 use crate::vnc::framebuffer::{FrameBuffer, rgba_to_bgra};
 use crate::vnc::net::is_private_ip;
@@ -394,6 +396,9 @@ pub struct VncSession {
     last_refresh_sent: Mutex<Instant>,
     /// Handle to the event loop task, aborted on disconnect
     event_loop_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    host: String,
+    port: u16,
+    disconnect_logged: Arc<AtomicBool>,
 }
 
 impl std::fmt::Debug for VncSession {
@@ -472,6 +477,8 @@ impl VncSession {
             .finish()
             .map_err(|e| format!("VNC finish error: {}", e))?;
 
+        security_log::log_vnc_connect(hostname, port);
+
         // Initial framebuffer - will be resized on first SetResolution event
         let framebuffer = Arc::new(Mutex::new(FrameBuffer::new(800, 600)));
 
@@ -479,6 +486,7 @@ impl VncSession {
         let (input_tx, input_rx) = mpsc::channel::<X11Event>(256);
 
         let now = Instant::now();
+        let disconnect_logged = Arc::new(AtomicBool::new(false));
         let session = Arc::new(Self {
             framebuffer: framebuffer.clone(),
             input_tx,
@@ -491,6 +499,9 @@ impl VncSession {
             refresh_rate_limit: Duration::from_millis(100),
             last_refresh_sent: Mutex::new(now - Duration::from_millis(500)),
             event_loop_handle: Mutex::new(None),
+            host: hostname.to_string(),
+            port,
+            disconnect_logged: disconnect_logged.clone(),
         });
 
         // Spawn the VNC event polling loop
@@ -502,6 +513,9 @@ impl VncSession {
             pixel_format,
             vnc_settings.refresh_fps,
             vnc_settings.max_events_per_tick,
+            hostname.to_string(),
+            port,
+            disconnect_logged,
         ));
         *session.event_loop_handle.lock() = Some(handle);
 
@@ -523,6 +537,9 @@ impl VncSession {
         pixel_format: PixelFormat,
         refresh_fps: u32,
         _max_events_per_tick: usize,
+        host: String,
+        port: u16,
+        disconnect_logged: Arc<AtomicBool>,
     ) {
         let refresh_ms = if refresh_fps == 0 {
             100
@@ -587,6 +604,9 @@ impl VncSession {
                 Err(e) => {
                     tracing::error!("VNC event error: {}", e);
                     let _ = event_tx.send(VncSessionEvent::Disconnected).await;
+                    if !disconnect_logged.swap(true, Ordering::SeqCst) {
+                        security_log::log_vnc_disconnect(&host, port);
+                    }
                     break;
                 }
             };
@@ -793,11 +813,17 @@ impl VncSession {
         if let Some(handle) = self.event_loop_handle.lock().take() {
             handle.abort();
         }
+        if !self.disconnect_logged.swap(true, Ordering::SeqCst) {
+            security_log::log_vnc_disconnect(&self.host, self.port);
+        }
     }
 }
 
 impl Drop for VncSession {
     fn drop(&mut self) {
+        if !self.disconnect_logged.swap(true, Ordering::SeqCst) {
+            security_log::log_vnc_disconnect(&self.host, self.port);
+        }
         tracing::debug!("VNC session cleanup: closing input channel and aborting event loop");
         let (replacement_tx, _replacement_rx) = mpsc::channel(1);
         let _ = std::mem::replace(&mut self.input_tx, replacement_tx);
