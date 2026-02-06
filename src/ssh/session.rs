@@ -94,9 +94,11 @@ impl SshSession {
             let _connection = connection_for_task;
             let _handle = handle_for_task;
 
-            // Track if we received a clean exit (exit status 0)
-            let mut clean_exit = false;
-
+            // We treat EOF/Close as a clean/intentional termination (e.g. user typed exit/logout).
+            // Unexpected drops surface as `None` from `channel.wait()`.
+            //
+            // Note: Some servers may send ExitStatus after EOF/Close; relying on exit status for
+            // "clean" causes incorrect auto-reconnect behavior on normal shell exits.
             loop {
                 tokio::select! {
                     // Handle incoming SSH data
@@ -113,35 +115,34 @@ impl SshSession {
                                 }
                             }
                             Some(ChannelMsg::Eof) => {
-                                let _ = event_tx.send(SshEvent::Disconnected { clean: clean_exit }).await;
+                                let _ = event_tx.send(SshEvent::Disconnected { clean: true }).await;
                                 if !disconnect_logged_for_task
                                     .swap(true, Ordering::SeqCst)
                                 {
                                     security_log::log_ssh_disconnect(
                                         &host_for_task,
                                         port,
-                                        clean_exit,
+                                        true,
                                     );
                                 }
                                 break;
                             }
                             Some(ChannelMsg::Close) => {
-                                let _ = event_tx.send(SshEvent::Disconnected { clean: clean_exit }).await;
+                                let _ = event_tx.send(SshEvent::Disconnected { clean: true }).await;
                                 if !disconnect_logged_for_task
                                     .swap(true, Ordering::SeqCst)
                                 {
                                     security_log::log_ssh_disconnect(
                                         &host_for_task,
                                         port,
-                                        clean_exit,
+                                        true,
                                     );
                                 }
                                 break;
                             }
                             Some(ChannelMsg::ExitStatus { exit_status }) => {
                                 tracing::debug!("Exit status: {}", exit_status);
-                                // Clean exit if the shell returned 0
-                                clean_exit = exit_status == 0;
+                                // Useful for debugging, but not used to determine "clean".
                             }
                             Some(_) => {}
                             None => {
