@@ -127,6 +127,7 @@ pub struct PreferencesState {
     pub reconnect_base_delay_ms: u64,
     pub reconnect_max_delay_ms: u64,
     pub allow_agent_forwarding: bool,
+    pub passphrase_cache_timeout: u64,
     pub session_logging_enabled: bool,
     pub session_log_dir: Option<std::path::PathBuf>,
     pub session_log_format: crate::config::settings::SessionLogFormat,
@@ -348,6 +349,7 @@ impl Portal {
                 reconnect_base_delay_ms: settings_config.reconnect_base_delay_ms,
                 reconnect_max_delay_ms: settings_config.reconnect_max_delay_ms,
                 allow_agent_forwarding: settings_config.allow_agent_forwarding,
+                passphrase_cache_timeout: settings_config.passphrase_cache_timeout,
                 session_logging_enabled: settings_config.session_logging_enabled,
                 session_log_dir: settings_config.session_log_dir,
                 session_log_format: settings_config.session_log_format,
@@ -368,6 +370,9 @@ impl Portal {
                 viewed_history_entry: None,
             },
         };
+
+        // Initialize the global passphrase cache with the configured timeout
+        services::connection::init_passphrase_cache(settings_config.passphrase_cache_timeout);
 
         // Focus the search input on startup
         let focus_task = iced::widget::operation::focus(search_input_id());

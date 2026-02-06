@@ -13,6 +13,7 @@ use crate::views::dialogs::host_key_dialog::HostKeyDialogState;
 use crate::views::dialogs::passphrase_dialog::PassphraseDialogState;
 use crate::views::toast::Toast;
 use iced::Task;
+use secrecy::{ExposeSecret, SecretString};
 use uuid::Uuid;
 
 /// Handle dialog messages
@@ -363,6 +364,37 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
             Task::none()
         }
         DialogMessage::PassphraseRequired(request) => {
+            // Check passphrase cache first
+            let cache = connection::shared_passphrase_cache();
+            if let Some(cached_passphrase) = cache.get(&request.key_path) {
+                // Use cached passphrase, skip dialog
+                tracing::debug!("Using cached passphrase for {:?}", request.key_path);
+                if let Some(host) = portal.config.hosts.find_host(request.host_id) {
+                    let host = std::sync::Arc::new(host.clone());
+                    if request.is_ssh {
+                        if let Some(session_id) = request.session_id {
+                            return connection::ssh_connect_tasks_with_passphrase(
+                                host,
+                                session_id,
+                                request.host_id,
+                                request.should_detect_os,
+                                portal.prefs.allow_agent_forwarding,
+                                cached_passphrase,
+                            );
+                        }
+                    } else if let Some(ctx) = request.sftp_context {
+                        return connection::sftp_connect_tasks_with_passphrase(
+                            host,
+                            ctx.tab_id,
+                            ctx.pane_id,
+                            ctx.sftp_session_id,
+                            request.host_id,
+                            cached_passphrase,
+                        );
+                    }
+                }
+            }
+            // No cached passphrase, show dialog
             portal
                 .dialogs
                 .open_passphrase(PassphraseDialogState::from_request(request));
@@ -384,7 +416,15 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                 let session_id = dialog.session_id;
                 let should_detect_os = dialog.should_detect_os;
                 let sftp_context = dialog.sftp_context;
+                let key_path = dialog.key_path.clone();
                 dialog.error = None;
+
+                // Cache the passphrase for future use
+                let cache = connection::shared_passphrase_cache();
+                cache.store(
+                    key_path,
+                    SecretString::new(passphrase.expose_secret().to_string().into()),
+                );
 
                 // Find the host and start connection with passphrase
                 if let Some(host) = portal.config.hosts.find_host(host_id) {

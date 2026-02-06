@@ -9,11 +9,13 @@ pub mod host_key_verification;
 pub mod key_install;
 pub mod known_hosts;
 pub mod os_detect;
+pub mod passphrase_cache;
 pub mod reconnect;
 pub mod session;
 
 pub use client::SshClient;
 pub use key_install::install_ssh_key;
+pub use passphrase_cache::PassphraseCache;
 pub use session::SshSession;
 
 use host_key_verification::HostKeyVerificationRequest;
