@@ -120,6 +120,10 @@ pub struct PreferencesState {
     pub terminal_font: crate::fonts::TerminalFont,
     pub sftp_column_widths: crate::views::sftp::ColumnWidths,
     pub vnc_settings: crate::config::settings::VncSettings,
+    pub auto_reconnect: bool,
+    pub reconnect_max_attempts: u32,
+    pub reconnect_base_delay_ms: u64,
+    pub reconnect_max_delay_ms: u64,
 }
 
 /// Configuration-backed state.
@@ -332,6 +336,10 @@ impl Portal {
                 terminal_font: settings_config.terminal_font,
                 sftp_column_widths: settings_config.sftp_column_widths,
                 vnc_settings: settings_config.vnc.apply_env_overrides(),
+                auto_reconnect: settings_config.auto_reconnect,
+                reconnect_max_attempts: settings_config.reconnect_max_attempts,
+                reconnect_base_delay_ms: settings_config.reconnect_base_delay_ms,
+                reconnect_max_delay_ms: settings_config.reconnect_max_delay_ms,
             },
             config: ConfigState {
                 hosts: hosts_config,
@@ -421,7 +429,28 @@ impl Portal {
                         .status_message
                         .as_ref()
                         .filter(|(_, shown_at)| shown_at.elapsed() < Duration::from_secs(3))
-                        .map(|(msg, _)| msg.as_str());
+                        .map(|(msg, _)| msg.clone());
+
+                    let reconnect_message = session.reconnect_next_attempt.map(|next_attempt| {
+                        let now = std::time::Instant::now();
+                        if next_attempt <= now {
+                            format!(
+                                "Reconnecting (attempt {}/{})...",
+                                session.reconnect_attempts, self.prefs.reconnect_max_attempts
+                            )
+                        } else {
+                            let remaining = next_attempt.duration_since(now);
+                            let remaining_secs = remaining.as_secs().max(1);
+                            format!(
+                                "Reconnecting (attempt {}/{}) in {}s",
+                                session.reconnect_attempts,
+                                self.prefs.reconnect_max_attempts,
+                                remaining_secs
+                            )
+                        }
+                    });
+
+                    let status_message = reconnect_message.or(status_message);
 
                     terminal_view_with_status(
                         theme,

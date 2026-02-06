@@ -174,6 +174,22 @@ pub struct SettingsConfig {
     #[serde(default)]
     pub vnc: VncSettings,
 
+    /// Auto-reconnect for SSH sessions
+    #[serde(default = "default_auto_reconnect")]
+    pub auto_reconnect: bool,
+
+    /// Maximum number of reconnect attempts
+    #[serde(default = "default_reconnect_max_attempts")]
+    pub reconnect_max_attempts: u32,
+
+    /// Base reconnect delay in milliseconds
+    #[serde(default = "default_reconnect_base_delay_ms")]
+    pub reconnect_base_delay_ms: u64,
+
+    /// Maximum reconnect delay in milliseconds
+    #[serde(default = "default_reconnect_max_delay_ms")]
+    pub reconnect_max_delay_ms: u64,
+
     /// Legacy dark_mode field for migration (read-only, not serialized)
     #[serde(default, skip_serializing)]
     dark_mode: Option<bool>,
@@ -181,6 +197,22 @@ pub struct SettingsConfig {
 
 fn default_terminal_font_size() -> f32 {
     9.0
+}
+
+fn default_auto_reconnect() -> bool {
+    true
+}
+
+fn default_reconnect_max_attempts() -> u32 {
+    5
+}
+
+fn default_reconnect_base_delay_ms() -> u64 {
+    1000
+}
+
+fn default_reconnect_max_delay_ms() -> u64 {
+    30_000
 }
 
 impl Default for SettingsConfig {
@@ -192,6 +224,10 @@ impl Default for SettingsConfig {
             ui_scale: None,
             sftp_column_widths: ColumnWidths::default(),
             vnc: VncSettings::default(),
+            auto_reconnect: default_auto_reconnect(),
+            reconnect_max_attempts: default_reconnect_max_attempts(),
+            reconnect_base_delay_ms: default_reconnect_base_delay_ms(),
+            reconnect_max_delay_ms: default_reconnect_max_delay_ms(),
             dark_mode: None,
         }
     }

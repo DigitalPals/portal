@@ -71,7 +71,7 @@ pub fn terminal_view_with_status<'a>(
     session: &'a TerminalSession,
     session_start: Instant,
     host_name: &'a str,
-    status_message: Option<&'a str>,
+    status_message: Option<String>,
     font_size: f32,
     terminal_font: TerminalFont,
     on_input: impl Fn(SessionId, Vec<u8>) -> Message + 'a,

@@ -324,10 +324,10 @@ fn map_ssh_connect_error(
                 error: Some("Incorrect passphrase".to_string()),
             }))
         }
-        _ => Message::Session(SessionMessage::Error(format!(
-            "Connection failed: {}",
-            error
-        ))),
+        _ => Message::Session(SessionMessage::ConnectFailed {
+            session_id,
+            error: format!("Connection failed: {}", error),
+        }),
     }
 }
 

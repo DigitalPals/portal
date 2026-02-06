@@ -85,8 +85,12 @@ pub enum SessionMessage {
     ProcessOutputTick,
     /// Terminal session disconnected
     Disconnected(SessionId),
+    /// Scheduled reconnect attempt
+    Reconnect(SessionId),
     /// Session error occurred
     Error(String),
+    /// Connection failed for a specific session
+    ConnectFailed { session_id: SessionId, error: String },
     /// Terminal input from user
     Input(SessionId, Vec<u8>),
     /// Terminal resize event

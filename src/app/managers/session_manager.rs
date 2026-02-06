@@ -29,9 +29,14 @@ pub struct ActiveSession {
     pub terminal: TerminalSession,
     pub session_start: Instant,
     pub host_name: String,
+    pub host_id: Option<Uuid>,
     pub history_entry_id: Uuid,
     /// Transient status message (message, shown_at) - auto-expires after 3 seconds
     pub status_message: Option<(String, Instant)>,
+    /// Number of reconnect attempts made for this session
+    pub reconnect_attempts: u32,
+    /// Next scheduled reconnect attempt time (if any)
+    pub reconnect_next_attempt: Option<Instant>,
     /// Buffered output to process in small chunks for UI responsiveness
     pub pending_output: VecDeque<Vec<u8>>,
 }
@@ -136,8 +141,11 @@ mod tests {
             terminal,
             session_start: Instant::now(),
             host_name: host_name.to_string(),
+            host_id: None,
             history_entry_id: Uuid::new_v4(),
             status_message: None,
+            reconnect_attempts: 0,
+            reconnect_next_attempt: None,
             pending_output: VecDeque::new(),
         }
     }

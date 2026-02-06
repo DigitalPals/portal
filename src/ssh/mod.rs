@@ -9,6 +9,7 @@ pub mod host_key_verification;
 pub mod key_install;
 pub mod known_hosts;
 pub mod os_detect;
+pub mod reconnect;
 pub mod session;
 
 pub use client::SshClient;
