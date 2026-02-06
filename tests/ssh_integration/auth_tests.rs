@@ -60,6 +60,7 @@ async fn test_wrong_password() {
             Some(wrong_password),
             None,
             false,
+            false, // No agent forwarding in tests
         )
         .await;
 
@@ -100,6 +101,7 @@ async fn test_nonexistent_user() {
             Some(password),
             None,
             false,
+            false, // No agent forwarding in tests
         )
         .await;
 
@@ -140,6 +142,7 @@ async fn test_invalid_key_path() {
             None,
             None,
             false,
+            false, // No agent forwarding in tests
         )
         .await;
 
@@ -181,6 +184,7 @@ async fn test_wrong_passphrase() {
             None,
             Some(wrong_passphrase),
             false,
+            false, // No agent forwarding in tests
         )
         .await;
 
@@ -227,6 +231,7 @@ async fn test_connection_refused() {
             Some(password),
             None,
             false,
+            false, // No agent forwarding in tests
         )
         .await;
 
@@ -257,6 +262,7 @@ async fn test_connection_timeout() {
         updated_at: chrono::Utc::now(),
         detected_os: None,
         last_connected: None,
+        agent_forwarding: false,
     };
 
     let (event_tx, event_rx) = mpsc::channel::<SshEvent>(32);
@@ -278,6 +284,7 @@ async fn test_connection_timeout() {
             Some(password),
             None,
             false,
+            false, // No agent forwarding in tests
         )
         .await;
 

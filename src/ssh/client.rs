@@ -86,6 +86,7 @@ impl SshClient {
         password: Option<SecretString>,
         passphrase: Option<SecretString>,
         detect_os_on_connect: bool,
+        allow_agent_forwarding: bool,
     ) -> Result<(Arc<SshSession>, Option<DetectedOs>), SshError> {
         let addr = format!("{}:{}", host.hostname, host.port);
 
@@ -109,6 +110,7 @@ impl SshClient {
                 password,
                 passphrase,
                 detect_os_on_connect,
+                allow_agent_forwarding,
             ),
         )
         .await
@@ -128,12 +130,15 @@ impl SshClient {
         password: Option<SecretString>,
         passphrase: Option<SecretString>,
         detect_os_on_connect: bool,
+        allow_agent_forwarding: bool,
     ) -> Result<(Arc<SshSession>, Option<DetectedOs>), SshError> {
+        let agent_forwarding_enabled = allow_agent_forwarding && host.agent_forwarding;
         let handler = ClientHandler::new(
             host.hostname.clone(),
             host.port,
             self.known_hosts.clone(),
             event_tx.clone(),
+            agent_forwarding_enabled,
         );
 
         let mut handle = client::connect_stream(self.config.clone(), stream, handler)
@@ -167,6 +172,12 @@ impl SshClient {
             .channel_open_session()
             .await
             .map_err(|e| SshError::Channel(e.to_string()))?;
+
+        if agent_forwarding_enabled {
+            if let Err(e) = channel.agent_forward(false).await {
+                tracing::warn!("Agent forwarding request failed: {}", e);
+            }
+        }
 
         // Request PTY
         channel

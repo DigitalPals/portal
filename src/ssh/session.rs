@@ -3,6 +3,8 @@ use std::time::Duration;
 
 use russh::client::Handle;
 use russh::{Channel, ChannelMsg, Disconnect};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::UnixStream;
 use tokio::sync::{Mutex, mpsc};
 use tokio::time::timeout;
 
@@ -321,6 +323,63 @@ impl SshSession {
             ))),
         }
     }
+}
+
+pub async fn spawn_agent_forwarding(
+    mut channel: Channel<russh::client::Msg>,
+) -> Result<(), SshError> {
+    let agent_path = std::env::var("SSH_AUTH_SOCK").map_err(|_| {
+        SshError::Agent("SSH_AUTH_SOCK not set - is ssh-agent running?".to_string())
+    })?;
+
+    let stream = UnixStream::connect(&agent_path)
+        .await
+        .map_err(|e| SshError::Agent(format!("Failed to connect to SSH agent: {}", e)))?;
+
+    let (mut agent_reader, mut agent_writer) = stream.into_split();
+
+    tokio::spawn(async move {
+        let mut buffer = vec![0u8; 16 * 1024];
+
+        loop {
+            tokio::select! {
+                msg = channel.wait() => {
+                    match msg {
+                        Some(ChannelMsg::Data { data }) => {
+                            if agent_writer.write_all(&data).await.is_err() {
+                                break;
+                            }
+                        }
+                        Some(ChannelMsg::ExtendedData { data, .. }) => {
+                            if agent_writer.write_all(&data).await.is_err() {
+                                break;
+                            }
+                        }
+                        Some(ChannelMsg::Eof | ChannelMsg::Close) | None => {
+                            break;
+                        }
+                        Some(_) => {}
+                    }
+                }
+                read = agent_reader.read(&mut buffer) => {
+                    match read {
+                        Ok(0) => break,
+                        Ok(count) => {
+                            if channel.data(&buffer[..count]).await.is_err() {
+                                break;
+                            }
+                        }
+                        Err(_) => break,
+                    }
+                }
+            }
+        }
+
+        let _ = channel.eof().await;
+        let _ = channel.close().await;
+    });
+
+    Ok(())
 }
 
 impl Drop for SshSession {

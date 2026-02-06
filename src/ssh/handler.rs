@@ -2,9 +2,9 @@ use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
-use russh::ChannelId;
 use russh::client::{Handler, Session};
 use russh::keys::PublicKey;
+use russh::{Channel, ChannelId};
 use tokio::sync::{Mutex, mpsc, oneshot};
 
 use crate::error::SshError;
@@ -22,6 +22,7 @@ pub struct ClientHandler {
     known_hosts: Arc<Mutex<KnownHostsManager>>,
     /// Channel to send events to UI (including verification requests)
     event_tx: mpsc::Sender<SshEvent>,
+    agent_forwarding_enabled: bool,
 }
 
 impl ClientHandler {
@@ -30,12 +31,14 @@ impl ClientHandler {
         port: u16,
         known_hosts: Arc<Mutex<KnownHostsManager>>,
         event_tx: mpsc::Sender<SshEvent>,
+        agent_forwarding_enabled: bool,
     ) -> Self {
         Self {
             host: Arc::from(host),
             port,
             known_hosts,
             event_tx,
+            agent_forwarding_enabled,
         }
     }
 }
@@ -244,6 +247,26 @@ impl Handler for ClientHandler {
     ) -> Result<(), Self::Error> {
         Ok(())
     }
+
+    async fn server_channel_open_agent_forward(
+        &mut self,
+        channel: Channel<russh::client::Msg>,
+        _session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        if !self.agent_forwarding_enabled {
+            tracing::warn!("Rejected agent forwarding request (disabled)");
+            if let Err(e) = channel.close().await {
+                tracing::debug!("Failed to close agent forwarding channel: {}", e);
+            }
+            return Ok(());
+        }
+
+        if let Err(e) = super::session::spawn_agent_forwarding(channel).await {
+            tracing::warn!("Agent forwarding failed: {}", e);
+        }
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -253,7 +276,7 @@ mod tests {
     fn create_test_handler() -> (ClientHandler, mpsc::Receiver<SshEvent>) {
         let (tx, rx) = mpsc::channel(16);
         let known_hosts = Arc::new(Mutex::new(KnownHostsManager::new()));
-        let handler = ClientHandler::new("example.com".to_string(), 22, known_hosts, tx);
+        let handler = ClientHandler::new("example.com".to_string(), 22, known_hosts, tx, false);
         (handler, rx)
     }
 
@@ -263,7 +286,13 @@ mod tests {
     fn new_creates_handler_with_host() {
         let (tx, _rx) = mpsc::channel(16);
         let known_hosts = Arc::new(Mutex::new(KnownHostsManager::new()));
-        let handler = ClientHandler::new("myserver.example.com".to_string(), 22, known_hosts, tx);
+        let handler = ClientHandler::new(
+            "myserver.example.com".to_string(),
+            22,
+            known_hosts,
+            tx,
+            false,
+        );
         assert_eq!(handler.host.as_ref(), "myserver.example.com");
     }
 
@@ -271,7 +300,7 @@ mod tests {
     fn new_creates_handler_with_port() {
         let (tx, _rx) = mpsc::channel(16);
         let known_hosts = Arc::new(Mutex::new(KnownHostsManager::new()));
-        let handler = ClientHandler::new("example.com".to_string(), 2222, known_hosts, tx);
+        let handler = ClientHandler::new("example.com".to_string(), 2222, known_hosts, tx, false);
         assert_eq!(handler.port, 2222);
     }
 
@@ -287,7 +316,7 @@ mod tests {
         let known_hosts = Arc::new(Mutex::new(KnownHostsManager::new()));
         let known_hosts_clone = known_hosts.clone();
 
-        let handler = ClientHandler::new("example.com".to_string(), 22, known_hosts, tx);
+        let handler = ClientHandler::new("example.com".to_string(), 22, known_hosts, tx, false);
 
         // Verify the same Arc is used
         assert!(Arc::ptr_eq(&handler.known_hosts, &known_hosts_clone));
@@ -297,7 +326,7 @@ mod tests {
     fn new_with_ipv4_host() {
         let (tx, _rx) = mpsc::channel(16);
         let known_hosts = Arc::new(Mutex::new(KnownHostsManager::new()));
-        let handler = ClientHandler::new("192.168.1.100".to_string(), 22, known_hosts, tx);
+        let handler = ClientHandler::new("192.168.1.100".to_string(), 22, known_hosts, tx, false);
         assert_eq!(handler.host.as_ref(), "192.168.1.100");
     }
 
@@ -305,7 +334,7 @@ mod tests {
     fn new_with_ipv6_host() {
         let (tx, _rx) = mpsc::channel(16);
         let known_hosts = Arc::new(Mutex::new(KnownHostsManager::new()));
-        let handler = ClientHandler::new("::1".to_string(), 22, known_hosts, tx);
+        let handler = ClientHandler::new("::1".to_string(), 22, known_hosts, tx, false);
         assert_eq!(handler.host.as_ref(), "::1");
     }
 
@@ -313,7 +342,7 @@ mod tests {
     fn new_with_localhost() {
         let (tx, _rx) = mpsc::channel(16);
         let known_hosts = Arc::new(Mutex::new(KnownHostsManager::new()));
-        let handler = ClientHandler::new("localhost".to_string(), 22, known_hosts, tx);
+        let handler = ClientHandler::new("localhost".to_string(), 22, known_hosts, tx, false);
         assert_eq!(handler.host.as_ref(), "localhost");
     }
 
@@ -321,7 +350,7 @@ mod tests {
     fn new_with_high_port() {
         let (tx, _rx) = mpsc::channel(16);
         let known_hosts = Arc::new(Mutex::new(KnownHostsManager::new()));
-        let handler = ClientHandler::new("example.com".to_string(), 65535, known_hosts, tx);
+        let handler = ClientHandler::new("example.com".to_string(), 65535, known_hosts, tx, false);
         assert_eq!(handler.port, 65535);
     }
 
@@ -329,7 +358,7 @@ mod tests {
     fn new_with_port_one() {
         let (tx, _rx) = mpsc::channel(16);
         let known_hosts = Arc::new(Mutex::new(KnownHostsManager::new()));
-        let handler = ClientHandler::new("example.com".to_string(), 1, known_hosts, tx);
+        let handler = ClientHandler::new("example.com".to_string(), 1, known_hosts, tx, false);
         assert_eq!(handler.port, 1);
     }
 
@@ -344,12 +373,14 @@ mod tests {
             22,
             shared_known_hosts.clone(),
             tx1,
+            false,
         );
         let handler2 = ClientHandler::new(
             "server2.example.com".to_string(),
             22,
             shared_known_hosts.clone(),
             tx2,
+            false,
         );
 
         // Both handlers should share the same known_hosts
@@ -368,12 +399,14 @@ mod tests {
             22,
             known_hosts.clone(),
             tx1,
+            false,
         );
         let _handler2 = ClientHandler::new(
             "server2.example.com".to_string(),
             22,
             known_hosts.clone(),
             tx2,
+            false,
         );
 
         // Handlers created successfully with separate channels
@@ -384,7 +417,7 @@ mod tests {
     fn new_with_empty_host() {
         let (tx, _rx) = mpsc::channel(16);
         let known_hosts = Arc::new(Mutex::new(KnownHostsManager::new()));
-        let handler = ClientHandler::new(String::new(), 22, known_hosts, tx);
+        let handler = ClientHandler::new(String::new(), 22, known_hosts, tx, false);
         assert!(handler.host.is_empty());
     }
 
@@ -393,7 +426,7 @@ mod tests {
         let (tx, _rx) = mpsc::channel(16);
         let known_hosts = Arc::new(Mutex::new(KnownHostsManager::new()));
         // IDN domain (internationalized domain name)
-        let handler = ClientHandler::new("例え.jp".to_string(), 22, known_hosts, tx);
+        let handler = ClientHandler::new("例え.jp".to_string(), 22, known_hosts, tx, false);
         assert_eq!(handler.host.as_ref(), "例え.jp");
     }
 
@@ -401,7 +434,13 @@ mod tests {
     fn new_preserves_host_case() {
         let (tx, _rx) = mpsc::channel(16);
         let known_hosts = Arc::new(Mutex::new(KnownHostsManager::new()));
-        let handler = ClientHandler::new("MyServer.Example.COM".to_string(), 22, known_hosts, tx);
+        let handler = ClientHandler::new(
+            "MyServer.Example.COM".to_string(),
+            22,
+            known_hosts,
+            tx,
+            false,
+        );
         // Host should preserve original case
         assert_eq!(handler.host.as_ref(), "MyServer.Example.COM");
     }

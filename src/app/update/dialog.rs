@@ -69,6 +69,10 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                     HostDialogField::Port => dialog_state.port = value,
                     HostDialogField::Username => dialog_state.username = value,
                     HostDialogField::KeyPath => dialog_state.key_path = value,
+                    HostDialogField::AgentForwarding => {
+                        dialog_state.agent_forwarding =
+                            matches!(value.trim().to_lowercase().as_str(), "true" | "1" | "yes");
+                    }
                     HostDialogField::Tags => dialog_state.tags = value,
                     HostDialogField::Notes => dialog_state.notes = value,
                     HostDialogField::AuthMethod => {
@@ -88,6 +92,7 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                                 if dialog_state.port == "22" {
                                     dialog_state.port = "5900".to_string();
                                 }
+                                dialog_state.agent_forwarding = false;
                                 ProtocolChoice::Vnc
                             }
                             _ => dialog_state.protocol,
@@ -217,6 +222,7 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                                 session_id,
                                 host_id,
                                 should_detect_os,
+                                portal.prefs.allow_agent_forwarding,
                                 password,
                             );
                         }
@@ -292,6 +298,7 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                                 session_id,
                                 host_id,
                                 should_detect_os,
+                                portal.prefs.allow_agent_forwarding,
                                 passphrase,
                             );
                         }
@@ -363,6 +370,7 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                     protocol: crate::config::Protocol::Ssh,
                     vnc_port: None,
                     auth,
+                    agent_forwarding: false,
                     group_id: None,
                     notes: None,
                     tags: vec![],

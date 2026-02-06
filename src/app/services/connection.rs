@@ -103,6 +103,7 @@ fn ssh_connect_tasks_with_auth(
     session_id: SessionId,
     host_id: Uuid,
     should_detect_os: bool,
+    allow_agent_forwarding: bool,
     auth: SshAuth,
 ) -> Task<Message> {
     let (event_tx, event_rx) = mpsc::channel::<SshEvent>(SSH_EVENT_CHANNEL_CAPACITY);
@@ -123,6 +124,7 @@ fn ssh_connect_tasks_with_auth(
                     password,
                     passphrase,
                     should_detect_os,
+                    allow_agent_forwarding,
                 )
                 .await;
 
@@ -148,8 +150,16 @@ pub fn ssh_connect_tasks(
     session_id: SessionId,
     host_id: Uuid,
     should_detect_os: bool,
+    allow_agent_forwarding: bool,
 ) -> Task<Message> {
-    ssh_connect_tasks_with_auth(host, session_id, host_id, should_detect_os, SshAuth::None)
+    ssh_connect_tasks_with_auth(
+        host,
+        session_id,
+        host_id,
+        should_detect_os,
+        allow_agent_forwarding,
+        SshAuth::None,
+    )
 }
 
 /// SSH connection tasks with password authentication
@@ -158,6 +168,7 @@ pub fn ssh_connect_tasks_with_password(
     session_id: SessionId,
     host_id: Uuid,
     should_detect_os: bool,
+    allow_agent_forwarding: bool,
     password: SecretString,
 ) -> Task<Message> {
     ssh_connect_tasks_with_auth(
@@ -165,6 +176,7 @@ pub fn ssh_connect_tasks_with_password(
         session_id,
         host_id,
         should_detect_os,
+        allow_agent_forwarding,
         SshAuth::Password(password),
     )
 }
@@ -175,6 +187,7 @@ pub fn ssh_connect_tasks_with_passphrase(
     session_id: SessionId,
     host_id: Uuid,
     should_detect_os: bool,
+    allow_agent_forwarding: bool,
     passphrase: SecretString,
 ) -> Task<Message> {
     ssh_connect_tasks_with_auth(
@@ -182,6 +195,7 @@ pub fn ssh_connect_tasks_with_passphrase(
         session_id,
         host_id,
         should_detect_os,
+        allow_agent_forwarding,
         SshAuth::Passphrase(passphrase),
     )
 }
@@ -420,6 +434,7 @@ mod tests {
             auth: AuthMethod::PublicKey { key_path: None },
             protocol: crate::config::Protocol::Ssh,
             vnc_port: None,
+            agent_forwarding: false,
             group_id: None,
             notes: None,
             tags: vec![],
@@ -456,6 +471,7 @@ mod tests {
             auth: AuthMethod::PublicKey { key_path: None },
             protocol: crate::config::Protocol::Ssh,
             vnc_port: None,
+            agent_forwarding: false,
             group_id: None,
             notes: None,
             tags: vec![],

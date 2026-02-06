@@ -293,7 +293,13 @@ impl Portal {
 
         let should_detect_os = connection::should_detect_os(host.detected_os.as_ref());
 
-        connection::ssh_connect_tasks(host, session_id, host_id, should_detect_os)
+        connection::ssh_connect_tasks(
+            host,
+            session_id,
+            host_id,
+            should_detect_os,
+            self.prefs.allow_agent_forwarding,
+        )
     }
 
     /// Spawn a local terminal session

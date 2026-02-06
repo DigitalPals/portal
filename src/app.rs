@@ -126,6 +126,7 @@ pub struct PreferencesState {
     pub reconnect_max_attempts: u32,
     pub reconnect_base_delay_ms: u64,
     pub reconnect_max_delay_ms: u64,
+    pub allow_agent_forwarding: bool,
     pub session_logging_enabled: bool,
     pub session_log_dir: Option<std::path::PathBuf>,
     pub session_log_format: crate::config::settings::SessionLogFormat,
@@ -346,6 +347,7 @@ impl Portal {
                 reconnect_max_attempts: settings_config.reconnect_max_attempts,
                 reconnect_base_delay_ms: settings_config.reconnect_base_delay_ms,
                 reconnect_max_delay_ms: settings_config.reconnect_max_delay_ms,
+                allow_agent_forwarding: settings_config.allow_agent_forwarding,
                 session_logging_enabled: settings_config.session_logging_enabled,
                 session_log_dir: settings_config.session_log_dir,
                 session_log_format: settings_config.session_log_format,
@@ -817,6 +819,7 @@ impl Portal {
         settings.theme = self.prefs.theme_id;
         settings.ui_scale = self.prefs.ui_scale_override;
         settings.vnc = self.prefs.vnc_settings.clone();
+        settings.allow_agent_forwarding = self.prefs.allow_agent_forwarding;
         settings.session_logging_enabled = self.prefs.session_logging_enabled;
         settings.session_log_dir = self.prefs.session_log_dir.clone();
         settings.session_log_format = self.prefs.session_log_format;

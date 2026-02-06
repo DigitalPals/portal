@@ -73,6 +73,7 @@ async fn test_unknown_host_prompts_verification() {
             Some(password),
             None,
             false,
+            false, // No agent forwarding in tests
         )
         .await;
 
@@ -135,6 +136,7 @@ async fn test_known_host_no_prompt() {
                 Some(password.clone()),
                 None,
                 false,
+                false, // No agent forwarding in tests
             )
             .await;
 
@@ -170,6 +172,7 @@ async fn test_known_host_no_prompt() {
                 Some(password),
                 None,
                 false,
+                false, // No agent forwarding in tests
             )
             .await;
 
@@ -229,6 +232,7 @@ async fn test_host_key_rejection_aborts() {
             Some(password),
             None,
             false,
+            false, // No agent forwarding in tests
         )
         .await;
 
@@ -313,6 +317,7 @@ async fn test_changed_host_key_detection() {
             Some(password),
             None,
             false,
+            false, // No agent forwarding in tests
         )
         .await;
 
@@ -382,6 +387,7 @@ async fn test_accepting_changed_key_updates_known_hosts() {
             Some(password),
             None,
             false,
+            false, // No agent forwarding in tests
         )
         .await;
 

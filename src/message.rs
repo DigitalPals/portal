@@ -39,6 +39,7 @@ pub enum HostDialogField {
     Username,
     AuthMethod,
     KeyPath,
+    AgentForwarding,
     Tags,
     Notes,
     Protocol,

@@ -223,6 +223,9 @@ pub struct Host {
     pub vnc_port: Option<u16>,
     #[serde(default)]
     pub auth: AuthMethod,
+    /// Enable SSH agent forwarding for this host
+    #[serde(default)]
+    pub agent_forwarding: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub group_id: Option<Uuid>,
     #[serde(skip_serializing_if = "Option::is_none")]

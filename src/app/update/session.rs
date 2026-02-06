@@ -385,7 +385,13 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
             }
 
             let should_detect_os = connection::should_detect_os(host.detected_os.as_ref());
-            connection::ssh_connect_tasks(Arc::new(host), session_id, host_id, should_detect_os)
+            connection::ssh_connect_tasks(
+                Arc::new(host),
+                session_id,
+                host_id,
+                should_detect_os,
+                portal.prefs.allow_agent_forwarding,
+            )
         }
         SessionMessage::Error(error) => {
             tracing::error!("Session error: {}", error);

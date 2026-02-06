@@ -236,6 +236,7 @@ impl SshTestEnvironment {
             updated_at: chrono::Utc::now(),
             detected_os: None,
             last_connected: None,
+            agent_forwarding: false,
         }
     }
 

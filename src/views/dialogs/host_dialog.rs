@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use iced::widget::{Space, button, column, pick_list, row, text, text_input};
+use iced::widget::{Space, button, checkbox, column, pick_list, row, text, text_input, tooltip};
 use iced::{Alignment, Element, Length};
 use uuid::Uuid;
 
@@ -41,6 +41,7 @@ pub struct HostDialogState {
     pub username: String,
     pub auth_method: AuthMethodChoice,
     pub key_path: String,
+    pub agent_forwarding: bool,
     pub tags: String,
     pub notes: String,
     /// Connection protocol
@@ -108,6 +109,7 @@ impl HostDialogState {
             username: String::new(),
             auth_method: AuthMethodChoice::Agent,
             key_path: String::new(),
+            agent_forwarding: false,
             tags: String::new(),
             notes: String::new(),
             protocol: ProtocolChoice::Ssh,
@@ -135,6 +137,7 @@ impl HostDialogState {
                     .unwrap_or_default(),
                 _ => String::new(),
             },
+            agent_forwarding: host.agent_forwarding,
             tags: host.tags.join(", "),
             notes: host.notes.clone().unwrap_or_default(),
             protocol: match host.protocol {
@@ -234,6 +237,12 @@ impl HostDialogState {
             ProtocolChoice::Vnc => Protocol::Vnc,
         };
 
+        let agent_forwarding = if protocol == Protocol::Ssh {
+            self.agent_forwarding
+        } else {
+            false
+        };
+
         let vnc_port = if protocol == Protocol::Vnc && port != 5900 {
             Some(port)
         } else {
@@ -249,6 +258,7 @@ impl HostDialogState {
             protocol,
             vnc_port,
             auth,
+            agent_forwarding,
             group_id: None,
             notes,
             tags,
@@ -290,6 +300,7 @@ pub fn host_dialog_view(state: &HostDialogState, theme: Theme) -> Element<'stati
     let port_value = state.port.clone();
     let username_value = state.username.clone();
     let key_path_value = state.key_path.clone();
+    let agent_forwarding = state.agent_forwarding;
     let tags_value = state.tags.clone();
     let notes_value = state.notes.clone();
     let auth_method = state.auth_method;
@@ -433,6 +444,38 @@ pub fn host_dialog_view(state: &HostDialogState, theme: Theme) -> Element<'stati
         column![].into()
     };
 
+    let agent_forwarding_section: Element<'static, Message> = if !is_vnc {
+        let checkbox_control = checkbox(agent_forwarding)
+            .label("Enable SSH Agent Forwarding")
+            .on_toggle(|value| {
+                Message::Dialog(DialogMessage::FieldChanged(
+                    HostDialogField::AgentForwarding,
+                    value.to_string(),
+                ))
+            })
+            .spacing(8);
+
+        let tooltip_text =
+            text("Forwards your local SSH agent to this host. Only enable for trusted systems.")
+                .size(11)
+                .color(theme.text_secondary);
+
+        tooltip(checkbox_control, tooltip_text, tooltip::Position::Top)
+            .style(move |_theme| iced::widget::container::Style {
+                background: Some(theme.surface.into()),
+                border: iced::Border {
+                    color: theme.border,
+                    width: 1.0,
+                    radius: 4.0.into(),
+                },
+                ..Default::default()
+            })
+            .padding(8)
+            .into()
+    } else {
+        column![].into()
+    };
+
     let tags_input = column![
         text("Tags").size(12).color(theme.text_secondary),
         text_input("web, production", &tags_value)
@@ -527,6 +570,7 @@ pub fn host_dialog_view(state: &HostDialogState, theme: Theme) -> Element<'stati
     if !is_vnc {
         form = form.push(auth_picker);
         form = form.push(key_path_section);
+        form = form.push(agent_forwarding_section);
     }
 
     form = form.push(tags_input);

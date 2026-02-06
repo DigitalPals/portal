@@ -200,6 +200,10 @@ pub struct SettingsConfig {
     #[serde(default = "default_reconnect_max_delay_ms")]
     pub reconnect_max_delay_ms: u64,
 
+    /// Allow SSH agent forwarding (global safety switch)
+    #[serde(default = "default_allow_agent_forwarding")]
+    pub allow_agent_forwarding: bool,
+
     /// Legacy dark_mode field for migration (read-only, not serialized)
     #[serde(default, skip_serializing)]
     dark_mode: Option<bool>,
@@ -240,6 +244,10 @@ fn default_reconnect_max_delay_ms() -> u64 {
     30_000
 }
 
+fn default_allow_agent_forwarding() -> bool {
+    true
+}
+
 fn default_session_logging_enabled() -> bool {
     false
 }
@@ -261,6 +269,7 @@ impl Default for SettingsConfig {
             reconnect_max_attempts: default_reconnect_max_attempts(),
             reconnect_base_delay_ms: default_reconnect_base_delay_ms(),
             reconnect_max_delay_ms: default_reconnect_max_delay_ms(),
+            allow_agent_forwarding: default_allow_agent_forwarding(),
             dark_mode: None,
             session_logging_enabled: default_session_logging_enabled(),
             session_log_dir: default_session_log_dir(),

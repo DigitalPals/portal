@@ -131,6 +131,7 @@ impl SftpClient {
             host.port,
             self.known_hosts.clone(),
             event_tx,
+            false, // No agent forwarding for SFTP
         );
 
         let mut handle = client::connect_stream(self.config.clone(), stream, handler)
