@@ -523,6 +523,115 @@ impl SshSession {
         Ok(())
     }
 
+    pub async fn create_dynamic_forward(&self, forward: PortForward) -> Result<(), SshError> {
+        if forward.kind != PortForwardKind::Dynamic {
+            return Err(SshError::Channel(
+                "Forward kind is not dynamic".to_string(),
+            ));
+        }
+
+        let bind_addr = format!("{}:{}", forward.bind_host, forward.bind_port);
+        let listener = TcpListener::bind(&bind_addr)
+            .await
+            .map_err(|e| SshError::Channel(format!("Failed to bind {}: {}", bind_addr, e)))?;
+
+        let actual_port = listener
+            .local_addr()
+            .map(|addr| addr.port())
+            .unwrap_or(forward.bind_port);
+
+        let (stop_tx, mut stop_rx) = oneshot::channel();
+        let handle = self.handle.clone();
+        let bind_host = forward.bind_host.clone();
+        let forward_id = forward.id;
+
+        self.forward_handles.lock().await.insert(
+            forward.id,
+            ForwardHandle {
+                id: forward.id,
+                kind: PortForwardKind::Dynamic,
+                bind_host: bind_host.clone(),
+                bind_port: actual_port,
+                stop_tx: Some(stop_tx),
+            },
+        );
+
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    _ = &mut stop_rx => {
+                        break;
+                    }
+                    accept_result = listener.accept() => {
+                        let (mut socket, origin) = match accept_result {
+                            Ok(result) => result,
+                            Err(e) => {
+                                tracing::debug!("Dynamic forward {} accept error: {}", forward_id, e);
+                                continue;
+                            }
+                        };
+
+                        let handle = handle.clone();
+                        tokio::spawn(async move {
+                            let peer_ip = origin.ip().to_string();
+                            let peer_port = origin.port() as u32;
+
+                            let (target_host, target_port) = match socks5_handshake(&mut socket).await {
+                                Ok(v) => v,
+                                Err(e) => {
+                                    tracing::debug!("Dynamic forward {} SOCKS handshake failed: {}", forward_id, e);
+                                    let _ = socket.shutdown().await;
+                                    return;
+                                }
+                            };
+
+                            let channel = {
+                                let handle_guard = handle.lock().await;
+                                handle_guard
+                                    .channel_open_direct_tcpip(
+                                        target_host.clone(),
+                                        target_port as u32,
+                                        peer_ip,
+                                        peer_port,
+                                    )
+                                    .await
+                            };
+
+                            let channel = match channel {
+                                Ok(channel) => channel,
+                                Err(e) => {
+                                    tracing::debug!(
+                                        "Dynamic forward {} failed to open channel to {}:{}: {}",
+                                        forward_id,
+                                        target_host,
+                                        target_port,
+                                        e
+                                    );
+                                    let _ = socket.shutdown().await;
+                                    return;
+                                }
+                            };
+
+                            let mut channel_stream = channel.into_stream();
+                            let _ = tokio::io::copy_bidirectional(&mut channel_stream, &mut socket).await;
+                            let _ = channel_stream.shutdown().await;
+                            let _ = socket.shutdown().await;
+                        });
+                    }
+                }
+            }
+        });
+
+        tracing::info!(
+            "Dynamic forward {} listening (SOCKS5) on {}:{}",
+            forward_id,
+            bind_host,
+            actual_port
+        );
+
+        Ok(())
+    }
+
     pub async fn stop_forward(&self, forward_id: Uuid) -> Result<(), SshError> {
         let mut handles = self.forward_handles.lock().await;
         let Some(mut handle) = handles.remove(&forward_id) else {
@@ -582,6 +691,12 @@ impl ForwardHandle {
                         ))
                     })
             }
+            PortForwardKind::Dynamic => {
+                if let Some(stop_tx) = self.stop_tx.take() {
+                    let _ = stop_tx.send(());
+                }
+                Ok(())
+            }
         }
     }
 }
@@ -592,6 +707,137 @@ fn normalize_remote_forward_port(requested: u16, assigned: u32) -> u16 {
     } else {
         requested
     }
+}
+
+async fn socks5_handshake<S>(stream: &mut S) -> Result<(String, u16), SshError>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    // Greeting: VER, NMETHODS, METHODS...
+    let mut hdr = [0u8; 2];
+    stream
+        .read_exact(&mut hdr)
+        .await
+        .map_err(|e| SshError::Channel(format!("SOCKS greeting read failed: {}", e)))?;
+    if hdr[0] != 0x05 {
+        return Err(SshError::Channel(format!(
+            "Unsupported SOCKS version: {}",
+            hdr[0]
+        )));
+    }
+
+    let nmethods = hdr[1] as usize;
+    let mut methods = vec![0u8; nmethods];
+    stream
+        .read_exact(&mut methods)
+        .await
+        .map_err(|e| SshError::Channel(format!("SOCKS methods read failed: {}", e)))?;
+
+    // Only support "no authentication" (0x00).
+    if !methods.iter().any(|m| *m == 0x00) {
+        let _ = stream.write_all(&[0x05, 0xff]).await;
+        let _ = stream.flush().await;
+        return Err(SshError::Channel(
+            "SOCKS client offered no supported auth methods".to_string(),
+        ));
+    }
+    stream
+        .write_all(&[0x05, 0x00])
+        .await
+        .map_err(|e| SshError::Channel(format!("SOCKS method write failed: {}", e)))?;
+    stream
+        .flush()
+        .await
+        .map_err(|e| SshError::Channel(format!("SOCKS flush failed: {}", e)))?;
+
+    // Request: VER CMD RSV ATYP ...
+    let mut req_hdr = [0u8; 4];
+    stream
+        .read_exact(&mut req_hdr)
+        .await
+        .map_err(|e| SshError::Channel(format!("SOCKS request header read failed: {}", e)))?;
+    if req_hdr[0] != 0x05 {
+        return Err(SshError::Channel(format!(
+            "Unsupported SOCKS request version: {}",
+            req_hdr[0]
+        )));
+    }
+    let cmd = req_hdr[1];
+    let atyp = req_hdr[3];
+
+    if cmd != 0x01 {
+        // Command not supported
+        let _ = stream
+            .write_all(&[0x05, 0x07, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
+            .await;
+        let _ = stream.flush().await;
+        return Err(SshError::Channel(format!(
+            "Unsupported SOCKS command: {}",
+            cmd
+        )));
+    }
+
+    let target_host = match atyp {
+        0x01 => {
+            // IPv4
+            let mut ip = [0u8; 4];
+            stream.read_exact(&mut ip).await.map_err(|e| {
+                SshError::Channel(format!("SOCKS IPv4 address read failed: {}", e))
+            })?;
+            format!("{}.{}.{}.{}", ip[0], ip[1], ip[2], ip[3])
+        }
+        0x03 => {
+            // Domain
+            let mut len = [0u8; 1];
+            stream.read_exact(&mut len).await.map_err(|e| {
+                SshError::Channel(format!("SOCKS domain length read failed: {}", e))
+            })?;
+            let mut name = vec![0u8; len[0] as usize];
+            stream.read_exact(&mut name).await.map_err(|e| {
+                SshError::Channel(format!("SOCKS domain read failed: {}", e))
+            })?;
+            String::from_utf8(name)
+                .map_err(|_| SshError::Channel("SOCKS domain is not UTF-8".to_string()))?
+        }
+        0x04 => {
+            // IPv6
+            let mut ip = [0u8; 16];
+            stream.read_exact(&mut ip).await.map_err(|e| {
+                SshError::Channel(format!("SOCKS IPv6 address read failed: {}", e))
+            })?;
+            std::net::Ipv6Addr::from(ip).to_string()
+        }
+        _ => {
+            // Address type not supported
+            let _ = stream
+                .write_all(&[0x05, 0x08, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
+                .await;
+            let _ = stream.flush().await;
+            return Err(SshError::Channel(format!(
+                "Unsupported SOCKS address type: {}",
+                atyp
+            )));
+        }
+    };
+
+    let mut port_bytes = [0u8; 2];
+    stream
+        .read_exact(&mut port_bytes)
+        .await
+        .map_err(|e| SshError::Channel(format!("SOCKS port read failed: {}", e)))?;
+    let target_port = u16::from_be_bytes(port_bytes);
+
+    // Success reply with BND.ADDR = 0.0.0.0 and BND.PORT = 0.
+    stream
+        .write_all(&[0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
+        .await
+        .map_err(|e| SshError::Channel(format!("SOCKS reply write failed: {}", e)))?;
+    stream
+        .flush()
+        .await
+        .map_err(|e| SshError::Channel(format!("SOCKS reply flush failed: {}", e)))?;
+
+    Ok((target_host, target_port))
 }
 
 pub async fn spawn_agent_forwarding(
@@ -888,4 +1134,38 @@ mod tests {
     // === ChannelCommand coverage via documentation ===
     // ChannelCommand is private and tested implicitly through integration tests
     // that exercise send() and window_change() methods.
+
+    // === SOCKS5 tests ===
+
+    #[tokio::test]
+    async fn socks5_handshake_domain_connect() {
+        let (mut client, mut server) = tokio::io::duplex(1024);
+
+        let server_task = tokio::spawn(async move { socks5_handshake(&mut server).await });
+
+        // Greeting: VER=5, NMETHODS=1, METHODS=[NOAUTH]
+        client.write_all(&[0x05, 0x01, 0x00]).await.unwrap();
+        client.flush().await.unwrap();
+
+        let mut method_select = [0u8; 2];
+        client.read_exact(&mut method_select).await.unwrap();
+        assert_eq!(method_select, [0x05, 0x00]);
+
+        // Request: CONNECT to example.com:80
+        let host = b"example.com";
+        let mut req = Vec::new();
+        req.extend_from_slice(&[0x05, 0x01, 0x00, 0x03, host.len() as u8]);
+        req.extend_from_slice(host);
+        req.extend_from_slice(&80u16.to_be_bytes());
+        client.write_all(&req).await.unwrap();
+        client.flush().await.unwrap();
+
+        let mut reply = [0u8; 10];
+        client.read_exact(&mut reply).await.unwrap();
+        assert_eq!(&reply[..4], &[0x05, 0x00, 0x00, 0x01]);
+
+        let (dst_host, dst_port) = server_task.await.unwrap().unwrap();
+        assert_eq!(dst_host, "example.com");
+        assert_eq!(dst_port, 80);
+    }
 }

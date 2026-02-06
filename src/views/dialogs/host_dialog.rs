@@ -162,12 +162,19 @@ impl PortForwardEditorState {
             return Err(format!("Bind host: {}", e.message));
         }
 
-        if let Err(e) = validate_hostname(&self.target_host) {
-            return Err(format!("Target host: {}", e.message));
-        }
+        let bind_port = validate_forward_bind_port(&self.bind_port)?;
 
-        let bind_port = validate_port(&self.bind_port).map_err(|e| e.message)?;
-        let target_port = validate_port(&self.target_port).map_err(|e| e.message)?;
+        // Dynamic forwarding is a local SOCKS5 proxy (-D). Target host/port come from the
+        // client's SOCKS CONNECT requests; the config's target_* fields are ignored.
+        let (target_host, target_port) = if self.kind == PortForwardKind::Dynamic {
+            ("socks".to_string(), 0u16)
+        } else {
+            if let Err(e) = validate_hostname(&self.target_host) {
+                return Err(format!("Target host: {}", e.message));
+            }
+            let target_port = validate_port(&self.target_port).map_err(|e| e.message)?;
+            (self.target_host.trim().to_string(), target_port)
+        };
 
         let description = if self.description.trim().is_empty() {
             None
@@ -180,11 +187,24 @@ impl PortForwardEditorState {
             kind: self.kind,
             bind_host,
             bind_port,
-            target_host: self.target_host.trim().to_string(),
+            target_host,
             target_port,
             enabled: self.enabled,
             description,
         })
+    }
+}
+
+fn validate_forward_bind_port(port_str: &str) -> Result<u16, String> {
+    let port_str = port_str.trim();
+
+    if port_str.is_empty() {
+        return Err("Bind port is required".to_string());
+    }
+
+    match port_str.parse::<u16>() {
+        Ok(port) => Ok(port), // Allow 0 for "auto-assign"
+        Err(_) => Err(format!("Invalid bind port number: '{}'", port_str)),
     }
 }
 
@@ -690,12 +710,10 @@ pub fn host_dialog_view(state: &HostDialogState, theme: Theme) -> Element<'stati
             if let Some(editor) = &port_forward_editor {
                 let bind_host_value = editor.bind_host.clone();
                 let bind_port_value = editor.bind_port.clone();
-                let target_host_value = editor.target_host.clone();
-                let target_port_value = editor.target_port.clone();
                 let description_value = editor.description.clone();
                 let kind = editor.kind;
 
-                let editor_view = column![
+                let mut editor_view = column![
                     text("Edit Forward").size(12).color(theme.text_secondary),
                     row![
                         column![
@@ -742,37 +760,6 @@ pub fn host_dialog_view(state: &HostDialogState, theme: Theme) -> Element<'stati
                         .width(Length::FillPortion(1)),
                     ]
                     .spacing(12),
-                    row![
-                        column![
-                            text("Target Host").size(11).color(theme.text_secondary),
-                            text_input("127.0.0.1", &target_host_value)
-                                .on_input(|s| {
-                                    Message::Dialog(DialogMessage::PortForwardFieldChanged(
-                                        crate::message::PortForwardField::TargetHost,
-                                        s,
-                                    ))
-                                })
-                                .padding(8)
-                                .width(Length::Fill)
-                                .style(dialog_input_style(theme))
-                        ]
-                        .width(Length::FillPortion(3)),
-                        column![
-                            text("Target Port").size(11).color(theme.text_secondary),
-                            text_input("80", &target_port_value)
-                                .on_input(|s| {
-                                    Message::Dialog(DialogMessage::PortForwardFieldChanged(
-                                        crate::message::PortForwardField::TargetPort,
-                                        s,
-                                    ))
-                                })
-                                .padding(8)
-                                .width(Length::Fill)
-                                .style(dialog_input_style(theme))
-                        ]
-                        .width(Length::FillPortion(1)),
-                    ]
-                    .spacing(12),
                     column![
                         text("Description").size(11).color(theme.text_secondary),
                         text_input("Optional description", &description_value)
@@ -799,7 +786,49 @@ pub fn host_dialog_view(state: &HostDialogState, theme: Theme) -> Element<'stati
                 ]
                 .spacing(8);
 
-                let mut editor_view = editor_view;
+                if kind == PortForwardKind::Dynamic {
+                    editor_view = editor_view.push(
+                        text("Dynamic (-D) forwards create a local SOCKS5 proxy.")
+                            .size(11)
+                            .color(theme.text_secondary),
+                    );
+                } else {
+                    let target_host_value = editor.target_host.clone();
+                    let target_port_value = editor.target_port.clone();
+                    editor_view = editor_view.push(
+                        row![
+                            column![
+                                text("Target Host").size(11).color(theme.text_secondary),
+                                text_input("127.0.0.1", &target_host_value)
+                                    .on_input(|s| {
+                                        Message::Dialog(DialogMessage::PortForwardFieldChanged(
+                                            crate::message::PortForwardField::TargetHost,
+                                            s,
+                                        ))
+                                    })
+                                    .padding(8)
+                                    .width(Length::Fill)
+                                    .style(dialog_input_style(theme))
+                            ]
+                            .width(Length::FillPortion(3)),
+                            column![
+                                text("Target Port").size(11).color(theme.text_secondary),
+                                text_input("80", &target_port_value)
+                                    .on_input(|s| {
+                                        Message::Dialog(DialogMessage::PortForwardFieldChanged(
+                                            crate::message::PortForwardField::TargetPort,
+                                            s,
+                                        ))
+                                    })
+                                    .padding(8)
+                                    .width(Length::Fill)
+                                    .style(dialog_input_style(theme))
+                            ]
+                            .width(Length::FillPortion(1)),
+                        ]
+                        .spacing(12),
+                    );
+                }
 
                 if let Some(err) = editor.validation_error.clone() {
                     editor_view = editor_view.push(text(err).size(11).color(ERROR_COLOR));

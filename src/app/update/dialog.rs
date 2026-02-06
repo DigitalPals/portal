@@ -156,6 +156,7 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                             editor.kind = match value.as_str() {
                                 "Local" => PortForwardKind::Local,
                                 "Remote" => PortForwardKind::Remote,
+                                "Dynamic" => PortForwardKind::Dynamic,
                                 _ => editor.kind,
                             };
                         }

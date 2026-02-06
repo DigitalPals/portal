@@ -19,10 +19,15 @@ pub enum Protocol {
 pub enum PortForwardKind {
     Local,
     Remote,
+    Dynamic,
 }
 
 impl PortForwardKind {
-    pub const ALL: [PortForwardKind; 2] = [PortForwardKind::Local, PortForwardKind::Remote];
+    pub const ALL: [PortForwardKind; 3] = [
+        PortForwardKind::Local,
+        PortForwardKind::Remote,
+        PortForwardKind::Dynamic,
+    ];
 }
 
 impl std::fmt::Display for PortForwardKind {
@@ -30,6 +35,7 @@ impl std::fmt::Display for PortForwardKind {
         match self {
             PortForwardKind::Local => write!(f, "Local"),
             PortForwardKind::Remote => write!(f, "Remote"),
+            PortForwardKind::Dynamic => write!(f, "Dynamic"),
         }
     }
 }
@@ -991,5 +997,6 @@ target_port = 80
     fn port_forward_kind_display() {
         assert_eq!(PortForwardKind::Local.to_string(), "Local");
         assert_eq!(PortForwardKind::Remote.to_string(), "Remote");
+        assert_eq!(PortForwardKind::Dynamic.to_string(), "Dynamic");
     }
 }

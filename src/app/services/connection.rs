@@ -158,6 +158,9 @@ fn ssh_connect_tasks_with_auth(
                             PortForwardKind::Remote => {
                                 session.create_remote_forward(forward.clone()).await
                             }
+                            PortForwardKind::Dynamic => {
+                                session.create_dynamic_forward(forward.clone()).await
+                            }
                         };
 
                         if let Err(e) = creation_result {
