@@ -26,6 +26,7 @@ enum PtyCommand {
 /// Handle to an active local terminal session
 pub struct LocalSession {
     command_tx: mpsc::Sender<PtyCommand>,
+    child_killer: Option<Box<dyn portable_pty::ChildKiller + Send + Sync>>,
 }
 
 impl std::fmt::Debug for LocalSession {
@@ -76,10 +77,11 @@ impl LocalSession {
         cmd.env("TERM", "xterm-256color");
 
         // Spawn shell process
-        let _child = pair
+        let child = pair
             .slave
             .spawn_command(cmd)
             .map_err(|e| LocalError::SpawnFailed(e.to_string()))?;
+        let child_killer = child.clone_killer();
 
         // Get master for I/O
         let reader = pair
@@ -99,7 +101,10 @@ impl LocalSession {
         // Spawn background task for PTY I/O
         Self::spawn_io_task(reader, writer, master, command_rx, event_tx);
 
-        Ok(Self { command_tx })
+        Ok(Self {
+            command_tx,
+            child_killer: Some(child_killer),
+        })
     }
 
     /// Spawn the background I/O task
@@ -194,6 +199,22 @@ impl LocalSession {
     #[cfg(test)]
     pub fn new_test_stub() -> Self {
         let (command_tx, _rx) = mpsc::channel(1);
-        Self { command_tx }
+        Self {
+            command_tx,
+            child_killer: None,
+        }
+    }
+}
+
+impl Drop for LocalSession {
+    fn drop(&mut self) {
+        tracing::debug!("Local PTY session cleanup: closing channel and killing process");
+        let (replacement_tx, _replacement_rx) = mpsc::channel(1);
+        let _ = std::mem::replace(&mut self.command_tx, replacement_tx);
+        if let Some(mut killer) = self.child_killer.take() {
+            if let Err(e) = killer.kill() {
+                tracing::debug!("Failed to kill local PTY process: {}", e);
+            }
+        }
     }
 }

@@ -795,3 +795,14 @@ impl VncSession {
         }
     }
 }
+
+impl Drop for VncSession {
+    fn drop(&mut self) {
+        tracing::debug!("VNC session cleanup: closing input channel and aborting event loop");
+        let (replacement_tx, _replacement_rx) = mpsc::channel(1);
+        let _ = std::mem::replace(&mut self.input_tx, replacement_tx);
+        if let Some(handle) = self.event_loop_handle.lock().take() {
+            handle.abort();
+        }
+    }
+}

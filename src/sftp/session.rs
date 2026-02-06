@@ -17,7 +17,7 @@ use super::types::FileEntry;
 
 /// SFTP session wrapper for file operations
 pub struct SftpSession {
-    sftp: Mutex<RusshSftpSession>,
+    sftp: Arc<Mutex<RusshSftpSession>>,
     home_dir: PathBuf,
 }
 
@@ -33,7 +33,7 @@ impl SftpSession {
     /// Create a new SFTP session
     pub fn new(sftp: RusshSftpSession, home_dir: PathBuf) -> Self {
         Self {
-            sftp: Mutex::new(sftp),
+            sftp: Arc::new(Mutex::new(sftp)),
             home_dir,
         }
     }
@@ -376,6 +376,26 @@ impl SftpSession {
         }
 
         Ok(count)
+    }
+}
+
+impl Drop for SftpSession {
+    fn drop(&mut self) {
+        tracing::debug!("SFTP session cleanup: closing session");
+        let sftp = self.sftp.clone();
+        match tokio::runtime::Handle::try_current() {
+            Ok(handle) => {
+                handle.spawn(async move {
+                    let sftp = sftp.lock().await;
+                    if let Err(e) = sftp.close().await {
+                        tracing::debug!("SFTP close failed: {}", e);
+                    }
+                });
+            }
+            Err(_) => {
+                tracing::debug!("SFTP session dropped without a Tokio runtime; close skipped");
+            }
+        }
     }
 }
 

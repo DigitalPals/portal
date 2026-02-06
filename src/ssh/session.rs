@@ -2,7 +2,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use russh::client::Handle;
-use russh::{Channel, ChannelMsg};
+use russh::{Channel, ChannelMsg, Disconnect};
 use tokio::sync::{Mutex, mpsc};
 use tokio::time::timeout;
 
@@ -319,6 +319,31 @@ impl SshSession {
                 "Command '{}' timed out after {} seconds",
                 command, timeout_secs
             ))),
+        }
+    }
+}
+
+impl Drop for SshSession {
+    fn drop(&mut self) {
+        tracing::debug!("SSH session cleanup: closing command channel");
+        let (replacement_tx, _replacement_rx) = mpsc::channel(1);
+        let _ = std::mem::replace(&mut self.command_tx, replacement_tx);
+        let handle = self.handle.clone();
+        match tokio::runtime::Handle::try_current() {
+            Ok(runtime) => {
+                runtime.spawn(async move {
+                    let handle = handle.lock().await;
+                    if let Err(e) = handle
+                        .disconnect(Disconnect::ByApplication, "session dropped", "en")
+                        .await
+                    {
+                        tracing::debug!("SSH disconnect failed: {}", e);
+                    }
+                });
+            }
+            Err(_) => {
+                tracing::debug!("SSH session dropped without a Tokio runtime; disconnect skipped");
+            }
         }
     }
 }
