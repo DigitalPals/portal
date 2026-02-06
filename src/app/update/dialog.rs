@@ -184,12 +184,11 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
         }
         DialogMessage::PasswordSubmit => {
             if let Some(dialog) = portal.dialogs.password_mut() {
-                let password = dialog.password.clone();
+                let password = std::mem::take(&mut dialog.password);
                 let host_id = dialog.host_id;
-                let connection_kind = dialog.connection_kind.clone();
-                let sftp_context = dialog.sftp_context.clone();
+                let connection_kind = dialog.connection_kind;
+                let sftp_context = dialog.sftp_context;
                 let dialog_username = dialog.username.clone();
-                dialog.clear_password();
                 dialog.error = None;
 
                 // Find the host and start connection with password
@@ -273,13 +272,12 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
         }
         DialogMessage::PassphraseSubmit => {
             if let Some(dialog) = portal.dialogs.passphrase_mut() {
-                let passphrase = dialog.passphrase.clone();
+                let passphrase = std::mem::take(&mut dialog.passphrase);
                 let host_id = dialog.host_id;
                 let is_ssh = dialog.is_ssh;
                 let session_id = dialog.session_id;
                 let should_detect_os = dialog.should_detect_os;
-                let sftp_context = dialog.sftp_context.clone();
-                dialog.clear_passphrase();
+                let sftp_context = dialog.sftp_context;
                 dialog.error = None;
 
                 // Find the host and start connection with passphrase

@@ -14,7 +14,7 @@ use super::common::{
 };
 
 /// What kind of connection this password dialog is for
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum PasswordConnectionKind {
     Ssh,
     Sftp,
@@ -47,7 +47,7 @@ pub struct PasswordDialogState {
 }
 
 /// Context for SFTP password connections
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct SftpConnectionContext {
     pub tab_id: Uuid,
     pub pane_id: crate::views::sftp::PaneId,

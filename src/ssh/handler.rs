@@ -17,7 +17,7 @@ use super::known_hosts::{HostKeyStatus, KnownHostsManager};
 
 /// SSH client handler implementation
 pub struct ClientHandler {
-    host: String,
+    host: Arc<str>,
     port: u16,
     known_hosts: Arc<Mutex<KnownHostsManager>>,
     /// Channel to send events to UI (including verification requests)
@@ -32,7 +32,7 @@ impl ClientHandler {
         event_tx: mpsc::Sender<SshEvent>,
     ) -> Self {
         Self {
-            host,
+            host: Arc::from(host),
             port,
             known_hosts,
             event_tx,
@@ -47,20 +47,20 @@ impl Handler for ClientHandler {
         &mut self,
         server_public_key: &PublicKey,
     ) -> impl Future<Output = Result<bool, Self::Error>> + Send {
-        let host = self.host.clone();
+        let host = Arc::clone(&self.host);
         let port = self.port;
-        let known_hosts = self.known_hosts.clone();
-        let key = server_public_key.clone();
+        let known_hosts = Arc::clone(&self.known_hosts);
+        let key = Arc::new(server_public_key.clone());
         let event_tx = self.event_tx.clone();
 
         async move {
             let status = tokio::task::spawn_blocking({
-                let known_hosts = known_hosts.clone();
-                let host = host.clone();
-                let key = key.clone();
+                let known_hosts = Arc::clone(&known_hosts);
+                let host = Arc::clone(&host);
+                let key = Arc::clone(&key);
                 move || {
                     let manager = known_hosts.blocking_lock();
-                    manager.check_host_key(&host, port, &key)
+                    manager.check_host_key(host.as_ref(), port, key.as_ref())
                 }
             })
             .await
@@ -88,10 +88,10 @@ impl Handler for ClientHandler {
 
                     let request = HostKeyVerificationRequest::NewHost {
                         info: HostKeyInfo {
-                            host: host.clone(),
+                            host: host.to_string(),
                             port,
-                            fingerprint: fingerprint.clone(),
-                            key_type: key_type.clone(),
+                            fingerprint,
+                            key_type,
                         },
                         responder: tx,
                     };
@@ -112,12 +112,12 @@ impl Handler for ClientHandler {
                             tracing::debug!("User accepted host key");
                             // Save key to known_hosts (fail closed if we cannot persist)
                             let store_result = tokio::task::spawn_blocking({
-                                let known_hosts = known_hosts.clone();
-                                let host = host.clone();
-                                let key = key.clone();
+                                let known_hosts = Arc::clone(&known_hosts);
+                                let host = Arc::clone(&host);
+                                let key = Arc::clone(&key);
                                 move || {
                                     let mut manager = known_hosts.blocking_lock();
-                                    manager.add_host_key(&host, port, &key)
+                                    manager.add_host_key(host.as_ref(), port, key.as_ref())
                                 }
                             })
                             .await
@@ -162,12 +162,12 @@ impl Handler for ClientHandler {
 
                     let request = HostKeyVerificationRequest::ChangedHost {
                         info: HostKeyInfo {
-                            host: host.clone(),
+                            host: host.to_string(),
                             port,
-                            fingerprint: new_fingerprint.clone(),
-                            key_type: key_type.clone(),
+                            fingerprint: new_fingerprint,
+                            key_type,
                         },
-                        old_fingerprint: old_fingerprint.clone(),
+                        old_fingerprint,
                         responder: tx,
                     };
 
@@ -187,12 +187,12 @@ impl Handler for ClientHandler {
                             tracing::debug!("User accepted changed host key");
                             // Update key in known_hosts (fail closed if we cannot persist)
                             let update_result = tokio::task::spawn_blocking({
-                                let known_hosts = known_hosts.clone();
-                                let host = host.clone();
-                                let key = key.clone();
+                                let known_hosts = Arc::clone(&known_hosts);
+                                let host = Arc::clone(&host);
+                                let key = Arc::clone(&key);
                                 move || {
                                     let mut manager = known_hosts.blocking_lock();
-                                    manager.update_host_key(&host, port, &key)
+                                    manager.update_host_key(host.as_ref(), port, key.as_ref())
                                 }
                             })
                             .await
@@ -264,7 +264,7 @@ mod tests {
         let (tx, _rx) = mpsc::channel(16);
         let known_hosts = Arc::new(Mutex::new(KnownHostsManager::new()));
         let handler = ClientHandler::new("myserver.example.com".to_string(), 22, known_hosts, tx);
-        assert_eq!(handler.host, "myserver.example.com");
+        assert_eq!(handler.host.as_ref(), "myserver.example.com");
     }
 
     #[test]
@@ -298,7 +298,7 @@ mod tests {
         let (tx, _rx) = mpsc::channel(16);
         let known_hosts = Arc::new(Mutex::new(KnownHostsManager::new()));
         let handler = ClientHandler::new("192.168.1.100".to_string(), 22, known_hosts, tx);
-        assert_eq!(handler.host, "192.168.1.100");
+        assert_eq!(handler.host.as_ref(), "192.168.1.100");
     }
 
     #[test]
@@ -306,7 +306,7 @@ mod tests {
         let (tx, _rx) = mpsc::channel(16);
         let known_hosts = Arc::new(Mutex::new(KnownHostsManager::new()));
         let handler = ClientHandler::new("::1".to_string(), 22, known_hosts, tx);
-        assert_eq!(handler.host, "::1");
+        assert_eq!(handler.host.as_ref(), "::1");
     }
 
     #[test]
@@ -314,7 +314,7 @@ mod tests {
         let (tx, _rx) = mpsc::channel(16);
         let known_hosts = Arc::new(Mutex::new(KnownHostsManager::new()));
         let handler = ClientHandler::new("localhost".to_string(), 22, known_hosts, tx);
-        assert_eq!(handler.host, "localhost");
+        assert_eq!(handler.host.as_ref(), "localhost");
     }
 
     #[test]
@@ -394,7 +394,7 @@ mod tests {
         let known_hosts = Arc::new(Mutex::new(KnownHostsManager::new()));
         // IDN domain (internationalized domain name)
         let handler = ClientHandler::new("例え.jp".to_string(), 22, known_hosts, tx);
-        assert_eq!(handler.host, "例え.jp");
+        assert_eq!(handler.host.as_ref(), "例え.jp");
     }
 
     #[test]
@@ -403,6 +403,6 @@ mod tests {
         let known_hosts = Arc::new(Mutex::new(KnownHostsManager::new()));
         let handler = ClientHandler::new("MyServer.Example.COM".to_string(), 22, known_hosts, tx);
         // Host should preserve original case
-        assert_eq!(handler.host, "MyServer.Example.COM");
+        assert_eq!(handler.host.as_ref(), "MyServer.Example.COM");
     }
 }

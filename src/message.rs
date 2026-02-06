@@ -220,7 +220,7 @@ pub enum DialogMessage {
 }
 
 /// Context for passphrase-based SFTP connections
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct PassphraseSftpContext {
     pub tab_id: Uuid,
     pub pane_id: PaneId,

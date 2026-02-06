@@ -202,7 +202,7 @@ impl Portal {
         self.dialogs.open_connecting(host.name.clone(), "VNC");
 
         let session_id = Uuid::new_v4();
-        let hostname = host.hostname.clone();
+        let host = Arc::new(host.clone());
         let port = host.effective_vnc_port();
         let host_name = host.name.clone();
         let host_id = host.id;
@@ -215,11 +215,11 @@ impl Portal {
         let connect_task = Task::perform(
             async move {
                 match VncSession::connect(
-                    &hostname,
+                    host.hostname.as_str(),
                     port,
                     username,
                     password_str,
-                    host_name.clone(),
+                    host_name,
                     vnc_settings,
                 )
                 .await
@@ -450,18 +450,18 @@ impl Portal {
                             PaneSource::Local => file_viewer::build_local_viewer(
                                 viewer_id,
                                 file_name.clone(),
-                                file_path.clone(),
-                                file_type.clone(),
+                                file_path,
+                                file_type,
                             ),
                             PaneSource::Remote { session_id, .. } => {
                                 if let Some(sftp) = self.sftp.get_connection(*session_id) {
                                     file_viewer::build_remote_viewer(
                                         viewer_id,
                                         file_name.clone(),
-                                        file_path.clone(),
+                                        file_path,
                                         *session_id,
                                         sftp.clone(),
-                                        file_type.clone(),
+                                        file_type,
                                     )
                                 } else {
                                     return Task::none();
@@ -832,10 +832,7 @@ impl Portal {
         }
 
         let target_dir = target_pane.current_path.clone();
-        let source = source_pane.source.clone();
-        let target = target_pane.source.clone();
-
-        match (&source, &target) {
+        match (&source_pane.source, &target_pane.source) {
             (PaneSource::Local, PaneSource::Local) => {
                 // Local to Local copy
                 Task::perform(
