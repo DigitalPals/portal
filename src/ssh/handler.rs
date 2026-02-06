@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::future::Future;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use russh::client::{Handler, Session};
@@ -27,7 +28,7 @@ pub struct ClientHandler {
     known_hosts: Arc<Mutex<KnownHostsManager>>,
     /// Channel to send events to UI (including verification requests)
     event_tx: mpsc::Sender<SshEvent>,
-    agent_forwarding_enabled: bool,
+    agent_forwarding_enabled: Arc<AtomicBool>,
     remote_forwards: Arc<Mutex<HashMap<Uuid, PortForward>>>,
 }
 
@@ -37,7 +38,7 @@ impl ClientHandler {
         port: u16,
         known_hosts: Arc<Mutex<KnownHostsManager>>,
         event_tx: mpsc::Sender<SshEvent>,
-        agent_forwarding_enabled: bool,
+        agent_forwarding_enabled: Arc<AtomicBool>,
         remote_forwards: Arc<Mutex<HashMap<Uuid, PortForward>>>,
     ) -> Self {
         Self {
@@ -345,7 +346,7 @@ impl Handler for ClientHandler {
         channel: Channel<russh::client::Msg>,
         _session: &mut Session,
     ) -> Result<(), Self::Error> {
-        if !self.agent_forwarding_enabled {
+        if !self.agent_forwarding_enabled.load(Ordering::SeqCst) {
             tracing::warn!("Rejected agent forwarding request (disabled)");
             if let Err(e) = channel.close().await {
                 tracing::debug!("Failed to close agent forwarding channel: {}", e);
@@ -370,6 +371,10 @@ mod tests {
         Arc::new(Mutex::new(HashMap::new()))
     }
 
+    fn agent_forwarding_disabled() -> Arc<AtomicBool> {
+        Arc::new(AtomicBool::new(false))
+    }
+
     fn create_test_handler() -> (ClientHandler, mpsc::Receiver<SshEvent>) {
         let (tx, rx) = mpsc::channel(16);
         let known_hosts = Arc::new(Mutex::new(KnownHostsManager::new()));
@@ -378,7 +383,7 @@ mod tests {
             22,
             known_hosts,
             tx,
-            false,
+            agent_forwarding_disabled(),
             empty_forwards(),
         );
         (handler, rx)
@@ -395,7 +400,7 @@ mod tests {
             22,
             known_hosts,
             tx,
-            false,
+            agent_forwarding_disabled(),
             empty_forwards(),
         );
         assert_eq!(handler.host.as_ref(), "myserver.example.com");
@@ -410,7 +415,7 @@ mod tests {
             2222,
             known_hosts,
             tx,
-            false,
+            agent_forwarding_disabled(),
             empty_forwards(),
         );
         assert_eq!(handler.port, 2222);
@@ -433,7 +438,7 @@ mod tests {
             22,
             known_hosts,
             tx,
-            false,
+            agent_forwarding_disabled(),
             empty_forwards(),
         );
 
@@ -450,7 +455,7 @@ mod tests {
             22,
             known_hosts,
             tx,
-            false,
+            agent_forwarding_disabled(),
             empty_forwards(),
         );
         assert_eq!(handler.host.as_ref(), "192.168.1.100");
@@ -465,7 +470,7 @@ mod tests {
             22,
             known_hosts,
             tx,
-            false,
+            agent_forwarding_disabled(),
             empty_forwards(),
         );
         assert_eq!(handler.host.as_ref(), "::1");
@@ -480,7 +485,7 @@ mod tests {
             22,
             known_hosts,
             tx,
-            false,
+            agent_forwarding_disabled(),
             empty_forwards(),
         );
         assert_eq!(handler.host.as_ref(), "localhost");
@@ -495,7 +500,7 @@ mod tests {
             65535,
             known_hosts,
             tx,
-            false,
+            agent_forwarding_disabled(),
             empty_forwards(),
         );
         assert_eq!(handler.port, 65535);
@@ -510,7 +515,7 @@ mod tests {
             1,
             known_hosts,
             tx,
-            false,
+            agent_forwarding_disabled(),
             empty_forwards(),
         );
         assert_eq!(handler.port, 1);
@@ -527,7 +532,7 @@ mod tests {
             22,
             shared_known_hosts.clone(),
             tx1,
-            false,
+            agent_forwarding_disabled(),
             empty_forwards(),
         );
         let handler2 = ClientHandler::new(
@@ -535,7 +540,7 @@ mod tests {
             22,
             shared_known_hosts.clone(),
             tx2,
-            false,
+            agent_forwarding_disabled(),
             empty_forwards(),
         );
 
@@ -555,7 +560,7 @@ mod tests {
             22,
             known_hosts.clone(),
             tx1,
-            false,
+            agent_forwarding_disabled(),
             empty_forwards(),
         );
         let _handler2 = ClientHandler::new(
@@ -563,7 +568,7 @@ mod tests {
             22,
             known_hosts.clone(),
             tx2,
-            false,
+            agent_forwarding_disabled(),
             empty_forwards(),
         );
 
@@ -575,8 +580,14 @@ mod tests {
     fn new_with_empty_host() {
         let (tx, _rx) = mpsc::channel(16);
         let known_hosts = Arc::new(Mutex::new(KnownHostsManager::new()));
-        let handler =
-            ClientHandler::new(String::new(), 22, known_hosts, tx, false, empty_forwards());
+        let handler = ClientHandler::new(
+            String::new(),
+            22,
+            known_hosts,
+            tx,
+            agent_forwarding_disabled(),
+            empty_forwards(),
+        );
         assert!(handler.host.is_empty());
     }
 
@@ -590,7 +601,7 @@ mod tests {
             22,
             known_hosts,
             tx,
-            false,
+            agent_forwarding_disabled(),
             empty_forwards(),
         );
         assert_eq!(handler.host.as_ref(), "例え.jp");
@@ -605,7 +616,7 @@ mod tests {
             22,
             known_hosts,
             tx,
-            false,
+            agent_forwarding_disabled(),
             empty_forwards(),
         );
         // Host should preserve original case

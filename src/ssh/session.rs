@@ -16,6 +16,7 @@ use crate::error::SshError;
 use crate::security_log;
 
 use super::SshEvent;
+use super::connection_pool::SshConnection;
 
 /// Result of executing a command, including output and exit code
 #[derive(Debug, Clone)]
@@ -35,6 +36,7 @@ enum ChannelCommand {
 /// Active SSH session handle
 pub struct SshSession {
     command_tx: mpsc::Sender<ChannelCommand>,
+    connection: Arc<SshConnection>,
     handle: Arc<Mutex<Handle<ClientHandler>>>,
     forward_handles: Arc<Mutex<HashMap<Uuid, ForwardHandle>>>,
     remote_forwards: Arc<Mutex<HashMap<Uuid, PortForward>>>,
@@ -68,25 +70,27 @@ impl std::fmt::Debug for SshSession {
 impl SshSession {
     /// Create a new session and spawn the channel I/O task
     pub fn new(
-        handle: Handle<ClientHandler>,
+        connection: Arc<SshConnection>,
         mut channel: Channel<russh::client::Msg>,
         event_tx: mpsc::Sender<SshEvent>,
-        remote_forwards: Arc<Mutex<HashMap<Uuid, PortForward>>>,
-        host: String,
-        port: u16,
     ) -> Self {
         let (command_tx, mut command_rx) = mpsc::channel::<ChannelCommand>(256);
         let disconnect_logged = Arc::new(AtomicBool::new(false));
 
-        // Wrap handle in Arc<Mutex> so it can be shared
-        let handle = Arc::new(Mutex::new(handle));
+        let handle = connection.handle();
+        let remote_forwards = connection.remote_forwards();
+        let host = connection.host().to_string();
+        let port = connection.port();
+
         let handle_for_task = handle.clone();
         let disconnect_logged_for_task = disconnect_logged.clone();
         let host_for_task = host.clone();
+        let connection_for_task = connection.clone();
 
         // Spawn task that owns the channel, keeping the connection alive
         tokio::spawn(async move {
-            // Keep handle reference alive for the duration of the session
+            // Keep the underlying connection alive for the duration of this channel.
+            let _connection = connection_for_task;
             let _handle = handle_for_task;
 
             // Track if we received a clean exit (exit status 0)
@@ -165,7 +169,10 @@ impl SshSession {
                                 }
                             }
                             None => {
-                                // Command channel closed, exit
+                                // Command channel closed; close only this channel and exit.
+                                let _ = event_tx.send(SshEvent::Disconnected { clean: false }).await;
+                                let _ = channel.eof().await;
+                                let _ = channel.close().await;
                                 break;
                             }
                         }
@@ -176,6 +183,7 @@ impl SshSession {
 
         Self {
             command_tx,
+            connection,
             handle,
             forward_handles: Arc::new(Mutex::new(HashMap::new())),
             remote_forwards,
@@ -525,9 +533,7 @@ impl SshSession {
 
     pub async fn create_dynamic_forward(&self, forward: PortForward) -> Result<(), SshError> {
         if forward.kind != PortForwardKind::Dynamic {
-            return Err(SshError::Channel(
-                "Forward kind is not dynamic".to_string(),
-            ));
+            return Err(SshError::Channel("Forward kind is not dynamic".to_string()));
         }
 
         let bind_addr = format!("{}:{}", forward.bind_host, forward.bind_port);
@@ -777,48 +783,50 @@ where
         )));
     }
 
-    let target_host = match atyp {
-        0x01 => {
-            // IPv4
-            let mut ip = [0u8; 4];
-            stream.read_exact(&mut ip).await.map_err(|e| {
-                SshError::Channel(format!("SOCKS IPv4 address read failed: {}", e))
-            })?;
-            format!("{}.{}.{}.{}", ip[0], ip[1], ip[2], ip[3])
-        }
-        0x03 => {
-            // Domain
-            let mut len = [0u8; 1];
-            stream.read_exact(&mut len).await.map_err(|e| {
-                SshError::Channel(format!("SOCKS domain length read failed: {}", e))
-            })?;
-            let mut name = vec![0u8; len[0] as usize];
-            stream.read_exact(&mut name).await.map_err(|e| {
-                SshError::Channel(format!("SOCKS domain read failed: {}", e))
-            })?;
-            String::from_utf8(name)
-                .map_err(|_| SshError::Channel("SOCKS domain is not UTF-8".to_string()))?
-        }
-        0x04 => {
-            // IPv6
-            let mut ip = [0u8; 16];
-            stream.read_exact(&mut ip).await.map_err(|e| {
-                SshError::Channel(format!("SOCKS IPv6 address read failed: {}", e))
-            })?;
-            std::net::Ipv6Addr::from(ip).to_string()
-        }
-        _ => {
-            // Address type not supported
-            let _ = stream
-                .write_all(&[0x05, 0x08, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
-                .await;
-            let _ = stream.flush().await;
-            return Err(SshError::Channel(format!(
-                "Unsupported SOCKS address type: {}",
-                atyp
-            )));
-        }
-    };
+    let target_host =
+        match atyp {
+            0x01 => {
+                // IPv4
+                let mut ip = [0u8; 4];
+                stream.read_exact(&mut ip).await.map_err(|e| {
+                    SshError::Channel(format!("SOCKS IPv4 address read failed: {}", e))
+                })?;
+                format!("{}.{}.{}.{}", ip[0], ip[1], ip[2], ip[3])
+            }
+            0x03 => {
+                // Domain
+                let mut len = [0u8; 1];
+                stream.read_exact(&mut len).await.map_err(|e| {
+                    SshError::Channel(format!("SOCKS domain length read failed: {}", e))
+                })?;
+                let mut name = vec![0u8; len[0] as usize];
+                stream
+                    .read_exact(&mut name)
+                    .await
+                    .map_err(|e| SshError::Channel(format!("SOCKS domain read failed: {}", e)))?;
+                String::from_utf8(name)
+                    .map_err(|_| SshError::Channel("SOCKS domain is not UTF-8".to_string()))?
+            }
+            0x04 => {
+                // IPv6
+                let mut ip = [0u8; 16];
+                stream.read_exact(&mut ip).await.map_err(|e| {
+                    SshError::Channel(format!("SOCKS IPv6 address read failed: {}", e))
+                })?;
+                std::net::Ipv6Addr::from(ip).to_string()
+            }
+            _ => {
+                // Address type not supported
+                let _ = stream
+                    .write_all(&[0x05, 0x08, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
+                    .await;
+                let _ = stream.flush().await;
+                return Err(SshError::Channel(format!(
+                    "Unsupported SOCKS address type: {}",
+                    atyp
+                )));
+            }
+        };
 
     let mut port_bytes = [0u8; 2];
     stream
@@ -926,18 +934,10 @@ impl Drop for SshSession {
                             }
                         }
                     }
-
-                    let handle_guard = handle.lock().await;
-                    if let Err(e) = handle_guard
-                        .disconnect(Disconnect::ByApplication, "session dropped", "en")
-                        .await
-                    {
-                        tracing::debug!("SSH disconnect failed: {}", e);
-                    }
                 });
             }
             Err(_) => {
-                tracing::debug!("SSH session dropped without a Tokio runtime; disconnect skipped");
+                tracing::debug!("SSH session dropped without a Tokio runtime; cleanup skipped");
             }
         }
     }

@@ -12,11 +12,14 @@ use tokio::io;
 use tokio::sync::Mutex;
 
 use crate::error::SftpError;
+use crate::ssh::SshConnection;
 
 use super::types::FileEntry;
 
 /// SFTP session wrapper for file operations
 pub struct SftpSession {
+    // Keeps the underlying SSH connection alive while this SFTP channel exists.
+    connection: Arc<SshConnection>,
     sftp: Arc<Mutex<RusshSftpSession>>,
     home_dir: PathBuf,
 }
@@ -31,8 +34,9 @@ impl std::fmt::Debug for SftpSession {
 
 impl SftpSession {
     /// Create a new SFTP session
-    pub fn new(sftp: RusshSftpSession, home_dir: PathBuf) -> Self {
+    pub fn new(connection: Arc<SshConnection>, sftp: RusshSftpSession, home_dir: PathBuf) -> Self {
         Self {
+            connection,
             sftp: Arc::new(Mutex::new(sftp)),
             home_dir,
         }
