@@ -156,9 +156,7 @@ impl SshConnectionPool {
 
     pub async fn get(&self, key: &SshConnectionKey) -> Option<Arc<SshConnection>> {
         let mut map = self.connections.lock().await;
-        let Some(weak) = map.get(key).cloned() else {
-            return None;
-        };
+        let weak = map.get(key).cloned()?;
 
         match weak.upgrade() {
             Some(conn) => Some(conn),

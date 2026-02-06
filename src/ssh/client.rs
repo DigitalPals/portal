@@ -203,7 +203,7 @@ impl SshClient {
             let detected_os = if detect_os_on_connect {
                 let handle = connection.handle();
                 let mut handle_guard = handle.lock().await;
-                match os_detect::detect_os(&mut *handle_guard).await {
+                match os_detect::detect_os(&mut handle_guard).await {
                     Ok(os) => Some(os),
                     Err(e) => {
                         tracing::warn!("OS detection failed: {}", e);

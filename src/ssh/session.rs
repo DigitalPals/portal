@@ -741,7 +741,7 @@ where
         .map_err(|e| SshError::Channel(format!("SOCKS methods read failed: {}", e)))?;
 
     // Only support "no authentication" (0x00).
-    if !methods.iter().any(|m| *m == 0x00) {
+    if !methods.contains(&0x00) {
         let _ = stream.write_all(&[0x05, 0xff]).await;
         let _ = stream.flush().await;
         return Err(SshError::Channel(
