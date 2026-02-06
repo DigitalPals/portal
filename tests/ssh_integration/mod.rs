@@ -22,4 +22,5 @@ pub mod fixtures;
 mod auth_tests;
 mod connection_tests;
 mod host_key_tests;
+mod multiplexing_tests;
 mod port_forward_tests;

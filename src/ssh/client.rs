@@ -201,7 +201,8 @@ impl SshClient {
 
             // Detect OS if requested (before opening the shell channel)
             let detected_os = if detect_os_on_connect {
-                let mut handle_guard = connection.handle().lock().await;
+                let handle = connection.handle();
+                let mut handle_guard = handle.lock().await;
                 match os_detect::detect_os(&mut *handle_guard).await {
                     Ok(os) => Some(os),
                     Err(e) => {
@@ -215,7 +216,8 @@ impl SshClient {
 
             // Open channel and request PTY
             let channel = {
-                let handle_guard = connection.handle().lock().await;
+                let handle = connection.handle();
+                let handle_guard = handle.lock().await;
                 handle_guard
                     .channel_open_session()
                     .await

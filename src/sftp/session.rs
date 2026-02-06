@@ -19,7 +19,7 @@ use super::types::FileEntry;
 /// SFTP session wrapper for file operations
 pub struct SftpSession {
     // Keeps the underlying SSH connection alive while this SFTP channel exists.
-    connection: Arc<SshConnection>,
+    _connection: Arc<SshConnection>,
     sftp: Arc<Mutex<RusshSftpSession>>,
     home_dir: PathBuf,
 }
@@ -36,7 +36,7 @@ impl SftpSession {
     /// Create a new SFTP session
     pub fn new(connection: Arc<SshConnection>, sftp: RusshSftpSession, home_dir: PathBuf) -> Self {
         Self {
-            connection,
+            _connection: connection,
             sftp: Arc::new(Mutex::new(sftp)),
             home_dir,
         }

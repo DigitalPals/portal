@@ -15,7 +15,7 @@ use portal::ssh::{SshClient, SshEvent};
 use super::fixtures::SshTestEnvironment;
 
 /// Helper to spawn a task that auto-accepts host keys and tracks verification requests
-fn spawn_host_key_handler(
+pub(super) fn spawn_host_key_handler(
     mut event_rx: mpsc::Receiver<SshEvent>,
 ) -> (
     tokio::task::JoinHandle<()>,

@@ -4,7 +4,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use russh::client::Handle;
-use russh::{Channel, ChannelMsg, Disconnect};
+use russh::{Channel, ChannelMsg};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, UnixStream};
 use tokio::sync::{Mutex, mpsc, oneshot};
@@ -36,7 +36,8 @@ enum ChannelCommand {
 /// Active SSH session handle
 pub struct SshSession {
     command_tx: mpsc::Sender<ChannelCommand>,
-    connection: Arc<SshConnection>,
+    // Keeps the underlying SSH transport alive while this interactive channel exists.
+    _connection: Arc<SshConnection>,
     handle: Arc<Mutex<Handle<ClientHandler>>>,
     forward_handles: Arc<Mutex<HashMap<Uuid, ForwardHandle>>>,
     remote_forwards: Arc<Mutex<HashMap<Uuid, PortForward>>>,
@@ -183,7 +184,7 @@ impl SshSession {
 
         Self {
             command_tx,
-            connection,
+            _connection: connection,
             handle,
             forward_handles: Arc::new(Mutex::new(HashMap::new())),
             remote_forwards,

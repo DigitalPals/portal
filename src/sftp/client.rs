@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use russh::client::{self, Config};
@@ -22,6 +23,7 @@ use crate::ssh::SshEvent;
 use crate::ssh::auth::ResolvedAuth;
 use crate::ssh::handler::ClientHandler;
 use crate::ssh::known_hosts::KnownHostsManager;
+use crate::ssh::{SshConnection, SshConnectionKey, shared_connection_pool};
 
 use super::session::{SftpSession, SharedSftpSession};
 
@@ -90,23 +92,10 @@ impl SftpClient {
         password: Option<SecretString>,
         passphrase: Option<SecretString>,
     ) -> Result<SharedSftpSession, SftpError> {
-        let addr = format!("{}:{}", host.hostname, host.port);
-
-        // Connect with timeout
-        let stream = timeout(connection_timeout, TcpStream::connect(&addr))
-            .await
-            .map_err(|_| SftpError::ConnectionFailed(format!("Connection timed out to {}", addr)))?
-            .map_err(|e| {
-                SftpError::ConnectionFailed(format!(
-                    "Failed to connect to {}:{}: {}",
-                    host.hostname, host.port, e
-                ))
-            })?;
-
         // Wrap the rest of the connection process in a timeout
         match timeout(
             connection_timeout,
-            self.establish_sftp_session(host, event_tx, stream, password, passphrase),
+            self.establish_sftp_session(host, event_tx, connection_timeout, password, passphrase),
         )
         .await
         {
@@ -123,73 +112,136 @@ impl SftpClient {
         &self,
         host: &Host,
         event_tx: mpsc::Sender<SshEvent>,
-        stream: TcpStream,
+        connection_timeout: Duration,
         password: Option<SecretString>,
         passphrase: Option<SecretString>,
     ) -> Result<SharedSftpSession, SftpError> {
-        // SFTP doesn't need remote forwards - create empty registry
-        let remote_forwards = Arc::new(Mutex::new(HashMap::new()));
-        let handler = ClientHandler::new(
-            host.hostname.clone(),
-            host.port,
-            self.known_hosts.clone(),
-            event_tx,
-            false, // No agent forwarding for SFTP
-            remote_forwards,
-        );
+        let pool = shared_connection_pool();
+        let key = SshConnectionKey::new(&host.hostname, host.port, &host.username);
 
-        let mut handle = client::connect_stream(self.config.clone(), stream, handler)
-            .await
-            .map_err(|e| {
-                SftpError::ConnectionFailed(format!(
-                    "SSH handshake failed for {}:{}: {}",
-                    host.hostname, host.port, e
-                ))
-            })?;
+        for attempt in 0..2 {
+            let mut connection = pool.get(&key).await;
 
-        // Authenticate
-        let auth = ResolvedAuth::resolve(&host.auth, password, passphrase)
-            .await
-            .map_err(|e| match e {
-                crate::error::SshError::KeyFilePassphraseRequired(path) => {
-                    SftpError::KeyFilePassphraseRequired(path)
+            if connection.is_none() {
+                let addr = format!("{}:{}", host.hostname, host.port);
+                let stream = timeout(connection_timeout, TcpStream::connect(&addr))
+                    .await
+                    .map_err(|_| {
+                        SftpError::ConnectionFailed(format!("Connection timed out to {}", addr))
+                    })?
+                    .map_err(|e| {
+                        SftpError::ConnectionFailed(format!(
+                            "Failed to connect to {}:{}: {}",
+                            host.hostname, host.port, e
+                        ))
+                    })?;
+
+                // SFTP doesn't need remote forwards - create empty registry
+                let remote_forwards = Arc::new(Mutex::new(HashMap::new()));
+                let agent_forwarding_enabled = Arc::new(AtomicBool::new(false));
+                let handler = ClientHandler::new(
+                    host.hostname.clone(),
+                    host.port,
+                    self.known_hosts.clone(),
+                    event_tx.clone(),
+                    agent_forwarding_enabled.clone(),
+                    remote_forwards.clone(),
+                );
+
+                let mut handle = client::connect_stream(self.config.clone(), stream, handler)
+                    .await
+                    .map_err(|e| {
+                        SftpError::ConnectionFailed(format!(
+                            "SSH handshake failed for {}:{}: {}",
+                            host.hostname, host.port, e
+                        ))
+                    })?;
+
+                // Authenticate
+                let auth = ResolvedAuth::resolve(&host.auth, password.clone(), passphrase.clone())
+                    .await
+                    .map_err(|e| match e {
+                        crate::error::SshError::KeyFilePassphraseRequired(path) => {
+                            SftpError::KeyFilePassphraseRequired(path)
+                        }
+                        crate::error::SshError::KeyFilePassphraseInvalid(path) => {
+                            SftpError::KeyFilePassphraseInvalid(path)
+                        }
+                        _ => SftpError::ConnectionFailed(format!("Authentication failed: {}", e)),
+                    })?;
+                self.authenticate(&mut handle, &host.username, auth, &host.hostname, host.port)
+                    .await?;
+
+                connection = Some(SshConnection::new(
+                    handle,
+                    remote_forwards,
+                    agent_forwarding_enabled,
+                    Arc::from(host.hostname.clone()),
+                    host.port,
+                ));
+
+                if let Some(conn) = connection.as_ref() {
+                    pool.put(key.clone(), conn.clone()).await;
                 }
-                crate::error::SshError::KeyFilePassphraseInvalid(path) => {
-                    SftpError::KeyFilePassphraseInvalid(path)
+            }
+
+            let connection = match connection {
+                Some(conn) => conn,
+                None => {
+                    return Err(SftpError::ConnectionFailed(
+                        "Connection pool lookup failed".to_string(),
+                    ));
                 }
-                _ => SftpError::ConnectionFailed(format!("Authentication failed: {}", e)),
-            })?;
-        self.authenticate(&mut handle, &host.username, auth, &host.hostname, host.port)
-            .await?;
+            };
 
-        // Open channel and request SFTP subsystem
-        let channel = handle
-            .channel_open_session()
-            .await
-            .map_err(|e| SftpError::ConnectionFailed(format!("Failed to open channel: {}", e)))?;
+            // Open channel and request SFTP subsystem
+            let channel = {
+                let handle = connection.handle();
+                let handle_guard = handle.lock().await;
+                handle_guard.channel_open_session().await
+            };
 
-        channel
-            .request_subsystem(false, "sftp")
-            .await
-            .map_err(|e| {
-                SftpError::ConnectionFailed(format!("Failed to request SFTP subsystem: {}", e))
-            })?;
+            let channel = match channel {
+                Ok(channel) => channel,
+                Err(e) => {
+                    pool.invalidate_if_matches(&key, &connection).await;
+                    if attempt == 0 {
+                        continue;
+                    }
+                    return Err(SftpError::ConnectionFailed(format!(
+                        "Failed to open channel: {}",
+                        e
+                    )));
+                }
+            };
 
-        // Create SFTP session
-        let sftp = RusshSftpSession::new(channel.into_stream())
-            .await
-            .map_err(|e| {
-                SftpError::ConnectionFailed(format!("Failed to initialize SFTP session: {}", e))
-            })?;
+            channel
+                .request_subsystem(false, "sftp")
+                .await
+                .map_err(|e| {
+                    SftpError::ConnectionFailed(format!("Failed to request SFTP subsystem: {}", e))
+                })?;
 
-        // Get the remote home directory
-        let home_dir = self.get_home_dir(&sftp).await?;
+            // Create SFTP session
+            let sftp = RusshSftpSession::new(channel.into_stream())
+                .await
+                .map_err(|e| {
+                    SftpError::ConnectionFailed(format!("Failed to initialize SFTP session: {}", e))
+                })?;
 
-        // Log successful SFTP connection
-        security_log::log_sftp_connect(&host.hostname, host.port, &host.username);
+            // Get the remote home directory
+            let home_dir = self.get_home_dir(&sftp).await?;
 
-        let session = Arc::new(SftpSession::new(sftp, home_dir));
-        Ok(session)
+            // Log successful SFTP connection
+            security_log::log_sftp_connect(&host.hostname, host.port, &host.username);
+
+            let session = Arc::new(SftpSession::new(connection, sftp, home_dir));
+            return Ok(session);
+        }
+
+        Err(SftpError::ConnectionFailed(
+            "Failed to establish SFTP session".to_string(),
+        ))
     }
 
     /// Get the remote user's home directory
