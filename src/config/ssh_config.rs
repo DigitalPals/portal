@@ -193,8 +193,7 @@ fn expand_identity_path(raw: &str) -> PathBuf {
 fn strip_comments(line: &str) -> String {
     let mut result = String::new();
     let mut in_quotes = false;
-    let mut chars = line.chars().peekable();
-    while let Some(ch) = chars.next() {
+    for ch in line.chars() {
         match ch {
             '"' => {
                 in_quotes = !in_quotes;

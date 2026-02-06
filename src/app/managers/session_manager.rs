@@ -127,9 +127,12 @@ impl SessionManager {
 
     /// Get the log file path for a session if logging is enabled
     pub fn log_path(&self, id: SessionId) -> Option<PathBuf> {
-        self.sessions
-            .get(&id)
-            .and_then(|session| session.logger.as_ref().map(|logger| logger.path().to_path_buf()))
+        self.sessions.get(&id).and_then(|session| {
+            session
+                .logger
+                .as_ref()
+                .map(|logger| logger.path().to_path_buf())
+        })
     }
 }
 

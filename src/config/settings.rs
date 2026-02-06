@@ -27,15 +27,11 @@ pub enum VncScalingMode {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum SessionLogFormat {
     Plain,
+    #[default]
     Timestamped,
-}
-
-impl Default for SessionLogFormat {
-    fn default() -> Self {
-        Self::Timestamped
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -213,7 +209,10 @@ pub struct SettingsConfig {
     pub session_logging_enabled: bool,
 
     /// Directory for session log files
-    #[serde(default = "default_session_log_dir", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default = "default_session_log_dir",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub session_log_dir: Option<PathBuf>,
 
     /// Session log format

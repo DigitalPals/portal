@@ -61,7 +61,8 @@ impl SessionLogger {
             while let Some(command) = receiver.recv().await {
                 match command {
                     LogCommand::Write(data) => {
-                        if let Err(error) = write_log_data(&mut file, &data, format, &mut at_line_start).await
+                        if let Err(error) =
+                            write_log_data(&mut file, &data, format, &mut at_line_start).await
                         {
                             tracing::error!(
                                 "Failed writing session log {}: {}",
@@ -115,8 +116,6 @@ fn sanitize_filename(value: &str) -> String {
     for ch in value.chars() {
         if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' || ch == '.' {
             output.push(ch);
-        } else if ch.is_whitespace() {
-            output.push('_');
         } else {
             output.push('_');
         }

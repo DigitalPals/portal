@@ -148,8 +148,12 @@ pub fn tab_context_menu_overlay(
         y = (window_size.height - ESTIMATED_MENU_HEIGHT).max(0.0);
     }
 
-    let background = mouse_area(container(Space::new().width(Fill).height(Fill)).width(Fill).height(Fill))
-        .on_press(Message::Tab(TabMessage::HideContextMenu));
+    let background = mouse_area(
+        container(Space::new().width(Fill).height(Fill))
+            .width(Fill)
+            .height(Fill),
+    )
+    .on_press(Message::Tab(TabMessage::HideContextMenu));
 
     let positioned_menu = container(menu).padding(Padding::new(0.0).top(y).left(x));
 

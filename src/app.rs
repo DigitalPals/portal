@@ -714,10 +714,7 @@ impl Portal {
         let (has_log_file, has_log_dir) = if let Some(tab_id) = self.ui.tab_context_menu.target_tab
         {
             let log_path = self.sessions.log_path(tab_id);
-            let dir_available = log_path
-                .as_ref()
-                .and_then(|path| path.parent())
-                .is_some()
+            let dir_available = log_path.as_ref().and_then(|path| path.parent()).is_some()
                 || self.prefs.session_log_dir.is_some();
             (log_path.is_some(), dir_available)
         } else {

@@ -90,7 +90,10 @@ pub enum SessionMessage {
     /// Session error occurred
     Error(String),
     /// Connection failed for a specific session
-    ConnectFailed { session_id: SessionId, error: String },
+    ConnectFailed {
+        session_id: SessionId,
+        error: String,
+    },
     /// Terminal input from user
     Input(SessionId, Vec<u8>),
     /// Terminal resize event

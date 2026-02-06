@@ -458,10 +458,14 @@ pub fn host_dialog_view(state: &HostDialogState, theme: Theme) -> Element<'stati
     .spacing(4);
 
     // Buttons
-    let import_button = button(text("Import from SSH Config").size(14).color(theme.text_primary))
-        .padding([8, 16])
-        .style(secondary_button_style(theme))
-        .on_press(Message::Dialog(DialogMessage::ImportFromSshConfig));
+    let import_button = button(
+        text("Import from SSH Config")
+            .size(14)
+            .color(theme.text_primary),
+    )
+    .padding([8, 16])
+    .style(secondary_button_style(theme))
+    .on_press(Message::Dialog(DialogMessage::ImportFromSshConfig));
 
     let cancel_button = button(text("Cancel").size(14).color(theme.text_primary))
         .padding([8, 16])
@@ -483,8 +487,8 @@ pub fn host_dialog_view(state: &HostDialogState, theme: Theme) -> Element<'stati
         cancel_button,
         save_button,
     ]
-        .spacing(8)
-        .align_y(Alignment::Center);
+    .spacing(8)
+    .align_y(Alignment::Center);
 
     // Protocol picker
     let protocol_picker = column![

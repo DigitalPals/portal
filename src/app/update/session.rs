@@ -9,11 +9,11 @@ use std::time::Instant;
 use uuid::Uuid;
 
 use crate::app::managers::{ActiveSession, SessionBackend};
+use crate::app::services::connection;
 use crate::app::{Portal, Tab};
 use crate::config::AuthMethod;
 use crate::message::{Message, SessionId, SessionMessage};
 use crate::ssh::reconnect::ReconnectPolicy;
-use crate::app::services::connection;
 use crate::terminal::backend::TerminalEvent;
 use crate::terminal::logger::SessionLogger;
 use crate::views::terminal_view::TerminalSession;
@@ -150,9 +150,7 @@ fn schedule_reconnect(portal: &mut Portal, session_id: SessionId) -> Task<Messag
 
     if session.reconnect_attempts >= policy.max_attempts {
         session.reconnect_next_attempt = None;
-        portal
-            .toast_manager
-            .push(Toast::error("Reconnect failed"));
+        portal.toast_manager.push(Toast::error("Reconnect failed"));
         finalize_disconnection(portal, session_id);
         return Task::none();
     }
@@ -161,7 +159,7 @@ fn schedule_reconnect(portal: &mut Portal, session_id: SessionId) -> Task<Messag
     session.reconnect_attempts += 1;
     session.reconnect_next_attempt = Some(Instant::now() + delay);
 
-    let delay_secs = ((delay.as_millis() + 999) / 1000).max(1);
+    let delay_secs = delay.as_millis().div_ceil(1000).max(1);
     portal.toast_manager.push(Toast::warning(format!(
         "Reconnecting in {}s...",
         delay_secs
@@ -196,10 +194,7 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                         host.last_connected = Some(chrono::Utc::now());
                         host.updated_at = chrono::Utc::now();
                         if let Err(e) = portal.config.hosts.save() {
-                            tracing::error!(
-                                "Failed to save hosts config with detected OS: {}",
-                                e
-                            );
+                            tracing::error!("Failed to save hosts config with detected OS: {}", e);
                         }
                     }
                 } else if let Some(host) = portal.config.hosts.find_host_mut(host_id) {
@@ -342,8 +337,7 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
             tracing::info!("Terminal session disconnected");
             let close_task = close_session_logger(portal, session_id);
             if let Some(session) = portal.sessions.get(session_id) {
-                if portal.prefs.auto_reconnect
-                    && matches!(session.backend, SessionBackend::Ssh(_))
+                if portal.prefs.auto_reconnect && matches!(session.backend, SessionBackend::Ssh(_))
                 {
                     let reconnect_task = schedule_reconnect(portal, session_id);
                     return Task::batch([close_task, reconnect_task]);
@@ -369,33 +363,29 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
 
             let Some(host_id) = session.host_id else {
                 session.reconnect_next_attempt = None;
-                portal
-                    .toast_manager
-                    .push(Toast::error("Reconnect failed"));
+                portal.toast_manager.push(Toast::error("Reconnect failed"));
                 finalize_disconnection(portal, session_id);
                 return Task::none();
             };
 
             let Some(host) = portal.config.hosts.find_host(host_id).cloned() else {
                 session.reconnect_next_attempt = None;
-                portal
-                    .toast_manager
-                    .push(Toast::error("Reconnect failed"));
+                portal.toast_manager.push(Toast::error("Reconnect failed"));
                 finalize_disconnection(portal, session_id);
                 return Task::none();
             };
 
             if matches!(host.auth, AuthMethod::Password) {
                 session.reconnect_next_attempt = None;
-                portal.toast_manager.push(Toast::error(
-                    "Reconnect failed (password required)",
-                ));
+                portal
+                    .toast_manager
+                    .push(Toast::error("Reconnect failed (password required)"));
                 finalize_disconnection(portal, session_id);
                 return Task::none();
             }
 
             let should_detect_os = connection::should_detect_os(host.detected_os.as_ref());
-            return connection::ssh_connect_tasks(Arc::new(host), session_id, host_id, should_detect_os);
+            connection::ssh_connect_tasks(Arc::new(host), session_id, host_id, should_detect_os)
         }
         SessionMessage::Error(error) => {
             tracing::error!("Session error: {}", error);
