@@ -116,6 +116,12 @@ pub struct PortForwardEditorState {
     pub validation_error: Option<String>,
 }
 
+impl Default for PortForwardEditorState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PortForwardEditorState {
     pub fn new() -> Self {
         Self {
