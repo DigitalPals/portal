@@ -68,4 +68,45 @@ mod tests {
         let max = (base as f64 * 1.1).round() as u64;
         assert!((min..=max).contains(&jittered));
     }
+
+    #[test]
+    fn policy_stores_max_attempts() {
+        let policy = ReconnectPolicy::new(500, 10_000, 3);
+        assert_eq!(policy.max_attempts, 3);
+        assert_eq!(policy.base_delay_ms, 500);
+        assert_eq!(policy.max_delay_ms, 10_000);
+    }
+
+    #[test]
+    fn delay_capped_at_max_delay() {
+        let policy = ReconnectPolicy::new(1000, 5000, 10);
+        // After 3 attempts: 1000 * 2^3 = 8000, but max is 5000
+        assert_eq!(policy.raw_delay_ms(3), 5000);
+        assert_eq!(policy.raw_delay_ms(10), 5000);
+        assert_eq!(policy.raw_delay_ms(100), 5000);
+    }
+
+    #[test]
+    fn delay_with_jitter_respects_max_delay() {
+        let policy = ReconnectPolicy::new(1000, 5000, 10);
+        for attempt in 0..20 {
+            let delay = policy.delay_with_jitter(attempt);
+            assert!(delay.as_millis() <= 5500); // 5000 * 1.1 = 5500 max with jitter
+        }
+    }
+
+    #[test]
+    fn zero_base_delay_stays_zero() {
+        let policy = ReconnectPolicy::new(0, 30_000, 5);
+        assert_eq!(policy.raw_delay_ms(0), 0);
+        assert_eq!(policy.raw_delay_ms(5), 0);
+    }
+
+    #[test]
+    fn very_high_attempt_does_not_overflow() {
+        let policy = ReconnectPolicy::new(1000, 60_000, 100);
+        // Attempt 64+ would overflow u64 without protection
+        assert_eq!(policy.raw_delay_ms(64), 60_000);
+        assert_eq!(policy.raw_delay_ms(200), 60_000);
+    }
 }
