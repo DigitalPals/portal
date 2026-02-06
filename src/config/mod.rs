@@ -2,6 +2,7 @@ pub mod history;
 pub mod hosts;
 pub mod paths;
 pub mod settings;
+pub mod ssh_config;
 pub mod snippet_history;
 pub mod snippets;
 

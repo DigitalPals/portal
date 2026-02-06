@@ -458,6 +458,11 @@ pub fn host_dialog_view(state: &HostDialogState, theme: Theme) -> Element<'stati
     .spacing(4);
 
     // Buttons
+    let import_button = button(text("Import from SSH Config").size(14).color(theme.text_primary))
+        .padding([8, 16])
+        .style(secondary_button_style(theme))
+        .on_press(Message::Dialog(DialogMessage::ImportFromSshConfig));
+
     let cancel_button = button(text("Cancel").size(14).color(theme.text_primary))
         .padding([8, 16])
         .style(secondary_button_style(theme))
@@ -472,7 +477,12 @@ pub fn host_dialog_view(state: &HostDialogState, theme: Theme) -> Element<'stati
             None
         });
 
-    let button_row = row![Space::new().width(Length::Fill), cancel_button, save_button,]
+    let button_row = row![
+        import_button,
+        Space::new().width(Length::Fill),
+        cancel_button,
+        save_button,
+    ]
         .spacing(8)
         .align_y(Alignment::Center);
 

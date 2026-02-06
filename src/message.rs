@@ -208,6 +208,8 @@ pub enum DialogMessage {
     QuickConnectFieldChanged(QuickConnectField, String),
     /// Quick connect dialog: user submitted
     QuickConnectSubmit,
+    /// Import hosts from SSH config
+    ImportFromSshConfig,
 }
 
 /// Context for passphrase-based SFTP connections

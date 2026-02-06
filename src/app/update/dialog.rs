@@ -97,6 +97,34 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
             }
             Task::none()
         }
+        DialogMessage::ImportFromSshConfig => {
+            match portal.config.hosts.import_from_ssh_config() {
+                Ok(count) => {
+                    if count > 0 {
+                        if let Err(e) = portal.config.hosts.save() {
+                            tracing::error!("Failed to save hosts after SSH import: {}", e);
+                            portal
+                                .toast_manager
+                                .push(Toast::error("Failed to save imported hosts"));
+                            return Task::none();
+                        }
+                    }
+                    let message = format!("Imported {} host(s) from SSH config", count);
+                    if count > 0 {
+                        portal.toast_manager.push(Toast::success(message));
+                    } else {
+                        portal.toast_manager.push(Toast::warning(message));
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("Failed to import hosts from SSH config: {}", e);
+                    portal
+                        .toast_manager
+                        .push(Toast::error("Failed to import SSH config"));
+                }
+            }
+            Task::none()
+        }
         DialogMessage::HostKeyVerification(mut wrapper) => {
             if let Some(request) = wrapper.0.take() {
                 portal

@@ -349,6 +349,31 @@ impl HostsConfig {
         let content = toml::to_string_pretty(self).map_err(ConfigError::Serialize)?;
         super::write_atomic(&path, &content).map_err(|e| ConfigError::WriteFile { path, source: e })
     }
+
+    /// Import hosts from the user's SSH config file.
+    /// Returns the number of new hosts imported.
+    pub fn import_from_ssh_config(&mut self) -> Result<usize, ConfigError> {
+        let mut imported = 0usize;
+        let existing_keys: std::collections::HashSet<(String, u16)> = self
+            .hosts
+            .iter()
+            .map(|host| (host.hostname.to_ascii_lowercase(), host.port))
+            .collect();
+        let mut seen = existing_keys;
+
+        let ssh_hosts = super::ssh_config::load_hosts_from_ssh_config()?;
+        for host in ssh_hosts {
+            let key = (host.hostname.to_ascii_lowercase(), host.port);
+            if seen.contains(&key) {
+                continue;
+            }
+            seen.insert(key);
+            self.hosts.push(host);
+            imported += 1;
+        }
+
+        Ok(imported)
+    }
 }
 
 #[cfg(test)]
