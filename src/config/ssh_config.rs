@@ -149,6 +149,7 @@ fn flush_block(current: &mut HostBlock, hosts: &mut Vec<Host>) {
             vnc_port: None,
             auth,
             agent_forwarding: false,
+            port_forwards: Vec::new(),
             group_id: None,
             notes: None,
             tags: Vec::new(),

@@ -7,7 +7,7 @@ use secrecy::SecretString;
 use tokio::sync::{Mutex, mpsc};
 use uuid::Uuid;
 
-use crate::config::{DetectedOs, Host};
+use crate::config::{DetectedOs, Host, PortForwardKind};
 use crate::message::{
     DialogMessage, Message, PassphraseRequest, PassphraseSftpContext, SessionId, SessionMessage,
     SftpMessage, VerificationRequestWrapper,
@@ -127,6 +127,35 @@ fn ssh_connect_tasks_with_auth(
                     allow_agent_forwarding,
                 )
                 .await;
+            let result = match result {
+                Ok((session, detected_os)) => {
+                    for forward in host_for_task
+                        .port_forwards
+                        .iter()
+                        .filter(|forward| forward.enabled)
+                    {
+                        let creation_result = match forward.kind {
+                            PortForwardKind::Local => {
+                                session.create_local_forward(forward.clone()).await
+                            }
+                            PortForwardKind::Remote => {
+                                session.create_remote_forward(forward.clone()).await
+                            }
+                        };
+
+                        if let Err(e) = creation_result {
+                            tracing::warn!(
+                                "Failed to create port forward {} on {}: {}",
+                                forward.id,
+                                host_for_task.name,
+                                e
+                            );
+                        }
+                    }
+                    Ok((session, detected_os))
+                }
+                Err(e) => Err(e),
+            };
 
             (session_id, host_id, host_for_task, result, should_detect_os)
         },
@@ -435,6 +464,7 @@ mod tests {
             protocol: crate::config::Protocol::Ssh,
             vnc_port: None,
             agent_forwarding: false,
+            port_forwards: Vec::new(),
             group_id: None,
             notes: None,
             tags: vec![],
@@ -472,6 +502,7 @@ mod tests {
             protocol: crate::config::Protocol::Ssh,
             vnc_port: None,
             agent_forwarding: false,
+            port_forwards: Vec::new(),
             group_id: None,
             notes: None,
             tags: vec![],

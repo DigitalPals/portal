@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
@@ -5,8 +6,12 @@ use std::time::Duration;
 use russh::client::{Handler, Session};
 use russh::keys::PublicKey;
 use russh::{Channel, ChannelId};
+use tokio::io::AsyncWriteExt;
+use tokio::net::TcpStream;
 use tokio::sync::{Mutex, mpsc, oneshot};
+use uuid::Uuid;
 
+use crate::config::{PortForward, PortForwardKind};
 use crate::error::SshError;
 
 use super::SshEvent;
@@ -23,6 +28,7 @@ pub struct ClientHandler {
     /// Channel to send events to UI (including verification requests)
     event_tx: mpsc::Sender<SshEvent>,
     agent_forwarding_enabled: bool,
+    remote_forwards: Arc<Mutex<HashMap<Uuid, PortForward>>>,
 }
 
 impl ClientHandler {
@@ -32,6 +38,7 @@ impl ClientHandler {
         known_hosts: Arc<Mutex<KnownHostsManager>>,
         event_tx: mpsc::Sender<SshEvent>,
         agent_forwarding_enabled: bool,
+        remote_forwards: Arc<Mutex<HashMap<Uuid, PortForward>>>,
     ) -> Self {
         Self {
             host: Arc::from(host),
@@ -39,8 +46,41 @@ impl ClientHandler {
             known_hosts,
             event_tx,
             agent_forwarding_enabled,
+            remote_forwards,
         }
     }
+}
+
+fn select_remote_forward(
+    forwards: &HashMap<Uuid, PortForward>,
+    connected_address: &str,
+    connected_port: u32,
+) -> Option<PortForward> {
+    let port = connected_port as u16;
+
+    if let Some(forward) = forwards
+        .values()
+        .find(|forward| {
+            forward.kind == PortForwardKind::Remote
+                && forward.bind_port == port
+                && forward.bind_host == connected_address
+        })
+        .cloned()
+    {
+        return Some(forward);
+    }
+
+    let mut matches: Vec<PortForward> = forwards
+        .values()
+        .filter(|forward| forward.kind == PortForwardKind::Remote && forward.bind_port == port)
+        .cloned()
+        .collect();
+
+    if matches.len() == 1 {
+        return matches.pop();
+    }
+
+    None
 }
 
 impl Handler for ClientHandler {
@@ -248,6 +288,58 @@ impl Handler for ClientHandler {
         Ok(())
     }
 
+    async fn server_channel_open_forwarded_tcpip(
+        &mut self,
+        channel: Channel<russh::client::Msg>,
+        connected_address: &str,
+        connected_port: u32,
+        originator_address: &str,
+        originator_port: u32,
+        _session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        let forward = {
+            let forwards = self.remote_forwards.lock().await;
+            select_remote_forward(&forwards, connected_address, connected_port)
+        };
+
+        let Some(forward) = forward else {
+            tracing::warn!(
+                "No remote forward for {}:{} (origin {}:{})",
+                connected_address,
+                connected_port,
+                originator_address,
+                originator_port
+            );
+            let _ = channel.close().await;
+            return Ok(());
+        };
+
+        let target_addr = format!("{}:{}", forward.target_host, forward.target_port);
+        let stream = TcpStream::connect(&target_addr).await;
+        let mut stream = match stream {
+            Ok(stream) => stream,
+            Err(e) => {
+                tracing::warn!(
+                    "Remote forward connection failed for {} -> {}: {}",
+                    forward.id,
+                    target_addr,
+                    e
+                );
+                let _ = channel.close().await;
+                return Ok(());
+            }
+        };
+
+        let mut channel_stream = channel.into_stream();
+        tokio::spawn(async move {
+            let _ = tokio::io::copy_bidirectional(&mut channel_stream, &mut stream).await;
+            let _ = channel_stream.shutdown().await;
+            let _ = stream.shutdown().await;
+        });
+
+        Ok(())
+    }
+
     async fn server_channel_open_agent_forward(
         &mut self,
         channel: Channel<russh::client::Msg>,
@@ -272,11 +364,23 @@ impl Handler for ClientHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
+
+    fn empty_forwards() -> Arc<Mutex<HashMap<Uuid, PortForward>>> {
+        Arc::new(Mutex::new(HashMap::new()))
+    }
 
     fn create_test_handler() -> (ClientHandler, mpsc::Receiver<SshEvent>) {
         let (tx, rx) = mpsc::channel(16);
         let known_hosts = Arc::new(Mutex::new(KnownHostsManager::new()));
-        let handler = ClientHandler::new("example.com".to_string(), 22, known_hosts, tx, false);
+        let handler = ClientHandler::new(
+            "example.com".to_string(),
+            22,
+            known_hosts,
+            tx,
+            false,
+            empty_forwards(),
+        );
         (handler, rx)
     }
 
@@ -292,6 +396,7 @@ mod tests {
             known_hosts,
             tx,
             false,
+            empty_forwards(),
         );
         assert_eq!(handler.host.as_ref(), "myserver.example.com");
     }
@@ -300,7 +405,14 @@ mod tests {
     fn new_creates_handler_with_port() {
         let (tx, _rx) = mpsc::channel(16);
         let known_hosts = Arc::new(Mutex::new(KnownHostsManager::new()));
-        let handler = ClientHandler::new("example.com".to_string(), 2222, known_hosts, tx, false);
+        let handler = ClientHandler::new(
+            "example.com".to_string(),
+            2222,
+            known_hosts,
+            tx,
+            false,
+            empty_forwards(),
+        );
         assert_eq!(handler.port, 2222);
     }
 
@@ -316,7 +428,14 @@ mod tests {
         let known_hosts = Arc::new(Mutex::new(KnownHostsManager::new()));
         let known_hosts_clone = known_hosts.clone();
 
-        let handler = ClientHandler::new("example.com".to_string(), 22, known_hosts, tx, false);
+        let handler = ClientHandler::new(
+            "example.com".to_string(),
+            22,
+            known_hosts,
+            tx,
+            false,
+            empty_forwards(),
+        );
 
         // Verify the same Arc is used
         assert!(Arc::ptr_eq(&handler.known_hosts, &known_hosts_clone));
@@ -326,7 +445,14 @@ mod tests {
     fn new_with_ipv4_host() {
         let (tx, _rx) = mpsc::channel(16);
         let known_hosts = Arc::new(Mutex::new(KnownHostsManager::new()));
-        let handler = ClientHandler::new("192.168.1.100".to_string(), 22, known_hosts, tx, false);
+        let handler = ClientHandler::new(
+            "192.168.1.100".to_string(),
+            22,
+            known_hosts,
+            tx,
+            false,
+            empty_forwards(),
+        );
         assert_eq!(handler.host.as_ref(), "192.168.1.100");
     }
 
@@ -334,7 +460,14 @@ mod tests {
     fn new_with_ipv6_host() {
         let (tx, _rx) = mpsc::channel(16);
         let known_hosts = Arc::new(Mutex::new(KnownHostsManager::new()));
-        let handler = ClientHandler::new("::1".to_string(), 22, known_hosts, tx, false);
+        let handler = ClientHandler::new(
+            "::1".to_string(),
+            22,
+            known_hosts,
+            tx,
+            false,
+            empty_forwards(),
+        );
         assert_eq!(handler.host.as_ref(), "::1");
     }
 
@@ -342,7 +475,14 @@ mod tests {
     fn new_with_localhost() {
         let (tx, _rx) = mpsc::channel(16);
         let known_hosts = Arc::new(Mutex::new(KnownHostsManager::new()));
-        let handler = ClientHandler::new("localhost".to_string(), 22, known_hosts, tx, false);
+        let handler = ClientHandler::new(
+            "localhost".to_string(),
+            22,
+            known_hosts,
+            tx,
+            false,
+            empty_forwards(),
+        );
         assert_eq!(handler.host.as_ref(), "localhost");
     }
 
@@ -350,7 +490,14 @@ mod tests {
     fn new_with_high_port() {
         let (tx, _rx) = mpsc::channel(16);
         let known_hosts = Arc::new(Mutex::new(KnownHostsManager::new()));
-        let handler = ClientHandler::new("example.com".to_string(), 65535, known_hosts, tx, false);
+        let handler = ClientHandler::new(
+            "example.com".to_string(),
+            65535,
+            known_hosts,
+            tx,
+            false,
+            empty_forwards(),
+        );
         assert_eq!(handler.port, 65535);
     }
 
@@ -358,7 +505,14 @@ mod tests {
     fn new_with_port_one() {
         let (tx, _rx) = mpsc::channel(16);
         let known_hosts = Arc::new(Mutex::new(KnownHostsManager::new()));
-        let handler = ClientHandler::new("example.com".to_string(), 1, known_hosts, tx, false);
+        let handler = ClientHandler::new(
+            "example.com".to_string(),
+            1,
+            known_hosts,
+            tx,
+            false,
+            empty_forwards(),
+        );
         assert_eq!(handler.port, 1);
     }
 
@@ -374,6 +528,7 @@ mod tests {
             shared_known_hosts.clone(),
             tx1,
             false,
+            empty_forwards(),
         );
         let handler2 = ClientHandler::new(
             "server2.example.com".to_string(),
@@ -381,6 +536,7 @@ mod tests {
             shared_known_hosts.clone(),
             tx2,
             false,
+            empty_forwards(),
         );
 
         // Both handlers should share the same known_hosts
@@ -400,6 +556,7 @@ mod tests {
             known_hosts.clone(),
             tx1,
             false,
+            empty_forwards(),
         );
         let _handler2 = ClientHandler::new(
             "server2.example.com".to_string(),
@@ -407,6 +564,7 @@ mod tests {
             known_hosts.clone(),
             tx2,
             false,
+            empty_forwards(),
         );
 
         // Handlers created successfully with separate channels
@@ -417,7 +575,8 @@ mod tests {
     fn new_with_empty_host() {
         let (tx, _rx) = mpsc::channel(16);
         let known_hosts = Arc::new(Mutex::new(KnownHostsManager::new()));
-        let handler = ClientHandler::new(String::new(), 22, known_hosts, tx, false);
+        let handler =
+            ClientHandler::new(String::new(), 22, known_hosts, tx, false, empty_forwards());
         assert!(handler.host.is_empty());
     }
 
@@ -426,7 +585,14 @@ mod tests {
         let (tx, _rx) = mpsc::channel(16);
         let known_hosts = Arc::new(Mutex::new(KnownHostsManager::new()));
         // IDN domain (internationalized domain name)
-        let handler = ClientHandler::new("例え.jp".to_string(), 22, known_hosts, tx, false);
+        let handler = ClientHandler::new(
+            "例え.jp".to_string(),
+            22,
+            known_hosts,
+            tx,
+            false,
+            empty_forwards(),
+        );
         assert_eq!(handler.host.as_ref(), "例え.jp");
     }
 
@@ -440,6 +606,7 @@ mod tests {
             known_hosts,
             tx,
             false,
+            empty_forwards(),
         );
         // Host should preserve original case
         assert_eq!(handler.host.as_ref(), "MyServer.Example.COM");

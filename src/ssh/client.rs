@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -133,12 +134,15 @@ impl SshClient {
         allow_agent_forwarding: bool,
     ) -> Result<(Arc<SshSession>, Option<DetectedOs>), SshError> {
         let agent_forwarding_enabled = allow_agent_forwarding && host.agent_forwarding;
+        // Create shared remote forwards registry for this connection
+        let remote_forwards = Arc::new(Mutex::new(HashMap::new()));
         let handler = ClientHandler::new(
             host.hostname.clone(),
             host.port,
             self.known_hosts.clone(),
             event_tx.clone(),
             agent_forwarding_enabled,
+            remote_forwards.clone(),
         );
 
         let mut handle = client::connect_stream(self.config.clone(), stream, handler)
@@ -202,7 +206,8 @@ impl SshClient {
         let _ = event_tx.send(SshEvent::Connected).await;
 
         // Session spawns its own reader task in new()
-        let session = Arc::new(SshSession::new(handle, channel, event_tx));
+        // Use the same remote_forwards registry that was given to the handler
+        let session = Arc::new(SshSession::new(handle, channel, event_tx, remote_forwards));
 
         Ok((session, detected_os))
     }

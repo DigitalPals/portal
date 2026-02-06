@@ -2,11 +2,13 @@
 
 use crate::app::Portal;
 use crate::app::services::connection;
-use crate::config::{AuthMethod, Host};
-use crate::message::{DialogMessage, HostDialogField, Message, QuickConnectField};
+use crate::config::{AuthMethod, Host, PortForwardKind};
+use crate::message::{
+    DialogMessage, HostDialogField, Message, PortForwardField, QuickConnectField,
+};
 use crate::security_log;
 use crate::ssh::host_key_verification::HostKeyVerificationResponse;
-use crate::views::dialogs::host_dialog::AuthMethodChoice;
+use crate::views::dialogs::host_dialog::{AuthMethodChoice, PortForwardEditorState};
 use crate::views::dialogs::host_key_dialog::HostKeyDialogState;
 use crate::views::dialogs::passphrase_dialog::PassphraseDialogState;
 use crate::views::toast::Toast;
@@ -99,6 +101,104 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                         };
                     }
                 }
+            }
+            Task::none()
+        }
+        DialogMessage::PortForwardSectionToggled => {
+            if let Some(dialog_state) = portal.dialogs.host_mut() {
+                dialog_state.port_forwards_expanded = !dialog_state.port_forwards_expanded;
+            }
+            Task::none()
+        }
+        DialogMessage::PortForwardAdd => {
+            if let Some(dialog_state) = portal.dialogs.host_mut() {
+                dialog_state.port_forwards_expanded = true;
+                dialog_state.port_forward_editor = Some(PortForwardEditorState::new());
+            }
+            Task::none()
+        }
+        DialogMessage::PortForwardEdit(id) => {
+            if let Some(dialog_state) = portal.dialogs.host_mut() {
+                if let Some(forward) = dialog_state.port_forwards.iter().find(|f| f.id == id) {
+                    dialog_state.port_forwards_expanded = true;
+                    dialog_state.port_forward_editor =
+                        Some(PortForwardEditorState::from_forward(forward));
+                }
+            }
+            Task::none()
+        }
+        DialogMessage::PortForwardRemove(id) => {
+            if let Some(dialog_state) = portal.dialogs.host_mut() {
+                dialog_state.port_forwards.retain(|f| f.id != id);
+                if let Some(editor) = dialog_state.port_forward_editor.as_ref() {
+                    if editor.id == id {
+                        dialog_state.port_forward_editor = None;
+                    }
+                }
+            }
+            Task::none()
+        }
+        DialogMessage::PortForwardToggleEnabled(id, enabled) => {
+            if let Some(dialog_state) = portal.dialogs.host_mut() {
+                if let Some(forward) = dialog_state.port_forwards.iter_mut().find(|f| f.id == id) {
+                    forward.enabled = enabled;
+                }
+            }
+            Task::none()
+        }
+        DialogMessage::PortForwardFieldChanged(field, value) => {
+            if let Some(dialog_state) = portal.dialogs.host_mut() {
+                if let Some(editor) = dialog_state.port_forward_editor.as_mut() {
+                    editor.validation_error = None;
+                    match field {
+                        PortForwardField::Kind => {
+                            editor.kind = match value.as_str() {
+                                "Local" => PortForwardKind::Local,
+                                "Remote" => PortForwardKind::Remote,
+                                _ => editor.kind,
+                            };
+                        }
+                        PortForwardField::BindHost => editor.bind_host = value,
+                        PortForwardField::BindPort => editor.bind_port = value,
+                        PortForwardField::TargetHost => editor.target_host = value,
+                        PortForwardField::TargetPort => editor.target_port = value,
+                        PortForwardField::Description => editor.description = value,
+                        PortForwardField::Enabled => {
+                            editor.enabled =
+                                matches!(value.trim().to_lowercase().as_str(), "true" | "1");
+                        }
+                    }
+                }
+            }
+            Task::none()
+        }
+        DialogMessage::PortForwardSave => {
+            if let Some(dialog_state) = portal.dialogs.host_mut() {
+                if let Some(editor) = dialog_state.port_forward_editor.as_mut() {
+                    match editor.build() {
+                        Ok(forward) => {
+                            if let Some(existing) = dialog_state
+                                .port_forwards
+                                .iter_mut()
+                                .find(|f| f.id == forward.id)
+                            {
+                                *existing = forward;
+                            } else {
+                                dialog_state.port_forwards.push(forward);
+                            }
+                            dialog_state.port_forward_editor = None;
+                        }
+                        Err(err) => {
+                            editor.validation_error = Some(err);
+                        }
+                    }
+                }
+            }
+            Task::none()
+        }
+        DialogMessage::PortForwardCancel => {
+            if let Some(dialog_state) = portal.dialogs.host_mut() {
+                dialog_state.port_forward_editor = None;
             }
             Task::none()
         }
@@ -371,6 +471,7 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                     vnc_port: None,
                     auth,
                     agent_forwarding: false,
+                    port_forwards: Vec::new(),
                     group_id: None,
                     notes: None,
                     tags: vec![],

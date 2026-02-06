@@ -1,5 +1,6 @@
 //! SFTP client for establishing connections
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -126,12 +127,15 @@ impl SftpClient {
         password: Option<SecretString>,
         passphrase: Option<SecretString>,
     ) -> Result<SharedSftpSession, SftpError> {
+        // SFTP doesn't need remote forwards - create empty registry
+        let remote_forwards = Arc::new(Mutex::new(HashMap::new()));
         let handler = ClientHandler::new(
             host.hostname.clone(),
             host.port,
             self.known_hosts.clone(),
             event_tx,
             false, // No agent forwarding for SFTP
+            remote_forwards,
         );
 
         let mut handle = client::connect_stream(self.config.clone(), stream, handler)

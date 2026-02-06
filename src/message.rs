@@ -46,6 +46,17 @@ pub enum HostDialogField {
 }
 
 #[derive(Debug, Clone)]
+pub enum PortForwardField {
+    Kind,
+    BindHost,
+    BindPort,
+    TargetHost,
+    TargetPort,
+    Description,
+    Enabled,
+}
+
+#[derive(Debug, Clone)]
 pub enum QuickConnectField {
     Hostname,
     Port,
@@ -190,6 +201,22 @@ pub enum DialogMessage {
     Submit,
     /// Host dialog field changed
     FieldChanged(HostDialogField, String),
+    /// Port forward editor field changed
+    PortForwardFieldChanged(PortForwardField, String),
+    /// Toggle port forwards section
+    PortForwardSectionToggled,
+    /// Add a new port forward
+    PortForwardAdd,
+    /// Edit an existing port forward
+    PortForwardEdit(Uuid),
+    /// Remove an existing port forward
+    PortForwardRemove(Uuid),
+    /// Toggle an existing port forward
+    PortForwardToggleEnabled(Uuid, bool),
+    /// Save port forward editor
+    PortForwardSave,
+    /// Cancel port forward editor
+    PortForwardCancel,
     /// Host key verification request received
     HostKeyVerification(VerificationRequestWrapper),
     /// User accepted host key

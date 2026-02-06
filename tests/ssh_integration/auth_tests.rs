@@ -255,6 +255,7 @@ async fn test_connection_timeout() {
         auth: AuthMethod::Password,
         protocol: portal::config::Protocol::Ssh,
         vnc_port: None,
+        port_forwards: Vec::new(),
         group_id: None,
         notes: None,
         tags: vec![],
