@@ -83,7 +83,13 @@ impl Portal {
         let sftp_sessions_to_close = self.sftp.remove_tab_and_collect_sessions(tab_id);
 
         self.tabs.retain(|t| t.id != tab_id);
-        self.sessions.remove(tab_id);
+        if let Some(session) = self.sessions.remove(tab_id) {
+            if let Some(logger) = session.logger {
+                tokio::spawn(async move {
+                    logger.shutdown().await;
+                });
+            }
+        }
         if let Some(vnc) = self.vnc_sessions.remove(&tab_id) {
             vnc.session.disconnect();
         }

@@ -251,6 +251,19 @@ pub enum TabMessage {
     New,
     /// Track which tab is being hovered (for showing close button)
     Hover(Option<Uuid>),
+    /// Show terminal tab context menu at position
+    ShowContextMenu(Uuid, f32, f32),
+    /// Hide terminal tab context menu
+    HideContextMenu,
+    /// Execute a terminal tab context menu action
+    ContextMenuAction(Uuid, TabContextMenuAction),
+}
+
+/// Context menu actions for terminal tabs
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TabContextMenuAction {
+    OpenLogFile,
+    OpenLogDirectory,
 }
 
 /// Host management messages
@@ -469,6 +482,8 @@ pub enum UiMessage {
     SnippetHistoryStoreOutput(bool),
     /// Redact sensitive values in snippet history
     SnippetHistoryRedactOutput(bool),
+    /// Session logging enabled/disabled
+    SessionLoggingEnabled(bool),
     /// Window resized
     WindowResized(iced::Size),
     /// Dismiss toast notification

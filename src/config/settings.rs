@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 use crate::error::ConfigError;
 use crate::fonts::TerminalFont;
@@ -22,6 +23,19 @@ pub enum VncScalingMode {
     Fit,
     Actual,
     Stretch,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum SessionLogFormat {
+    Plain,
+    Timestamped,
+}
+
+impl Default for SessionLogFormat {
+    fn default() -> Self {
+        Self::Timestamped
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -193,6 +207,18 @@ pub struct SettingsConfig {
     /// Legacy dark_mode field for migration (read-only, not serialized)
     #[serde(default, skip_serializing)]
     dark_mode: Option<bool>,
+
+    /// Enable logging terminal session output to disk
+    #[serde(default = "default_session_logging_enabled")]
+    pub session_logging_enabled: bool,
+
+    /// Directory for session log files
+    #[serde(default = "default_session_log_dir", skip_serializing_if = "Option::is_none")]
+    pub session_log_dir: Option<PathBuf>,
+
+    /// Session log format
+    #[serde(default)]
+    pub session_log_format: SessionLogFormat,
 }
 
 fn default_terminal_font_size() -> f32 {
@@ -215,6 +241,14 @@ fn default_reconnect_max_delay_ms() -> u64 {
     30_000
 }
 
+fn default_session_logging_enabled() -> bool {
+    false
+}
+
+fn default_session_log_dir() -> Option<PathBuf> {
+    crate::config::paths::config_dir().map(|dir| dir.join("logs").join("sessions"))
+}
+
 impl Default for SettingsConfig {
     fn default() -> Self {
         Self {
@@ -229,6 +263,9 @@ impl Default for SettingsConfig {
             reconnect_base_delay_ms: default_reconnect_base_delay_ms(),
             reconnect_max_delay_ms: default_reconnect_max_delay_ms(),
             dark_mode: None,
+            session_logging_enabled: default_session_logging_enabled(),
+            session_log_dir: default_session_log_dir(),
+            session_log_format: SessionLogFormat::default(),
         }
     }
 }

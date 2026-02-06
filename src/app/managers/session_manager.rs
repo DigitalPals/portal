@@ -4,6 +4,7 @@
 //! including tracking active sessions, their terminals, and status messages.
 
 use std::collections::{HashMap, VecDeque};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 use uuid::Uuid;
@@ -12,6 +13,7 @@ use crate::local::LocalSession;
 use crate::message::SessionId;
 use crate::message::{QualityLevel, VncScreen};
 use crate::ssh::SshSession;
+use crate::terminal::logger::SessionLogger;
 use crate::views::terminal_view::TerminalSession;
 use crate::vnc::VncSession;
 
@@ -39,6 +41,8 @@ pub struct ActiveSession {
     pub reconnect_next_attempt: Option<Instant>,
     /// Buffered output to process in small chunks for UI responsiveness
     pub pending_output: VecDeque<Vec<u8>>,
+    /// Optional session logger for terminal output
+    pub logger: Option<SessionLogger>,
 }
 
 /// Active VNC session
@@ -120,6 +124,13 @@ impl SessionManager {
     pub fn values_mut(&mut self) -> impl Iterator<Item = &mut ActiveSession> {
         self.sessions.values_mut()
     }
+
+    /// Get the log file path for a session if logging is enabled
+    pub fn log_path(&self, id: SessionId) -> Option<PathBuf> {
+        self.sessions
+            .get(&id)
+            .and_then(|session| session.logger.as_ref().map(|logger| logger.path().to_path_buf()))
+    }
 }
 
 impl Default for SessionManager {
@@ -147,6 +158,7 @@ mod tests {
             reconnect_attempts: 0,
             reconnect_next_attempt: None,
             pending_output: VecDeque::new(),
+            logger: None,
         }
     }
 

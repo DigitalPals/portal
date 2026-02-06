@@ -15,12 +15,54 @@ use crate::message::{Message, SessionId, SessionMessage};
 use crate::ssh::reconnect::ReconnectPolicy;
 use crate::app::services::connection;
 use crate::terminal::backend::TerminalEvent;
+use crate::terminal::logger::SessionLogger;
 use crate::views::terminal_view::TerminalSession;
 use crate::views::toast::Toast;
 
 /// Maximum bytes to buffer before dropping oldest data.
 /// 16MB is generous - if we hit this, data is arriving faster than humanly readable.
 const MAX_PENDING_OUTPUT_BYTES: usize = 16 * 1024 * 1024;
+
+fn start_session_logger(portal: &mut Portal, session_id: SessionId) {
+    if !portal.prefs.session_logging_enabled {
+        return;
+    }
+
+    let Some(session) = portal.sessions.get_mut(session_id) else {
+        return;
+    };
+
+    if let Some(logger) = session.logger.take() {
+        tokio::spawn(async move {
+            logger.shutdown().await;
+        });
+    }
+
+    let Some(log_dir) = portal.prefs.session_log_dir.clone() else {
+        return;
+    };
+
+    match SessionLogger::start(&session.host_name, log_dir, portal.prefs.session_log_format) {
+        Ok(logger) => {
+            session.logger = Some(logger);
+        }
+        Err(error) => {
+            tracing::error!("Failed to start session logger: {}", error);
+        }
+    }
+}
+
+fn close_session_logger(portal: &mut Portal, session_id: SessionId) -> Task<Message> {
+    let Some(session) = portal.sessions.get_mut(session_id) else {
+        return Task::none();
+    };
+
+    if let Some(logger) = session.logger.take() {
+        return Task::perform(async move { logger.shutdown().await }, |_| Message::Noop);
+    }
+
+    Task::none()
+}
 
 fn start_terminal_session(
     portal: &mut Portal,
@@ -47,6 +89,7 @@ fn start_terminal_session(
             reconnect_attempts: 0,
             reconnect_next_attempt: None,
             pending_output: VecDeque::new(),
+            logger: None,
         },
     );
 
@@ -56,6 +99,8 @@ fn start_terminal_session(
 
     // Switch to terminal view and hide sidebar
     portal.enter_terminal_view(session_id, true);
+
+    start_session_logger(portal, session_id);
 
     Task::run(
         stream::unfold(terminal_events, |mut rx| async move {
@@ -170,6 +215,7 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                 session.reconnect_attempts = 0;
                 session.reconnect_next_attempt = None;
                 session.status_message = Some(("Reconnected".to_string(), Instant::now()));
+                start_session_logger(portal, session_id);
                 return Task::none();
             }
 
@@ -248,6 +294,9 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
         SessionMessage::Data(session_id, data) => {
             if let Some(session) = portal.sessions.get_mut(session_id) {
                 if !data.is_empty() {
+                    if let Some(logger) = session.logger.as_ref() {
+                        logger.write(&data);
+                    }
                     session.pending_output.push_back(data);
 
                     // Enforce buffer size limit by dropping oldest data
@@ -291,15 +340,17 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
         }
         SessionMessage::Disconnected(session_id) => {
             tracing::info!("Terminal session disconnected");
+            let close_task = close_session_logger(portal, session_id);
             if let Some(session) = portal.sessions.get(session_id) {
                 if portal.prefs.auto_reconnect
                     && matches!(session.backend, SessionBackend::Ssh(_))
                 {
-                    return schedule_reconnect(portal, session_id);
+                    let reconnect_task = schedule_reconnect(portal, session_id);
+                    return Task::batch([close_task, reconnect_task]);
                 }
             }
             finalize_disconnection(portal, session_id);
-            Task::none()
+            close_task
         }
         SessionMessage::Reconnect(session_id) => {
             let Some(session) = portal.sessions.get_mut(session_id) else {

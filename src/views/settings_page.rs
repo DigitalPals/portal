@@ -17,6 +17,7 @@ pub struct SettingsPageContext {
     pub snippet_store_command: bool,
     pub snippet_store_output: bool,
     pub snippet_redact_output: bool,
+    pub session_logging_enabled: bool,
     /// Effective UI scale (user override or system default)
     pub ui_scale: f32,
     /// System-detected UI scale
@@ -60,6 +61,14 @@ pub fn settings_page_view(
         vec![
             font_selector_setting(context.terminal_font, theme, fonts),
             font_size_setting(context.terminal_font_size, theme, fonts),
+            toggle_setting(
+                "Enable session logging",
+                "Save terminal output to a log file per session",
+                context.session_logging_enabled,
+                |value| Message::Ui(UiMessage::SessionLoggingEnabled(value)),
+                theme,
+                fonts,
+            ),
         ],
     );
 

@@ -134,6 +134,11 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
             portal.save_snippet_history();
             Task::none()
         }
+        UiMessage::SessionLoggingEnabled(enabled) => {
+            portal.prefs.session_logging_enabled = enabled;
+            portal.save_settings();
+            Task::none()
+        }
         UiMessage::WindowResized(size) => {
             portal.ui.window_size = size;
             if !portal.ui.sidebar_manually_set {
@@ -462,6 +467,7 @@ fn handle_keyboard_event(
                 tab_state.hide_context_menu();
                 tab_state.close_dialog();
             }
+            portal.ui.tab_context_menu.hide();
             return Task::none();
         }
         // Ctrl+N - new tab / go to host grid

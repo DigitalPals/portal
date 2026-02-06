@@ -33,6 +33,7 @@ use crate::views::sftp::{
 };
 use crate::views::sidebar::sidebar_view;
 use crate::views::snippet_grid::{SnippetPageContext, snippet_page_view};
+use crate::views::tab_context_menu::{TabContextMenuState, tab_context_menu_overlay};
 use crate::views::tabs::{Tab, tab_bar_view};
 use crate::views::terminal_view::terminal_view_with_status;
 use crate::views::toast::{ToastManager, toast_overlay_view};
@@ -108,6 +109,7 @@ pub struct UiState {
     pub host_grid_focus_index: Option<usize>,
     pub history_focus_index: Option<usize>,
     pub terminal_captured: bool,
+    pub tab_context_menu: TabContextMenuState,
 }
 
 /// User preference state (theme, fonts, sizing).
@@ -124,6 +126,9 @@ pub struct PreferencesState {
     pub reconnect_max_attempts: u32,
     pub reconnect_base_delay_ms: u64,
     pub reconnect_max_delay_ms: u64,
+    pub session_logging_enabled: bool,
+    pub session_log_dir: Option<std::path::PathBuf>,
+    pub session_log_format: crate::config::settings::SessionLogFormat,
 }
 
 /// Configuration-backed state.
@@ -320,6 +325,7 @@ impl Portal {
                 host_grid_focus_index: None,
                 history_focus_index: None,
                 terminal_captured: false,
+                tab_context_menu: TabContextMenuState::default(),
             },
             tabs: Vec::new(),
             active_tab: None,
@@ -340,6 +346,9 @@ impl Portal {
                 reconnect_max_attempts: settings_config.reconnect_max_attempts,
                 reconnect_base_delay_ms: settings_config.reconnect_base_delay_ms,
                 reconnect_max_delay_ms: settings_config.reconnect_max_delay_ms,
+                session_logging_enabled: settings_config.session_logging_enabled,
+                session_log_dir: settings_config.session_log_dir,
+                session_log_format: settings_config.session_log_format,
             },
             config: ConfigState {
                 hosts: hosts_config,
@@ -416,6 +425,7 @@ impl Portal {
                     ui_scale: self.effective_ui_scale(),
                     system_ui_scale: self.prefs.system_ui_scale,
                     has_ui_scale_override: self.has_ui_scale_override(),
+                    session_logging_enabled: self.prefs.session_logging_enabled,
                 },
                 theme,
                 fonts,
@@ -701,15 +711,45 @@ impl Portal {
             with_actions_dismiss
         };
 
-        // Overlay toast notifications on top of everything
-        let final_content = if self.toast_manager.has_toasts() {
+        let (has_log_file, has_log_dir) = if let Some(tab_id) = self.ui.tab_context_menu.target_tab
+        {
+            let log_path = self.sessions.log_path(tab_id);
+            let dir_available = log_path
+                .as_ref()
+                .and_then(|path| path.parent())
+                .is_some()
+                || self.prefs.session_log_dir.is_some();
+            (log_path.is_some(), dir_available)
+        } else {
+            (false, false)
+        };
+
+        let with_tab_context_menu: Element<'_, Message> = if self.ui.tab_context_menu.visible {
             stack![
                 with_context_menu,
-                toast_overlay_view(&self.toast_manager, theme, fonts)
+                tab_context_menu_overlay(
+                    &self.ui.tab_context_menu,
+                    theme,
+                    fonts,
+                    self.ui.window_size,
+                    has_log_file,
+                    has_log_dir
+                )
             ]
             .into()
         } else {
             with_context_menu
+        };
+
+        // Overlay toast notifications on top of everything
+        let final_content = if self.toast_manager.has_toasts() {
+            stack![
+                with_tab_context_menu,
+                toast_overlay_view(&self.toast_manager, theme, fonts)
+            ]
+            .into()
+        } else {
+            with_tab_context_menu
         };
 
         // Wrap everything in a container with our background color
@@ -780,6 +820,9 @@ impl Portal {
         settings.theme = self.prefs.theme_id;
         settings.ui_scale = self.prefs.ui_scale_override;
         settings.vnc = self.prefs.vnc_settings.clone();
+        settings.session_logging_enabled = self.prefs.session_logging_enabled;
+        settings.session_log_dir = self.prefs.session_log_dir.clone();
+        settings.session_log_format = self.prefs.session_log_format;
         if let Err(e) = settings.save() {
             tracing::error!("Failed to save settings: {}", e);
         }
