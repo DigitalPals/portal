@@ -18,6 +18,8 @@ pub struct SettingsPageContext {
     pub snippet_store_output: bool,
     pub snippet_redact_output: bool,
     pub session_logging_enabled: bool,
+    /// Credential cache timeout in seconds (0 = disabled)
+    pub credential_timeout: u64,
     /// Effective UI scale (user override or system default)
     pub ui_scale: f32,
     /// System-detected UI scale
@@ -72,6 +74,14 @@ pub fn settings_page_view(
         ],
     );
 
+    // === Security Section ===
+    let security_section = settings_section(
+        "Security",
+        theme,
+        fonts,
+        vec![credential_timeout_setting(context.credential_timeout, theme, fonts)],
+    );
+
     // === Snippet History Section ===
     let snippet_history_section = settings_section(
         "Snippet History",
@@ -119,6 +129,8 @@ pub fn settings_page_view(
         appearance_section,
         Space::new().height(16),
         terminal_section,
+        Space::new().height(16),
+        security_section,
         Space::new().height(16),
         snippet_history_section,
     ]
@@ -563,6 +575,74 @@ where
             toggle_button,
         ]
         .align_y(Alignment::Center),
+    ]
+    .spacing(0)
+    .into()
+}
+
+fn format_timeout_seconds(seconds: u64) -> String {
+    if seconds == 0 {
+        return "Off".to_string();
+    }
+
+    if seconds % 3600 == 0 {
+        let hours = seconds / 3600;
+        return if hours == 1 {
+            "1 hour".to_string()
+        } else {
+            format!("{} hours", hours)
+        };
+    }
+
+    if seconds % 60 == 0 {
+        let minutes = seconds / 60;
+        return if minutes == 1 {
+            "1 min".to_string()
+        } else {
+            format!("{} min", minutes)
+        };
+    }
+
+    format!("{} sec", seconds)
+}
+
+fn credential_timeout_setting(
+    timeout_seconds: u64,
+    theme: Theme,
+    fonts: ScaledFonts,
+) -> Element<'static, Message> {
+    let label = text("Credential Timeout")
+        .size(fonts.body)
+        .color(theme.text_primary);
+
+    let description = text("Cache SSH credentials in memory for this long (0 disables caching)")
+        .size(fonts.label)
+        .color(theme.text_muted);
+
+    let current = timeout_seconds.min(3600) as f32;
+    let slider_widget = slider(0.0..=3600.0, current, |v| {
+        // Keep changes stable and predictable by snapping to 30s increments.
+        let snapped = ((v / 30.0).round() * 30.0).clamp(0.0, 3600.0);
+        Message::Ui(UiMessage::CredentialTimeoutChange(snapped as u64))
+    })
+    .step(30.0)
+    .width(140);
+
+    let value_text = text(format_timeout_seconds(timeout_seconds.min(3600)))
+        .size(fonts.body)
+        .color(theme.text_secondary);
+
+    column![
+        row![
+            label,
+            Space::new().width(Length::Fill),
+            slider_widget,
+            Space::new().width(12),
+            value_text,
+        ]
+        .align_y(Alignment::Center),
+        Space::new().height(4),
+        description,
     ]
     .spacing(0)
     .into()

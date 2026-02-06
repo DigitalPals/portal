@@ -405,7 +405,7 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                 cache.remove(&request.key_path);
             }
             // No cached passphrase, show dialog
-            let remember_default = portal.prefs.passphrase_cache_timeout > 0;
+            let remember_default = portal.prefs.credential_timeout > 0;
             portal
                 .dialogs
                 .open_passphrase(PassphraseDialogState::from_request(

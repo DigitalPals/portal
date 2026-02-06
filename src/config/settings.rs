@@ -209,10 +209,16 @@ pub struct SettingsConfig {
     #[serde(default = "default_allow_agent_forwarding")]
     pub allow_agent_forwarding: bool,
 
-    /// Passphrase cache timeout in seconds (0 = disabled)
-    /// Cached passphrases for encrypted SSH keys expire after this duration
-    #[serde(default = "default_passphrase_cache_timeout")]
-    pub passphrase_cache_timeout: u64,
+    /// Credential cache timeout in seconds (0 = disabled)
+    ///
+    /// Controls in-memory caching of sensitive SSH credentials (e.g. key passphrases).
+    /// Existing config files may contain the legacy `passphrase_cache_timeout` key; it
+    /// is accepted as an alias and migrated to `credential_timeout` on save.
+    #[serde(
+        default = "default_credential_timeout",
+        alias = "passphrase_cache_timeout"
+    )]
+    pub credential_timeout: u64,
 
     /// Legacy dark_mode field for migration (read-only, not serialized)
     #[serde(default, skip_serializing)]
@@ -269,7 +275,7 @@ fn default_allow_agent_forwarding() -> bool {
     true
 }
 
-fn default_passphrase_cache_timeout() -> u64 {
+fn default_credential_timeout() -> u64 {
     300 // 5 minutes
 }
 
@@ -304,7 +310,7 @@ impl Default for SettingsConfig {
             reconnect_base_delay_ms: default_reconnect_base_delay_ms(),
             reconnect_max_delay_ms: default_reconnect_max_delay_ms(),
             allow_agent_forwarding: default_allow_agent_forwarding(),
-            passphrase_cache_timeout: default_passphrase_cache_timeout(),
+            credential_timeout: default_credential_timeout(),
             dark_mode: None,
             session_logging_enabled: default_session_logging_enabled(),
             session_log_dir: default_session_log_dir(),

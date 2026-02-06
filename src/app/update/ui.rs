@@ -5,6 +5,7 @@ use iced::keyboard::{self, Key};
 
 use crate::app::ActiveDialog;
 use crate::app::{FocusSection, Portal, SIDEBAR_AUTO_COLLAPSE_THRESHOLD, View};
+use crate::app::services;
 use crate::keybindings::AppAction;
 use crate::message::{
     DialogMessage, HistoryMessage, HostMessage, Message, SessionMessage, SftpMessage,
@@ -138,6 +139,14 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
         UiMessage::SessionLoggingEnabled(enabled) => {
             portal.prefs.session_logging_enabled = enabled;
             portal.save_settings();
+            Task::none()
+        }
+        UiMessage::CredentialTimeoutChange(timeout_seconds) => {
+            let clamped = timeout_seconds.min(3600);
+            portal.prefs.credential_timeout = clamped;
+            portal.save_settings();
+            // Apply to the global in-memory cache for future entries.
+            services::connection::init_passphrase_cache(clamped);
             Task::none()
         }
         UiMessage::WindowResized(size) => {

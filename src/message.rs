@@ -518,6 +518,8 @@ pub enum UiMessage {
     SnippetHistoryRedactOutput(bool),
     /// Session logging enabled/disabled
     SessionLoggingEnabled(bool),
+    /// Credential cache timeout changed (seconds, 0 = disabled)
+    CredentialTimeoutChange(u64),
     /// Window resized
     WindowResized(iced::Size),
     /// Dismiss toast notification

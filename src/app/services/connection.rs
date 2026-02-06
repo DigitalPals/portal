@@ -20,7 +20,7 @@ use crate::views::sftp::PaneId;
 
 const SSH_EVENT_CHANNEL_CAPACITY: usize = 1024;
 const SSH_KEEPALIVE_INTERVAL_SECS: u64 = 60;
-const DEFAULT_PASSPHRASE_CACHE_TIMEOUT: u64 = 300; // 5 minutes
+const DEFAULT_CREDENTIAL_TIMEOUT: u64 = 300; // 5 minutes
 
 static KNOWN_HOSTS_MANAGER: OnceLock<Arc<Mutex<KnownHostsManager>>> = OnceLock::new();
 static PASSPHRASE_CACHE: OnceLock<Arc<PassphraseCache>> = OnceLock::new();
@@ -66,12 +66,18 @@ pub fn shared_known_hosts_manager() -> Arc<Mutex<KnownHostsManager>> {
 /// Get the shared passphrase cache instance
 pub fn shared_passphrase_cache() -> Arc<PassphraseCache> {
     PASSPHRASE_CACHE
-        .get_or_init(|| Arc::new(PassphraseCache::new(DEFAULT_PASSPHRASE_CACHE_TIMEOUT)))
+        .get_or_init(|| Arc::new(PassphraseCache::new(DEFAULT_CREDENTIAL_TIMEOUT)))
         .clone()
 }
 
 /// Initialize the passphrase cache with a custom timeout
 pub fn init_passphrase_cache(timeout_seconds: u64) {
+    if let Some(cache) = PASSPHRASE_CACHE.get() {
+        // Apply updates at runtime; this only affects new entries.
+        cache.set_timeout(timeout_seconds);
+        return;
+    }
+
     let _ = PASSPHRASE_CACHE.get_or_init(|| Arc::new(PassphraseCache::new(timeout_seconds)));
 }
 

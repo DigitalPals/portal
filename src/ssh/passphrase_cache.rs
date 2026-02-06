@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use secrecy::{ExposeSecret, SecretString};
@@ -22,7 +23,7 @@ struct CacheEntry {
 /// after the configured timeout period.
 pub struct PassphraseCache {
     entries: Mutex<HashMap<PathBuf, CacheEntry>>,
-    timeout: Duration,
+    timeout_seconds: AtomicU64,
 }
 
 impl PassphraseCache {
@@ -32,7 +33,7 @@ impl PassphraseCache {
     pub fn new(timeout_seconds: u64) -> Self {
         Self {
             entries: Mutex::new(HashMap::new()),
-            timeout: Duration::from_secs(timeout_seconds),
+            timeout_seconds: AtomicU64::new(timeout_seconds),
         }
     }
 
@@ -41,13 +42,14 @@ impl PassphraseCache {
     /// The passphrase will expire after the configured timeout.
     /// If timeout is 0, the passphrase is not stored.
     pub fn store(&self, key_path: PathBuf, passphrase: SecretString) {
-        if self.timeout.is_zero() {
+        let timeout_seconds = self.timeout_seconds.load(Ordering::Relaxed);
+        if timeout_seconds == 0 {
             return;
         }
 
         let entry = CacheEntry {
             passphrase,
-            expires_at: Instant::now() + self.timeout,
+            expires_at: Instant::now() + Duration::from_secs(timeout_seconds),
         };
 
         if let Ok(mut entries) = self.entries.lock() {
@@ -103,13 +105,14 @@ impl PassphraseCache {
     ///
     /// This only affects new entries; existing entries keep their
     /// original expiration time.
-    pub fn set_timeout(&mut self, timeout_seconds: u64) {
-        self.timeout = Duration::from_secs(timeout_seconds);
+    pub fn set_timeout(&self, timeout_seconds: u64) {
+        self.timeout_seconds
+            .store(timeout_seconds, Ordering::Relaxed);
     }
 
     /// Get the current timeout in seconds.
     pub fn timeout_seconds(&self) -> u64 {
-        self.timeout.as_secs()
+        self.timeout_seconds.load(Ordering::Relaxed)
     }
 }
 

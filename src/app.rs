@@ -128,7 +128,7 @@ pub struct PreferencesState {
     pub reconnect_base_delay_ms: u64,
     pub reconnect_max_delay_ms: u64,
     pub allow_agent_forwarding: bool,
-    pub passphrase_cache_timeout: u64,
+    pub credential_timeout: u64,
     pub session_logging_enabled: bool,
     pub session_log_dir: Option<std::path::PathBuf>,
     pub session_log_format: crate::config::settings::SessionLogFormat,
@@ -351,7 +351,7 @@ impl Portal {
                 reconnect_base_delay_ms: settings_config.reconnect_base_delay_ms,
                 reconnect_max_delay_ms: settings_config.reconnect_max_delay_ms,
                 allow_agent_forwarding: settings_config.allow_agent_forwarding,
-                passphrase_cache_timeout: settings_config.passphrase_cache_timeout,
+                credential_timeout: settings_config.credential_timeout,
                 session_logging_enabled: settings_config.session_logging_enabled,
                 session_log_dir: settings_config.session_log_dir,
                 session_log_format: settings_config.session_log_format,
@@ -375,7 +375,7 @@ impl Portal {
         };
 
         // Initialize the global passphrase cache with the configured timeout
-        services::connection::init_passphrase_cache(settings_config.passphrase_cache_timeout);
+        services::connection::init_passphrase_cache(settings_config.credential_timeout);
 
         // Initialize security audit logging if enabled
         if settings_config.security_audit_enabled {
@@ -449,6 +449,7 @@ impl Portal {
                     system_ui_scale: self.prefs.system_ui_scale,
                     has_ui_scale_override: self.has_ui_scale_override(),
                     session_logging_enabled: self.prefs.session_logging_enabled,
+                    credential_timeout: self.prefs.credential_timeout,
                 },
                 theme,
                 fonts,
@@ -842,6 +843,7 @@ impl Portal {
         settings.ui_scale = self.prefs.ui_scale_override;
         settings.vnc = self.prefs.vnc_settings.clone();
         settings.allow_agent_forwarding = self.prefs.allow_agent_forwarding;
+        settings.credential_timeout = self.prefs.credential_timeout;
         settings.session_logging_enabled = self.prefs.session_logging_enabled;
         settings.session_log_dir = self.prefs.session_log_dir.clone();
         settings.session_log_format = self.prefs.session_log_format;
