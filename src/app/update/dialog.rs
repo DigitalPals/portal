@@ -369,6 +369,7 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
             if let Some(cached_passphrase) = cache.get(&request.key_path) {
                 // Use cached passphrase, skip dialog
                 tracing::debug!("Using cached passphrase for {:?}", request.key_path);
+                crate::security_log::log_passphrase_cache_hit(&request.key_path.to_string_lossy());
                 if let Some(host) = portal.config.hosts.find_host(request.host_id) {
                     let host = std::sync::Arc::new(host.clone());
                     if request.is_ssh {

@@ -374,6 +374,19 @@ impl Portal {
         // Initialize the global passphrase cache with the configured timeout
         services::connection::init_passphrase_cache(settings_config.passphrase_cache_timeout);
 
+        // Initialize security audit logging if enabled
+        if settings_config.security_audit_enabled {
+            let audit_path = settings_config.security_audit_dir.as_ref().map(|dir| {
+                // Create directory if it doesn't exist
+                let _ = std::fs::create_dir_all(dir);
+                dir.join("audit.log")
+            });
+            crate::security_log::init_audit_log(audit_path);
+            tracing::info!("Security audit logging enabled");
+        } else {
+            crate::security_log::init_audit_log(None);
+        }
+
         // Focus the search input on startup
         let focus_task = iced::widget::operation::focus(search_input_id());
         (app, focus_task)

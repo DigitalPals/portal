@@ -227,6 +227,17 @@ pub struct SettingsConfig {
     /// Session log format
     #[serde(default)]
     pub session_log_format: SessionLogFormat,
+
+    /// Enable security audit logging to file
+    #[serde(default = "default_security_audit_enabled")]
+    pub security_audit_enabled: bool,
+
+    /// Directory for security audit log file
+    #[serde(
+        default = "default_security_audit_dir",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub security_audit_dir: Option<PathBuf>,
 }
 
 fn default_terminal_font_size() -> f32 {
@@ -265,6 +276,14 @@ fn default_session_log_dir() -> Option<PathBuf> {
     crate::config::paths::config_dir().map(|dir| dir.join("logs").join("sessions"))
 }
 
+fn default_security_audit_enabled() -> bool {
+    false
+}
+
+fn default_security_audit_dir() -> Option<PathBuf> {
+    crate::config::paths::config_dir().map(|dir| dir.join("logs").join("security"))
+}
+
 impl Default for SettingsConfig {
     fn default() -> Self {
         Self {
@@ -284,6 +303,8 @@ impl Default for SettingsConfig {
             session_logging_enabled: default_session_logging_enabled(),
             session_log_dir: default_session_log_dir(),
             session_log_format: SessionLogFormat::default(),
+            security_audit_enabled: default_security_audit_enabled(),
+            security_audit_dir: default_security_audit_dir(),
         }
     }
 }

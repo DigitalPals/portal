@@ -180,6 +180,12 @@ impl SshClient {
         if agent_forwarding_enabled {
             if let Err(e) = channel.agent_forward(false).await {
                 tracing::warn!("Agent forwarding request failed: {}", e);
+            } else {
+                crate::security_log::log_agent_forwarding_enabled(
+                    &host.hostname,
+                    host.port,
+                    &host.username,
+                );
             }
         }
 
