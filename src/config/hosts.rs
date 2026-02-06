@@ -244,6 +244,16 @@ impl Host {
     pub fn effective_vnc_port(&self) -> u16 {
         self.vnc_port.unwrap_or(5900)
     }
+
+    /// Get the effective SSH username (host override or current user)
+    pub fn effective_username(&self) -> String {
+        let trimmed = self.username.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
+        }
+
+        std::env::var("USER").unwrap_or_else(|_| "root".to_string())
+    }
 }
 
 /// Group/folder for organizing hosts

@@ -98,7 +98,7 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                     host.id,
                     host.name.clone(),
                     host.hostname.clone(),
-                    host.username.clone(),
+                    host.effective_username(),
                     crate::config::SessionType::Ssh,
                 );
                 let entry_id = entry.id;

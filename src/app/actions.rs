@@ -176,7 +176,7 @@ impl Portal {
             host.name.clone(),
             host.hostname.clone(),
             port,
-            host.username.clone(),
+            host.effective_username(),
             host.id,
         );
         self.dialogs.open_password(password_dialog);
@@ -200,7 +200,7 @@ impl Portal {
         let port = host.effective_vnc_port();
         let host_name = host.name.clone();
         let host_id = host.id;
-        let username = Some(host.username.clone()).filter(|u| !u.is_empty());
+        let username = Some(host.effective_username());
         let password_str = Some(password.expose_secret().to_string());
 
         let (msg_tx, msg_rx) = mpsc::channel::<Message>(256);
@@ -271,7 +271,7 @@ impl Portal {
                 host.name.clone(),
                 host.hostname.clone(),
                 host.port,
-                host.username.clone(),
+                host.effective_username(),
                 host.id,
             );
             self.dialogs.open_password(password_dialog);
@@ -385,7 +385,7 @@ impl Portal {
                 host.name.clone(),
                 host.hostname.clone(),
                 host.port,
-                host.username.clone(),
+                host.effective_username(),
                 host.id,
                 tab_id,
                 pane_id,

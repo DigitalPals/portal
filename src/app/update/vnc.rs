@@ -41,7 +41,7 @@ pub fn handle_vnc(portal: &mut Portal, msg: VncMessage) -> Task<Message> {
                     host.id,
                     host.name.clone(),
                     host.hostname.clone(),
-                    host.username.clone(),
+                    host.effective_username(),
                     crate::config::SessionType::Vnc,
                 );
                 history_entry_id = entry.id;
