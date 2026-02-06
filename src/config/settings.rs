@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use crate::error::ConfigError;
 use crate::fonts::TerminalFont;
+use crate::keybindings::KeybindingsConfig;
 use crate::theme::ThemeId;
 use crate::views::sftp::ColumnWidths;
 
@@ -184,6 +185,10 @@ pub struct SettingsConfig {
     #[serde(default)]
     pub vnc: VncSettings,
 
+    /// Keyboard shortcut configuration
+    #[serde(default)]
+    pub keybindings: KeybindingsConfig,
+
     /// Auto-reconnect for SSH sessions
     #[serde(default = "default_auto_reconnect")]
     pub auto_reconnect: bool,
@@ -293,6 +298,7 @@ impl Default for SettingsConfig {
             ui_scale: None,
             sftp_column_widths: ColumnWidths::default(),
             vnc: VncSettings::default(),
+            keybindings: KeybindingsConfig::default(),
             auto_reconnect: default_auto_reconnect(),
             reconnect_max_attempts: default_reconnect_max_attempts(),
             reconnect_base_delay_ms: default_reconnect_base_delay_ms(),

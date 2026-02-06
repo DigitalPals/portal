@@ -5,6 +5,7 @@ use iced::keyboard::{self, Key};
 
 use crate::app::ActiveDialog;
 use crate::app::{FocusSection, Portal, SIDEBAR_AUTO_COLLAPSE_THRESHOLD, View};
+use crate::keybindings::AppAction;
 use crate::message::{
     DialogMessage, HistoryMessage, HostMessage, Message, SessionMessage, SftpMessage,
     SidebarMenuItem, TabMessage, UiMessage, VncMessage,
@@ -304,9 +305,20 @@ fn handle_keyboard_event(
             return Task::none();
         }
 
-        // F11 toggles fullscreen
-        if let Key::Named(keyboard::key::Named::F11) = &key {
-            return Task::done(Message::Vnc(VncMessage::ToggleFullscreen));
+        if let Some(task) = handle_configured_actions(
+            portal,
+            &key,
+            &modifiers,
+            &[
+                AppAction::ToggleFullscreen,
+                AppAction::NewConnection,
+                AppAction::CloseSession,
+                AppAction::NewTab,
+                AppAction::NextSession,
+                AppAction::PreviousSession,
+            ],
+        ) {
+            return task;
         }
 
         // Ctrl+Shift shortcuts for VNC-specific actions
@@ -470,28 +482,6 @@ fn handle_keyboard_event(
             portal.ui.tab_context_menu.hide();
             return Task::none();
         }
-        // Ctrl+N - new tab / go to host grid
-        (Key::Character(c), true, false) if c.as_str() == "n" => {
-            portal.restore_sidebar_after_session();
-            portal.enter_host_grid();
-            portal.ui.focus_section = FocusSection::Content;
-            return Task::none();
-        }
-        // Ctrl+W - close current tab
-        (Key::Character(c), true, false) if c.as_str() == "w" => {
-            portal.close_active_tab();
-            return Task::none();
-        }
-        // Ctrl+Tab - next tab
-        (Key::Named(keyboard::key::Named::Tab), true, false) => {
-            portal.select_next_tab();
-            return Task::none();
-        }
-        // Ctrl+Shift+Tab - previous tab
-        (Key::Named(keyboard::key::Named::Tab), true, true) => {
-            portal.select_prev_tab();
-            return Task::none();
-        }
         // Ctrl+Shift+K - Install SSH key on remote server
         (Key::Character(c), true, true) if c.as_str() == "k" || c.as_str() == "K" => {
             if let View::Terminal(session_id) = portal.ui.active_view {
@@ -504,12 +494,46 @@ fn handle_keyboard_event(
         _ => {}
     }
 
+    if let Some(task) = handle_configured_actions(
+        portal,
+        &key,
+        &modifiers,
+        &[
+            AppAction::NewConnection,
+            AppAction::CloseSession,
+            AppAction::NewTab,
+            AppAction::NextSession,
+            AppAction::PreviousSession,
+            AppAction::ToggleFullscreen,
+        ],
+    ) {
+        return task;
+    }
+
     // Priority 4: Section-specific navigation
     match portal.ui.focus_section {
         FocusSection::Sidebar => handle_sidebar_keyboard(portal, &key, &modifiers),
         FocusSection::TabBar => handle_tabbar_keyboard(portal, &key, &modifiers),
         FocusSection::Content => handle_content_keyboard(portal, &key, &modifiers),
     }
+}
+
+fn handle_configured_actions(
+    portal: &mut Portal,
+    key: &Key,
+    modifiers: &keyboard::Modifiers,
+    actions: &[AppAction],
+) -> Option<Task<Message>> {
+    for action in actions {
+        if portal
+            .prefs
+            .keybindings
+            .matches_action(*action, key, modifiers)
+        {
+            return Some(portal.handle_keybinding_action(*action));
+        }
+    }
+    None
 }
 
 /// Handle keyboard navigation in dialogs

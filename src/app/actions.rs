@@ -8,9 +8,10 @@ use uuid::Uuid;
 
 use crate::config::{AuthMethod, Host};
 use crate::fs_utils::{cleanup_temp_dir, copy_dir_recursive, count_items_in_dir};
+use crate::keybindings::AppAction;
 use crate::local::{LocalEvent, LocalSession};
 use crate::local_fs::list_local_dir;
-use crate::message::{Message, SessionId, SessionMessage, SftpMessage};
+use crate::message::{Message, SessionId, SessionMessage, SftpMessage, VncMessage};
 use crate::views::dialogs::password_dialog::PasswordDialogState;
 use crate::views::file_viewer::{FileSource, FileType};
 use crate::views::sftp::{ContextMenuAction, PaneId, PaneSource, PermissionBits, SftpDialogType};
@@ -18,7 +19,7 @@ use crate::views::tabs::Tab;
 use crate::views::toast::Toast;
 
 use super::services::{connection, file_viewer, history};
-use super::{Portal, View};
+use super::{FocusSection, Portal, View};
 
 impl Portal {
     fn hide_sidebar_for_session(&mut self) {
@@ -171,6 +172,38 @@ impl Portal {
         };
         let prev_id = self.tabs[prev_idx].id;
         self.set_active_tab(prev_id);
+    }
+
+    pub(super) fn handle_keybinding_action(&mut self, action: AppAction) -> Task<Message> {
+        match action {
+            AppAction::NewConnection => {
+                self.dialogs.open_quick_connect();
+                Task::none()
+            }
+            AppAction::CloseSession => {
+                self.close_active_tab();
+                Task::none()
+            }
+            AppAction::NewTab => {
+                self.restore_sidebar_after_session();
+                self.enter_host_grid();
+                self.ui.focus_section = FocusSection::Content;
+                Task::none()
+            }
+            AppAction::NextSession => {
+                self.select_next_tab();
+                Task::none()
+            }
+            AppAction::PreviousSession => {
+                self.select_prev_tab();
+                Task::none()
+            }
+            AppAction::Copy | AppAction::Paste => Task::none(),
+            AppAction::ToggleFullscreen => match self.ui.active_view {
+                View::VncViewer(_) => Task::done(Message::Vnc(VncMessage::ToggleFullscreen)),
+                _ => Task::none(),
+            },
+        }
     }
 
     /// Connect to a VNC host

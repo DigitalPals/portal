@@ -14,6 +14,7 @@ pub mod validation;
 // Public modules for the binary
 pub mod app;
 pub mod fonts;
+pub mod keybindings;
 pub mod platform;
 
 // Internal modules

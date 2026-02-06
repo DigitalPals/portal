@@ -23,6 +23,7 @@ use super::backend::{CursorInfo, EventProxy, RenderCell};
 use super::block_elements::render_block_element;
 use super::colors::{DEFAULT_BG, DEFAULT_FG, ansi_to_iced_themed};
 use crate::fonts::{JETBRAINS_MONO_NERD, TerminalFont};
+use crate::keybindings::{AppAction, KeybindingsConfig};
 use crate::theme::TerminalColors;
 
 /// Left padding for terminal content (matches Termius style)
@@ -37,6 +38,7 @@ pub struct TerminalWidget<'a, Message> {
     font: iced::Font,
     terminal_colors: Option<TerminalColors>,
     render_epoch: Option<Arc<AtomicU64>>,
+    keybindings: KeybindingsConfig,
 }
 
 impl<'a, Message> TerminalWidget<'a, Message> {
@@ -53,6 +55,7 @@ impl<'a, Message> TerminalWidget<'a, Message> {
             font: JETBRAINS_MONO_NERD,
             terminal_colors: None,
             render_epoch: None,
+            keybindings: KeybindingsConfig::default(),
         }
     }
 
@@ -77,6 +80,12 @@ impl<'a, Message> TerminalWidget<'a, Message> {
     /// Set render epoch for change detection.
     pub fn render_epoch(mut self, epoch: Arc<AtomicU64>) -> Self {
         self.render_epoch = Some(epoch);
+        self
+    }
+
+    /// Set keybindings for terminal actions
+    pub fn keybindings(mut self, keybindings: KeybindingsConfig) -> Self {
+        self.keybindings = keybindings;
         self
     }
 
@@ -948,7 +957,10 @@ where
                     // - Ctrl+Insert (copy) / Shift+Insert (paste) - X11/Hyprland style
                     // - Ctrl+Shift+C/V - Linux terminal style
                     // - Super+C/V - macOS style (if not intercepted by WM)
-                    let is_copy_shortcut =
+                    let is_copy_shortcut = self
+                        .keybindings
+                        .matches_action(AppAction::Copy, key, modifiers)
+                        ||
                         // Ctrl+Insert (Hyprland sends this for Super+C)
                         (modifiers.control()
                             && !modifiers.shift()
@@ -961,7 +973,10 @@ where
                         || (modifiers.logo()
                             && matches!(&key, Key::Character(c) if c.as_str() == "c"));
 
-                    let is_paste_shortcut =
+                    let is_paste_shortcut = self
+                        .keybindings
+                        .matches_action(AppAction::Paste, key, modifiers)
+                        ||
                         // Shift+Insert (Hyprland sends this for Super+V)
                         (modifiers.shift()
                             && !modifiers.control()

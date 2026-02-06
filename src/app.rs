@@ -14,6 +14,7 @@ use iced::keyboard;
 use crate::config::{
     HistoryConfig, HostsConfig, SettingsConfig, SnippetHistoryConfig, SnippetsConfig,
 };
+use crate::keybindings::KeybindingsConfig;
 use crate::message::{Message, SessionId, SessionMessage, SidebarMenuItem, UiMessage, VncMessage};
 use crate::theme::{ScaledFonts, ThemeId, get_theme};
 use crate::views::dialogs::about_dialog::about_dialog_view;
@@ -131,6 +132,7 @@ pub struct PreferencesState {
     pub session_logging_enabled: bool,
     pub session_log_dir: Option<std::path::PathBuf>,
     pub session_log_format: crate::config::settings::SessionLogFormat,
+    pub keybindings: KeybindingsConfig,
 }
 
 /// Configuration-backed state.
@@ -353,6 +355,7 @@ impl Portal {
                 session_logging_enabled: settings_config.session_logging_enabled,
                 session_log_dir: settings_config.session_log_dir,
                 session_log_format: settings_config.session_log_format,
+                keybindings: settings_config.keybindings.clone(),
             },
             config: ConfigState {
                 hosts: hosts_config,
@@ -491,6 +494,7 @@ impl Portal {
                         status_message,
                         self.prefs.terminal_font_size,
                         self.prefs.terminal_font,
+                        self.prefs.keybindings.clone(),
                         move |_sid, bytes| {
                             Message::Session(SessionMessage::Input(session_id, bytes))
                         },
@@ -841,6 +845,7 @@ impl Portal {
         settings.session_logging_enabled = self.prefs.session_logging_enabled;
         settings.session_log_dir = self.prefs.session_log_dir.clone();
         settings.session_log_format = self.prefs.session_log_format;
+        settings.keybindings = self.prefs.keybindings.clone();
         if let Err(e) = settings.save() {
             tracing::error!("Failed to save settings: {}", e);
         }
