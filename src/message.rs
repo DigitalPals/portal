@@ -236,6 +236,8 @@ pub enum DialogMessage {
     PassphraseRequired(PassphraseRequest),
     /// Passphrase dialog: passphrase text changed
     PassphraseChanged(SecretString),
+    /// Passphrase dialog: toggle whether to cache passphrase for the session
+    PassphraseRememberToggled(bool),
     /// Passphrase dialog: user submitted passphrase
     PassphraseSubmit,
     /// Passphrase dialog: user cancelled
