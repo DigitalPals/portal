@@ -311,6 +311,7 @@ fn handle_keyboard_event(
             &modifiers,
             &[
                 AppAction::ToggleFullscreen,
+                AppAction::NewWindow,
                 AppAction::NewConnection,
                 AppAction::CloseSession,
                 AppAction::NewTab,
@@ -499,6 +500,7 @@ fn handle_keyboard_event(
         &key,
         &modifiers,
         &[
+            AppAction::NewWindow,
             AppAction::NewConnection,
             AppAction::CloseSession,
             AppAction::NewTab,

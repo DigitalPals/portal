@@ -176,6 +176,10 @@ impl Portal {
 
     pub(super) fn handle_keybinding_action(&mut self, action: AppAction) -> Task<Message> {
         match action {
+            AppAction::NewWindow => {
+                let _ = std::process::Command::new(std::env::current_exe().unwrap()).spawn();
+                Task::none()
+            }
             AppAction::NewConnection => {
                 self.dialogs.open_quick_connect();
                 Task::none()

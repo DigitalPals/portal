@@ -5,6 +5,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer, de};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AppAction {
+    NewWindow,
     NewConnection,
     CloseSession,
     NewTab,
@@ -218,6 +219,8 @@ fn parse_key_token(token: &str) -> Result<KeybindingKey, KeybindingParseError> {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KeybindingsConfig {
+    #[serde(default = "default_new_window")]
+    pub new_window: Vec<Keybinding>,
     #[serde(default = "default_new_connection")]
     pub new_connection: Vec<Keybinding>,
     #[serde(default = "default_close_session")]
@@ -239,6 +242,7 @@ pub struct KeybindingsConfig {
 impl Default for KeybindingsConfig {
     fn default() -> Self {
         Self {
+            new_window: default_new_window(),
             new_connection: default_new_connection(),
             close_session: default_close_session(),
             new_tab: default_new_tab(),
@@ -254,6 +258,7 @@ impl Default for KeybindingsConfig {
 impl KeybindingsConfig {
     pub fn matches_action(&self, action: AppAction, key: &Key, modifiers: &Modifiers) -> bool {
         let bindings = match action {
+            AppAction::NewWindow => &self.new_window,
             AppAction::NewConnection => &self.new_connection,
             AppAction::CloseSession => &self.close_session,
             AppAction::NewTab => &self.new_tab,
@@ -270,8 +275,12 @@ impl KeybindingsConfig {
     }
 }
 
-fn default_new_connection() -> Vec<Keybinding> {
+fn default_new_window() -> Vec<Keybinding> {
     vec![Keybinding::parse("Ctrl+Shift+N").expect("valid default")]
+}
+
+fn default_new_connection() -> Vec<Keybinding> {
+    vec![Keybinding::parse("Ctrl+Shift+O").expect("valid default")]
 }
 
 fn default_close_session() -> Vec<Keybinding> {
