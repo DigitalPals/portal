@@ -44,7 +44,7 @@ fn spawn_host_key_handler(
                 SshEvent::Connected => {
                     connected_clone.store(true, Ordering::SeqCst);
                 }
-                SshEvent::Disconnected => {
+                SshEvent::Disconnected { .. } => {
                     break;
                 }
                 SshEvent::Data(_) => {}

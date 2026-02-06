@@ -75,7 +75,9 @@ fn ssh_event_listener(session_id: SessionId, event_rx: mpsc::Receiver<SshEvent>)
         }),
         move |event| match event {
             SshEvent::Data(data) => Message::Session(SessionMessage::Data(session_id, data)),
-            SshEvent::Disconnected => Message::Session(SessionMessage::Disconnected(session_id)),
+            SshEvent::Disconnected { clean } => {
+                Message::Session(SessionMessage::Disconnected { session_id, clean })
+            }
             SshEvent::HostKeyVerification(request) => Message::Dialog(
                 DialogMessage::HostKeyVerification(VerificationRequestWrapper(Some(request))),
             ),

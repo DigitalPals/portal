@@ -26,7 +26,8 @@ pub enum SshEvent {
     /// Data received from remote
     Data(Vec<u8>),
     /// Connection closed
-    Disconnected,
+    /// `clean` is true if the shell exited normally (exit status 0), false for unexpected drops
+    Disconnected { clean: bool },
     /// Host key verification required
     HostKeyVerification(Box<HostKeyVerificationRequest>),
 }

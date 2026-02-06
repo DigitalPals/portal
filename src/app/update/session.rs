@@ -333,11 +333,14 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
 
             Task::none()
         }
-        SessionMessage::Disconnected(session_id) => {
-            tracing::info!("Terminal session disconnected");
+        SessionMessage::Disconnected { session_id, clean } => {
+            tracing::info!("Terminal session disconnected (clean: {})", clean);
             let close_task = close_session_logger(portal, session_id);
             if let Some(session) = portal.sessions.get(session_id) {
-                if portal.prefs.auto_reconnect && matches!(session.backend, SessionBackend::Ssh(_))
+                // Only auto-reconnect for unexpected disconnections, not clean exits
+                if !clean
+                    && portal.prefs.auto_reconnect
+                    && matches!(session.backend, SessionBackend::Ssh(_))
                 {
                     let reconnect_task = schedule_reconnect(portal, session_id);
                     return Task::batch([close_task, reconnect_task]);
@@ -428,7 +431,13 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
             TerminalEvent::PtyWrite(bytes) => {
                 handle_session(portal, SessionMessage::Input(session_id, bytes))
             }
-            TerminalEvent::Exit => handle_session(portal, SessionMessage::Disconnected(session_id)),
+            TerminalEvent::Exit => handle_session(
+                portal,
+                SessionMessage::Disconnected {
+                    session_id,
+                    clean: true,
+                },
+            ),
             TerminalEvent::Wakeup => Task::none(),
         },
         SessionMessage::ClipboardLoaded(session_id, contents) => {

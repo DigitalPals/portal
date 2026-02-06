@@ -79,6 +79,9 @@ impl SshSession {
             // Keep handle reference alive for the duration of the session
             let _handle = handle_for_task;
 
+            // Track if we received a clean exit (exit status 0)
+            let mut clean_exit = false;
+
             loop {
                 tokio::select! {
                     // Handle incoming SSH data
@@ -95,19 +98,22 @@ impl SshSession {
                                 }
                             }
                             Some(ChannelMsg::Eof) => {
-                                let _ = event_tx.send(SshEvent::Disconnected).await;
+                                let _ = event_tx.send(SshEvent::Disconnected { clean: clean_exit }).await;
                                 break;
                             }
                             Some(ChannelMsg::Close) => {
-                                let _ = event_tx.send(SshEvent::Disconnected).await;
+                                let _ = event_tx.send(SshEvent::Disconnected { clean: clean_exit }).await;
                                 break;
                             }
                             Some(ChannelMsg::ExitStatus { exit_status }) => {
                                 tracing::debug!("Exit status: {}", exit_status);
+                                // Clean exit if the shell returned 0
+                                clean_exit = exit_status == 0;
                             }
                             Some(_) => {}
                             None => {
-                                let _ = event_tx.send(SshEvent::Disconnected).await;
+                                // Connection dropped unexpectedly (no EOF/Close received)
+                                let _ = event_tx.send(SshEvent::Disconnected { clean: false }).await;
                                 break;
                             }
                         }

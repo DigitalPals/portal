@@ -316,9 +316,10 @@ impl Portal {
             }),
             move |event| match event {
                 LocalEvent::Data(data) => Message::Session(SessionMessage::Data(session_id, data)),
-                LocalEvent::Disconnected => {
-                    Message::Session(SessionMessage::Disconnected(session_id))
-                }
+                LocalEvent::Disconnected => Message::Session(SessionMessage::Disconnected {
+                    session_id,
+                    clean: true,
+                }),
             },
         );
 

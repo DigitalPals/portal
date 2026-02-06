@@ -96,7 +96,8 @@ pub enum SessionMessage {
     /// Process buffered terminal output in time-sliced chunks
     ProcessOutputTick,
     /// Terminal session disconnected
-    Disconnected(SessionId),
+    /// `clean` is true if the session ended normally (e.g., user typed `exit`)
+    Disconnected { session_id: SessionId, clean: bool },
     /// Scheduled reconnect attempt
     Reconnect(SessionId),
     /// Session error occurred
