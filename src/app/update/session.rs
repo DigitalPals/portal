@@ -310,7 +310,9 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
             Task::none()
         }
         SessionMessage::ProcessOutputTick => {
-            const MAX_OUTPUT_BYTES_PER_TICK: usize = 16 * 1024;
+            // Increased from 16KB to 64KB for better throughput in fast SSH sessions.
+            // At 60fps (16ms ticks), this allows ~4MB/s vs previous ~1MB/s.
+            const MAX_OUTPUT_BYTES_PER_TICK: usize = 64 * 1024;
 
             for session in portal.sessions.values_mut() {
                 let mut budget = MAX_OUTPUT_BYTES_PER_TICK;
