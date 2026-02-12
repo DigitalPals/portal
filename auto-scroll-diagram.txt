@@ -1,0 +1,108 @@
+AUTO-SCROLL DURING TEXT SELECTION - VISUAL DIAGRAM
+===================================================
+
+┌────────────────────────────────────────────────────┐
+│  Terminal Viewport                                 │
+│  ┌──────────────────────────────────────────────┐  │
+│  │ ▲ AUTO-SCROLL ZONE (30px)                   │  │ ← Dragging here scrolls UP
+│  │ ┊┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┊  │  │    (faster when closer to edge)
+│  │ │                                           │  │
+│  │ │  Normal Selection Area                    │  │
+│  │ │  (no auto-scroll)                         │  │
+│  │ │                                           │  │
+│  │ │  Line 1: Lorem ipsum dolor sit amet...   │  │
+│  │ │  Line 2: Consectetur adipiscing elit...  │  │
+│  │ │  Line 3: Sed do eiusmod tempor...        │  │
+│  │ │                                           │  │
+│  │ │  [User drags selection here]             │  │
+│  │ │        ▼                                  │  │
+│  │ │  ═══════════════════════════             │  │ ← Selection highlight
+│  │ │                                           │  │
+│  │ ┊┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┊  │  │
+│  │ ▼ AUTO-SCROLL ZONE (30px)                   │  │ ← Dragging here scrolls DOWN
+│  └──────────────────────────────────────────────┘  │
+└────────────────────────────────────────────────────┘
+
+
+USER INTERACTION FLOW:
+======================
+
+1. User clicks to start selection
+   │
+   ├─ Single click  → Character mode
+   ├─ Double click  → Word mode
+   └─ Triple click  → Line mode
+   
+2. User drags mouse while holding button
+   │
+   ├─ Inside viewport → Normal selection update
+   │
+   └─ Near edge (< 30px from top/bottom)
+      │
+      ├─ Check: Can auto-scroll? (not in alt screen, throttle OK)
+      │
+      ├─ Calculate: Distance from edge → Scroll speed (1-3 lines)
+      │
+      ├─ Scroll: Terminal display up/down
+      │
+      └─ Update: Selection endpoint follows scroll
+
+
+SCROLL SPEED CALCULATION:
+=========================
+
+Distance from edge (px)  →  Distance Factor  →  Scroll Lines
+────────────────────────────────────────────────────────────
+0  (at edge)             →  1.0              →  3 lines
+10                       →  0.67             →  2 lines
+20                       →  0.33             →  1 line
+30 (edge of zone)        →  0.0              →  0 lines (no scroll)
+>30                      →  N/A              →  No auto-scroll
+
+
+SELECTION MODE BEHAVIORS:
+=========================
+
+Character Mode (single-click):
+  • Selection extends character-by-character
+  • Auto-scroll updates endpoint to exact cursor cell
+
+Word Mode (double-click):
+  • Selection extends word-by-word
+  • Auto-scroll finds word boundaries at cursor position
+  • Extends to start/end of word based on direction
+
+Line Mode (triple-click):
+  • Selection extends line-by-line
+  • Auto-scroll selects entire lines
+  • Start always at column 0, end at last column
+
+
+THROTTLING:
+===========
+
+Without throttling:
+  Mouse move events → 100+ per second
+  Each triggers scroll → Choppy, high CPU
+  
+With 50ms throttle:
+  Mouse move events → ~20 scrolls per second
+  Smooth scrolling, low CPU usage
+  
+Timing check:
+  if last_auto_scroll.elapsed() >= 50ms:
+      perform_scroll()
+      last_auto_scroll = now()
+  else:
+      skip (wait for throttle period)
+
+
+EDGE CASES:
+===========
+
+✅ Cursor outside viewport → Still scrolls when near edges
+✅ Alternate screen (vim)  → No scroll (no scrollback buffer)
+✅ End of scrollback       → Scroll stops naturally
+✅ Selection mode changes  → Each mode updates correctly
+✅ Mouse button release    → Auto-scroll stops immediately
+✅ Click outside terminal  → Selection cleared, auto-scroll reset

@@ -365,6 +365,8 @@ struct TerminalState {
     last_click_position: Option<(usize, usize)>,
     click_count: u8, // 1 = single, 2 = double, 3 = triple
     selection_mode: SelectionMode,
+    // Auto-scroll during selection
+    last_auto_scroll: Option<std::time::Instant>,
 }
 
 /// Selection granularity mode
@@ -404,6 +406,7 @@ impl Default for TerminalState {
             last_click_position: None,
             click_count: 0,
             selection_mode: SelectionMode::Character,
+            last_auto_scroll: None,
         }
     }
 }
@@ -452,6 +455,7 @@ where
             last_click_position: None,
             click_count: 0,
             selection_mode: SelectionMode::Character,
+            last_auto_scroll: None,
         })
     }
 
@@ -843,60 +847,161 @@ where
                 state.click_count = 0;
                 state.selection_mode = SelectionMode::Character;
                 state.last_drag_cell = None;
+                state.last_auto_scroll = None;
                 shell.request_redraw();
             }
             Event::Mouse(mouse::Event::CursorMoved { position }) => {
                 // Update selection while dragging
-                if state.is_selecting && cursor.is_over(bounds) {
-                    if let Some(cell) = self.pixel_to_cell(&bounds, *position) {
-                        // Throttle selection updates to avoid excessive redraws.
-                        if let Some(last) = state.last_drag_update {
-                            if last.elapsed() < std::time::Duration::from_millis(8) {
+                if state.is_selecting {
+                    // Auto-scroll zone (pixels from edge to trigger scrolling)
+                    const AUTO_SCROLL_ZONE: f32 = 30.0;
+                    // Minimum time between auto-scroll updates (milliseconds)
+                    const AUTO_SCROLL_INTERVAL: std::time::Duration =
+                        std::time::Duration::from_millis(50);
+
+                    // Check if cursor is near viewport edges for auto-scroll
+                    let should_auto_scroll = if cursor.is_over(bounds) {
+                        false
+                    } else {
+                        // Cursor outside bounds - check if near top or bottom edge
+                        position.y < bounds.y + AUTO_SCROLL_ZONE
+                            || position.y > bounds.y + bounds.height - AUTO_SCROLL_ZONE
+                    };
+
+                    // Alternative: also support auto-scroll when cursor is inside but near edges
+                    let edge_distance_top = position.y - bounds.y;
+                    let edge_distance_bottom = bounds.y + bounds.height - position.y;
+                    let near_top_edge = edge_distance_top >= 0.0 && edge_distance_top < AUTO_SCROLL_ZONE;
+                    let near_bottom_edge = edge_distance_bottom >= 0.0 && edge_distance_bottom < AUTO_SCROLL_ZONE;
+
+                    // Auto-scroll if near edges and not in alternate screen mode
+                    if (should_auto_scroll || near_top_edge || near_bottom_edge) {
+                        let can_scroll = state
+                            .last_auto_scroll
+                            .map(|t| t.elapsed() >= AUTO_SCROLL_INTERVAL)
+                            .unwrap_or(true);
+
+                        if can_scroll {
+                            let in_alt_screen = {
+                                let term = self.term.lock();
+                                term.mode().contains(TermMode::ALT_SCREEN)
+                            };
+
+                            if !in_alt_screen {
+                                // Determine scroll direction and amount
+                                let scroll_lines = if position.y < bounds.y + AUTO_SCROLL_ZONE {
+                                    // Near top - scroll up
+                                    let distance_factor = (AUTO_SCROLL_ZONE - edge_distance_top.max(0.0)) / AUTO_SCROLL_ZONE;
+                                    -(1.max((distance_factor * 3.0) as i32))
+                                } else {
+                                    // Near bottom - scroll down
+                                    let distance_factor = (AUTO_SCROLL_ZONE - edge_distance_bottom.max(0.0)) / AUTO_SCROLL_ZONE;
+                                    1.max((distance_factor * 3.0) as i32)
+                                };
+
+                                let mut term = self.term.lock();
+                                term.scroll_display(Scroll::Delta(scroll_lines));
+                                drop(term);
+
+                                state.render_cache.borrow_mut().needs_refresh = true;
+                                state.last_auto_scroll = Some(std::time::Instant::now());
+                                shell.request_redraw();
+
+                                // After scrolling, update the selection endpoint
+                                // Convert current mouse position to cell (clamped to viewport)
+                                let clamped_y = position.y.clamp(bounds.y, bounds.y + bounds.height - 1.0);
+                                let clamped_pos = iced::Point::new(position.x, clamped_y);
+                                if let Some(cell) = self.pixel_to_cell(&bounds, clamped_pos) {
+                                    let cols = (bounds.width / self.cell_width()) as usize;
+
+                                    match state.selection_mode {
+                                        SelectionMode::Word => {
+                                            let (word_start, word_end) =
+                                                self.find_word_at(cell.0, cell.1, cols);
+                                            if let Some(start) = state.selection_start {
+                                                if cell.1 < start.1
+                                                    || (cell.1 == start.1 && word_start < start.0)
+                                                {
+                                                    state.selection_end = Some((word_start, cell.1));
+                                                } else {
+                                                    state.selection_end = Some((word_end, cell.1));
+                                                }
+                                            }
+                                        }
+                                        SelectionMode::Line => {
+                                            if let Some(start) = state.selection_start {
+                                                if cell.1 < start.1 {
+                                                    state.selection_start = Some((0, cell.1));
+                                                    state.selection_end =
+                                                        Some((cols.saturating_sub(1), start.1));
+                                                } else {
+                                                    state.selection_start = Some((0, start.1));
+                                                    state.selection_end =
+                                                        Some((cols.saturating_sub(1), cell.1));
+                                                }
+                                            }
+                                        }
+                                        SelectionMode::Character => {
+                                            state.selection_end = Some(cell);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Normal selection update when cursor is over bounds
+                    if cursor.is_over(bounds) {
+                        if let Some(cell) = self.pixel_to_cell(&bounds, *position) {
+                            // Throttle selection updates to avoid excessive redraws.
+                            if let Some(last) = state.last_drag_update {
+                                if last.elapsed() < std::time::Duration::from_millis(8) {
+                                    return;
+                                }
+                            }
+                            if state.last_drag_cell == Some(cell) {
                                 return;
                             }
-                        }
-                        if state.last_drag_cell == Some(cell) {
-                            return;
-                        }
-                        state.last_drag_cell = Some(cell);
-                        state.last_drag_update = Some(std::time::Instant::now());
-                        let cols = (bounds.width / self.cell_width()) as usize;
+                            state.last_drag_cell = Some(cell);
+                            state.last_drag_update = Some(std::time::Instant::now());
+                            let cols = (bounds.width / self.cell_width()) as usize;
 
-                        match state.selection_mode {
-                            SelectionMode::Word => {
-                                // Extend selection by word
-                                let (word_start, word_end) =
-                                    self.find_word_at(cell.0, cell.1, cols);
-                                if let Some(start) = state.selection_start {
-                                    // Determine direction and extend appropriately
-                                    if cell.1 < start.1
-                                        || (cell.1 == start.1 && word_start < start.0)
-                                    {
-                                        state.selection_end = Some((word_start, cell.1));
-                                    } else {
-                                        state.selection_end = Some((word_end, cell.1));
+                            match state.selection_mode {
+                                SelectionMode::Word => {
+                                    // Extend selection by word
+                                    let (word_start, word_end) =
+                                        self.find_word_at(cell.0, cell.1, cols);
+                                    if let Some(start) = state.selection_start {
+                                        // Determine direction and extend appropriately
+                                        if cell.1 < start.1
+                                            || (cell.1 == start.1 && word_start < start.0)
+                                        {
+                                            state.selection_end = Some((word_start, cell.1));
+                                        } else {
+                                            state.selection_end = Some((word_end, cell.1));
+                                        }
                                     }
                                 }
-                            }
-                            SelectionMode::Line => {
-                                // Extend selection by line
-                                if let Some(start) = state.selection_start {
-                                    if cell.1 < start.1 {
-                                        state.selection_start = Some((0, cell.1));
-                                        state.selection_end =
-                                            Some((cols.saturating_sub(1), start.1));
-                                    } else {
-                                        state.selection_start = Some((0, start.1));
-                                        state.selection_end =
-                                            Some((cols.saturating_sub(1), cell.1));
+                                SelectionMode::Line => {
+                                    // Extend selection by line
+                                    if let Some(start) = state.selection_start {
+                                        if cell.1 < start.1 {
+                                            state.selection_start = Some((0, cell.1));
+                                            state.selection_end =
+                                                Some((cols.saturating_sub(1), start.1));
+                                        } else {
+                                            state.selection_start = Some((0, start.1));
+                                            state.selection_end =
+                                                Some((cols.saturating_sub(1), cell.1));
+                                        }
                                     }
                                 }
+                                SelectionMode::Character => {
+                                    state.selection_end = Some(cell);
+                                }
                             }
-                            SelectionMode::Character => {
-                                state.selection_end = Some(cell);
-                            }
+                            shell.request_redraw();
                         }
-                        shell.request_redraw();
                     }
                 }
             }
@@ -906,6 +1011,7 @@ where
                 state.is_selecting = false;
                 state.last_drag_cell = None;
                 state.last_drag_update = None;
+                state.last_auto_scroll = None;
                 shell.request_redraw();
             }
             Event::Mouse(mouse::Event::WheelScrolled { delta }) if cursor.is_over(bounds) => {
