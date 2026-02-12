@@ -909,12 +909,12 @@ where
 
                                 // Compensate selection endpoints for scroll offset
                                 // When viewport scrolls up (positive delta), content moves down in screen space
-                                // so we need to subtract from line coordinates to keep selection anchored
+                                // so we need to ADD to line coordinates to keep selection anchored to the same content
                                 if let Some((col, line)) = state.selection_start {
-                                    state.selection_start = Some((col, (line as i32 - scroll_lines).max(0) as usize));
+                                    state.selection_start = Some((col, (line as i32 + scroll_lines).max(0) as usize));
                                 }
                                 if let Some((col, line)) = state.selection_end {
-                                    state.selection_end = Some((col, (line as i32 - scroll_lines).max(0) as usize));
+                                    state.selection_end = Some((col, (line as i32 + scroll_lines).max(0) as usize));
                                 }
 
                                 // After scrolling, update the selection endpoint
