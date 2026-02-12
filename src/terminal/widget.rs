@@ -875,7 +875,7 @@ where
                     let near_bottom_edge = edge_distance_bottom >= 0.0 && edge_distance_bottom < AUTO_SCROLL_ZONE;
 
                     // Auto-scroll if near edges and not in alternate screen mode
-                    if (should_auto_scroll || near_top_edge || near_bottom_edge) {
+                    if should_auto_scroll || near_top_edge || near_bottom_edge {
                         let can_scroll = state
                             .last_auto_scroll
                             .map(|t| t.elapsed() >= AUTO_SCROLL_INTERVAL)
