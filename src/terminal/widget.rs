@@ -890,13 +890,13 @@ where
                             if !in_alt_screen {
                                 // Determine scroll direction and amount
                                 let scroll_lines = if position.y < bounds.y + AUTO_SCROLL_ZONE {
-                                    // Near top - scroll up
+                                    // Near top - scroll up (positive delta scrolls viewport up)
                                     let distance_factor = (AUTO_SCROLL_ZONE - edge_distance_top.max(0.0)) / AUTO_SCROLL_ZONE;
-                                    -(1.max((distance_factor * 3.0) as i32))
-                                } else {
-                                    // Near bottom - scroll down
-                                    let distance_factor = (AUTO_SCROLL_ZONE - edge_distance_bottom.max(0.0)) / AUTO_SCROLL_ZONE;
                                     1.max((distance_factor * 3.0) as i32)
+                                } else {
+                                    // Near bottom - scroll down (negative delta scrolls viewport down)
+                                    let distance_factor = (AUTO_SCROLL_ZONE - edge_distance_bottom.max(0.0)) / AUTO_SCROLL_ZONE;
+                                    -(1.max((distance_factor * 3.0) as i32))
                                 };
 
                                 let mut term = self.term.lock();
@@ -906,6 +906,16 @@ where
                                 state.render_cache.borrow_mut().needs_refresh = true;
                                 state.last_auto_scroll = Some(std::time::Instant::now());
                                 shell.request_redraw();
+
+                                // Compensate selection endpoints for scroll offset
+                                // When viewport scrolls up (positive delta), content moves down in screen space
+                                // so we need to subtract from line coordinates to keep selection anchored
+                                if let Some((col, line)) = state.selection_start {
+                                    state.selection_start = Some((col, (line as i32 - scroll_lines).max(0) as usize));
+                                }
+                                if let Some((col, line)) = state.selection_end {
+                                    state.selection_end = Some((col, (line as i32 - scroll_lines).max(0) as usize));
+                                }
 
                                 // After scrolling, update the selection endpoint
                                 // Convert current mouse position to cell (clamped to viewport)
