@@ -199,22 +199,6 @@ impl<'a, Message> TerminalWidget<'a, Message> {
         (screen_col, buffer_line)
     }
 
-    /// Convert buffer-absolute coordinates to screen coordinates
-    fn buffer_to_screen(&self, buffer_col: usize, buffer_line: i32) -> Option<(usize, usize)> {
-        let term = self.term.lock();
-        let content = term.renderable_content();
-        let display_offset = content.display_offset;
-        
-        // Screen line = buffer line + display_offset
-        let screen_line = buffer_line + display_offset as i32;
-        
-        if screen_line < 0 {
-            None // Off-screen (scrolled out of view above)
-        } else {
-            Some((buffer_col, screen_line as usize))
-        }
-    }
-
     /// Check if a character is a word boundary
     fn is_word_boundary(c: char) -> bool {
         c.is_whitespace()
