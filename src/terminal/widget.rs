@@ -307,7 +307,7 @@ impl<'a, Message> TerminalWidget<'a, Message> {
 
     /// Get selected text from the terminal using buffer-absolute coordinates
     /// This uses direct grid access (like Alacritty) instead of display_iter
-    fn get_selected_text(&self, start: (usize, i32), end: (usize, i32), cols: usize) -> String {
+    fn get_selected_text(&self, start: (usize, i32), end: (usize, i32), _cols: usize) -> String {
         use alacritty_terminal::index::{Column, Line};
         use alacritty_terminal::term::cell::Flags;
 
@@ -320,16 +320,18 @@ impl<'a, Message> TerminalWidget<'a, Message> {
 
         let term = self.term.lock();
         let grid = term.grid(); // Direct grid access - includes all scrollback!
+        let cols = grid.columns(); // Use actual grid columns, not display-calculated
 
         let mut result = String::new();
 
         // Iterate through buffer lines (can be negative for scrollback)
         for buffer_line in start.1..=end.1 {
-            let start_col = if buffer_line == start.1 { start.0 } else { 0 };
+            let max_col = cols.saturating_sub(1);
+            let start_col = if buffer_line == start.1 { start.0.min(max_col) } else { 0 };
             let end_col = if buffer_line == end.1 {
-                end.0.min(cols.saturating_sub(1))
+                end.0.min(max_col)
             } else {
-                cols.saturating_sub(1)
+                max_col
             };
 
             // Extract text from this line using Line type for proper grid indexing
