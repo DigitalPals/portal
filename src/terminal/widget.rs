@@ -306,7 +306,11 @@ impl<'a, Message> TerminalWidget<'a, Message> {
     }
 
     /// Get selected text from the terminal using buffer-absolute coordinates
+    /// This uses direct grid access (like Alacritty) instead of display_iter
     fn get_selected_text(&self, start: (usize, i32), end: (usize, i32), cols: usize) -> String {
+        use alacritty_terminal::index::{Column, Line};
+        use alacritty_terminal::term::cell::Flags;
+
         // Normalize selection (ensure start comes before end)
         let (start, end) = if start.1 < end.1 || (start.1 == end.1 && start.0 <= end.0) {
             (start, end)
@@ -315,36 +319,12 @@ impl<'a, Message> TerminalWidget<'a, Message> {
         };
 
         let term = self.term.lock();
-        let content = term.renderable_content();
+        let grid = term.grid(); // Direct grid access - includes all scrollback!
 
-        // Build a grid of characters from the buffer
-        // start.1 and end.1 are buffer-absolute line numbers (can be negative for scrollback)
-        let rows = ((end.1 - start.1 + 1) as usize).min(1000); // Limit to prevent huge allocations
-        let mut grid: Vec<Vec<char>> = vec![vec![' '; cols]; rows];
-
-        for indexed in content.display_iter {
-            let cell = &indexed.cell;
-
-            // indexed.point.line.0 is the buffer line (signed, can be negative)
-            let buffer_line = indexed.point.line.0;
-            let col = indexed.point.column.0;
-
-            // Check if within our selection range (buffer coordinates)
-            if buffer_line >= start.1 && buffer_line <= end.1 && col < cols {
-                let grid_line = (buffer_line - start.1) as usize;
-                if grid_line < grid.len() {
-                    grid[grid_line][col] = cell.c;
-                }
-            }
-        }
-
-        // Build result string from grid
         let mut result = String::new();
-        for (i, buffer_line) in (start.1..=end.1).enumerate() {
-            if i >= grid.len() {
-                break;
-            }
 
+        // Iterate through buffer lines (can be negative for scrollback)
+        for buffer_line in start.1..=end.1 {
             let start_col = if buffer_line == start.1 { start.0 } else { 0 };
             let end_col = if buffer_line == end.1 {
                 end.0.min(cols.saturating_sub(1))
@@ -352,13 +332,33 @@ impl<'a, Message> TerminalWidget<'a, Message> {
                 cols.saturating_sub(1)
             };
 
-            // Extract characters for this line
-            let line_chars: String = grid[i][start_col..=end_col.min(grid[i].len() - 1)]
-                .iter()
-                .collect();
+            // Extract text from this line using Line type for proper grid indexing
+            let line = Line(buffer_line);
+            let grid_line = &grid[line];
+
+            let mut line_text = String::new();
+
+            // Extract characters from the line
+            for col_idx in start_col..=end_col {
+                let cell = &grid_line[Column(col_idx)];
+
+                // Skip wide character spacers (they're placeholders for 2nd column of wide chars)
+                if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
+                    continue;
+                }
+
+                line_text.push(cell.c);
+
+                // Include zero-width characters if present (combining marks, etc.)
+                if let Some(zerowidth) = cell.zerowidth() {
+                    for c in zerowidth {
+                        line_text.push(*c);
+                    }
+                }
+            }
 
             // Trim trailing whitespace from each line
-            result.push_str(line_chars.trim_end());
+            result.push_str(line_text.trim_end());
 
             // Add newline between lines (but not after the last line)
             if buffer_line < end.1 {
