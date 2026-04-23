@@ -75,6 +75,8 @@ impl LocalSession {
         }
         // Set TERM for proper terminal emulation
         cmd.env("TERM", "xterm-256color");
+        cmd.env("COLORTERM", "truecolor");
+        cmd.env("TERM_PROGRAM", "Portal");
 
         // Spawn shell process
         let child = pair

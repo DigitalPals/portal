@@ -1,5 +1,6 @@
 //! Color conversion utilities for terminal rendering
 
+use alacritty_terminal::term::cell::Flags as CellFlags;
 use alacritty_terminal::vte::ansi::{Color as AnsiColor, NamedColor};
 use iced::Color;
 
@@ -42,6 +43,39 @@ pub fn ansi_to_iced_themed(color: AnsiColor, colors: &TerminalColors) -> Color {
     }
 }
 
+/// Convert a cell foreground color to iced, including terminal intensity flags.
+pub fn cell_fg_to_iced(color: AnsiColor, flags: CellFlags, colors: &TerminalColors) -> Color {
+    let color = if flags.contains(CellFlags::BOLD) {
+        bold_color(color)
+    } else {
+        color
+    };
+
+    let mut color = ansi_to_iced_themed(color, colors);
+
+    if flags.contains(CellFlags::DIM) {
+        color = dim_color(color);
+    }
+
+    color
+}
+
+fn bold_color(color: AnsiColor) -> AnsiColor {
+    match color {
+        AnsiColor::Named(NamedColor::Black) => AnsiColor::Named(NamedColor::BrightBlack),
+        AnsiColor::Named(NamedColor::Red) => AnsiColor::Named(NamedColor::BrightRed),
+        AnsiColor::Named(NamedColor::Green) => AnsiColor::Named(NamedColor::BrightGreen),
+        AnsiColor::Named(NamedColor::Yellow) => AnsiColor::Named(NamedColor::BrightYellow),
+        AnsiColor::Named(NamedColor::Blue) => AnsiColor::Named(NamedColor::BrightBlue),
+        AnsiColor::Named(NamedColor::Magenta) => AnsiColor::Named(NamedColor::BrightMagenta),
+        AnsiColor::Named(NamedColor::Cyan) => AnsiColor::Named(NamedColor::BrightCyan),
+        AnsiColor::Named(NamedColor::White) => AnsiColor::Named(NamedColor::BrightWhite),
+        AnsiColor::Named(NamedColor::Foreground) => AnsiColor::Named(NamedColor::BrightForeground),
+        AnsiColor::Indexed(index @ 0..=7) => AnsiColor::Indexed(index + 8),
+        _ => color,
+    }
+}
+
 /// Convert a named color to iced Color using themed colors
 fn named_to_iced_themed(named: NamedColor, colors: &TerminalColors) -> Color {
     match named {
@@ -64,7 +98,7 @@ fn named_to_iced_themed(named: NamedColor, colors: &TerminalColors) -> Color {
         NamedColor::Foreground => colors.foreground,
         NamedColor::Background => colors.background,
         NamedColor::Cursor => colors.cursor,
-        NamedColor::BrightForeground => colors.foreground,
+        NamedColor::BrightForeground => colors.ansi[15],
         NamedColor::DimForeground => dim_color(colors.foreground),
         // Dim variants - slightly darker versions
         NamedColor::DimBlack => dim_color(colors.ansi[0]),
@@ -117,4 +151,74 @@ fn indexed_to_iced_themed(idx: u8, colors: &TerminalColors) -> Color {
 /// Create a dimmed version of a color
 fn dim_color(color: Color) -> Color {
     Color::from_rgba(color.r * 0.66, color.g * 0.66, color.b * 0.66, color.a)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::theme::Theme;
+
+    #[test]
+    fn bold_named_ansi_uses_bright_palette_entry() {
+        let colors = Theme::portal_default().terminal;
+
+        assert_eq!(
+            cell_fg_to_iced(AnsiColor::Named(NamedColor::Red), CellFlags::BOLD, &colors),
+            colors.ansi[9]
+        );
+    }
+
+    #[test]
+    fn bold_indexed_ansi_uses_bright_palette_entry() {
+        let colors = Theme::portal_default().terminal;
+
+        assert_eq!(
+            cell_fg_to_iced(AnsiColor::Indexed(2), CellFlags::BOLD, &colors),
+            colors.ansi[10]
+        );
+    }
+
+    #[test]
+    fn bold_default_foreground_uses_bright_white() {
+        let colors = Theme::portal_default().terminal;
+
+        assert_eq!(
+            cell_fg_to_iced(
+                AnsiColor::Named(NamedColor::Foreground),
+                CellFlags::BOLD,
+                &colors
+            ),
+            colors.ansi[15]
+        );
+    }
+
+    #[test]
+    fn truecolor_is_not_brightened_by_bold_flag() {
+        let colors = Theme::portal_default().terminal;
+        let rgb = alacritty_terminal::vte::ansi::Rgb {
+            r: 10,
+            g: 20,
+            b: 30,
+        };
+
+        assert_eq!(
+            cell_fg_to_iced(AnsiColor::Spec(rgb), CellFlags::BOLD, &colors),
+            Color::from_rgb8(10, 20, 30)
+        );
+    }
+
+    #[test]
+    fn dim_flag_dims_after_bold_mapping() {
+        let colors = Theme::portal_default().terminal;
+        let bright_red = colors.ansi[9];
+
+        assert_eq!(
+            cell_fg_to_iced(
+                AnsiColor::Named(NamedColor::Red),
+                CellFlags::BOLD | CellFlags::DIM,
+                &colors
+            ),
+            dim_color(bright_red)
+        );
+    }
 }

@@ -249,6 +249,15 @@ impl SshClient {
                 }
             }
 
+            // Hint truecolor support before starting the remote shell. Some SSH
+            // servers may ignore env requests unless AcceptEnv allows them.
+            if let Err(error) = channel.set_env(false, "COLORTERM", "truecolor").await {
+                tracing::debug!("COLORTERM env request failed: {}", error);
+            }
+            if let Err(error) = channel.set_env(false, "TERM_PROGRAM", "Portal").await {
+                tracing::debug!("TERM_PROGRAM env request failed: {}", error);
+            }
+
             // Request PTY
             channel
                 .request_pty(

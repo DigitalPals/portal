@@ -16,12 +16,12 @@ use iced::advanced::widget::{self, Tree, Widget};
 use iced::advanced::{Clipboard, Shell};
 use iced::keyboard::{self, Key, Modifiers};
 use iced::mouse::{self, Cursor};
-use iced::{Background, Border, Color, Element, Event, Length, Rectangle, Shadow, Size};
+use iced::{Background, Border, Color, Element, Event, Length, Rectangle, Shadow, Size, font};
 use parking_lot::Mutex;
 
 use super::backend::{CursorInfo, EventProxy, RenderCell};
 use super::block_elements::render_terminal_graphic;
-use super::colors::{DEFAULT_BG, DEFAULT_FG, ansi_to_iced_themed};
+use super::colors::{DEFAULT_BG, DEFAULT_FG, ansi_to_iced_themed, cell_fg_to_iced};
 use crate::fonts::{JETBRAINS_MONO_NERD, TerminalFont};
 use crate::keybindings::{AppAction, KeybindingsConfig};
 use crate::theme::TerminalColors;
@@ -568,7 +568,7 @@ where
             let x = bounds.x + TERMINAL_PADDING_LEFT + cell.column as f32 * cell_width;
             let y = bounds.y + cell.line as f32 * cell_height;
 
-            let mut fg_color = ansi_to_iced_themed(cell.fg, colors);
+            let mut fg_color = cell_fg_to_iced(cell.fg, cell.flags, colors);
             let mut bg_color = ansi_to_iced_themed(cell.bg, colors);
 
             if cell.flags.contains(CellFlags::INVERSE) {
@@ -595,16 +595,6 @@ where
 
             // Draw character
             if cell.character != ' ' && !cell.flags.contains(CellFlags::HIDDEN) {
-                // Handle flags
-                if cell.flags.contains(CellFlags::DIM) {
-                    fg_color = Color::from_rgba(
-                        fg_color.r * 0.66,
-                        fg_color.g * 0.66,
-                        fg_color.b * 0.66,
-                        fg_color.a,
-                    );
-                }
-
                 // Wide characters (e.g. CJK, emoji) occupy 2 cells
                 let char_width = if cell.flags.contains(CellFlags::WIDE_CHAR) {
                     cell_width * 2.0
@@ -624,6 +614,15 @@ where
                 ) {
                     // Block element was rendered as rectangles
                 } else {
+                    let font = if cell.flags.contains(CellFlags::BOLD) {
+                        iced::Font {
+                            weight: font::Weight::Bold,
+                            ..self.font
+                        }
+                    } else {
+                        self.font
+                    };
+
                     // Draw the character using text renderer
                     let text = iced::advanced::Text {
                         content: cell.character.to_string(),
@@ -632,7 +631,7 @@ where
                         line_height: iced::advanced::text::LineHeight::Absolute(iced::Pixels(
                             cell_height,
                         )),
-                        font: self.font,
+                        font,
                         align_x: iced::alignment::Horizontal::Left.into(),
                         align_y: iced::alignment::Vertical::Top,
                         shaping: iced::advanced::text::Shaping::Advanced,
