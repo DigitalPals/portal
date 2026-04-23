@@ -89,6 +89,7 @@ fn start_terminal_session(
             reconnect_attempts: 0,
             reconnect_next_attempt: None,
             pending_output: VecDeque::new(),
+            last_data_received_at: None,
             logger: None,
         },
     );
@@ -293,6 +294,7 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                         logger.write(&data);
                     }
                     session.pending_output.push_back(data);
+                    session.last_data_received_at = Some(Instant::now());
 
                     // Enforce buffer size limit by dropping oldest data
                     let mut total_size: usize =
@@ -314,7 +316,30 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
             // At 60fps (16ms ticks), this allows ~4MB/s vs previous ~1MB/s.
             const MAX_OUTPUT_BYTES_PER_TICK: usize = 64 * 1024;
 
+            // Coalesce rapid back-to-back SSH writes before feeding them to the
+            // terminal emulator. Shell prompts (e.g. oh-my-posh) may arrive in
+            // multiple SSH packets within a few ms. Without this delay we can
+            // snapshot a partial prompt and render it before the trailing
+            // characters (e.g. Powerline end-cap) arrive.
+            //
+            // Skip processing if data arrived less than 8ms ago AND the buffer
+            // is small (interactive/prompt traffic). Large buffers (>8KB) bypass
+            // the delay so bulk transfers are not throttled.
+            const COALESCE_MS: u128 = 8;
+            const COALESCE_BYPASS_BYTES: usize = 8 * 1024;
+
             for session in portal.sessions.values_mut() {
+                let pending_bytes: usize =
+                    session.pending_output.iter().map(|c| c.len()).sum();
+
+                let in_coalesce_window = session
+                    .last_data_received_at
+                    .is_some_and(|t| t.elapsed().as_millis() < COALESCE_MS);
+
+                if in_coalesce_window && pending_bytes < COALESCE_BYPASS_BYTES {
+                    continue;
+                }
+
                 let mut budget = MAX_OUTPUT_BYTES_PER_TICK;
                 while budget > 0 {
                     let Some(mut chunk) = session.pending_output.pop_front() else {

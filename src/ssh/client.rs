@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
+use russh::Pty;
 use russh::client::{self, Config};
 use russh::keys::HashAlg;
 use tokio::net::TcpStream;
@@ -25,6 +26,65 @@ use super::known_hosts::KnownHostsManager;
 use super::os_detect;
 use super::session::SshSession;
 use super::shared_connection_pool;
+
+const SSH_TERMINAL_TYPE: &str = "xterm-256color";
+
+fn default_pty_modes() -> &'static [(Pty, u32)] {
+    &[
+        (Pty::VINTR, 3),
+        (Pty::VQUIT, 28),
+        (Pty::VERASE, 127),
+        (Pty::VKILL, 21),
+        (Pty::VEOF, 4),
+        (Pty::VEOL, 0),
+        (Pty::VEOL2, 0),
+        (Pty::VSTART, 17),
+        (Pty::VSTOP, 19),
+        (Pty::VSUSP, 26),
+        (Pty::VREPRINT, 18),
+        (Pty::VWERASE, 23),
+        (Pty::VLNEXT, 22),
+        (Pty::VDISCARD, 15),
+        (Pty::IGNPAR, 0),
+        (Pty::PARMRK, 0),
+        (Pty::INPCK, 0),
+        (Pty::ISTRIP, 0),
+        (Pty::INLCR, 0),
+        (Pty::IGNCR, 0),
+        (Pty::ICRNL, 1),
+        (Pty::IUCLC, 0),
+        (Pty::IXON, 1),
+        (Pty::IXANY, 0),
+        (Pty::IXOFF, 0),
+        (Pty::IMAXBEL, 1),
+        (Pty::IUTF8, 1),
+        (Pty::ISIG, 1),
+        (Pty::ICANON, 1),
+        (Pty::XCASE, 0),
+        (Pty::ECHO, 1),
+        (Pty::ECHOE, 1),
+        (Pty::ECHOK, 1),
+        (Pty::ECHONL, 0),
+        (Pty::NOFLSH, 0),
+        (Pty::TOSTOP, 0),
+        (Pty::IEXTEN, 1),
+        (Pty::ECHOCTL, 1),
+        (Pty::ECHOKE, 1),
+        (Pty::PENDIN, 0),
+        (Pty::OPOST, 1),
+        (Pty::OLCUC, 0),
+        (Pty::ONLCR, 1),
+        (Pty::OCRNL, 0),
+        (Pty::ONOCR, 0),
+        (Pty::ONLRET, 0),
+        (Pty::CS7, 0),
+        (Pty::CS8, 1),
+        (Pty::PARENB, 0),
+        (Pty::PARODD, 0),
+        (Pty::TTY_OP_ISPEED, 38400),
+        (Pty::TTY_OP_OSPEED, 38400),
+    ]
+}
 
 /// SSH client for establishing connections
 pub struct SshClient {
@@ -199,21 +259,6 @@ impl SshClient {
                 }
             };
 
-            // Detect OS if requested (before opening the shell channel)
-            let detected_os = if detect_os_on_connect {
-                let handle = connection.handle();
-                let mut handle_guard = handle.lock().await;
-                match os_detect::detect_os(&mut handle_guard).await {
-                    Ok(os) => Some(os),
-                    Err(e) => {
-                        tracing::warn!("OS detection failed: {}", e);
-                        None
-                    }
-                }
-            } else {
-                None
-            };
-
             // Open channel and request PTY
             let channel = {
                 let handle = connection.handle();
@@ -249,25 +294,25 @@ impl SshClient {
                 }
             }
 
-            // Hint truecolor support before starting the remote shell. Some SSH
-            // servers may ignore env requests unless AcceptEnv allows them.
-            if let Err(error) = channel.set_env(false, "COLORTERM", "truecolor").await {
-                tracing::debug!("COLORTERM env request failed: {}", error);
-            }
-            if let Err(error) = channel.set_env(false, "TERM_PROGRAM", "Portal").await {
-                tracing::debug!("TERM_PROGRAM env request failed: {}", error);
+            // Signal truecolor and terminal identity to the remote shell.
+            // Servers only honour these if AcceptEnv includes them (sshd_config).
+            // Failures are non-fatal — we warn and continue.
+            for (name, value) in [("COLORTERM", "truecolor"), ("TERM_PROGRAM", "portal")] {
+                if let Err(e) = channel.set_env(false, name, value).await {
+                    tracing::warn!("Failed to set {name}: {e}");
+                }
             }
 
             // Request PTY
             channel
                 .request_pty(
                     false,
-                    "xterm-256color",
+                    SSH_TERMINAL_TYPE,
                     terminal_size.0 as u32,
                     terminal_size.1 as u32,
                     0,
                     0,
-                    &[],
+                    default_pty_modes(),
                 )
                 .await
                 .map_err(|e| SshError::Channel(format!("PTY request failed: {}", e)))?;
@@ -277,6 +322,23 @@ impl SshClient {
                 .request_shell(false)
                 .await
                 .map_err(|e| SshError::Channel(format!("Shell request failed: {}", e)))?;
+
+            // Run host OS detection only after the user-facing shell has been
+            // requested. Opening exec channels first can consume login/PAM
+            // output like MOTD before the visible interactive PTY exists.
+            let detected_os = if detect_os_on_connect {
+                let handle = connection.handle();
+                let mut handle_guard = handle.lock().await;
+                match os_detect::detect_os(&mut handle_guard).await {
+                    Ok(os) => Some(os),
+                    Err(e) => {
+                        tracing::warn!("OS detection failed: {}", e);
+                        None
+                    }
+                }
+            } else {
+                None
+            };
 
             if created_new_connection {
                 security_log::log_ssh_connect(&host.hostname, host.port, &host.username);

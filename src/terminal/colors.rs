@@ -45,12 +45,6 @@ pub fn ansi_to_iced_themed(color: AnsiColor, colors: &TerminalColors) -> Color {
 
 /// Convert a cell foreground color to iced, including terminal intensity flags.
 pub fn cell_fg_to_iced(color: AnsiColor, flags: CellFlags, colors: &TerminalColors) -> Color {
-    let color = if flags.contains(CellFlags::BOLD) {
-        bold_color(color)
-    } else {
-        color
-    };
-
     let mut color = ansi_to_iced_themed(color, colors);
 
     if flags.contains(CellFlags::DIM) {
@@ -58,22 +52,6 @@ pub fn cell_fg_to_iced(color: AnsiColor, flags: CellFlags, colors: &TerminalColo
     }
 
     color
-}
-
-fn bold_color(color: AnsiColor) -> AnsiColor {
-    match color {
-        AnsiColor::Named(NamedColor::Black) => AnsiColor::Named(NamedColor::BrightBlack),
-        AnsiColor::Named(NamedColor::Red) => AnsiColor::Named(NamedColor::BrightRed),
-        AnsiColor::Named(NamedColor::Green) => AnsiColor::Named(NamedColor::BrightGreen),
-        AnsiColor::Named(NamedColor::Yellow) => AnsiColor::Named(NamedColor::BrightYellow),
-        AnsiColor::Named(NamedColor::Blue) => AnsiColor::Named(NamedColor::BrightBlue),
-        AnsiColor::Named(NamedColor::Magenta) => AnsiColor::Named(NamedColor::BrightMagenta),
-        AnsiColor::Named(NamedColor::Cyan) => AnsiColor::Named(NamedColor::BrightCyan),
-        AnsiColor::Named(NamedColor::White) => AnsiColor::Named(NamedColor::BrightWhite),
-        AnsiColor::Named(NamedColor::Foreground) => AnsiColor::Named(NamedColor::BrightForeground),
-        AnsiColor::Indexed(index @ 0..=7) => AnsiColor::Indexed(index + 8),
-        _ => color,
-    }
 }
 
 /// Convert a named color to iced Color using themed colors
@@ -159,27 +137,27 @@ mod tests {
     use crate::theme::Theme;
 
     #[test]
-    fn bold_named_ansi_uses_bright_palette_entry() {
+    fn bold_named_ansi_keeps_same_palette_entry() {
         let colors = Theme::portal_default().terminal;
 
         assert_eq!(
             cell_fg_to_iced(AnsiColor::Named(NamedColor::Red), CellFlags::BOLD, &colors),
-            colors.ansi[9]
+            colors.ansi[1]
         );
     }
 
     #[test]
-    fn bold_indexed_ansi_uses_bright_palette_entry() {
+    fn bold_indexed_ansi_keeps_same_palette_entry() {
         let colors = Theme::portal_default().terminal;
 
         assert_eq!(
             cell_fg_to_iced(AnsiColor::Indexed(2), CellFlags::BOLD, &colors),
-            colors.ansi[10]
+            colors.ansi[2]
         );
     }
 
     #[test]
-    fn bold_default_foreground_uses_bright_white() {
+    fn bold_default_foreground_keeps_default_foreground() {
         let colors = Theme::portal_default().terminal;
 
         assert_eq!(
@@ -188,7 +166,7 @@ mod tests {
                 CellFlags::BOLD,
                 &colors
             ),
-            colors.ansi[15]
+            colors.foreground
         );
     }
 
@@ -208,9 +186,9 @@ mod tests {
     }
 
     #[test]
-    fn dim_flag_dims_after_bold_mapping() {
+    fn dim_flag_dims_color_even_when_bold_is_set() {
         let colors = Theme::portal_default().terminal;
-        let bright_red = colors.ansi[9];
+        let red = colors.ansi[1];
 
         assert_eq!(
             cell_fg_to_iced(
@@ -218,7 +196,7 @@ mod tests {
                 CellFlags::BOLD | CellFlags::DIM,
                 &colors
             ),
-            dim_color(bright_red)
+            dim_color(red)
         );
     }
 }

@@ -41,6 +41,10 @@ pub struct ActiveSession {
     pub reconnect_next_attempt: Option<Instant>,
     /// Buffered output to process in small chunks for UI responsiveness
     pub pending_output: VecDeque<Vec<u8>>,
+    /// Timestamp of the most recent data push into pending_output.
+    /// Used to coalesce rapid back-to-back SSH writes (e.g. multi-flush prompts)
+    /// into a single terminal update cycle to avoid rendering partial state.
+    pub last_data_received_at: Option<Instant>,
     /// Optional session logger for terminal output
     pub logger: Option<SessionLogger>,
 }
@@ -161,6 +165,7 @@ mod tests {
             reconnect_attempts: 0,
             reconnect_next_attempt: None,
             pending_output: VecDeque::new(),
+            last_data_received_at: None,
             logger: None,
         }
     }

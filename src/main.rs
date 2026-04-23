@@ -21,6 +21,12 @@ fn main() -> iced::Result {
         .default_font(fonts::JETBRAINS_MONO_NERD)
         .font(fonts::INTER_BYTES)
         .font(fonts::JETBRAINS_MONO_NERD_BYTES)
+        .font(fonts::JETBRAINS_MONO_NERD_BOLD_BYTES)
+        .font(fonts::JETBRAINS_MONO_NERD_ITALIC_BYTES)
+        .font(fonts::JETBRAINS_MONO_NERD_BOLD_ITALIC_BYTES)
         .font(fonts::HACK_NERD_BYTES)
+        .font(fonts::HACK_NERD_BOLD_BYTES)
+        .font(fonts::HACK_NERD_ITALIC_BYTES)
+        .font(fonts::HACK_NERD_BOLD_ITALIC_BYTES)
         .run()
 }

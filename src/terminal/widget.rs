@@ -16,7 +16,7 @@ use iced::advanced::widget::{self, Tree, Widget};
 use iced::advanced::{Clipboard, Shell};
 use iced::keyboard::{self, Key, Modifiers};
 use iced::mouse::{self, Cursor};
-use iced::{Background, Border, Color, Element, Event, Length, Rectangle, Shadow, Size, font};
+use iced::{Background, Border, Color, Element, Event, Length, Rectangle, Shadow, Size};
 use parking_lot::Mutex;
 
 use super::backend::{CursorInfo, EventProxy, RenderCell};
@@ -36,10 +36,10 @@ struct CellMetrics {
 }
 
 impl CellMetrics {
-    fn for_font_size(font_size: f32) -> Self {
+    fn for_font(font_size: f32, line_height_ratio: f32) -> Self {
         Self {
             width: font_size * 0.6,
-            height: font_size * 1.4,
+            height: font_size * line_height_ratio,
         }
     }
 
@@ -59,6 +59,7 @@ pub struct TerminalWidget<'a, Message> {
     on_resize: Option<Box<dyn Fn(u16, u16) -> Message + 'a>>,
     font_size: f32,
     font: iced::Font,
+    terminal_font: TerminalFont,
     terminal_colors: Option<TerminalColors>,
     render_epoch: Option<Arc<AtomicU64>>,
     keybindings: KeybindingsConfig,
@@ -76,6 +77,7 @@ impl<'a, Message> TerminalWidget<'a, Message> {
             on_resize: None,
             font_size: 9.0,
             font: JETBRAINS_MONO_NERD,
+            terminal_font: TerminalFont::default(),
             terminal_colors: None,
             render_epoch: None,
             keybindings: KeybindingsConfig::default(),
@@ -91,6 +93,7 @@ impl<'a, Message> TerminalWidget<'a, Message> {
     /// Set terminal font
     pub fn font(mut self, font: TerminalFont) -> Self {
         self.font = font.to_iced_font();
+        self.terminal_font = font;
         self
     }
 
@@ -119,7 +122,7 @@ impl<'a, Message> TerminalWidget<'a, Message> {
     }
 
     fn cell_metrics(&self) -> CellMetrics {
-        CellMetrics::for_font_size(self.font_size)
+        CellMetrics::for_font(self.font_size, self.terminal_font.line_height_ratio())
     }
 
     /// Calculate cell width based on font size.
@@ -563,8 +566,12 @@ where
         let cached_cursor = cache.cursor.clone();
         drop(cache);
 
-        // Draw cells
-        for cell in &state.render_cache.borrow().cells {
+        let render_cache = state.render_cache.borrow();
+
+        // Draw cell backgrounds first. Some terminal glyphs (Powerline
+        // separators, Nerd Font icons) intentionally overhang their cell.
+        // Painting backgrounds in the same pass can cover those overhangs.
+        for cell in &render_cache.cells {
             let x = bounds.x + TERMINAL_PADDING_LEFT + cell.column as f32 * cell_width;
             let y = bounds.y + cell.line as f32 * cell_height;
 
@@ -577,12 +584,18 @@ where
 
             // Draw cell background if not default (after inverse swap)
             if bg_color != colors.background {
+                let bg_width = if cell.flags.contains(CellFlags::WIDE_CHAR) {
+                    cell_width * 2.0
+                } else {
+                    cell_width
+                };
+
                 renderer.fill_quad(
                     Quad {
                         bounds: Rectangle {
                             x,
                             y,
-                            width: cell_width,
+                            width: bg_width,
                             height: cell_height,
                         },
                         border: Border::default(),
@@ -591,6 +604,20 @@ where
                     },
                     Background::Color(bg_color),
                 );
+            }
+        }
+
+        // Draw glyphs after all backgrounds so non-standard terminal glyphs are
+        // not clipped by the next cell's background.
+        for cell in &render_cache.cells {
+            let x = bounds.x + TERMINAL_PADDING_LEFT + cell.column as f32 * cell_width;
+            let y = bounds.y + cell.line as f32 * cell_height;
+
+            let mut fg_color = cell_fg_to_iced(cell.fg, cell.flags, colors);
+            let mut bg_color = ansi_to_iced_themed(cell.bg, colors);
+
+            if cell.flags.contains(CellFlags::INVERSE) {
+                std::mem::swap(&mut fg_color, &mut bg_color);
             }
 
             // Draw character
@@ -614,14 +641,9 @@ where
                 ) {
                     // Block element was rendered as rectangles
                 } else {
-                    let font = if cell.flags.contains(CellFlags::BOLD) {
-                        iced::Font {
-                            weight: font::Weight::Bold,
-                            ..self.font
-                        }
-                    } else {
-                        self.font
-                    };
+                    let bold = cell.flags.contains(CellFlags::BOLD);
+                    let italic = cell.flags.contains(CellFlags::ITALIC);
+                    let font = self.terminal_font.variant(bold, italic);
 
                     // Draw the character using text renderer
                     let text = iced::advanced::Text {
@@ -638,7 +660,12 @@ where
                         wrapping: iced::advanced::text::Wrapping::None,
                     };
 
-                    renderer.fill_text(text, iced::Point::new(x, y), fg_color, bounds);
+                    renderer.fill_text(
+                        text,
+                        iced::Point::new(x, y),
+                        fg_color,
+                        bounds,
+                    );
                 }
             }
         }

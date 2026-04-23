@@ -34,6 +34,21 @@ pub fn render_terminal_graphic<Renderer: renderer::Renderer>(
         return true;
     }
 
+    // Powerline solid separators — rendered geometrically so they never get
+    // dropped by the font-atlas eviction that causes intermittent glyph gaps.
+    if let Some(rects) = powerline_separator_rects(c, x, y, width, height) {
+        draw_rects(renderer, &rects, fg_color);
+        return true;
+    }
+
+    // All box-drawing characters (U+2500–U+257F) use the font renderer so that
+    // stroke weights, positions, and rounded arcs are all consistent. Cell height
+    // is set to the font's natural line height so glyphs fill cells exactly and
+    // connect seamlessly across line boundaries.
+    if matches!(c, '\u{2500}'..='\u{257f}') {
+        return false;
+    }
+
     if let Some(rects) = box_drawing_rects(c, x, y, width, height) {
         draw_rects(renderer, &rects, fg_color);
         return true;
@@ -58,6 +73,81 @@ fn draw_rects<Renderer: renderer::Renderer>(
             Background::Color(fg_color),
         );
     }
+}
+
+/// Render Powerline solid separator glyphs geometrically so they never get
+/// dropped by font-atlas eviction.
+///
+/// E0B0: hard right-pointing triangle ►  (straight edges)
+/// E0B2: hard left-pointing triangle  ◄  (straight edges)
+/// E0B4: soft right-pointing half-oval )  (convex curve)
+/// E0B6: soft left-pointing half-oval  (  (convex curve)
+fn powerline_separator_rects(c: char, x: f32, y: f32, width: f32, height: f32) -> Option<Vec<Rectangle>> {
+    match c {
+        '\u{E0B0}' => Some(solid_triangle_rects(x, y, width, height, false)),
+        '\u{E0B2}' => Some(solid_triangle_rects(x, y, width, height, true)),
+        '\u{E0B4}' => Some(half_ellipse_rects(x, y, width, height, false)),
+        '\u{E0B6}' => Some(half_ellipse_rects(x, y, width, height, true)),
+        _ => None,
+    }
+}
+
+/// Horizontal-strip rectangles approximating a solid filled triangle.
+///
+/// `point_left = false` → ►: base on left, apex at right-center.
+/// `point_left = true`  → ◄: base on right, apex at left-center.
+fn solid_triangle_rects(x: f32, y: f32, width: f32, height: f32, point_left: bool) -> Vec<Rectangle> {
+    let strips = (height.ceil() as usize).max(2);
+    let strip_h = height / strips as f32;
+    let half = strips as f32 / 2.0;
+    let mut rects = Vec::with_capacity(strips);
+
+    for i in 0..strips {
+        // dist: 0.0 at the center row, 1.0 at the top/bottom edges.
+        let dist = ((i as f32 + 0.5) - half).abs() / half;
+        let fill = ((1.0 - dist) * width).max(1.0);
+        let strip_y = y + i as f32 * strip_h;
+
+        rects.push(if point_left {
+            Rectangle { x: x + (width - fill), y: strip_y, width: fill, height: strip_h }
+        } else {
+            Rectangle { x, y: strip_y, width: fill, height: strip_h }
+        });
+    }
+    rects
+}
+
+/// Horizontal-strip rectangles approximating a right or left half-ellipse.
+///
+/// `point_left = false` → ) shape: flat left edge, convex curve on the right.
+/// `point_left = true`  → ( shape: flat right edge, convex curve on the left.
+///
+/// The ellipse equation gives a smooth curve: at the vertical center the strip
+/// is at full `width`; at the top/bottom edges the strip width approaches 0.
+fn half_ellipse_rects(x: f32, y: f32, width: f32, height: f32, point_left: bool) -> Vec<Rectangle> {
+    let strips = (height.ceil() as usize).max(2);
+    let strip_h = height / strips as f32;
+    let half_h = height / 2.0;
+    let mut rects = Vec::with_capacity(strips);
+
+    for i in 0..strips {
+        let y_center = (i as f32 + 0.5) * strip_h;
+        let dy = y_center - half_h;
+        // t ∈ [-1, 1] — normalised distance from the cell midline.
+        let t = dy / half_h;
+        // Ellipse: fill = width × √(1 − t²)
+        let fill = (width * (1.0 - t * t).sqrt()).max(1.0);
+        let strip_y = y + i as f32 * strip_h;
+
+        rects.push(if point_left {
+            // ( — right-aligned: base on right, convex curve opens to the left.
+            Rectangle { x: x + (width - fill), y: strip_y, width: fill, height: strip_h }
+        } else {
+            // ) — left-aligned: base on left, convex curve opens to the right.
+            Rectangle { x, y: strip_y, width: fill, height: strip_h }
+        });
+    }
+    rects
 }
 
 fn block_element_rects(c: char, x: f32, y: f32, width: f32, height: f32) -> Option<Vec<Rectangle>> {
@@ -373,28 +463,28 @@ fn box_glyph(c: char) -> Option<BoxGlyph> {
             left: false,
             stroke: light,
         },
-        '┌' | '╭' => BoxGlyph {
+        '┌' => BoxGlyph {
             up: false,
             right: true,
             down: true,
             left: false,
             stroke: light,
         },
-        '┐' | '╮' => BoxGlyph {
+        '┐' => BoxGlyph {
             up: false,
             right: false,
             down: true,
             left: true,
             stroke: light,
         },
-        '└' | '╰' => BoxGlyph {
+        '└' => BoxGlyph {
             up: true,
             right: true,
             down: false,
             left: false,
             stroke: light,
         },
-        '┘' | '╯' => BoxGlyph {
+        '┘' => BoxGlyph {
             up: true,
             right: false,
             down: false,
@@ -827,5 +917,77 @@ mod tests {
     fn unsupported_characters_fall_back_to_text() {
         assert!(block_element_rects('A', 0.0, 0.0, 8.0, 16.0).is_none());
         assert!(box_drawing_rects('A', 0.0, 0.0, 8.0, 16.0).is_none());
+    }
+
+    #[test]
+    fn powerline_right_triangle_strips_span_full_height() {
+        let rects = powerline_separator_rects('\u{E0B0}', 0.0, 0.0, 8.0, 16.0).unwrap();
+        let top = rects.first().unwrap();
+        let bottom = rects.last().unwrap();
+        assert_close(top.y, 0.0);
+        assert_close(bottom.y + bottom.height, 16.0);
+        // All strips are left-aligned (x == 0 for ►)
+        for r in &rects {
+            assert_close(r.x, 0.0);
+        }
+        // Center strip is widest
+        let mid = &rects[rects.len() / 2];
+        for r in &rects {
+            assert!(mid.width >= r.width - 0.001);
+        }
+    }
+
+    #[test]
+    fn powerline_left_triangle_strips_span_full_height() {
+        let rects = powerline_separator_rects('\u{E0B2}', 0.0, 0.0, 8.0, 16.0).unwrap();
+        let top = rects.first().unwrap();
+        let bottom = rects.last().unwrap();
+        assert_close(top.y, 0.0);
+        assert_close(bottom.y + bottom.height, 16.0);
+        // All strips are right-aligned (x + width == 8.0 for ◄)
+        for r in &rects {
+            assert_close(r.x + r.width, 8.0);
+        }
+    }
+
+    #[test]
+    fn powerline_e0b4_is_ellipse_not_triangle() {
+        // E0B4 uses the ellipse path. The strip at index n/4 (25% from top,
+        // 75% of the way toward center) should be ≥80% of the center strip's
+        // width. For the ellipse this is ≈90%; for a linear triangle it would
+        // only be ≈56%, so the threshold distinguishes the two shapes.
+        let rects = powerline_separator_rects('\u{E0B4}', 0.0, 0.0, 8.0, 16.0).unwrap();
+        let mid = rects[rects.len() / 2].width;
+        let quarter = rects[rects.len() / 4].width;
+        assert!(
+            quarter >= mid * 0.80,
+            "quarter={quarter:.3} should be ≥ 0.80 × mid={mid:.3} (ellipse falloff, not linear)"
+        );
+        // All strips are left-aligned (x=0 for the ) shape)
+        for r in &rects {
+            assert_close(r.x, 0.0);
+        }
+    }
+
+    #[test]
+    fn powerline_e0b6_is_left_ellipse() {
+        let rects = powerline_separator_rects('\u{E0B6}', 0.0, 0.0, 8.0, 16.0).unwrap();
+        // All strips right-aligned (x + width == 8.0 for the ( shape)
+        for r in &rects {
+            assert_close(r.x + r.width, 8.0);
+        }
+    }
+
+    #[test]
+    fn rounded_box_drawing_arcs_fall_back_to_font() {
+        // Arc corners are rendered via the font to preserve their curved
+        // appearance. Cell height is set to the font's natural line height so
+        // the glyphs fill the cell and connect across line boundaries.
+        for c in ['╭', '╮', '╯', '╰'] {
+            assert!(
+                box_drawing_rects(c, 0.0, 0.0, 8.0, 16.0).is_none(),
+                "{c} should be rendered by the font, not the quad path"
+            );
+        }
     }
 }
