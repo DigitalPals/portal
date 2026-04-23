@@ -20,7 +20,7 @@ use iced::{Background, Border, Color, Element, Event, Length, Rectangle, Shadow,
 use parking_lot::Mutex;
 
 use super::backend::{CursorInfo, EventProxy, RenderCell};
-use super::block_elements::render_block_element;
+use super::block_elements::render_terminal_graphic;
 use super::colors::{DEFAULT_BG, DEFAULT_FG, ansi_to_iced_themed};
 use crate::fonts::{JETBRAINS_MONO_NERD, TerminalFont};
 use crate::keybindings::{AppAction, KeybindingsConfig};
@@ -28,6 +28,29 @@ use crate::theme::TerminalColors;
 
 /// Left padding for terminal content (matches Termius style)
 const TERMINAL_PADDING_LEFT: f32 = 12.0;
+
+#[derive(Debug, Clone, Copy)]
+struct CellMetrics {
+    width: f32,
+    height: f32,
+}
+
+impl CellMetrics {
+    fn for_font_size(font_size: f32) -> Self {
+        Self {
+            width: font_size * 0.6,
+            height: font_size * 1.4,
+        }
+    }
+
+    fn columns_for_bounds(self, bounds: Rectangle) -> usize {
+        ((bounds.width - TERMINAL_PADDING_LEFT).max(0.0) / self.width) as usize
+    }
+
+    fn rows_for_bounds(self, bounds: Rectangle) -> usize {
+        (bounds.height / self.height) as usize
+    }
+}
 
 /// Terminal widget for iced
 pub struct TerminalWidget<'a, Message> {
@@ -95,14 +118,18 @@ impl<'a, Message> TerminalWidget<'a, Message> {
         self
     }
 
-    /// Calculate cell width based on font size (JetBrains Mono aspect ratio)
-    fn cell_width(&self) -> f32 {
-        self.font_size * 0.6
+    fn cell_metrics(&self) -> CellMetrics {
+        CellMetrics::for_font_size(self.font_size)
     }
 
-    /// Calculate cell height based on font size (line height)
+    /// Calculate cell width based on font size.
+    fn cell_width(&self) -> f32 {
+        self.cell_metrics().width
+    }
+
+    /// Calculate cell height based on font size.
     fn cell_height(&self) -> f32 {
-        self.font_size * 1.4
+        self.cell_metrics().height
     }
 
     /// Get renderable cells from the terminal
@@ -191,11 +218,11 @@ impl<'a, Message> TerminalWidget<'a, Message> {
         let term = self.term.lock();
         let content = term.renderable_content();
         let display_offset = content.display_offset;
-        
+
         // Buffer line = screen line - display_offset
         // When scrolled back (display_offset > 0), screen line 0 maps to negative buffer line
         let buffer_line = screen_line as i32 - display_offset as i32;
-        
+
         (screen_col, buffer_line)
     }
 
@@ -311,7 +338,11 @@ impl<'a, Message> TerminalWidget<'a, Message> {
         // Iterate through buffer lines (can be negative for scrollback)
         for buffer_line in start.1..=end.1 {
             let max_col = cols.saturating_sub(1);
-            let start_col = if buffer_line == start.1 { start.0.min(max_col) } else { 0 };
+            let start_col = if buffer_line == start.1 {
+                start.0.min(max_col)
+            } else {
+                0
+            };
             let end_col = if buffer_line == end.1 {
                 end.0.min(max_col)
             } else {
@@ -368,7 +399,7 @@ struct TerminalState {
     // Selection state (stored in buffer-absolute coordinates)
     selection_start: Option<(usize, i32)>, // (column, buffer_line) - buffer-absolute coords
     selection_end: Option<(usize, i32)>,   // buffer_line can be negative (scrollback)
-    is_selecting: bool, // Mouse button held during drag
+    is_selecting: bool,                    // Mouse button held during drag
     last_drag_cell: Option<(usize, usize)>,
     last_drag_update: Option<std::time::Instant>,
     // Click tracking for double/triple click
@@ -506,8 +537,9 @@ where
             Background::Color(colors.background),
         );
 
-        let cell_width = self.cell_width();
-        let cell_height = self.cell_height();
+        let metrics = self.cell_metrics();
+        let cell_width = metrics.width;
+        let cell_height = metrics.height;
 
         // Refresh cached render data if terminal content changed.
         let mut cache = state.render_cache.borrow_mut();
@@ -580,8 +612,8 @@ where
                     cell_width
                 };
 
-                // Try to render block elements as rectangles for pixel-perfect rendering
-                if render_block_element(
+                // Try to render terminal graphics as rectangles for pixel-perfect rendering
+                if render_terminal_graphic(
                     renderer,
                     cell.character,
                     x,
@@ -615,13 +647,15 @@ where
         // Draw selection highlight (convert buffer coords to screen coords for rendering)
         if let (Some(start_buf), Some(end_buf)) = selection {
             // Normalize selection (ensure start comes before end)
-            let (start_buf, end_buf) = if start_buf.1 < end_buf.1 || (start_buf.1 == end_buf.1 && start_buf.0 <= end_buf.0) {
+            let (start_buf, end_buf) = if start_buf.1 < end_buf.1
+                || (start_buf.1 == end_buf.1 && start_buf.0 <= end_buf.0)
+            {
                 (start_buf, end_buf)
             } else {
                 (end_buf, start_buf)
             };
 
-            let cols = (bounds.width / cell_width) as usize;
+            let cols = metrics.columns_for_bounds(bounds);
             let selection_color = Color::from_rgba(0.3, 0.5, 0.8, 0.4);
 
             // Convert buffer range to screen range for rendering
@@ -634,14 +668,18 @@ where
             for buffer_line in start_buf.1..=end_buf.1 {
                 // Convert buffer line to screen line
                 let screen_line = buffer_line + display_offset;
-                
+
                 // Skip if not visible in current viewport
                 if screen_line < 0 {
                     continue;
                 }
                 let screen_line = screen_line as usize;
 
-                let start_col = if buffer_line == start_buf.1 { start_buf.0 } else { 0 };
+                let start_col = if buffer_line == start_buf.1 {
+                    start_buf.0
+                } else {
+                    0
+                };
                 let end_col = if buffer_line == end_buf.1 {
                     end_buf.0
                 } else {
@@ -773,12 +811,13 @@ where
     ) {
         let state = tree.state.downcast_mut::<TerminalState>();
         let bounds = layout.bounds();
+        let metrics = self.cell_metrics();
 
         // Detect size changes and emit resize message
         if let Some(ref on_resize) = self.on_resize {
             // Calculate terminal dimensions from pixel bounds (accounting for padding)
-            let cols = ((bounds.width - TERMINAL_PADDING_LEFT) / self.cell_width()) as u16;
-            let rows = (bounds.height / self.cell_height()) as u16;
+            let cols = metrics.columns_for_bounds(bounds) as u16;
+            let rows = metrics.rows_for_bounds(bounds) as u16;
 
             // Enforce minimum size
             let cols = cols.max(10);
@@ -809,7 +848,7 @@ where
                 if let Some(position) = cursor.position() {
                     if let Some(cell) = self.pixel_to_cell(&bounds, position) {
                         let now = std::time::Instant::now();
-                        let cols = (bounds.width / self.cell_width()) as usize;
+                        let cols = metrics.columns_for_bounds(bounds);
 
                         // Check for multi-click (same position, within time threshold)
                         let is_multi_click = state
@@ -903,8 +942,10 @@ where
                     // Alternative: also support auto-scroll when cursor is inside but near edges
                     let edge_distance_top = position.y - bounds.y;
                     let edge_distance_bottom = bounds.y + bounds.height - position.y;
-                    let near_top_edge = edge_distance_top >= 0.0 && edge_distance_top < AUTO_SCROLL_ZONE;
-                    let near_bottom_edge = edge_distance_bottom >= 0.0 && edge_distance_bottom < AUTO_SCROLL_ZONE;
+                    let near_top_edge =
+                        edge_distance_top >= 0.0 && edge_distance_top < AUTO_SCROLL_ZONE;
+                    let near_bottom_edge =
+                        edge_distance_bottom >= 0.0 && edge_distance_bottom < AUTO_SCROLL_ZONE;
 
                     // Auto-scroll if near edges and not in alternate screen mode
                     if should_auto_scroll || near_top_edge || near_bottom_edge {
@@ -923,11 +964,15 @@ where
                                 // Determine scroll direction and amount
                                 let scroll_lines = if position.y < bounds.y + AUTO_SCROLL_ZONE {
                                     // Near top - scroll up (positive delta scrolls viewport up)
-                                    let distance_factor = (AUTO_SCROLL_ZONE - edge_distance_top.max(0.0)) / AUTO_SCROLL_ZONE;
+                                    let distance_factor = (AUTO_SCROLL_ZONE
+                                        - edge_distance_top.max(0.0))
+                                        / AUTO_SCROLL_ZONE;
                                     1.max((distance_factor * 3.0) as i32)
                                 } else {
                                     // Near bottom - scroll down (negative delta scrolls viewport down)
-                                    let distance_factor = (AUTO_SCROLL_ZONE - edge_distance_bottom.max(0.0)) / AUTO_SCROLL_ZONE;
+                                    let distance_factor = (AUTO_SCROLL_ZONE
+                                        - edge_distance_bottom.max(0.0))
+                                        / AUTO_SCROLL_ZONE;
                                     -(1.max((distance_factor * 3.0) as i32))
                                 };
 
@@ -944,25 +989,33 @@ where
 
                                 // After scrolling, update the selection endpoint
                                 // Convert current mouse position to cell (clamped to viewport)
-                                let clamped_y = position.y.clamp(bounds.y, bounds.y + bounds.height - 1.0);
+                                let clamped_y =
+                                    position.y.clamp(bounds.y, bounds.y + bounds.height - 1.0);
                                 let clamped_pos = iced::Point::new(position.x, clamped_y);
                                 if let Some(cell) = self.pixel_to_cell(&bounds, clamped_pos) {
-                                    let cols = (bounds.width / self.cell_width()) as usize;
+                                    let cols = metrics.columns_for_bounds(bounds);
                                     let (buf_col, buf_line) = self.screen_to_buffer(cell.0, cell.1);
 
                                     match state.selection_mode {
                                         SelectionMode::Word => {
                                             let (word_start, word_end) =
                                                 self.find_word_at(cell.0, cell.1, cols);
-                                            let (word_start_buf, _) = self.screen_to_buffer(word_start, cell.1);
-                                            let (word_end_buf, _) = self.screen_to_buffer(word_end, cell.1);
-                                            if let Some((start_col, start_line)) = state.selection_start {
+                                            let (word_start_buf, _) =
+                                                self.screen_to_buffer(word_start, cell.1);
+                                            let (word_end_buf, _) =
+                                                self.screen_to_buffer(word_end, cell.1);
+                                            if let Some((start_col, start_line)) =
+                                                state.selection_start
+                                            {
                                                 if buf_line < start_line
-                                                    || (buf_line == start_line && word_start_buf < start_col)
+                                                    || (buf_line == start_line
+                                                        && word_start_buf < start_col)
                                                 {
-                                                    state.selection_end = Some((word_start_buf, buf_line));
+                                                    state.selection_end =
+                                                        Some((word_start_buf, buf_line));
                                                 } else {
-                                                    state.selection_end = Some((word_end_buf, buf_line));
+                                                    state.selection_end =
+                                                        Some((word_end_buf, buf_line));
                                                 }
                                             }
                                         }
@@ -1002,7 +1055,7 @@ where
                             }
                             state.last_drag_cell = Some(cell);
                             state.last_drag_update = Some(std::time::Instant::now());
-                            let cols = (bounds.width / self.cell_width()) as usize;
+                            let cols = metrics.columns_for_bounds(bounds);
 
                             // Convert screen cell to buffer coordinates
                             let (buf_col, buf_line) = self.screen_to_buffer(cell.0, cell.1);
@@ -1012,12 +1065,14 @@ where
                                     // Extend selection by word
                                     let (word_start, word_end) =
                                         self.find_word_at(cell.0, cell.1, cols);
-                                    let (word_start_buf, _) = self.screen_to_buffer(word_start, cell.1);
+                                    let (word_start_buf, _) =
+                                        self.screen_to_buffer(word_start, cell.1);
                                     let (word_end_buf, _) = self.screen_to_buffer(word_end, cell.1);
                                     if let Some((start_col, start_line)) = state.selection_start {
                                         // Determine direction and extend appropriately
                                         if buf_line < start_line
-                                            || (buf_line == start_line && word_start_buf < start_col)
+                                            || (buf_line == start_line
+                                                && word_start_buf < start_col)
                                         {
                                             state.selection_end = Some((word_start_buf, buf_line));
                                         } else {
@@ -1079,7 +1134,7 @@ where
                         mouse::ScrollDelta::Pixels { y, .. } => {
                             // Accumulate pixels for smooth trackpad scrolling
                             state.scroll_pixels += y;
-                            let line_height = self.cell_height();
+                            let line_height = metrics.height;
                             let lines = (state.scroll_pixels / line_height) as i32;
                             // Keep remainder for next scroll event
                             state.scroll_pixels -= lines as f32 * line_height;
@@ -1149,7 +1204,7 @@ where
                         if let (Some(start), Some(end)) =
                             (state.selection_start, state.selection_end)
                         {
-                            let cols = (bounds.width / self.cell_width()) as usize;
+                            let cols = metrics.columns_for_bounds(bounds);
                             let text_content = self.get_selected_text(start, end, cols);
                             if !text_content.is_empty() {
                                 clipboard
@@ -1174,13 +1229,14 @@ where
 
                     if is_select_all {
                         // Select all visible content (in buffer coordinates)
-                        let cols = (bounds.width / self.cell_width()) as usize;
-                        let rows = (bounds.height / self.cell_height()) as usize;
-                        
+                        let cols = metrics.columns_for_bounds(bounds);
+                        let rows = metrics.rows_for_bounds(bounds);
+
                         // Convert screen coordinates to buffer coordinates
                         let (start_col, start_line) = self.screen_to_buffer(0, 0);
-                        let (end_col, end_line) = self.screen_to_buffer(cols.saturating_sub(1), rows.saturating_sub(1));
-                        
+                        let (end_col, end_line) =
+                            self.screen_to_buffer(cols.saturating_sub(1), rows.saturating_sub(1));
+
                         state.selection_start = Some((start_col, start_line));
                         state.selection_end = Some((end_col, end_line));
                         shell.request_redraw();
