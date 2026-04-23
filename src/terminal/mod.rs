@@ -6,6 +6,7 @@ pub mod backend;
 mod block_elements;
 mod colors;
 pub mod logger;
+mod text;
 pub mod widget;
 
 pub use backend::TerminalBackend;

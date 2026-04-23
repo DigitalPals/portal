@@ -4650,6 +4650,7 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+ "ttf-parser",
  "uuid",
  "vnc-rs",
 ]
