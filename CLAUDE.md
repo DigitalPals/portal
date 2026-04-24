@@ -68,7 +68,7 @@ src/
 ├── config/             # TOML-based configuration (hosts, snippets, history, settings)
 ├── ssh/                # russh-based SSH client, auth, host key verification
 ├── sftp/               # SFTP client wrapping russh-sftp
-├── terminal/           # Custom Iced widget using alacritty_terminal
+├── terminal/           # Custom Iced widget using alacritty_terminal with auto-scroll during text selection
 ├── vnc/                # VNC client: session, framebuffer, widget (wgpu shader), keysym mapping, quality tracking, monitor discovery
 └── views/              # UI views (host_grid, sidebar, terminal_view, sftp/, vnc_view, dialogs/)
 ```
@@ -100,6 +100,29 @@ Config stored in platform-specific directory (`~/.config/portal/` on Linux):
 - `history.toml` - Connection history
 - `settings.toml` - Theme, font size, VNC settings (encoding, color depth, refresh rate, scaling mode)
 - `known_hosts` - SSH host key storage
+
+### Terminal Widget Features
+
+The terminal widget (`src/terminal/widget.rs`) is a custom Iced component built on `alacritty_terminal`:
+
+**Text Selection**:
+- Single-click: character-by-character selection
+- Double-click: word-by-word selection
+- Triple-click: line-by-line selection
+- **Auto-scroll on edge**: When dragging selection near viewport edges (30px zone), terminal automatically scrolls up/down to reveal more content
+  - Scroll speed: 1-3 lines based on proximity to edge
+  - Throttled at 50ms intervals to prevent performance issues
+  - Respects alternate screen mode (no auto-scroll in vim, htop, etc.)
+
+**Clipboard Integration**:
+- Ctrl+Shift+C / Ctrl+Insert: copy selected text
+- Ctrl+Shift+V / Shift+Insert: paste from clipboard
+- Ctrl+Shift+A: select all visible content
+
+**Scrollback**:
+- Mouse wheel scrolling through terminal history
+- Trackpad pixel-perfect smooth scrolling
+- Scroll to bottom on user input
 
 ### VNC Framebuffer Rendering
 

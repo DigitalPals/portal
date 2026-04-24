@@ -13,6 +13,33 @@ pub enum Protocol {
     Vnc,
 }
 
+/// SSH port forward type
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum PortForwardKind {
+    Local,
+    Remote,
+    Dynamic,
+}
+
+impl PortForwardKind {
+    pub const ALL: [PortForwardKind; 3] = [
+        PortForwardKind::Local,
+        PortForwardKind::Remote,
+        PortForwardKind::Dynamic,
+    ];
+}
+
+impl std::fmt::Display for PortForwardKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PortForwardKind::Local => write!(f, "Local"),
+            PortForwardKind::Remote => write!(f, "Remote"),
+            PortForwardKind::Dynamic => write!(f, "Dynamic"),
+        }
+    }
+}
+
 /// Authentication method for SSH connection
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -27,6 +54,30 @@ pub enum AuthMethod {
     /// SSH Agent authentication
     #[default]
     Agent,
+}
+
+fn default_bind_host() -> String {
+    "localhost".to_string()
+}
+
+fn default_port_forward_enabled() -> bool {
+    true
+}
+
+/// SSH port forwarding configuration
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct PortForward {
+    pub id: Uuid,
+    pub kind: PortForwardKind,
+    #[serde(default = "default_bind_host")]
+    pub bind_host: String,
+    pub bind_port: u16,
+    pub target_host: String,
+    pub target_port: u16,
+    #[serde(default = "default_port_forward_enabled")]
+    pub enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
 }
 
 /// Detected operating system from SSH connection
@@ -223,6 +274,12 @@ pub struct Host {
     pub vnc_port: Option<u16>,
     #[serde(default)]
     pub auth: AuthMethod,
+    /// Enable SSH agent forwarding for this host
+    #[serde(default)]
+    pub agent_forwarding: bool,
+    /// SSH port forwards (-L and -R)
+    #[serde(default)]
+    pub port_forwards: Vec<PortForward>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub group_id: Option<Uuid>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -243,6 +300,16 @@ impl Host {
     /// Get the effective VNC port (vnc_port or default 5900)
     pub fn effective_vnc_port(&self) -> u16 {
         self.vnc_port.unwrap_or(5900)
+    }
+
+    /// Get the effective SSH username (host override or current user)
+    pub fn effective_username(&self) -> String {
+        let trimmed = self.username.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
+        }
+
+        std::env::var("USER").unwrap_or_else(|_| "root".to_string())
     }
 }
 
@@ -338,6 +405,31 @@ impl HostsConfig {
 
         let content = toml::to_string_pretty(self).map_err(ConfigError::Serialize)?;
         super::write_atomic(&path, &content).map_err(|e| ConfigError::WriteFile { path, source: e })
+    }
+
+    /// Import hosts from the user's SSH config file.
+    /// Returns the number of new hosts imported.
+    pub fn import_from_ssh_config(&mut self) -> Result<usize, ConfigError> {
+        let mut imported = 0usize;
+        let existing_keys: std::collections::HashSet<(String, u16)> = self
+            .hosts
+            .iter()
+            .map(|host| (host.hostname.to_ascii_lowercase(), host.port))
+            .collect();
+        let mut seen = existing_keys;
+
+        let ssh_hosts = super::ssh_config::load_hosts_from_ssh_config()?;
+        for host in ssh_hosts {
+            let key = (host.hostname.to_ascii_lowercase(), host.port);
+            if seen.contains(&key) {
+                continue;
+            }
+            seen.insert(key);
+            self.hosts.push(host);
+            imported += 1;
+        }
+
+        Ok(imported)
     }
 }
 
@@ -878,5 +970,33 @@ VERSION="24.05 (Uakari)"
         };
         assert_eq!(pk1, pk2);
         assert_ne!(pk1, pk3);
+    }
+
+    // === PortForward tests ===
+
+    #[test]
+    fn port_forward_defaults_bind_host_and_enabled() {
+        let id = Uuid::new_v4();
+        let toml_str = format!(
+            r#"
+id = "{}"
+kind = "local"
+bind_port = 8080
+target_host = "127.0.0.1"
+target_port = 80
+"#,
+            id
+        );
+        let forward: PortForward = toml::from_str(&toml_str).expect("PortForward parse failed");
+        assert_eq!(forward.bind_host, "localhost");
+        assert!(forward.enabled);
+        assert!(forward.description.is_none());
+    }
+
+    #[test]
+    fn port_forward_kind_display() {
+        assert_eq!(PortForwardKind::Local.to_string(), "Local");
+        assert_eq!(PortForwardKind::Remote.to_string(), "Remote");
+        assert_eq!(PortForwardKind::Dynamic.to_string(), "Dynamic");
     }
 }

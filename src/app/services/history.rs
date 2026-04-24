@@ -4,6 +4,9 @@ use crate::config::HistoryConfig;
 
 pub fn mark_entry_disconnected(history: &mut HistoryConfig, entry_id: Uuid) -> bool {
     if let Some(entry) = history.find_entry_mut(entry_id) {
+        if entry.disconnected_at.is_some() {
+            return false;
+        }
         entry.disconnected_at = Some(chrono::Utc::now());
         return true;
     }
@@ -42,5 +45,28 @@ mod tests {
     fn mark_entry_disconnected_returns_false_for_missing() {
         let mut history = HistoryConfig::default();
         assert!(!mark_entry_disconnected(&mut history, Uuid::new_v4()));
+    }
+
+    #[test]
+    fn mark_entry_disconnected_is_idempotent() {
+        let mut history = HistoryConfig::default();
+        let entry = HistoryEntry::new(
+            Uuid::new_v4(),
+            "Host".to_string(),
+            "host.example".to_string(),
+            "user".to_string(),
+            SessionType::Ssh,
+        );
+        let entry_id = entry.id;
+        history.add_entry(entry);
+
+        assert!(mark_entry_disconnected(&mut history, entry_id));
+        let first_timestamp = history.find_entry(entry_id).unwrap().disconnected_at;
+
+        assert!(!mark_entry_disconnected(&mut history, entry_id));
+        assert_eq!(
+            history.find_entry(entry_id).unwrap().disconnected_at,
+            first_timestamp
+        );
     }
 }

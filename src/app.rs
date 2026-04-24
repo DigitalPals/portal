@@ -14,6 +14,7 @@ use iced::keyboard;
 use crate::config::{
     HistoryConfig, HostsConfig, SettingsConfig, SnippetHistoryConfig, SnippetsConfig,
 };
+use crate::keybindings::KeybindingsConfig;
 use crate::message::{Message, SessionId, SessionMessage, SidebarMenuItem, UiMessage, VncMessage};
 use crate::theme::{ScaledFonts, ThemeId, get_theme};
 use crate::views::dialogs::about_dialog::about_dialog_view;
@@ -33,6 +34,7 @@ use crate::views::sftp::{
 };
 use crate::views::sidebar::sidebar_view;
 use crate::views::snippet_grid::{SnippetPageContext, snippet_page_view};
+use crate::views::tab_context_menu::{TabContextMenuState, tab_context_menu_overlay};
 use crate::views::tabs::{Tab, tab_bar_view};
 use crate::views::terminal_view::terminal_view_with_status;
 use crate::views::toast::{ToastManager, toast_overlay_view};
@@ -108,6 +110,7 @@ pub struct UiState {
     pub host_grid_focus_index: Option<usize>,
     pub history_focus_index: Option<usize>,
     pub terminal_captured: bool,
+    pub tab_context_menu: TabContextMenuState,
 }
 
 /// User preference state (theme, fonts, sizing).
@@ -120,6 +123,18 @@ pub struct PreferencesState {
     pub terminal_font: crate::fonts::TerminalFont,
     pub sftp_column_widths: crate::views::sftp::ColumnWidths,
     pub vnc_settings: crate::config::settings::VncSettings,
+    pub auto_reconnect: bool,
+    pub reconnect_max_attempts: u32,
+    pub reconnect_base_delay_ms: u64,
+    pub reconnect_max_delay_ms: u64,
+    pub allow_agent_forwarding: bool,
+    pub credential_timeout: u64,
+    pub session_logging_enabled: bool,
+    pub session_log_dir: Option<std::path::PathBuf>,
+    pub session_log_format: crate::config::settings::SessionLogFormat,
+    pub security_audit_enabled: bool,
+    pub security_audit_dir: Option<std::path::PathBuf>,
+    pub keybindings: KeybindingsConfig,
 }
 
 /// Configuration-backed state.
@@ -316,6 +331,7 @@ impl Portal {
                 host_grid_focus_index: None,
                 history_focus_index: None,
                 terminal_captured: false,
+                tab_context_menu: TabContextMenuState::default(),
             },
             tabs: Vec::new(),
             active_tab: None,
@@ -332,6 +348,18 @@ impl Portal {
                 terminal_font: settings_config.terminal_font,
                 sftp_column_widths: settings_config.sftp_column_widths,
                 vnc_settings: settings_config.vnc.apply_env_overrides(),
+                auto_reconnect: settings_config.auto_reconnect,
+                reconnect_max_attempts: settings_config.reconnect_max_attempts,
+                reconnect_base_delay_ms: settings_config.reconnect_base_delay_ms,
+                reconnect_max_delay_ms: settings_config.reconnect_max_delay_ms,
+                allow_agent_forwarding: settings_config.allow_agent_forwarding,
+                credential_timeout: settings_config.credential_timeout,
+                session_logging_enabled: settings_config.session_logging_enabled,
+                session_log_dir: settings_config.session_log_dir,
+                session_log_format: settings_config.session_log_format,
+                security_audit_enabled: settings_config.security_audit_enabled,
+                security_audit_dir: settings_config.security_audit_dir.clone(),
+                keybindings: settings_config.keybindings.clone(),
             },
             config: ConfigState {
                 hosts: hosts_config,
@@ -349,6 +377,25 @@ impl Portal {
                 viewed_history_entry: None,
             },
         };
+
+        // Initialize the global passphrase cache with the configured timeout
+        services::connection::init_passphrase_cache(settings_config.credential_timeout);
+
+        // Initialize security audit logging if enabled
+        if settings_config.security_audit_enabled {
+            let audit_dir = settings_config.security_audit_dir.clone().or_else(|| {
+                crate::config::paths::config_dir().map(|dir| dir.join("logs").join("security"))
+            });
+            let audit_path = audit_dir.as_ref().map(|dir| {
+                // Create directory if it doesn't exist
+                let _ = std::fs::create_dir_all(dir);
+                dir.join("audit.log")
+            });
+            crate::security_log::init_audit_log(audit_path);
+            tracing::info!("Security audit logging enabled");
+        } else {
+            crate::security_log::init_audit_log(None);
+        }
 
         // Focus the search input on startup
         let focus_task = iced::widget::operation::focus(search_input_id());
@@ -408,6 +455,21 @@ impl Portal {
                     ui_scale: self.effective_ui_scale(),
                     system_ui_scale: self.prefs.system_ui_scale,
                     has_ui_scale_override: self.has_ui_scale_override(),
+                    session_logging_enabled: self.prefs.session_logging_enabled,
+                    credential_timeout: self.prefs.credential_timeout,
+                    security_audit_enabled: self.prefs.security_audit_enabled,
+                    security_audit_log_location: self
+                        .prefs
+                        .security_audit_dir
+                        .as_ref()
+                        .cloned()
+                        .or_else(|| {
+                            crate::config::paths::config_dir()
+                                .map(|dir| dir.join("logs").join("security"))
+                        })
+                        .map(|d| d.join("audit.log"))
+                        .map(|p| p.to_string_lossy().to_string())
+                        .unwrap_or_else(|| "Not available".to_string()),
                 },
                 theme,
                 fonts,
@@ -421,7 +483,28 @@ impl Portal {
                         .status_message
                         .as_ref()
                         .filter(|(_, shown_at)| shown_at.elapsed() < Duration::from_secs(3))
-                        .map(|(msg, _)| msg.as_str());
+                        .map(|(msg, _)| msg.clone());
+
+                    let reconnect_message = session.reconnect_next_attempt.map(|next_attempt| {
+                        let now = std::time::Instant::now();
+                        if next_attempt <= now {
+                            format!(
+                                "Reconnecting (attempt {}/{})...",
+                                session.reconnect_attempts, self.prefs.reconnect_max_attempts
+                            )
+                        } else {
+                            let remaining = next_attempt.duration_since(now);
+                            let remaining_secs = remaining.as_secs().max(1);
+                            format!(
+                                "Reconnecting (attempt {}/{}) in {}s",
+                                session.reconnect_attempts,
+                                self.prefs.reconnect_max_attempts,
+                                remaining_secs
+                            )
+                        }
+                    });
+
+                    let status_message = reconnect_message.or(status_message);
 
                     terminal_view_with_status(
                         theme,
@@ -432,6 +515,7 @@ impl Portal {
                         status_message,
                         self.prefs.terminal_font_size,
                         self.prefs.terminal_font,
+                        self.prefs.keybindings.clone(),
                         move |_sid, bytes| {
                             Message::Session(SessionMessage::Input(session_id, bytes))
                         },
@@ -672,15 +756,42 @@ impl Portal {
             with_actions_dismiss
         };
 
-        // Overlay toast notifications on top of everything
-        let final_content = if self.toast_manager.has_toasts() {
+        let (has_log_file, has_log_dir) = if let Some(tab_id) = self.ui.tab_context_menu.target_tab
+        {
+            let log_path = self.sessions.log_path(tab_id);
+            let dir_available = log_path.as_ref().and_then(|path| path.parent()).is_some()
+                || self.prefs.session_log_dir.is_some();
+            (log_path.is_some(), dir_available)
+        } else {
+            (false, false)
+        };
+
+        let with_tab_context_menu: Element<'_, Message> = if self.ui.tab_context_menu.visible {
             stack![
                 with_context_menu,
-                toast_overlay_view(&self.toast_manager, theme, fonts)
+                tab_context_menu_overlay(
+                    &self.ui.tab_context_menu,
+                    theme,
+                    fonts,
+                    self.ui.window_size,
+                    has_log_file,
+                    has_log_dir
+                )
             ]
             .into()
         } else {
             with_context_menu
+        };
+
+        // Overlay toast notifications on top of everything
+        let final_content = if self.toast_manager.has_toasts() {
+            stack![
+                with_tab_context_menu,
+                toast_overlay_view(&self.toast_manager, theme, fonts)
+            ]
+            .into()
+        } else {
+            with_tab_context_menu
         };
 
         // Wrap everything in a container with our background color
@@ -751,6 +862,14 @@ impl Portal {
         settings.theme = self.prefs.theme_id;
         settings.ui_scale = self.prefs.ui_scale_override;
         settings.vnc = self.prefs.vnc_settings.clone();
+        settings.allow_agent_forwarding = self.prefs.allow_agent_forwarding;
+        settings.credential_timeout = self.prefs.credential_timeout;
+        settings.session_logging_enabled = self.prefs.session_logging_enabled;
+        settings.session_log_dir = self.prefs.session_log_dir.clone();
+        settings.session_log_format = self.prefs.session_log_format;
+        settings.security_audit_enabled = self.prefs.security_audit_enabled;
+        settings.security_audit_dir = self.prefs.security_audit_dir.clone();
+        settings.keybindings = self.prefs.keybindings.clone();
         if let Err(e) = settings.save() {
             tracing::error!("Failed to save settings: {}", e);
         }

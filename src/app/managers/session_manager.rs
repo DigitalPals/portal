@@ -4,14 +4,15 @@
 //! including tracking active sessions, their terminals, and status messages.
 
 use std::collections::{HashMap, VecDeque};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 use uuid::Uuid;
 
 use crate::local::LocalSession;
 use crate::message::SessionId;
-use crate::message::{QualityLevel, VncScreen};
 use crate::ssh::SshSession;
+use crate::terminal::logger::SessionLogger;
 use crate::views::terminal_view::TerminalSession;
 use crate::vnc::VncSession;
 
@@ -29,11 +30,24 @@ pub struct ActiveSession {
     pub terminal: TerminalSession,
     pub session_start: Instant,
     pub host_name: String,
+    pub host_id: Option<Uuid>,
     pub history_entry_id: Uuid,
     /// Transient status message (message, shown_at) - auto-expires after 3 seconds
     pub status_message: Option<(String, Instant)>,
+    /// Number of reconnect attempts made for this session
+    pub reconnect_attempts: u32,
+    /// Next scheduled reconnect attempt time (if any)
+    pub reconnect_next_attempt: Option<Instant>,
     /// Buffered output to process in small chunks for UI responsiveness
     pub pending_output: VecDeque<Vec<u8>>,
+    /// Total bytes currently held in pending_output.
+    pub pending_output_bytes: usize,
+    /// Timestamp of the most recent data push into pending_output.
+    /// Used to coalesce rapid back-to-back SSH writes (e.g. multi-flush prompts)
+    /// into a single terminal update cycle to avoid rendering partial state.
+    pub last_data_received_at: Option<Instant>,
+    /// Optional session logger for terminal output
+    pub logger: Option<SessionLogger>,
 }
 
 /// Active VNC session
@@ -51,12 +65,6 @@ pub struct VncActiveSession {
     pub fullscreen: bool,
     /// Whether keyboard passthrough is active (all keys go to VNC)
     pub keyboard_passthrough: bool,
-    /// Current adaptive quality level
-    pub quality_level: QualityLevel,
-    /// Discovered remote monitors
-    pub monitors: Vec<VncScreen>,
-    /// Currently selected monitor (None = full desktop)
-    pub selected_monitor: Option<usize>,
     /// History entry ID for marking disconnection
     pub history_entry_id: uuid::Uuid,
 }
@@ -108,12 +116,22 @@ impl SessionManager {
     pub fn has_pending_output(&self) -> bool {
         self.sessions
             .values()
-            .any(|session| !session.pending_output.is_empty())
+            .any(|session| session.pending_output_bytes > 0)
     }
 
     /// Get mutable iterator over all sessions
     pub fn values_mut(&mut self) -> impl Iterator<Item = &mut ActiveSession> {
         self.sessions.values_mut()
+    }
+
+    /// Get the log file path for a session if logging is enabled
+    pub fn log_path(&self, id: SessionId) -> Option<PathBuf> {
+        self.sessions.get(&id).and_then(|session| {
+            session
+                .logger
+                .as_ref()
+                .map(|logger| logger.path().to_path_buf())
+        })
     }
 }
 
@@ -136,9 +154,15 @@ mod tests {
             terminal,
             session_start: Instant::now(),
             host_name: host_name.to_string(),
+            host_id: None,
             history_entry_id: Uuid::new_v4(),
             status_message: None,
+            reconnect_attempts: 0,
+            reconnect_next_attempt: None,
             pending_output: VecDeque::new(),
+            pending_output_bytes: 0,
+            last_data_received_at: None,
+            logger: None,
         }
     }
 
@@ -270,6 +294,7 @@ mod tests {
         let mut session = create_test_session("test");
 
         session.pending_output.push_back(vec![1, 2, 3]);
+        session.pending_output_bytes = 3;
 
         manager.insert(session_id, session);
 
@@ -288,6 +313,7 @@ mod tests {
         // Second session with pending output
         let mut session2 = create_test_session("has-data");
         session2.pending_output.push_back(vec![1, 2, 3]);
+        session2.pending_output_bytes = 3;
         manager.insert(id2, session2);
 
         assert!(manager.has_pending_output());
@@ -300,6 +326,7 @@ mod tests {
         let mut session = create_test_session("test");
 
         session.pending_output.push_back(vec![1, 2, 3]);
+        session.pending_output_bytes = 3;
         manager.insert(session_id, session);
 
         assert!(manager.has_pending_output());
@@ -307,6 +334,7 @@ mod tests {
         // Simulate processing output
         if let Some(session) = manager.get_mut(session_id) {
             session.pending_output.clear();
+            session.pending_output_bytes = 0;
         }
 
         assert!(!manager.has_pending_output());
@@ -338,6 +366,7 @@ mod tests {
         // Add pending output to all sessions
         for session in manager.values_mut() {
             session.pending_output.push_back(vec![42]);
+            session.pending_output_bytes = 1;
         }
 
         // Both sessions should now have pending output

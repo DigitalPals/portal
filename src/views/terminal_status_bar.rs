@@ -32,7 +32,7 @@ pub fn terminal_status_bar<'a>(
     fonts: ScaledFonts,
     host_name: &'a str,
     session_start: Instant,
-    status_message: Option<&'a str>,
+    status_message: Option<String>,
 ) -> Element<'a, Message> {
     let duration = format_duration(session_start);
 

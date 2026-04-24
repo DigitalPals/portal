@@ -1,6 +1,9 @@
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
+use russh::Pty;
 use russh::client::{self, Config};
 use russh::keys::HashAlg;
 use tokio::net::TcpStream;
@@ -17,10 +20,71 @@ use secrecy::{ExposeSecret, SecretString};
 
 use super::SshEvent;
 use super::auth::ResolvedAuth;
+use super::connection_pool::{SshConnection, SshConnectionKey};
 use super::handler::ClientHandler;
 use super::known_hosts::KnownHostsManager;
 use super::os_detect;
 use super::session::SshSession;
+use super::shared_connection_pool;
+
+const SSH_TERMINAL_TYPE: &str = "xterm-256color";
+
+fn default_pty_modes() -> &'static [(Pty, u32)] {
+    &[
+        (Pty::VINTR, 3),
+        (Pty::VQUIT, 28),
+        (Pty::VERASE, 127),
+        (Pty::VKILL, 21),
+        (Pty::VEOF, 4),
+        (Pty::VEOL, 0),
+        (Pty::VEOL2, 0),
+        (Pty::VSTART, 17),
+        (Pty::VSTOP, 19),
+        (Pty::VSUSP, 26),
+        (Pty::VREPRINT, 18),
+        (Pty::VWERASE, 23),
+        (Pty::VLNEXT, 22),
+        (Pty::VDISCARD, 15),
+        (Pty::IGNPAR, 0),
+        (Pty::PARMRK, 0),
+        (Pty::INPCK, 0),
+        (Pty::ISTRIP, 0),
+        (Pty::INLCR, 0),
+        (Pty::IGNCR, 0),
+        (Pty::ICRNL, 1),
+        (Pty::IUCLC, 0),
+        (Pty::IXON, 1),
+        (Pty::IXANY, 0),
+        (Pty::IXOFF, 0),
+        (Pty::IMAXBEL, 1),
+        (Pty::IUTF8, 1),
+        (Pty::ISIG, 1),
+        (Pty::ICANON, 1),
+        (Pty::XCASE, 0),
+        (Pty::ECHO, 1),
+        (Pty::ECHOE, 1),
+        (Pty::ECHOK, 1),
+        (Pty::ECHONL, 0),
+        (Pty::NOFLSH, 0),
+        (Pty::TOSTOP, 0),
+        (Pty::IEXTEN, 1),
+        (Pty::ECHOCTL, 1),
+        (Pty::ECHOKE, 1),
+        (Pty::PENDIN, 0),
+        (Pty::OPOST, 1),
+        (Pty::OLCUC, 0),
+        (Pty::ONLCR, 1),
+        (Pty::OCRNL, 0),
+        (Pty::ONOCR, 0),
+        (Pty::ONLRET, 0),
+        (Pty::CS7, 0),
+        (Pty::CS8, 1),
+        (Pty::PARENB, 0),
+        (Pty::PARODD, 0),
+        (Pty::TTY_OP_ISPEED, 38400),
+        (Pty::TTY_OP_OSPEED, 38400),
+    ]
+}
 
 /// SSH client for establishing connections
 pub struct SshClient {
@@ -86,18 +150,9 @@ impl SshClient {
         password: Option<SecretString>,
         passphrase: Option<SecretString>,
         detect_os_on_connect: bool,
+        allow_agent_forwarding: bool,
     ) -> Result<(Arc<SshSession>, Option<DetectedOs>), SshError> {
         let addr = format!("{}:{}", host.hostname, host.port);
-
-        // Connect with timeout
-        let stream = timeout(connection_timeout, TcpStream::connect(&addr))
-            .await
-            .map_err(|_| SshError::Timeout(addr.clone()))?
-            .map_err(|e| SshError::ConnectionFailed {
-                host: host.hostname.clone(),
-                port: host.port,
-                reason: e.to_string(),
-            })?;
 
         match timeout(
             connection_timeout,
@@ -105,10 +160,11 @@ impl SshClient {
                 host,
                 terminal_size,
                 event_tx,
-                stream,
+                connection_timeout,
                 password,
                 passphrase,
                 detect_os_on_connect,
+                allow_agent_forwarding,
             ),
         )
         .await
@@ -124,76 +180,191 @@ impl SshClient {
         host: &Host,
         terminal_size: (u16, u16),
         event_tx: mpsc::Sender<SshEvent>,
-        stream: TcpStream,
+        connection_timeout: Duration,
         password: Option<SecretString>,
         passphrase: Option<SecretString>,
         detect_os_on_connect: bool,
+        allow_agent_forwarding: bool,
     ) -> Result<(Arc<SshSession>, Option<DetectedOs>), SshError> {
-        let handler = ClientHandler::new(
-            host.hostname.clone(),
-            host.port,
-            self.known_hosts.clone(),
-            event_tx.clone(),
-        );
+        let pool = shared_connection_pool();
+        let key = SshConnectionKey::new(&host.hostname, host.port, &host.username);
+        let agent_forwarding_enabled = allow_agent_forwarding && host.agent_forwarding;
 
-        let mut handle = client::connect_stream(self.config.clone(), stream, handler)
-            .await
-            .map_err(|e| SshError::ConnectionFailed {
-                host: host.hostname.clone(),
-                port: host.port,
-                reason: e.to_string(),
-            })?;
+        // At most 1 reconnect attempt if we raced a stale pooled connection.
+        for attempt in 0..2 {
+            // Try to reuse an existing authenticated connection.
+            let mut connection = pool.get(&key).await;
+            let mut created_new_connection = false;
 
-        // Authenticate
-        let auth = ResolvedAuth::resolve(&host.auth, password, passphrase).await?;
-        self.authenticate(&mut handle, &host.username, auth, &host.hostname, host.port)
-            .await?;
+            if connection.is_none() {
+                created_new_connection = true;
+                let addr = format!("{}:{}", host.hostname, host.port);
 
-        // Detect OS if requested (before opening the shell channel)
-        let detected_os = if detect_os_on_connect {
-            match os_detect::detect_os(&mut handle).await {
-                Ok(os) => Some(os),
-                Err(e) => {
-                    tracing::warn!("OS detection failed: {}", e);
-                    None
+                // Connect with timeout
+                let stream = timeout(connection_timeout, TcpStream::connect(&addr))
+                    .await
+                    .map_err(|_| SshError::Timeout(addr.clone()))?
+                    .map_err(|e| SshError::ConnectionFailed {
+                        host: host.hostname.clone(),
+                        port: host.port,
+                        reason: e.to_string(),
+                    })?;
+
+                let agent_forwarding_enabled_flag = Arc::new(AtomicBool::new(false));
+                // Create shared remote forwards registry for this connection
+                let remote_forwards = Arc::new(Mutex::new(HashMap::new()));
+                let handler = ClientHandler::new(
+                    host.hostname.clone(),
+                    host.port,
+                    self.known_hosts.clone(),
+                    event_tx.clone(),
+                    agent_forwarding_enabled_flag.clone(),
+                    remote_forwards.clone(),
+                );
+
+                let mut handle = client::connect_stream(self.config.clone(), stream, handler)
+                    .await
+                    .map_err(|e| SshError::ConnectionFailed {
+                        host: host.hostname.clone(),
+                        port: host.port,
+                        reason: e.to_string(),
+                    })?;
+
+                // Authenticate
+                let auth =
+                    ResolvedAuth::resolve(&host.auth, password.clone(), passphrase.clone()).await?;
+                self.authenticate(&mut handle, &host.username, auth, &host.hostname, host.port)
+                    .await?;
+
+                connection = Some(SshConnection::new(
+                    handle,
+                    remote_forwards,
+                    agent_forwarding_enabled_flag,
+                    Arc::from(host.hostname.clone()),
+                    host.port,
+                ));
+                if let Some(conn) = connection.as_ref() {
+                    pool.put(key.clone(), conn.clone()).await;
                 }
             }
-        } else {
-            None
-        };
 
-        // Open channel and request PTY
-        let channel = handle
-            .channel_open_session()
-            .await
-            .map_err(|e| SshError::Channel(e.to_string()))?;
+            let connection = match connection {
+                Some(conn) => conn,
+                None => {
+                    return Err(SshError::ConnectionFailed {
+                        host: host.hostname.clone(),
+                        port: host.port,
+                        reason: "Connection pool lookup failed".to_string(),
+                    });
+                }
+            };
 
-        // Request PTY
-        channel
-            .request_pty(
-                false,
-                "xterm-256color",
-                terminal_size.0 as u32,
-                terminal_size.1 as u32,
-                0,
-                0,
-                &[],
-            )
-            .await
-            .map_err(|e| SshError::Channel(format!("PTY request failed: {}", e)))?;
+            // Open channel and request PTY
+            let channel = {
+                let handle = connection.handle();
+                let handle_guard = handle.lock().await;
+                handle_guard
+                    .channel_open_session()
+                    .await
+                    .map_err(|e| SshError::Channel(e.to_string()))
+            };
 
-        // Request shell
-        channel
-            .request_shell(false)
-            .await
-            .map_err(|e| SshError::Channel(format!("Shell request failed: {}", e)))?;
+            let channel = match channel {
+                Ok(channel) => channel,
+                Err(e) => {
+                    // Connection may be stale; invalidate and retry once.
+                    pool.invalidate_if_matches(&key, &connection).await;
+                    if attempt == 0 && !created_new_connection {
+                        continue;
+                    }
+                    return Err(e);
+                }
+            };
 
-        let _ = event_tx.send(SshEvent::Connected).await;
+            if agent_forwarding_enabled {
+                connection.enable_agent_forwarding();
+                if let Err(e) = channel.agent_forward(false).await {
+                    tracing::warn!("Agent forwarding request failed: {}", e);
+                } else {
+                    crate::security_log::log_agent_forwarding_enabled(
+                        &host.hostname,
+                        host.port,
+                        &host.username,
+                    );
+                }
+            }
 
-        // Session spawns its own reader task in new()
-        let session = Arc::new(SshSession::new(handle, channel, event_tx));
+            // Signal truecolor and terminal identity to the remote shell.
+            // Servers only honour these if AcceptEnv includes them (sshd_config).
+            // Failures are non-fatal — we warn and continue.
+            for (name, value) in [("COLORTERM", "truecolor"), ("TERM_PROGRAM", "portal")] {
+                if let Err(e) = channel.set_env(false, name, value).await {
+                    tracing::warn!("Failed to set {name}: {e}");
+                }
+            }
 
-        Ok((session, detected_os))
+            // Request PTY
+            if let Err(e) = channel
+                .request_pty(
+                    false,
+                    SSH_TERMINAL_TYPE,
+                    terminal_size.0 as u32,
+                    terminal_size.1 as u32,
+                    0,
+                    0,
+                    default_pty_modes(),
+                )
+                .await
+            {
+                pool.invalidate_if_matches(&key, &connection).await;
+                if attempt == 0 && !created_new_connection {
+                    continue;
+                }
+                return Err(SshError::Channel(format!("PTY request failed: {}", e)));
+            }
+
+            // Request shell
+            if let Err(e) = channel.request_shell(false).await {
+                pool.invalidate_if_matches(&key, &connection).await;
+                if attempt == 0 && !created_new_connection {
+                    continue;
+                }
+                return Err(SshError::Channel(format!("Shell request failed: {}", e)));
+            }
+
+            // Run host OS detection only after the user-facing shell has been
+            // requested. Opening exec channels first can consume login/PAM
+            // output like MOTD before the visible interactive PTY exists.
+            let detected_os = if detect_os_on_connect {
+                let handle = connection.handle();
+                let mut handle_guard = handle.lock().await;
+                match os_detect::detect_os(&mut handle_guard).await {
+                    Ok(os) => Some(os),
+                    Err(e) => {
+                        tracing::warn!("OS detection failed: {}", e);
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+
+            if created_new_connection {
+                security_log::log_ssh_connect(&host.hostname, host.port, &host.username);
+            }
+            let _ = event_tx.send(SshEvent::Connected).await;
+
+            // Session spawns its own reader task in new()
+            let session = Arc::new(SshSession::new(connection, channel, event_tx));
+
+            return Ok((session, detected_os));
+        }
+
+        Err(SshError::ConnectionFailed {
+            host: host.hostname.clone(),
+            port: host.port,
+            reason: "Failed to establish session".to_string(),
+        })
     }
 
     async fn authenticate(

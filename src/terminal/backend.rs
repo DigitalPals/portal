@@ -116,6 +116,7 @@ pub struct RenderCell {
     pub column: usize,
     pub line: usize,
     pub character: char,
+    pub zerowidth: String,
     pub fg: AnsiColor,
     pub bg: AnsiColor,
     pub flags: CellFlags,
@@ -203,5 +204,32 @@ impl TerminalBackend {
         let mut term = self.term.lock();
         term.resize(self.size);
         self.render_epoch.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alacritty_terminal::index::{Column, Line};
+
+    #[test]
+    fn process_input_preserves_utf8_box_drawing_cells() {
+        let (backend, _event_rx) = TerminalBackend::new(TerminalSize::new(10, 3));
+
+        backend.process_input("┌─┐│x│└─┘".as_bytes());
+
+        let term = backend.term.lock();
+        let grid = term.grid();
+        let line = &grid[Line(0)];
+
+        assert_eq!(line[Column(0)].c, '┌');
+        assert_eq!(line[Column(1)].c, '─');
+        assert_eq!(line[Column(2)].c, '┐');
+        assert_eq!(line[Column(3)].c, '│');
+        assert_eq!(line[Column(4)].c, 'x');
+        assert_eq!(line[Column(5)].c, '│');
+        assert_eq!(line[Column(6)].c, '└');
+        assert_eq!(line[Column(7)].c, '─');
+        assert_eq!(line[Column(8)].c, '┘');
     }
 }

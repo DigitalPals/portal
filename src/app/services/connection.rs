@@ -7,20 +7,23 @@ use secrecy::SecretString;
 use tokio::sync::{Mutex, mpsc};
 use uuid::Uuid;
 
-use crate::config::{DetectedOs, Host};
+use crate::config::{DetectedOs, Host, PortForwardKind};
 use crate::message::{
     DialogMessage, Message, PassphraseRequest, PassphraseSftpContext, SessionId, SessionMessage,
     SftpMessage, VerificationRequestWrapper,
 };
 use crate::sftp::SftpClient;
 use crate::ssh::known_hosts::KnownHostsManager;
+use crate::ssh::passphrase_cache::PassphraseCache;
 use crate::ssh::{SshClient, SshEvent};
 use crate::views::sftp::PaneId;
 
 const SSH_EVENT_CHANNEL_CAPACITY: usize = 1024;
 const SSH_KEEPALIVE_INTERVAL_SECS: u64 = 60;
+const DEFAULT_CREDENTIAL_TIMEOUT: u64 = 300; // 5 minutes
 
 static KNOWN_HOSTS_MANAGER: OnceLock<Arc<Mutex<KnownHostsManager>>> = OnceLock::new();
+static PASSPHRASE_CACHE: OnceLock<Arc<PassphraseCache>> = OnceLock::new();
 
 enum SshAuth {
     None,
@@ -60,6 +63,24 @@ pub fn shared_known_hosts_manager() -> Arc<Mutex<KnownHostsManager>> {
         .clone()
 }
 
+/// Get the shared passphrase cache instance
+pub fn shared_passphrase_cache() -> Arc<PassphraseCache> {
+    PASSPHRASE_CACHE
+        .get_or_init(|| Arc::new(PassphraseCache::new(DEFAULT_CREDENTIAL_TIMEOUT)))
+        .clone()
+}
+
+/// Initialize the passphrase cache with a custom timeout
+pub fn init_passphrase_cache(timeout_seconds: u64) {
+    if let Some(cache) = PASSPHRASE_CACHE.get() {
+        // Apply updates at runtime; this only affects new entries.
+        cache.set_timeout(timeout_seconds);
+        return;
+    }
+
+    let _ = PASSPHRASE_CACHE.get_or_init(|| Arc::new(PassphraseCache::new(timeout_seconds)));
+}
+
 pub fn should_detect_os(detected_os: Option<&DetectedOs>) -> bool {
     match detected_os {
         None => true,
@@ -75,7 +96,9 @@ fn ssh_event_listener(session_id: SessionId, event_rx: mpsc::Receiver<SshEvent>)
         }),
         move |event| match event {
             SshEvent::Data(data) => Message::Session(SessionMessage::Data(session_id, data)),
-            SshEvent::Disconnected => Message::Session(SessionMessage::Disconnected(session_id)),
+            SshEvent::Disconnected { clean } => {
+                Message::Session(SessionMessage::Disconnected { session_id, clean })
+            }
             SshEvent::HostKeyVerification(request) => Message::Dialog(
                 DialogMessage::HostKeyVerification(VerificationRequestWrapper(Some(request))),
             ),
@@ -103,6 +126,7 @@ fn ssh_connect_tasks_with_auth(
     session_id: SessionId,
     host_id: Uuid,
     should_detect_os: bool,
+    allow_agent_forwarding: bool,
     auth: SshAuth,
 ) -> Task<Message> {
     let (event_tx, event_rx) = mpsc::channel::<SshEvent>(SSH_EVENT_CHANNEL_CAPACITY);
@@ -123,8 +147,41 @@ fn ssh_connect_tasks_with_auth(
                     password,
                     passphrase,
                     should_detect_os,
+                    allow_agent_forwarding,
                 )
                 .await;
+            let result = match result {
+                Ok((session, detected_os)) => {
+                    for forward in host_for_task
+                        .port_forwards
+                        .iter()
+                        .filter(|forward| forward.enabled)
+                    {
+                        let creation_result = match forward.kind {
+                            PortForwardKind::Local => {
+                                session.create_local_forward(forward.clone()).await
+                            }
+                            PortForwardKind::Remote => {
+                                session.create_remote_forward(forward.clone()).await
+                            }
+                            PortForwardKind::Dynamic => {
+                                session.create_dynamic_forward(forward.clone()).await
+                            }
+                        };
+
+                        if let Err(e) = creation_result {
+                            tracing::warn!(
+                                "Failed to create port forward {} on {}: {}",
+                                forward.id,
+                                host_for_task.name,
+                                e
+                            );
+                        }
+                    }
+                    Ok((session, detected_os))
+                }
+                Err(e) => Err(e),
+            };
 
             (session_id, host_id, host_for_task, result, should_detect_os)
         },
@@ -148,8 +205,16 @@ pub fn ssh_connect_tasks(
     session_id: SessionId,
     host_id: Uuid,
     should_detect_os: bool,
+    allow_agent_forwarding: bool,
 ) -> Task<Message> {
-    ssh_connect_tasks_with_auth(host, session_id, host_id, should_detect_os, SshAuth::None)
+    ssh_connect_tasks_with_auth(
+        host,
+        session_id,
+        host_id,
+        should_detect_os,
+        allow_agent_forwarding,
+        SshAuth::None,
+    )
 }
 
 /// SSH connection tasks with password authentication
@@ -158,6 +223,7 @@ pub fn ssh_connect_tasks_with_password(
     session_id: SessionId,
     host_id: Uuid,
     should_detect_os: bool,
+    allow_agent_forwarding: bool,
     password: SecretString,
 ) -> Task<Message> {
     ssh_connect_tasks_with_auth(
@@ -165,6 +231,7 @@ pub fn ssh_connect_tasks_with_password(
         session_id,
         host_id,
         should_detect_os,
+        allow_agent_forwarding,
         SshAuth::Password(password),
     )
 }
@@ -175,6 +242,7 @@ pub fn ssh_connect_tasks_with_passphrase(
     session_id: SessionId,
     host_id: Uuid,
     should_detect_os: bool,
+    allow_agent_forwarding: bool,
     passphrase: SecretString,
 ) -> Task<Message> {
     ssh_connect_tasks_with_auth(
@@ -182,6 +250,7 @@ pub fn ssh_connect_tasks_with_passphrase(
         session_id,
         host_id,
         should_detect_os,
+        allow_agent_forwarding,
         SshAuth::Passphrase(passphrase),
     )
 }
@@ -324,10 +393,10 @@ fn map_ssh_connect_error(
                 error: Some("Incorrect passphrase".to_string()),
             }))
         }
-        _ => Message::Session(SessionMessage::Error(format!(
-            "Connection failed: {}",
-            error
-        ))),
+        _ => Message::Session(SessionMessage::ConnectFailed {
+            session_id,
+            error: format!("Connection failed: {}", error),
+        }),
     }
 }
 
@@ -420,6 +489,8 @@ mod tests {
             auth: AuthMethod::PublicKey { key_path: None },
             protocol: crate::config::Protocol::Ssh,
             vnc_port: None,
+            agent_forwarding: false,
+            port_forwards: Vec::new(),
             group_id: None,
             notes: None,
             tags: vec![],
@@ -456,6 +527,8 @@ mod tests {
             auth: AuthMethod::PublicKey { key_path: None },
             protocol: crate::config::Protocol::Ssh,
             vnc_port: None,
+            agent_forwarding: false,
+            port_forwards: Vec::new(),
             group_id: None,
             notes: None,
             tags: vec![],

@@ -10,6 +10,7 @@ use crate::icons::{self, icon_with_color};
 use crate::message::{Message, TabMessage, UiMessage};
 use crate::theme::{ScaledFonts, Theme};
 use crate::views::host_grid::os_icon_data;
+use crate::widgets::mouse_area as capture_mouse_area;
 
 /// Represents a single tab
 #[derive(Debug, Clone)]
@@ -284,11 +285,18 @@ fn tab_button<'a>(
         .padding(0)
         .on_press(Message::Tab(TabMessage::Select(tab_id)));
 
-    // Wrap in mouse_area for hover detection
-    mouse_area(tab_button)
+    // Wrap in mouse_area for hover and right-click detection
+    let area = mouse_area(tab_button)
         .on_enter(Message::Tab(TabMessage::Hover(Some(tab_id))))
-        .on_exit(Message::Tab(TabMessage::Hover(None)))
-        .into()
+        .on_exit(Message::Tab(TabMessage::Hover(None)));
+
+    if tab.tab_type == TabType::Terminal {
+        capture_mouse_area(area)
+            .on_right_press(move |x, y| Message::Tab(TabMessage::ShowContextMenu(tab_id, x, y)))
+            .into()
+    } else {
+        area.into()
+    }
 }
 
 /// New tab "+" button

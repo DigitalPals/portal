@@ -39,9 +39,21 @@ pub enum HostDialogField {
     Username,
     AuthMethod,
     KeyPath,
+    AgentForwarding,
     Tags,
     Notes,
     Protocol,
+}
+
+#[derive(Debug, Clone)]
+pub enum PortForwardField {
+    Kind,
+    BindHost,
+    BindPort,
+    TargetHost,
+    TargetPort,
+    Description,
+    Enabled,
 }
 
 #[derive(Debug, Clone)]
@@ -84,9 +96,17 @@ pub enum SessionMessage {
     /// Process buffered terminal output in time-sliced chunks
     ProcessOutputTick,
     /// Terminal session disconnected
-    Disconnected(SessionId),
+    /// `clean` is true if the session ended normally (e.g., user typed `exit`)
+    Disconnected { session_id: SessionId, clean: bool },
+    /// Scheduled reconnect attempt
+    Reconnect(SessionId),
     /// Session error occurred
     Error(String),
+    /// Connection failed for a specific session
+    ConnectFailed {
+        session_id: SessionId,
+        error: String,
+    },
     /// Terminal input from user
     Input(SessionId, Vec<u8>),
     /// Terminal resize event
@@ -182,6 +202,22 @@ pub enum DialogMessage {
     Submit,
     /// Host dialog field changed
     FieldChanged(HostDialogField, String),
+    /// Port forward editor field changed
+    PortForwardFieldChanged(PortForwardField, String),
+    /// Toggle port forwards section
+    PortForwardSectionToggled,
+    /// Add a new port forward
+    PortForwardAdd,
+    /// Edit an existing port forward
+    PortForwardEdit(Uuid),
+    /// Remove an existing port forward
+    PortForwardRemove(Uuid),
+    /// Toggle an existing port forward
+    PortForwardToggleEnabled(Uuid, bool),
+    /// Save port forward editor
+    PortForwardSave,
+    /// Cancel port forward editor
+    PortForwardCancel,
     /// Host key verification request received
     HostKeyVerification(VerificationRequestWrapper),
     /// User accepted host key
@@ -200,6 +236,8 @@ pub enum DialogMessage {
     PassphraseRequired(PassphraseRequest),
     /// Passphrase dialog: passphrase text changed
     PassphraseChanged(SecretString),
+    /// Passphrase dialog: toggle whether to cache passphrase for the session
+    PassphraseRememberToggled(bool),
     /// Passphrase dialog: user submitted passphrase
     PassphraseSubmit,
     /// Passphrase dialog: user cancelled
@@ -208,10 +246,12 @@ pub enum DialogMessage {
     QuickConnectFieldChanged(QuickConnectField, String),
     /// Quick connect dialog: user submitted
     QuickConnectSubmit,
+    /// Import hosts from SSH config
+    ImportFromSshConfig,
 }
 
 /// Context for passphrase-based SFTP connections
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct PassphraseSftpContext {
     pub tab_id: Uuid,
     pub pane_id: PaneId,
@@ -245,6 +285,19 @@ pub enum TabMessage {
     New,
     /// Track which tab is being hovered (for showing close button)
     Hover(Option<Uuid>),
+    /// Show terminal tab context menu at position
+    ShowContextMenu(Uuid, f32, f32),
+    /// Hide terminal tab context menu
+    HideContextMenu,
+    /// Execute a terminal tab context menu action
+    ContextMenuAction(Uuid, TabContextMenuAction),
+}
+
+/// Context menu actions for terminal tabs
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TabContextMenuAction {
+    OpenLogFile,
+    OpenLogDirectory,
 }
 
 /// Host management messages
@@ -408,30 +461,6 @@ pub enum VncMessage {
     },
     /// Toggle keyboard passthrough mode
     ToggleKeyboardPassthrough,
-    /// Quality level changed (adaptive quality)
-    QualityChanged(SessionId, QualityLevel),
-    /// Monitors discovered on remote desktop
-    MonitorsDiscovered(SessionId, Vec<VncScreen>),
-    /// Select a specific monitor to view
-    SelectMonitor(SessionId, Option<usize>),
-}
-
-/// VNC connection quality level
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum QualityLevel {
-    High,
-    Medium,
-    Low,
-}
-
-/// VNC remote screen/monitor info
-#[derive(Debug, Clone)]
-pub struct VncScreen {
-    pub id: u32,
-    pub x: u16,
-    pub y: u16,
-    pub width: u16,
-    pub height: u16,
 }
 
 /// UI state messages
@@ -463,6 +492,12 @@ pub enum UiMessage {
     SnippetHistoryStoreOutput(bool),
     /// Redact sensitive values in snippet history
     SnippetHistoryRedactOutput(bool),
+    /// Session logging enabled/disabled
+    SessionLoggingEnabled(bool),
+    /// Credential cache timeout changed (seconds, 0 = disabled)
+    CredentialTimeoutChange(u64),
+    /// Security audit logging enabled/disabled (writes security events to an audit log file)
+    SecurityAuditLoggingEnabled(bool),
     /// Window resized
     WindowResized(iced::Size),
     /// Dismiss toast notification

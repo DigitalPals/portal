@@ -4,19 +4,65 @@ use futures::stream;
 use iced::Task;
 use iced::clipboard;
 use std::collections::VecDeque;
+use std::sync::Arc;
 use std::time::Instant;
 use uuid::Uuid;
 
 use crate::app::managers::{ActiveSession, SessionBackend};
+use crate::app::services::{connection, history};
 use crate::app::{Portal, Tab};
+use crate::config::AuthMethod;
 use crate::message::{Message, SessionId, SessionMessage};
+use crate::ssh::reconnect::ReconnectPolicy;
 use crate::terminal::backend::TerminalEvent;
+use crate::terminal::logger::SessionLogger;
 use crate::views::terminal_view::TerminalSession;
 use crate::views::toast::Toast;
 
 /// Maximum bytes to buffer before dropping oldest data.
 /// 16MB is generous - if we hit this, data is arriving faster than humanly readable.
 const MAX_PENDING_OUTPUT_BYTES: usize = 16 * 1024 * 1024;
+
+fn start_session_logger(portal: &mut Portal, session_id: SessionId) {
+    if !portal.prefs.session_logging_enabled {
+        return;
+    }
+
+    let Some(session) = portal.sessions.get_mut(session_id) else {
+        return;
+    };
+
+    if let Some(logger) = session.logger.take() {
+        tokio::spawn(async move {
+            logger.shutdown().await;
+        });
+    }
+
+    let Some(log_dir) = portal.prefs.session_log_dir.clone() else {
+        return;
+    };
+
+    match SessionLogger::start(&session.host_name, log_dir, portal.prefs.session_log_format) {
+        Ok(logger) => {
+            session.logger = Some(logger);
+        }
+        Err(error) => {
+            tracing::error!("Failed to start session logger: {}", error);
+        }
+    }
+}
+
+fn close_session_logger(portal: &mut Portal, session_id: SessionId) -> Task<Message> {
+    let Some(session) = portal.sessions.get_mut(session_id) else {
+        return Task::none();
+    };
+
+    if let Some(logger) = session.logger.take() {
+        return Task::perform(async move { logger.shutdown().await }, |_| Message::Noop);
+    }
+
+    Task::none()
+}
 
 fn start_terminal_session(
     portal: &mut Portal,
@@ -37,9 +83,15 @@ fn start_terminal_session(
             terminal,
             session_start: Instant::now(),
             host_name: host_name.clone(),
+            host_id,
             history_entry_id,
             status_message: None,
+            reconnect_attempts: 0,
+            reconnect_next_attempt: None,
             pending_output: VecDeque::new(),
+            pending_output_bytes: 0,
+            last_data_received_at: None,
+            logger: None,
         },
     );
 
@@ -50,11 +102,75 @@ fn start_terminal_session(
     // Switch to terminal view and hide sidebar
     portal.enter_terminal_view(session_id, true);
 
+    start_session_logger(portal, session_id);
+
     Task::run(
         stream::unfold(terminal_events, |mut rx| async move {
             rx.recv().await.map(|event| (event, rx))
         }),
         move |event| Message::Session(SessionMessage::TerminalEvent(session_id, event)),
+    )
+}
+
+fn finalize_disconnection(portal: &mut Portal, session_id: SessionId) {
+    if let Some(session) = portal.sessions.get(session_id) {
+        if history::mark_entry_disconnected(&mut portal.config.history, session.history_entry_id) {
+            if let Err(e) = portal.config.history.save() {
+                tracing::error!("Failed to save history config: {}", e);
+            }
+        }
+    }
+    portal.close_tab(session_id);
+}
+
+fn schedule_reconnect(portal: &mut Portal, session_id: SessionId) -> Task<Message> {
+    let Some(session) = portal.sessions.get_mut(session_id) else {
+        return Task::none();
+    };
+
+    if !portal.prefs.auto_reconnect {
+        return Task::none();
+    }
+
+    if !matches!(session.backend, SessionBackend::Ssh(_)) {
+        return Task::none();
+    }
+
+    if let Some(next_attempt) = session.reconnect_next_attempt {
+        if next_attempt > Instant::now() {
+            return Task::none();
+        }
+    }
+
+    let policy = ReconnectPolicy::new(
+        portal.prefs.reconnect_base_delay_ms,
+        portal.prefs.reconnect_max_delay_ms,
+        portal.prefs.reconnect_max_attempts,
+    );
+
+    if session.reconnect_attempts >= policy.max_attempts {
+        session.reconnect_next_attempt = None;
+        portal.toast_manager.push(Toast::error("Reconnect failed"));
+        finalize_disconnection(portal, session_id);
+        return Task::none();
+    }
+
+    let delay = policy.delay_with_jitter(session.reconnect_attempts);
+    session.reconnect_attempts += 1;
+    session.reconnect_next_attempt = Some(Instant::now() + delay);
+
+    let delay_secs = delay.as_millis().div_ceil(1000).max(1);
+    portal.toast_manager.push(Toast::warning(format!(
+        "Reconnecting in {}s...",
+        delay_secs
+    )));
+
+    Task::perform(
+        async move {
+            tokio::time::sleep(delay).await;
+            session_id
+        },
+        |session_id| Message::Session(SessionMessage::Reconnect(session_id)),
     )
 }
 
@@ -70,6 +186,33 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
         } => {
             tracing::info!("SSH connected");
             portal.dialogs.close_connecting();
+
+            if let Some(session) = portal.sessions.get_mut(session_id) {
+                if let Some(os) = detected_os {
+                    if let Some(host) = portal.config.hosts.find_host_mut(host_id) {
+                        host.detected_os = Some(os);
+                        host.last_connected = Some(chrono::Utc::now());
+                        host.updated_at = chrono::Utc::now();
+                        if let Err(e) = portal.config.hosts.save() {
+                            tracing::error!("Failed to save hosts config with detected OS: {}", e);
+                        }
+                    }
+                } else if let Some(host) = portal.config.hosts.find_host_mut(host_id) {
+                    host.last_connected = Some(chrono::Utc::now());
+                    host.updated_at = chrono::Utc::now();
+                    if let Err(e) = portal.config.hosts.save() {
+                        tracing::error!("Failed to save host connection time: {}", e);
+                    }
+                }
+
+                session.backend = SessionBackend::Ssh(ssh_session);
+                session.session_start = Instant::now();
+                session.reconnect_attempts = 0;
+                session.reconnect_next_attempt = None;
+                session.status_message = Some(("Reconnected".to_string(), Instant::now()));
+                start_session_logger(portal, session_id);
+                return Task::none();
+            }
 
             // Update host with detected OS if available
             if let Some(os) = detected_os {
@@ -98,7 +241,7 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                     host.id,
                     host.name.clone(),
                     host.hostname.clone(),
-                    host.username.clone(),
+                    host.effective_username(),
                     crate::config::SessionType::Ssh,
                 );
                 let entry_id = entry.id;
@@ -146,16 +289,21 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
         SessionMessage::Data(session_id, data) => {
             if let Some(session) = portal.sessions.get_mut(session_id) {
                 if !data.is_empty() {
+                    if let Some(logger) = session.logger.as_ref() {
+                        logger.write(&data);
+                    }
+                    session.pending_output_bytes =
+                        session.pending_output_bytes.saturating_add(data.len());
                     session.pending_output.push_back(data);
+                    session.last_data_received_at = Some(Instant::now());
 
                     // Enforce buffer size limit by dropping oldest data
-                    let mut total_size: usize =
-                        session.pending_output.iter().map(|chunk| chunk.len()).sum();
-
-                    while total_size > MAX_PENDING_OUTPUT_BYTES {
+                    while session.pending_output_bytes > MAX_PENDING_OUTPUT_BYTES {
                         if let Some(dropped) = session.pending_output.pop_front() {
-                            total_size -= dropped.len();
+                            session.pending_output_bytes =
+                                session.pending_output_bytes.saturating_sub(dropped.len());
                         } else {
+                            session.pending_output_bytes = 0;
                             break;
                         }
                     }
@@ -164,9 +312,33 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
             Task::none()
         }
         SessionMessage::ProcessOutputTick => {
-            const MAX_OUTPUT_BYTES_PER_TICK: usize = 16 * 1024;
+            // Increased from 16KB to 64KB for better throughput in fast SSH sessions.
+            // At 60fps (16ms ticks), this allows ~4MB/s vs previous ~1MB/s.
+            const MAX_OUTPUT_BYTES_PER_TICK: usize = 64 * 1024;
+
+            // Coalesce rapid back-to-back SSH writes before feeding them to the
+            // terminal emulator. Shell prompts (e.g. oh-my-posh) may arrive in
+            // multiple SSH packets within a few ms. Without this delay we can
+            // snapshot a partial prompt and render it before the trailing
+            // characters (e.g. Powerline end-cap) arrive.
+            //
+            // Skip processing if data arrived less than 8ms ago AND the buffer
+            // is small (interactive/prompt traffic). Large buffers (>8KB) bypass
+            // the delay so bulk transfers are not throttled.
+            const COALESCE_MS: u128 = 8;
+            const COALESCE_BYPASS_BYTES: usize = 8 * 1024;
 
             for session in portal.sessions.values_mut() {
+                let pending_bytes = session.pending_output_bytes;
+
+                let in_coalesce_window = session
+                    .last_data_received_at
+                    .is_some_and(|t| t.elapsed().as_millis() < COALESCE_MS);
+
+                if in_coalesce_window && pending_bytes < COALESCE_BYPASS_BYTES {
+                    continue;
+                }
+
                 let mut budget = MAX_OUTPUT_BYTES_PER_TICK;
                 while budget > 0 {
                     let Some(mut chunk) = session.pending_output.pop_front() else {
@@ -176,34 +348,97 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                     if chunk.len() > budget {
                         let remainder = chunk.split_off(budget);
                         session.terminal.process_output(&chunk);
+                        session.pending_output_bytes =
+                            session.pending_output_bytes.saturating_sub(chunk.len());
                         session.pending_output.push_front(remainder);
                         budget = 0;
                     } else {
+                        let chunk_len = chunk.len();
                         session.terminal.process_output(&chunk);
-                        budget -= chunk.len();
+                        session.pending_output_bytes =
+                            session.pending_output_bytes.saturating_sub(chunk_len);
+                        budget -= chunk_len;
                     }
                 }
             }
 
             Task::none()
         }
-        SessionMessage::Disconnected(session_id) => {
-            tracing::info!("Terminal session disconnected");
+        SessionMessage::Disconnected { session_id, clean } => {
+            tracing::info!("Terminal session disconnected (clean: {})", clean);
+            let close_task = close_session_logger(portal, session_id);
             if let Some(session) = portal.sessions.get(session_id) {
-                portal
-                    .config
-                    .history
-                    .mark_disconnected(session.history_entry_id);
-                if let Err(e) = portal.config.history.save() {
-                    tracing::error!("Failed to save history config: {}", e);
+                // Only auto-reconnect for unexpected disconnections, not clean exits
+                if !clean
+                    && portal.prefs.auto_reconnect
+                    && matches!(session.backend, SessionBackend::Ssh(_))
+                {
+                    let reconnect_task = schedule_reconnect(portal, session_id);
+                    return Task::batch([close_task, reconnect_task]);
                 }
             }
-            portal.close_tab(session_id);
-            Task::none()
+            finalize_disconnection(portal, session_id);
+            close_task
+        }
+        SessionMessage::Reconnect(session_id) => {
+            let Some(session) = portal.sessions.get_mut(session_id) else {
+                return Task::none();
+            };
+
+            if !portal.prefs.auto_reconnect {
+                session.reconnect_next_attempt = None;
+                return Task::none();
+            }
+
+            if !matches!(session.backend, SessionBackend::Ssh(_)) {
+                session.reconnect_next_attempt = None;
+                return Task::none();
+            }
+
+            let Some(host_id) = session.host_id else {
+                session.reconnect_next_attempt = None;
+                portal.toast_manager.push(Toast::error("Reconnect failed"));
+                finalize_disconnection(portal, session_id);
+                return Task::none();
+            };
+
+            let Some(host) = portal.config.hosts.find_host(host_id).cloned() else {
+                session.reconnect_next_attempt = None;
+                portal.toast_manager.push(Toast::error("Reconnect failed"));
+                finalize_disconnection(portal, session_id);
+                return Task::none();
+            };
+
+            if matches!(host.auth, AuthMethod::Password) {
+                session.reconnect_next_attempt = None;
+                portal
+                    .toast_manager
+                    .push(Toast::error("Reconnect failed (password required)"));
+                finalize_disconnection(portal, session_id);
+                return Task::none();
+            }
+
+            let should_detect_os = connection::should_detect_os(host.detected_os.as_ref());
+            connection::ssh_connect_tasks(
+                Arc::new(host),
+                session_id,
+                host_id,
+                should_detect_os,
+                portal.prefs.allow_agent_forwarding,
+            )
         }
         SessionMessage::Error(error) => {
             tracing::error!("Session error: {}", error);
             portal.dialogs.close_connecting();
+            portal.toast_manager.push(Toast::error(error));
+            Task::none()
+        }
+        SessionMessage::ConnectFailed { session_id, error } => {
+            tracing::error!("Session connection failed: {}", error);
+            portal.dialogs.close_connecting();
+            if portal.sessions.contains(session_id) {
+                return schedule_reconnect(portal, session_id);
+            }
             portal.toast_manager.push(Toast::error(error));
             Task::none()
         }
@@ -227,7 +462,13 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
             TerminalEvent::PtyWrite(bytes) => {
                 handle_session(portal, SessionMessage::Input(session_id, bytes))
             }
-            TerminalEvent::Exit => handle_session(portal, SessionMessage::Disconnected(session_id)),
+            TerminalEvent::Exit => handle_session(
+                portal,
+                SessionMessage::Disconnected {
+                    session_id,
+                    clean: true,
+                },
+            ),
             TerminalEvent::Wakeup => Task::none(),
         },
         SessionMessage::ClipboardLoaded(session_id, contents) => {

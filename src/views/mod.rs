@@ -8,6 +8,7 @@ pub mod sidebar;
 pub mod snippet_edit;
 pub mod snippet_grid;
 pub mod snippet_results;
+pub mod tab_context_menu;
 pub mod tabs;
 pub mod terminal_status_bar;
 pub mod terminal_view;

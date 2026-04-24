@@ -6,6 +6,7 @@
 
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
@@ -19,6 +20,7 @@ use vnc::{PixelFormat, VncEvent, X11Event};
 
 use crate::config::DetectedOs;
 use crate::config::settings::VncSettings;
+use crate::security_log;
 use crate::vnc::encoding::{build_encodings, pixel_format_from_depth};
 use crate::vnc::framebuffer::{FrameBuffer, rgba_to_bgra};
 use crate::vnc::net::is_private_ip;
@@ -267,8 +269,10 @@ impl NegotiatedStream {
                     inner: tcp,
                     prefix,
                     prefix_offset: 0,
-                    // vnc-rs will write: 12 bytes version response (goes to server, fine)
-                    drop_write_bytes: 0,
+                    // The real server already received our echoed non-standard
+                    // version. Drop vnc-rs' synthetic version write, then let
+                    // the auth selection/challenge response pass through.
+                    drop_write_bytes: 12,
                 },
                 detected_os,
             ));
@@ -382,6 +386,8 @@ pub struct VncSession {
     mouse_rate_limit: Duration,
     /// Last time a pointer event was sent
     last_mouse_sent: Mutex<Instant>,
+    /// Last pointer button mask sent; button changes bypass movement throttling
+    last_mouse_buttons: Mutex<u8>,
     /// Minimum interval between resize requests
     resize_rate_limit: Duration,
     /// Last time a resize was requested
@@ -394,6 +400,9 @@ pub struct VncSession {
     last_refresh_sent: Mutex<Instant>,
     /// Handle to the event loop task, aborted on disconnect
     event_loop_handle: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    host: String,
+    port: u16,
+    disconnect_logged: Arc<AtomicBool>,
 }
 
 impl std::fmt::Debug for VncSession {
@@ -472,6 +481,8 @@ impl VncSession {
             .finish()
             .map_err(|e| format!("VNC finish error: {}", e))?;
 
+        security_log::log_vnc_connect(hostname, port);
+
         // Initial framebuffer - will be resized on first SetResolution event
         let framebuffer = Arc::new(Mutex::new(FrameBuffer::new(800, 600)));
 
@@ -479,18 +490,23 @@ impl VncSession {
         let (input_tx, input_rx) = mpsc::channel::<X11Event>(256);
 
         let now = Instant::now();
+        let disconnect_logged = Arc::new(AtomicBool::new(false));
         let session = Arc::new(Self {
             framebuffer: framebuffer.clone(),
             input_tx,
             host_name,
             mouse_rate_limit: Duration::from_millis(vnc_settings.pointer_interval_ms),
             last_mouse_sent: Mutex::new(now),
+            last_mouse_buttons: Mutex::new(0),
             resize_rate_limit: Duration::from_millis(100),
             last_resize_sent: Mutex::new(now - Duration::from_millis(500)),
             last_resize_size: Mutex::new((0, 0)),
             refresh_rate_limit: Duration::from_millis(100),
             last_refresh_sent: Mutex::new(now - Duration::from_millis(500)),
             event_loop_handle: Mutex::new(None),
+            host: hostname.to_string(),
+            port,
+            disconnect_logged: disconnect_logged.clone(),
         });
 
         // Spawn the VNC event polling loop
@@ -501,7 +517,9 @@ impl VncSession {
             input_rx,
             pixel_format,
             vnc_settings.refresh_fps,
-            vnc_settings.max_events_per_tick,
+            hostname.to_string(),
+            port,
+            disconnect_logged,
         ));
         *session.event_loop_handle.lock() = Some(handle);
 
@@ -522,7 +540,9 @@ impl VncSession {
         mut input_rx: mpsc::Receiver<X11Event>,
         pixel_format: PixelFormat,
         refresh_fps: u32,
-        _max_events_per_tick: usize,
+        host: String,
+        port: u16,
+        disconnect_logged: Arc<AtomicBool>,
     ) {
         let refresh_ms = if refresh_fps == 0 {
             100
@@ -587,6 +607,9 @@ impl VncSession {
                 Err(e) => {
                     tracing::error!("VNC event error: {}", e);
                     let _ = event_tx.send(VncSessionEvent::Disconnected).await;
+                    if !disconnect_logged.swap(true, Ordering::SeqCst) {
+                        security_log::log_vnc_disconnect(&host, port);
+                    }
                     break;
                 }
             };
@@ -700,7 +723,16 @@ impl VncSession {
 
     /// Send a mouse event to the VNC server
     pub async fn send_mouse(&self, x: u16, y: u16, buttons: u8) {
-        if self.mouse_rate_limit > Duration::ZERO {
+        let buttons_changed = {
+            let mut last_buttons = self.last_mouse_buttons.lock();
+            let changed = *last_buttons != buttons;
+            if changed {
+                *last_buttons = buttons;
+            }
+            changed
+        };
+
+        if !buttons_changed && self.mouse_rate_limit > Duration::ZERO {
             let now = Instant::now();
             let mut last = self.last_mouse_sent.lock();
             if now.duration_since(*last) < self.mouse_rate_limit {
@@ -770,7 +802,16 @@ impl VncSession {
 
     /// Send a mouse event synchronously (non-blocking, for use from widget events)
     pub fn try_send_mouse(&self, x: u16, y: u16, buttons: u8) {
-        if self.mouse_rate_limit > Duration::ZERO {
+        let buttons_changed = {
+            let mut last_buttons = self.last_mouse_buttons.lock();
+            let changed = *last_buttons != buttons;
+            if changed {
+                *last_buttons = buttons;
+            }
+            changed
+        };
+
+        if !buttons_changed && self.mouse_rate_limit > Duration::ZERO {
             let now = Instant::now();
             let mut last = self.last_mouse_sent.lock();
             if now.duration_since(*last) < self.mouse_rate_limit {
@@ -793,5 +834,122 @@ impl VncSession {
         if let Some(handle) = self.event_loop_handle.lock().take() {
             handle.abort();
         }
+        if !self.disconnect_logged.swap(true, Ordering::SeqCst) {
+            security_log::log_vnc_disconnect(&self.host, self.port);
+        }
+    }
+}
+
+impl Drop for VncSession {
+    fn drop(&mut self) {
+        if !self.disconnect_logged.swap(true, Ordering::SeqCst) {
+            security_log::log_vnc_disconnect(&self.host, self.port);
+        }
+        tracing::debug!("VNC session cleanup: closing input channel and aborting event loop");
+        let (replacement_tx, _replacement_rx) = mpsc::channel(1);
+        let _ = std::mem::replace(&mut self.input_tx, replacement_tx);
+        if let Some(handle) = self.event_loop_handle.lock().take() {
+            handle.abort();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    fn test_session(input_tx: mpsc::Sender<X11Event>, mouse_rate_limit: Duration) -> VncSession {
+        let now = Instant::now();
+        VncSession {
+            framebuffer: Arc::new(Mutex::new(FrameBuffer::new(16, 16))),
+            input_tx,
+            host_name: "test".to_string(),
+            mouse_rate_limit,
+            last_mouse_sent: Mutex::new(now),
+            last_mouse_buttons: Mutex::new(0),
+            resize_rate_limit: Duration::from_millis(100),
+            last_resize_sent: Mutex::new(now - Duration::from_millis(500)),
+            last_resize_size: Mutex::new((0, 0)),
+            refresh_rate_limit: Duration::from_millis(100),
+            last_refresh_sent: Mutex::new(now - Duration::from_millis(500)),
+            event_loop_handle: Mutex::new(None),
+            host: "127.0.0.1".to_string(),
+            port: 5900,
+            disconnect_logged: Arc::new(AtomicBool::new(true)),
+        }
+    }
+
+    fn recv_pointer(rx: &mut mpsc::Receiver<X11Event>) -> (u16, u16, u8) {
+        match rx.try_recv().expect("expected pointer event") {
+            X11Event::PointerEvent(mouse) => (mouse.position_x, mouse.position_y, mouse.bottons),
+            other => panic!("expected pointer event, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn mouse_button_changes_bypass_rate_limit() {
+        let (tx, mut rx) = mpsc::channel(8);
+        let session = test_session(tx, Duration::from_secs(1));
+
+        session.try_send_mouse(1, 1, 0);
+        assert!(
+            rx.try_recv().is_err(),
+            "move-only event should be throttled"
+        );
+
+        session.try_send_mouse(2, 2, 1);
+        assert_eq!(recv_pointer(&mut rx), (2, 2, 1));
+
+        session.try_send_mouse(2, 2, 0);
+        assert_eq!(recv_pointer(&mut rx), (2, 2, 0));
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn scroll_press_and_release_bypass_rate_limit() {
+        let (tx, mut rx) = mpsc::channel(8);
+        let session = test_session(tx, Duration::from_secs(1));
+
+        session.try_send_mouse(4, 5, 8);
+        session.try_send_mouse(4, 5, 0);
+
+        assert_eq!(recv_pointer(&mut rx), (4, 5, 8));
+        assert_eq!(recv_pointer(&mut rx), (4, 5, 0));
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn nonstandard_standard_auth_drops_duplicate_version_write() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            socket.write_all(b"RFB 003.889\n").await.unwrap();
+
+            let mut version_echo = [0u8; 12];
+            socket.read_exact(&mut version_echo).await.unwrap();
+            assert_eq!(&version_echo, b"RFB 003.889\n");
+
+            socket.write_all(&[1, 2]).await.unwrap();
+
+            let mut auth_selection = [0u8; 1];
+            socket.read_exact(&mut auth_selection).await.unwrap();
+            auth_selection[0]
+        });
+
+        let tcp = TcpStream::connect(addr).await.unwrap();
+        let (mut stream, detected_os) = NegotiatedStream::negotiate(tcp, "user", "pass")
+            .await
+            .unwrap();
+        assert_eq!(detected_os, Some(DetectedOs::MacOS));
+
+        stream.write_all(b"RFB 003.008\n").await.unwrap();
+        stream.write_all(&[2]).await.unwrap();
+        stream.flush().await.unwrap();
+
+        assert_eq!(server.await.unwrap(), 2);
     }
 }

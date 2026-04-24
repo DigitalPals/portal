@@ -397,7 +397,7 @@ async fn execute_on_host(host: &Host, command: &str) -> Result<HostExecutionResu
                     };
                     let _ = responder.send(HostKeyVerificationResponse::Reject);
                 }
-                SshEvent::Disconnected => {
+                SshEvent::Disconnected { .. } => {
                     tracing::debug!("SSH disconnected during snippet execution");
                 }
                 _ => {}
@@ -420,6 +420,7 @@ async fn execute_on_host(host: &Host, command: &str) -> Result<HostExecutionResu
             None,  // No password (use key auth)
             None,  // No key passphrase
             false, // Don't detect OS
+            false, // No agent forwarding for snippet exec
         )
         .await;
 

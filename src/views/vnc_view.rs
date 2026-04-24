@@ -7,7 +7,6 @@ use iced::{Element, Fill};
 
 use crate::app::managers::session_manager::VncActiveSession;
 use crate::config::settings::VncScalingMode;
-use crate::message::QualityLevel;
 use crate::message::{Message, SessionId, VncMessage};
 use crate::theme::{ScaledFonts, Theme};
 use crate::vnc::widget::vnc_framebuffer_interactive;
@@ -134,14 +133,6 @@ pub fn vnc_viewer_view<'a>(
                 theme,
                 fonts
             ),
-            {
-                let (quality_label, quality_color) = match vnc.quality_level {
-                    QualityLevel::High => ("● High", iced::Color::from_rgb8(0x40, 0xa0, 0x2b)),
-                    QualityLevel::Medium => ("● Med", iced::Color::from_rgb8(0xdf, 0x8e, 0x1d)),
-                    QualityLevel::Low => ("● Low", iced::Color::from_rgb8(0xd2, 0x0f, 0x39)),
-                };
-                text(quality_label).size(fonts.small).color(quality_color)
-            },
             text("|").size(fonts.small).color(theme.text_muted),
             // Send Keys dropdown + Grab KB
             send_keys_picker,
@@ -158,30 +149,6 @@ pub fn vnc_viewer_view<'a>(
             text("|").size(fonts.small).color(theme.text_muted),
             // Spacer
             iced::widget::Space::new().width(Fill),
-            // Monitor selector (only if multiple monitors detected)
-            {
-                let monitor_buttons: Vec<Element<'a, Message>> = if vnc.monitors.len() > 1 {
-                    let mut btns = vec![vnc_action_button(
-                        "All",
-                        Message::Vnc(VncMessage::SelectMonitor(session_id, None)),
-                        theme,
-                        fonts,
-                    )];
-                    for (i, _screen) in vnc.monitors.iter().enumerate() {
-                        let label_str: String = format!("Mon {}", i + 1);
-                        btns.push(vnc_action_button_owned(
-                            label_str,
-                            Message::Vnc(VncMessage::SelectMonitor(session_id, Some(i))),
-                            theme,
-                            fonts,
-                        ));
-                    }
-                    btns
-                } else {
-                    vec![]
-                };
-                row(monitor_buttons).spacing(2)
-            },
             vnc_action_button(
                 "Screenshot",
                 Message::Vnc(VncMessage::CaptureScreenshot(session_id)),
@@ -266,35 +233,6 @@ pub fn vnc_viewer_view<'a>(
 /// Small toolbar button for VNC actions
 fn vnc_action_button<'a>(
     label: &'a str,
-    on_press: Message,
-    theme: Theme,
-    fonts: ScaledFonts,
-) -> Element<'a, Message> {
-    button(text(label).size(fonts.small).color(theme.text_secondary))
-        .on_press(on_press)
-        .padding([2, 6])
-        .style(move |_t, status| {
-            let bg = match status {
-                button::Status::Hovered => theme.hover,
-                _ => theme.surface,
-            };
-            button::Style {
-                background: Some(bg.into()),
-                border: iced::Border {
-                    radius: 3.0.into(),
-                    width: 1.0,
-                    color: theme.border,
-                },
-                text_color: theme.text_secondary,
-                ..Default::default()
-            }
-        })
-        .into()
-}
-
-/// Small toolbar button with owned label string
-fn vnc_action_button_owned<'a>(
-    label: String,
     on_press: Message,
     theme: Theme,
     fonts: ScaledFonts,

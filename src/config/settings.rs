@@ -1,7 +1,9 @@
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 use crate::error::ConfigError;
 use crate::fonts::TerminalFont;
+use crate::keybindings::KeybindingsConfig;
 use crate::theme::ThemeId;
 use crate::views::sftp::ColumnWidths;
 
@@ -24,6 +26,15 @@ pub enum VncScalingMode {
     Stretch,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+#[derive(Default)]
+pub enum SessionLogFormat {
+    Plain,
+    #[default]
+    Timestamped,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VncSettings {
     /// Preferred encoding selection
@@ -37,10 +48,6 @@ pub struct VncSettings {
     /// Refresh rate for VNC updates (frames per second)
     #[serde(default = "default_vnc_refresh_fps")]
     pub refresh_fps: u32,
-
-    /// Max number of VNC events processed per poll tick
-    #[serde(default = "default_vnc_max_events_per_tick")]
-    pub max_events_per_tick: usize,
 
     /// Minimum interval between pointer events (ms)
     #[serde(default = "default_vnc_pointer_interval_ms")]
@@ -65,7 +72,6 @@ impl Default for VncSettings {
             encoding: VncEncodingPreference::default(),
             color_depth: default_vnc_color_depth(),
             refresh_fps: default_vnc_refresh_fps(),
-            max_events_per_tick: default_vnc_max_events_per_tick(),
             pointer_interval_ms: default_vnc_pointer_interval_ms(),
             remote_resize: default_vnc_remote_resize(),
             clipboard_sharing: default_vnc_clipboard_sharing(),
@@ -101,12 +107,6 @@ impl VncSettings {
             }
         }
 
-        if let Ok(raw) = std::env::var("PORTAL_VNC_MAX_EVENTS_PER_TICK") {
-            if let Ok(count) = raw.trim().parse::<usize>() {
-                self.max_events_per_tick = count.clamp(1, 1024);
-            }
-        }
-
         if let Ok(raw) = std::env::var("PORTAL_VNC_POINTER_INTERVAL_MS") {
             if let Ok(ms) = raw.trim().parse::<u64>() {
                 self.pointer_interval_ms = ms.min(1000);
@@ -128,10 +128,6 @@ fn default_vnc_refresh_fps() -> u32 {
 
 fn default_vnc_color_depth() -> u8 {
     32
-}
-
-fn default_vnc_max_events_per_tick() -> usize {
-    64
 }
 
 fn default_vnc_pointer_interval_ms() -> u64 {
@@ -174,13 +170,114 @@ pub struct SettingsConfig {
     #[serde(default)]
     pub vnc: VncSettings,
 
+    /// Keyboard shortcut configuration
+    #[serde(default)]
+    pub keybindings: KeybindingsConfig,
+
+    /// Auto-reconnect for SSH sessions
+    #[serde(default = "default_auto_reconnect")]
+    pub auto_reconnect: bool,
+
+    /// Maximum number of reconnect attempts
+    #[serde(default = "default_reconnect_max_attempts")]
+    pub reconnect_max_attempts: u32,
+
+    /// Base reconnect delay in milliseconds
+    #[serde(default = "default_reconnect_base_delay_ms")]
+    pub reconnect_base_delay_ms: u64,
+
+    /// Maximum reconnect delay in milliseconds
+    #[serde(default = "default_reconnect_max_delay_ms")]
+    pub reconnect_max_delay_ms: u64,
+
+    /// Allow SSH agent forwarding (global safety switch)
+    #[serde(default = "default_allow_agent_forwarding")]
+    pub allow_agent_forwarding: bool,
+
+    /// Credential cache timeout in seconds (0 = disabled)
+    ///
+    /// Controls in-memory caching of sensitive SSH credentials (e.g. key passphrases).
+    /// Existing config files may contain the legacy `passphrase_cache_timeout` key; it
+    /// is accepted as an alias and migrated to `credential_timeout` on save.
+    #[serde(
+        default = "default_credential_timeout",
+        alias = "passphrase_cache_timeout"
+    )]
+    pub credential_timeout: u64,
+
     /// Legacy dark_mode field for migration (read-only, not serialized)
     #[serde(default, skip_serializing)]
     dark_mode: Option<bool>,
+
+    /// Enable logging terminal session output to disk
+    #[serde(default = "default_session_logging_enabled")]
+    pub session_logging_enabled: bool,
+
+    /// Directory for session log files
+    #[serde(
+        default = "default_session_log_dir",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub session_log_dir: Option<PathBuf>,
+
+    /// Session log format
+    #[serde(default)]
+    pub session_log_format: SessionLogFormat,
+
+    /// Enable security audit logging to file
+    #[serde(default = "default_security_audit_enabled")]
+    pub security_audit_enabled: bool,
+
+    /// Directory for security audit log file
+    #[serde(
+        default = "default_security_audit_dir",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub security_audit_dir: Option<PathBuf>,
 }
 
 fn default_terminal_font_size() -> f32 {
     9.0
+}
+
+fn default_auto_reconnect() -> bool {
+    true
+}
+
+fn default_reconnect_max_attempts() -> u32 {
+    5
+}
+
+fn default_reconnect_base_delay_ms() -> u64 {
+    1000
+}
+
+fn default_reconnect_max_delay_ms() -> u64 {
+    30_000
+}
+
+fn default_allow_agent_forwarding() -> bool {
+    true
+}
+
+fn default_credential_timeout() -> u64 {
+    300 // 5 minutes
+}
+
+fn default_session_logging_enabled() -> bool {
+    false
+}
+
+fn default_session_log_dir() -> Option<PathBuf> {
+    crate::config::paths::config_dir().map(|dir| dir.join("logs").join("sessions"))
+}
+
+fn default_security_audit_enabled() -> bool {
+    false
+}
+
+fn default_security_audit_dir() -> Option<PathBuf> {
+    crate::config::paths::config_dir().map(|dir| dir.join("logs").join("security"))
 }
 
 impl Default for SettingsConfig {
@@ -192,7 +289,19 @@ impl Default for SettingsConfig {
             ui_scale: None,
             sftp_column_widths: ColumnWidths::default(),
             vnc: VncSettings::default(),
+            keybindings: KeybindingsConfig::default(),
+            auto_reconnect: default_auto_reconnect(),
+            reconnect_max_attempts: default_reconnect_max_attempts(),
+            reconnect_base_delay_ms: default_reconnect_base_delay_ms(),
+            reconnect_max_delay_ms: default_reconnect_max_delay_ms(),
+            allow_agent_forwarding: default_allow_agent_forwarding(),
+            credential_timeout: default_credential_timeout(),
             dark_mode: None,
+            session_logging_enabled: default_session_logging_enabled(),
+            session_log_dir: default_session_log_dir(),
+            session_log_format: SessionLogFormat::default(),
+            security_audit_enabled: default_security_audit_enabled(),
+            security_audit_dir: default_security_audit_dir(),
         }
     }
 }

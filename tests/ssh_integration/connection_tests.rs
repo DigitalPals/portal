@@ -15,7 +15,7 @@ use portal::ssh::{SshClient, SshEvent};
 use super::fixtures::SshTestEnvironment;
 
 /// Helper to spawn a task that auto-accepts host keys and tracks verification requests
-fn spawn_host_key_handler(
+pub(super) fn spawn_host_key_handler(
     mut event_rx: mpsc::Receiver<SshEvent>,
 ) -> (
     tokio::task::JoinHandle<()>,
@@ -44,7 +44,7 @@ fn spawn_host_key_handler(
                 SshEvent::Connected => {
                     connected_clone.store(true, Ordering::SeqCst);
                 }
-                SshEvent::Disconnected => {
+                SshEvent::Disconnected { .. } => {
                     break;
                 }
                 SshEvent::Data(_) => {}
@@ -83,6 +83,7 @@ async fn test_password_auth_success() {
             Some(password),
             None,
             false,
+            false, // No agent forwarding in tests
         )
         .await;
 
@@ -129,6 +130,7 @@ async fn test_pubkey_auth_success() {
             None,
             None,
             false,
+            false, // No agent forwarding in tests
         )
         .await;
 
@@ -175,6 +177,7 @@ async fn test_encrypted_key_with_passphrase() {
             None,
             Some(passphrase),
             false,
+            false, // No agent forwarding in tests
         )
         .await;
 
@@ -221,6 +224,7 @@ async fn test_encrypted_key_without_passphrase() {
             None,
             None,
             false,
+            false, // No agent forwarding in tests
         )
         .await;
 
@@ -260,7 +264,8 @@ async fn test_os_detection_on_connect() {
             Duration::from_secs(10),
             Some(password),
             None,
-            true, // Enable OS detection
+            true,  // Enable OS detection
+            false, // No agent forwarding in tests
         )
         .await;
 

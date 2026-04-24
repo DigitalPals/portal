@@ -4,13 +4,16 @@ pub mod paths;
 pub mod settings;
 pub mod snippet_history;
 pub mod snippets;
+pub mod ssh_config;
 
 use std::io::Write;
 use std::path::Path;
 use uuid::Uuid;
 
 pub use history::{HistoryConfig, HistoryEntry, SessionType};
-pub use hosts::{AuthMethod, DetectedOs, Host, HostsConfig, Protocol};
+pub use hosts::{
+    AuthMethod, DetectedOs, Host, HostsConfig, PortForward, PortForwardKind, Protocol,
+};
 pub use settings::SettingsConfig;
 pub use snippet_history::{HistoricalHostResult, SnippetExecutionEntry, SnippetHistoryConfig};
 pub use snippets::{Snippet, SnippetsConfig};

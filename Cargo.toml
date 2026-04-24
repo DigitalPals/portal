@@ -1,6 +1,6 @@
 [package]
 name = "portal"
-version = "0.6.3"
+version = "0.6.4"
 edition = "2024"
 description = "A modern SSH client with GUI"
 authors = ["John"]
@@ -9,10 +9,10 @@ rust-version = "1.85"
 
 [dependencies]
 # GUI
-iced = { version = "0.14", features = ["tokio", "advanced", "svg", "markdown", "highlighter", "image"] }
+iced = { version = "0.14", features = ["tokio", "advanced", "canvas", "svg", "markdown", "highlighter", "image"] }
 
 # Terminal emulation
-alacritty_terminal = "0.25.1"
+alacritty_terminal = "0.26.0"
 
 # SSH
 russh = "0.56.0"
@@ -51,6 +51,7 @@ hmac = "0.12"
 sha1 = "0.10"
 secrecy = { version = "0.10", features = ["serde"] }
 regex = "1"
+ttf-parser = "0.25"
 
 # Additional
 parking_lot = "0.12"

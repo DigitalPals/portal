@@ -92,12 +92,25 @@ async fn load_key_file(path: &Path, passphrase: Option<&str>) -> Result<Resolved
     }
 
     let key = russh::keys::load_secret_key(path, passphrase).map_err(|e| {
+        // Prefer stable error variants when available. Fall back to string matching
+        // for other decrypt-related errors which can vary by key format.
+        if matches!(e, russh::keys::Error::KeyIsEncrypted) {
+            return if passphrase.is_some() {
+                SshError::KeyFilePassphraseInvalid(path.to_path_buf())
+            } else {
+                SshError::KeyFilePassphraseRequired(path.to_path_buf())
+            };
+        }
+
         let msg = e.to_string();
         let normalized = msg.to_lowercase();
-        // Detect passphrase-related errors from various russh error messages
         let is_passphrase_error = normalized.contains("encrypted")
             || normalized.contains("passphrase")
-            || normalized.contains("cryptographic");
+            || normalized.contains("cryptographic")
+            || normalized.contains("decrypt")
+            || normalized.contains("mac check")
+            || normalized.contains("integrity");
+
         if is_passphrase_error {
             if passphrase.is_some() {
                 SshError::KeyFilePassphraseInvalid(path.to_path_buf())

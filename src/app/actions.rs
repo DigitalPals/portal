@@ -8,17 +8,19 @@ use uuid::Uuid;
 
 use crate::config::{AuthMethod, Host};
 use crate::fs_utils::{cleanup_temp_dir, copy_dir_recursive, count_items_in_dir};
+use crate::keybindings::AppAction;
 use crate::local::{LocalEvent, LocalSession};
 use crate::local_fs::list_local_dir;
-use crate::message::{Message, SessionId, SessionMessage, SftpMessage};
+use crate::message::{Message, SessionId, SessionMessage, SftpMessage, VncMessage};
 use crate::views::dialogs::password_dialog::PasswordDialogState;
 use crate::views::file_viewer::{FileSource, FileType};
 use crate::views::sftp::{ContextMenuAction, PaneId, PaneSource, PermissionBits, SftpDialogType};
 use crate::views::tabs::Tab;
 use crate::views::toast::Toast;
 
+use super::managers::SessionBackend;
 use super::services::{connection, file_viewer, history};
-use super::{Portal, View};
+use super::{FocusSection, Portal, View};
 
 impl Portal {
     fn hide_sidebar_for_session(&mut self) {
@@ -81,9 +83,32 @@ impl Portal {
 
     pub(super) fn close_tab(&mut self, tab_id: Uuid) {
         let sftp_sessions_to_close = self.sftp.remove_tab_and_collect_sessions(tab_id);
+        let mut history_changed = false;
 
         self.tabs.retain(|t| t.id != tab_id);
-        self.sessions.remove(tab_id);
+        if let Some(session) = self.sessions.remove(tab_id) {
+            if history::mark_entry_disconnected(&mut self.config.history, session.history_entry_id)
+            {
+                history_changed = true;
+            }
+
+            let ssh_session_to_cleanup = match &session.backend {
+                SessionBackend::Ssh(ssh_session) => Some(ssh_session.clone()),
+                SessionBackend::Local(_) => None,
+            };
+
+            if let Some(logger) = session.logger {
+                tokio::spawn(async move {
+                    logger.shutdown().await;
+                });
+            }
+
+            if let Some(ssh_session) = ssh_session_to_cleanup {
+                tokio::spawn(async move {
+                    ssh_session.stop_all_forwards().await;
+                });
+            }
+        }
         if let Some(vnc) = self.vnc_sessions.remove(&tab_id) {
             vnc.session.disconnect();
         }
@@ -97,7 +122,6 @@ impl Portal {
             }
         }
 
-        let mut history_changed = false;
         for session_id in sftp_sessions_to_close {
             let still_used = self.sftp.is_connection_in_use(session_id);
             if !still_used {
@@ -167,6 +191,42 @@ impl Portal {
         self.set_active_tab(prev_id);
     }
 
+    pub(super) fn handle_keybinding_action(&mut self, action: AppAction) -> Task<Message> {
+        match action {
+            AppAction::NewWindow => {
+                let _ = std::process::Command::new(std::env::current_exe().unwrap()).spawn();
+                Task::none()
+            }
+            AppAction::NewConnection => {
+                self.dialogs.open_quick_connect();
+                Task::none()
+            }
+            AppAction::CloseSession => {
+                self.close_active_tab();
+                Task::none()
+            }
+            AppAction::NewTab => {
+                self.restore_sidebar_after_session();
+                self.enter_host_grid();
+                self.ui.focus_section = FocusSection::Content;
+                Task::none()
+            }
+            AppAction::NextSession => {
+                self.select_next_tab();
+                Task::none()
+            }
+            AppAction::PreviousSession => {
+                self.select_prev_tab();
+                Task::none()
+            }
+            AppAction::Copy | AppAction::Paste => Task::none(),
+            AppAction::ToggleFullscreen => match self.ui.active_view {
+                View::VncViewer(_) => Task::done(Message::Vnc(VncMessage::ToggleFullscreen)),
+                _ => Task::none(),
+            },
+        }
+    }
+
     /// Connect to a VNC host
     pub(super) fn connect_vnc_host(&mut self, host: &Host) -> Task<Message> {
         let port = host.effective_vnc_port();
@@ -176,7 +236,7 @@ impl Portal {
             host.name.clone(),
             host.hostname.clone(),
             port,
-            host.username.clone(),
+            host.effective_username(),
             host.id,
         );
         self.dialogs.open_password(password_dialog);
@@ -196,11 +256,11 @@ impl Portal {
         self.dialogs.open_connecting(host.name.clone(), "VNC");
 
         let session_id = Uuid::new_v4();
-        let hostname = host.hostname.clone();
+        let host = Arc::new(host.clone());
         let port = host.effective_vnc_port();
         let host_name = host.name.clone();
         let host_id = host.id;
-        let username = Some(host.username.clone()).filter(|u| !u.is_empty());
+        let username = Some(host.effective_username());
         let password_str = Some(password.expose_secret().to_string());
 
         let (msg_tx, msg_rx) = mpsc::channel::<Message>(256);
@@ -209,11 +269,11 @@ impl Portal {
         let connect_task = Task::perform(
             async move {
                 match VncSession::connect(
-                    &hostname,
+                    host.hostname.as_str(),
                     port,
                     username,
                     password_str,
-                    host_name.clone(),
+                    host_name,
                     vnc_settings,
                 )
                 .await
@@ -271,7 +331,7 @@ impl Portal {
                 host.name.clone(),
                 host.hostname.clone(),
                 host.port,
-                host.username.clone(),
+                host.effective_username(),
                 host.id,
             );
             self.dialogs.open_password(password_dialog);
@@ -287,7 +347,13 @@ impl Portal {
 
         let should_detect_os = connection::should_detect_os(host.detected_os.as_ref());
 
-        connection::ssh_connect_tasks(host, session_id, host_id, should_detect_os)
+        connection::ssh_connect_tasks(
+            host,
+            session_id,
+            host_id,
+            should_detect_os,
+            self.prefs.allow_agent_forwarding,
+        )
     }
 
     /// Spawn a local terminal session
@@ -304,9 +370,10 @@ impl Portal {
             }),
             move |event| match event {
                 LocalEvent::Data(data) => Message::Session(SessionMessage::Data(session_id, data)),
-                LocalEvent::Disconnected => {
-                    Message::Session(SessionMessage::Disconnected(session_id))
-                }
+                LocalEvent::Disconnected => Message::Session(SessionMessage::Disconnected {
+                    session_id,
+                    clean: true,
+                }),
             },
         );
 
@@ -385,7 +452,7 @@ impl Portal {
                 host.name.clone(),
                 host.hostname.clone(),
                 host.port,
-                host.username.clone(),
+                host.effective_username(),
                 host.id,
                 tab_id,
                 pane_id,
@@ -444,18 +511,18 @@ impl Portal {
                             PaneSource::Local => file_viewer::build_local_viewer(
                                 viewer_id,
                                 file_name.clone(),
-                                file_path.clone(),
-                                file_type.clone(),
+                                file_path,
+                                file_type,
                             ),
                             PaneSource::Remote { session_id, .. } => {
                                 if let Some(sftp) = self.sftp.get_connection(*session_id) {
                                     file_viewer::build_remote_viewer(
                                         viewer_id,
                                         file_name.clone(),
-                                        file_path.clone(),
+                                        file_path,
                                         *session_id,
                                         sftp.clone(),
-                                        file_type.clone(),
+                                        file_type,
                                     )
                                 } else {
                                     return Task::none();
@@ -826,10 +893,7 @@ impl Portal {
         }
 
         let target_dir = target_pane.current_path.clone();
-        let source = source_pane.source.clone();
-        let target = target_pane.source.clone();
-
-        match (&source, &target) {
+        match (&source_pane.source, &target_pane.source) {
             (PaneSource::Local, PaneSource::Local) => {
                 // Local to Local copy
                 Task::perform(

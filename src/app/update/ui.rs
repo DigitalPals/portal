@@ -4,7 +4,9 @@ use iced::Task;
 use iced::keyboard::{self, Key};
 
 use crate::app::ActiveDialog;
+use crate::app::services;
 use crate::app::{FocusSection, Portal, SIDEBAR_AUTO_COLLAPSE_THRESHOLD, View};
+use crate::keybindings::AppAction;
 use crate::message::{
     DialogMessage, HistoryMessage, HostMessage, Message, SessionMessage, SftpMessage,
     SidebarMenuItem, TabMessage, UiMessage, VncMessage,
@@ -132,6 +134,44 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
         UiMessage::SnippetHistoryRedactOutput(redact_output) => {
             portal.config.snippet_history.redact_output = redact_output;
             portal.save_snippet_history();
+            Task::none()
+        }
+        UiMessage::SessionLoggingEnabled(enabled) => {
+            portal.prefs.session_logging_enabled = enabled;
+            portal.save_settings();
+            Task::none()
+        }
+        UiMessage::CredentialTimeoutChange(timeout_seconds) => {
+            let clamped = timeout_seconds.min(3600);
+            portal.prefs.credential_timeout = clamped;
+            portal.save_settings();
+            // Apply to the global in-memory cache for future entries.
+            services::connection::init_passphrase_cache(clamped);
+            Task::none()
+        }
+        UiMessage::SecurityAuditLoggingEnabled(enabled) => {
+            portal.prefs.security_audit_enabled = enabled;
+
+            if enabled {
+                if portal.prefs.security_audit_dir.is_none() {
+                    portal.prefs.security_audit_dir = crate::config::paths::config_dir()
+                        .map(|dir| dir.join("logs").join("security"));
+                }
+
+                portal.save_settings();
+
+                let audit_path = portal.prefs.security_audit_dir.as_ref().map(|dir| {
+                    let _ = std::fs::create_dir_all(dir);
+                    dir.join("audit.log")
+                });
+                crate::security_log::init_audit_log(audit_path);
+                tracing::info!("Security audit logging enabled");
+            } else {
+                portal.save_settings();
+                crate::security_log::init_audit_log(None);
+                tracing::info!("Security audit logging disabled");
+            }
+
             Task::none()
         }
         UiMessage::WindowResized(size) => {
@@ -299,9 +339,21 @@ fn handle_keyboard_event(
             return Task::none();
         }
 
-        // F11 toggles fullscreen
-        if let Key::Named(keyboard::key::Named::F11) = &key {
-            return Task::done(Message::Vnc(VncMessage::ToggleFullscreen));
+        if let Some(task) = handle_configured_actions(
+            portal,
+            &key,
+            &modifiers,
+            &[
+                AppAction::ToggleFullscreen,
+                AppAction::NewWindow,
+                AppAction::NewConnection,
+                AppAction::CloseSession,
+                AppAction::NewTab,
+                AppAction::NextSession,
+                AppAction::PreviousSession,
+            ],
+        ) {
+            return task;
         }
 
         // Ctrl+Shift shortcuts for VNC-specific actions
@@ -462,28 +514,7 @@ fn handle_keyboard_event(
                 tab_state.hide_context_menu();
                 tab_state.close_dialog();
             }
-            return Task::none();
-        }
-        // Ctrl+N - new tab / go to host grid
-        (Key::Character(c), true, false) if c.as_str() == "n" => {
-            portal.restore_sidebar_after_session();
-            portal.enter_host_grid();
-            portal.ui.focus_section = FocusSection::Content;
-            return Task::none();
-        }
-        // Ctrl+W - close current tab
-        (Key::Character(c), true, false) if c.as_str() == "w" => {
-            portal.close_active_tab();
-            return Task::none();
-        }
-        // Ctrl+Tab - next tab
-        (Key::Named(keyboard::key::Named::Tab), true, false) => {
-            portal.select_next_tab();
-            return Task::none();
-        }
-        // Ctrl+Shift+Tab - previous tab
-        (Key::Named(keyboard::key::Named::Tab), true, true) => {
-            portal.select_prev_tab();
+            portal.ui.tab_context_menu.hide();
             return Task::none();
         }
         // Ctrl+Shift+K - Install SSH key on remote server
@@ -498,12 +529,47 @@ fn handle_keyboard_event(
         _ => {}
     }
 
+    if let Some(task) = handle_configured_actions(
+        portal,
+        &key,
+        &modifiers,
+        &[
+            AppAction::NewWindow,
+            AppAction::NewConnection,
+            AppAction::CloseSession,
+            AppAction::NewTab,
+            AppAction::NextSession,
+            AppAction::PreviousSession,
+            AppAction::ToggleFullscreen,
+        ],
+    ) {
+        return task;
+    }
+
     // Priority 4: Section-specific navigation
     match portal.ui.focus_section {
         FocusSection::Sidebar => handle_sidebar_keyboard(portal, &key, &modifiers),
         FocusSection::TabBar => handle_tabbar_keyboard(portal, &key, &modifiers),
         FocusSection::Content => handle_content_keyboard(portal, &key, &modifiers),
     }
+}
+
+fn handle_configured_actions(
+    portal: &mut Portal,
+    key: &Key,
+    modifiers: &keyboard::Modifiers,
+    actions: &[AppAction],
+) -> Option<Task<Message>> {
+    for action in actions {
+        if portal
+            .prefs
+            .keybindings
+            .matches_action(*action, key, modifiers)
+        {
+            return Some(portal.handle_keybinding_action(*action));
+        }
+    }
+    None
 }
 
 /// Handle keyboard navigation in dialogs

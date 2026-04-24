@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use iced::widget::{Space, button, column, container, row, text, text_input};
+use iced::widget::{Space, button, checkbox, column, container, row, text, text_input};
 use iced::{Alignment, Element, Length};
 use secrecy::{ExposeSecret, SecretString};
 use uuid::Uuid;
@@ -30,6 +30,8 @@ pub struct PassphraseDialogState {
     pub key_path: PathBuf,
     /// The passphrase being entered (sensitive - should be cleared after use)
     pub passphrase: SecretString,
+    /// Whether to cache this passphrase for the session (in-memory only).
+    pub remember_for_session: bool,
     /// Error message to display if passphrase was invalid
     pub error: Option<String>,
     /// The host ID for resuming the connection
@@ -45,7 +47,7 @@ pub struct PassphraseDialogState {
 }
 
 impl PassphraseDialogState {
-    pub fn from_request(request: PassphraseRequest) -> Self {
+    pub fn from_request(request: PassphraseRequest, remember_for_session: bool) -> Self {
         Self {
             host_name: request.host_name,
             hostname: request.hostname,
@@ -53,6 +55,7 @@ impl PassphraseDialogState {
             username: request.username,
             key_path: request.key_path,
             passphrase: SecretString::from(String::new()),
+            remember_for_session,
             error: request.error,
             host_id: request.host_id,
             is_ssh: request.is_ssh,
@@ -104,6 +107,12 @@ pub fn passphrase_dialog_view(
         .style(dialog_input_style(theme))
         .on_input(|s| Message::Dialog(DialogMessage::PassphraseChanged(SecretString::from(s))))
         .on_submit(Message::Dialog(DialogMessage::PassphraseSubmit));
+
+    let remember_checkbox = checkbox(state.remember_for_session)
+        .label("Remember for session")
+        .on_toggle(|v| Message::Dialog(DialogMessage::PassphraseRememberToggled(v)))
+        .size(13)
+        .spacing(8);
 
     // Error message if present
     let error_element: Element<'static, Message> = if let Some(error) = &state.error {
@@ -164,7 +173,9 @@ pub fn passphrase_dialog_view(
         passphrase_label.into(),
         Space::new().height(4).into(),
         passphrase_input.into(),
-        Space::new().height(24).into(),
+        Space::new().height(10).into(),
+        remember_checkbox.into(),
+        Space::new().height(20).into(),
         button_row.into(),
     ]);
 

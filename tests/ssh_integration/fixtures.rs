@@ -229,6 +229,7 @@ impl SshTestEnvironment {
             auth,
             protocol: portal::config::Protocol::Ssh,
             vnc_port: None,
+            port_forwards: Vec::new(),
             group_id: None,
             notes: None,
             tags: vec![],
@@ -236,6 +237,7 @@ impl SshTestEnvironment {
             updated_at: chrono::Utc::now(),
             detected_os: None,
             last_connected: None,
+            agent_forwarding: false,
         }
     }
 

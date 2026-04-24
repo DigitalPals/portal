@@ -13,6 +13,7 @@ use crate::views::dialogs::quick_connect_dialog::QuickConnectDialogState;
 
 /// The currently active dialog, if any
 #[derive(Default)]
+#[allow(clippy::large_enum_variant)]
 pub enum ActiveDialog {
     /// No dialog is open
     #[default]
