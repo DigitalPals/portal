@@ -1303,7 +1303,14 @@ where
                         }
                     }
 
-                    if let Some(bytes) = key_to_escape_sequence(key, *modifiers, text.as_deref()) {
+                    let app_cursor = {
+                        let term = self.term.lock();
+                        term.mode().contains(TermMode::APP_CURSOR)
+                    };
+
+                    if let Some(bytes) =
+                        key_to_escape_sequence(key, *modifiers, text.as_deref(), app_cursor)
+                    {
                         shell.publish((self.on_input)(bytes));
 
                         // Scroll back to bottom when user types (after scrolling up in history)
@@ -1332,8 +1339,13 @@ where
     }
 }
 
-/// Convert a keyboard key to terminal escape sequence
-fn key_to_escape_sequence(key: &Key, modifiers: Modifiers, text: Option<&str>) -> Option<Vec<u8>> {
+/// Convert a keyboard key to terminal escape sequence.
+fn key_to_escape_sequence(
+    key: &Key,
+    modifiers: Modifiers,
+    text: Option<&str>,
+    app_cursor: bool,
+) -> Option<Vec<u8>> {
     // Handle Ctrl+key combinations
     if modifiers.control() {
         if let Key::Character(c) = key {
@@ -1366,10 +1378,12 @@ fn key_to_escape_sequence(key: &Key, modifiers: Modifiers, text: Option<&str>) -
                     }
                 }
                 keyboard::key::Named::Escape => vec![27],
-                keyboard::key::Named::ArrowUp => b"\x1b[A".to_vec(),
-                keyboard::key::Named::ArrowDown => b"\x1b[B".to_vec(),
-                keyboard::key::Named::ArrowRight => b"\x1b[C".to_vec(),
-                keyboard::key::Named::ArrowLeft => b"\x1b[D".to_vec(),
+                keyboard::key::Named::ArrowUp => cursor_key_sequence(b'A', modifiers, app_cursor),
+                keyboard::key::Named::ArrowDown => cursor_key_sequence(b'B', modifiers, app_cursor),
+                keyboard::key::Named::ArrowRight => {
+                    cursor_key_sequence(b'C', modifiers, app_cursor)
+                }
+                keyboard::key::Named::ArrowLeft => cursor_key_sequence(b'D', modifiers, app_cursor),
                 keyboard::key::Named::Home => b"\x1b[H".to_vec(),
                 keyboard::key::Named::End => b"\x1b[F".to_vec(),
                 keyboard::key::Named::PageUp => b"\x1b[5~".to_vec(),
@@ -1401,11 +1415,97 @@ fn key_to_escape_sequence(key: &Key, modifiers: Modifiers, text: Option<&str>) -
     }
 }
 
+fn cursor_key_sequence(final_byte: u8, modifiers: Modifiers, app_cursor: bool) -> Vec<u8> {
+    let modifier_value = 1
+        + u8::from(modifiers.shift())
+        + (u8::from(modifiers.alt()) * 2)
+        + (u8::from(modifiers.control()) * 4);
+
+    if modifier_value > 1 {
+        format!("\x1b[1;{}{}", modifier_value, final_byte as char).into_bytes()
+    } else if app_cursor {
+        vec![0x1b, b'O', final_byte]
+    } else {
+        vec![0x1b, b'[', final_byte]
+    }
+}
+
 impl<'a, Message> From<TerminalWidget<'a, Message>> for Element<'a, Message>
 where
     Message: 'a,
 {
     fn from(widget: TerminalWidget<'a, Message>) -> Self {
         Element::new(widget)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn arrow_keys_use_normal_cursor_sequences_by_default() {
+        assert_eq!(
+            key_to_escape_sequence(
+                &Key::Named(keyboard::key::Named::ArrowUp),
+                Modifiers::NONE,
+                None,
+                false
+            ),
+            Some(b"\x1b[A".to_vec())
+        );
+        assert_eq!(
+            key_to_escape_sequence(
+                &Key::Named(keyboard::key::Named::ArrowLeft),
+                Modifiers::NONE,
+                None,
+                false
+            ),
+            Some(b"\x1b[D".to_vec())
+        );
+    }
+
+    #[test]
+    fn arrow_keys_follow_application_cursor_mode() {
+        assert_eq!(
+            key_to_escape_sequence(
+                &Key::Named(keyboard::key::Named::ArrowUp),
+                Modifiers::NONE,
+                None,
+                true
+            ),
+            Some(b"\x1bOA".to_vec())
+        );
+        assert_eq!(
+            key_to_escape_sequence(
+                &Key::Named(keyboard::key::Named::ArrowRight),
+                Modifiers::NONE,
+                None,
+                true
+            ),
+            Some(b"\x1bOC".to_vec())
+        );
+    }
+
+    #[test]
+    fn modified_arrow_keys_use_xterm_modifier_sequences() {
+        assert_eq!(
+            key_to_escape_sequence(
+                &Key::Named(keyboard::key::Named::ArrowDown),
+                Modifiers::SHIFT,
+                None,
+                false
+            ),
+            Some(b"\x1b[1;2B".to_vec())
+        );
+        assert_eq!(
+            key_to_escape_sequence(
+                &Key::Named(keyboard::key::Named::ArrowRight),
+                Modifiers::CTRL | Modifiers::ALT,
+                None,
+                true
+            ),
+            Some(b"\x1b[1;7C".to_vec())
+        );
     }
 }
