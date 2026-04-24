@@ -69,35 +69,33 @@ impl Lines {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct TerminalGraphicCell {
+    pub rect: Rectangle,
+    pub box_thickness: f32,
+}
+
 /// Render a built-in terminal graphic. Returns `false` when the caller should
 /// fall back to normal text rendering.
 pub fn render_terminal_graphic<Renderer>(
     renderer: &mut Renderer,
     c: char,
-    x: f32,
-    y: f32,
-    width: f32,
-    height: f32,
-    box_thickness: f32,
+    cell: TerminalGraphicCell,
     fg_color: Color,
 ) -> bool
 where
     Renderer: renderer::Renderer + geometry::Renderer,
 {
-    let cell = Rectangle {
-        x,
-        y,
-        width,
-        height,
-    };
+    let rect = cell.rect;
+    let box_thickness = cell.box_thickness;
 
-    if draw_block(renderer, c, cell, fg_color)
-        || draw_braille(renderer, c, cell, fg_color)
-        || draw_powerline(renderer, c, cell, box_thickness, fg_color)
-        || draw_geometric(renderer, c, cell, fg_color)
-        || draw_box(renderer, c, cell, box_thickness, fg_color)
-        || draw_legacy_computing(renderer, c, cell, box_thickness, fg_color)
-        || draw_branch(renderer, c, cell, box_thickness, fg_color)
+    if draw_block(renderer, c, rect, fg_color)
+        || draw_braille(renderer, c, rect, fg_color)
+        || draw_powerline(renderer, c, rect, box_thickness, fg_color)
+        || draw_geometric(renderer, c, rect, fg_color)
+        || draw_box(renderer, c, rect, box_thickness, fg_color)
+        || draw_legacy_computing(renderer, c, rect, box_thickness, fg_color)
+        || draw_branch(renderer, c, rect, box_thickness, fg_color)
     {
         return true;
     }

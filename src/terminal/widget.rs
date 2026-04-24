@@ -20,7 +20,7 @@ use iced::{Background, Border, Color, Element, Event, Length, Rectangle, Shadow,
 use parking_lot::Mutex;
 
 use super::backend::{CursorInfo, EventProxy, RenderCell};
-use super::block_elements::render_terminal_graphic;
+use super::block_elements::{TerminalGraphicCell, render_terminal_graphic};
 use super::colors::{DEFAULT_BG, DEFAULT_FG, ansi_to_iced_themed, cell_fg_to_iced};
 use super::metrics::{TERMINAL_PADDING_LEFT, TerminalMetrics};
 use crate::fonts::{JETBRAINS_MONO_NERD, TerminalFont};
@@ -618,11 +618,15 @@ where
                 if render_terminal_graphic(
                     renderer,
                     cell.character,
-                    x,
-                    y,
-                    cell_width,
-                    cell_height,
-                    metrics.box_thickness,
+                    TerminalGraphicCell {
+                        rect: Rectangle {
+                            x,
+                            y,
+                            width: cell_width,
+                            height: cell_height,
+                        },
+                        box_thickness: metrics.box_thickness,
+                    },
                     fg_color,
                 ) {
                     // Block element was rendered as rectangles
@@ -966,10 +970,8 @@ where
                     // Alternative: also support auto-scroll when cursor is inside but near edges
                     let edge_distance_top = position.y - bounds.y;
                     let edge_distance_bottom = bounds.y + bounds.height - position.y;
-                    let near_top_edge =
-                        edge_distance_top >= 0.0 && edge_distance_top < AUTO_SCROLL_ZONE;
-                    let near_bottom_edge =
-                        edge_distance_bottom >= 0.0 && edge_distance_bottom < AUTO_SCROLL_ZONE;
+                    let near_top_edge = (0.0..AUTO_SCROLL_ZONE).contains(&edge_distance_top);
+                    let near_bottom_edge = (0.0..AUTO_SCROLL_ZONE).contains(&edge_distance_bottom);
 
                     // Auto-scroll if near edges and not in alternate screen mode
                     if should_auto_scroll || near_top_edge || near_bottom_edge {
