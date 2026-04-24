@@ -40,19 +40,20 @@ impl std::fmt::Debug for LocalSession {
 impl LocalSession {
     /// Spawn a new local terminal session
     ///
-    /// Uses `$SHELL` environment variable or falls back to `/bin/sh`.
+    /// Uses the user's configured shell and starts it as an interactive terminal shell.
     /// Returns a session handle and spawns a background task for PTY I/O.
     pub fn spawn(
         cols: u16,
         rows: u16,
         event_tx: mpsc::Sender<LocalEvent>,
     ) -> Result<Self, LocalError> {
-        // Get user's shell
-        let shell = if cfg!(target_os = "windows") {
-            std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string())
-        } else {
-            std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string())
-        };
+        // Resolve the user's configured shell. On Unix, CommandBuilder's base
+        // environment falls back to the password database when SHELL is absent,
+        // which is common for GUI-launched applications.
+        #[cfg(target_os = "windows")]
+        let shell = std::env::var("COMSPEC").unwrap_or_else(|_| "cmd.exe".to_string());
+        #[cfg(not(target_os = "windows"))]
+        let shell = CommandBuilder::new_default_prog().get_shell();
         tracing::info!("Spawning local terminal");
 
         // Create PTY system
@@ -68,11 +69,9 @@ impl LocalSession {
             })
             .map_err(|e| LocalError::PtyCreation(e.to_string()))?;
 
-        // Build command for shell as login shell to source profile/rc files
+        // Build command for a normal interactive terminal shell. The PTY makes
+        // shells interactive, so bash/zsh/fish read their usual rc files.
         let mut cmd = CommandBuilder::new(&shell);
-        if !cfg!(target_os = "windows") {
-            cmd.arg("-l");
-        }
         // Set TERM for proper terminal emulation
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
