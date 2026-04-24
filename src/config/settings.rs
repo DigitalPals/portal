@@ -49,10 +49,6 @@ pub struct VncSettings {
     #[serde(default = "default_vnc_refresh_fps")]
     pub refresh_fps: u32,
 
-    /// Max number of VNC events processed per poll tick
-    #[serde(default = "default_vnc_max_events_per_tick")]
-    pub max_events_per_tick: usize,
-
     /// Minimum interval between pointer events (ms)
     #[serde(default = "default_vnc_pointer_interval_ms")]
     pub pointer_interval_ms: u64,
@@ -76,7 +72,6 @@ impl Default for VncSettings {
             encoding: VncEncodingPreference::default(),
             color_depth: default_vnc_color_depth(),
             refresh_fps: default_vnc_refresh_fps(),
-            max_events_per_tick: default_vnc_max_events_per_tick(),
             pointer_interval_ms: default_vnc_pointer_interval_ms(),
             remote_resize: default_vnc_remote_resize(),
             clipboard_sharing: default_vnc_clipboard_sharing(),
@@ -112,12 +107,6 @@ impl VncSettings {
             }
         }
 
-        if let Ok(raw) = std::env::var("PORTAL_VNC_MAX_EVENTS_PER_TICK") {
-            if let Ok(count) = raw.trim().parse::<usize>() {
-                self.max_events_per_tick = count.clamp(1, 1024);
-            }
-        }
-
         if let Ok(raw) = std::env::var("PORTAL_VNC_POINTER_INTERVAL_MS") {
             if let Ok(ms) = raw.trim().parse::<u64>() {
                 self.pointer_interval_ms = ms.min(1000);
@@ -139,10 +128,6 @@ fn default_vnc_refresh_fps() -> u32 {
 
 fn default_vnc_color_depth() -> u8 {
     32
-}
-
-fn default_vnc_max_events_per_tick() -> usize {
-    64
 }
 
 fn default_vnc_pointer_interval_ms() -> u64 {

@@ -204,7 +204,6 @@ Environment variables:
 - `PORTAL_VNC_COLOR_DEPTH` (optional) - color depth in bits: `16` or `32`. Default: `32`.
 - `PORTAL_VNC_REFRESH_FPS` (optional) - framebuffer refresh rate, 1-60. Default: `10`.
 - `PORTAL_VNC_POINTER_INTERVAL_MS` (optional) - minimum interval between pointer events in ms. Default: `16`.
-- `PORTAL_VNC_MAX_EVENTS_PER_TICK` (optional) - max VNC events per poll, 1-1024. Default: `64`.
 - `PORTAL_VNC_REMOTE_RESIZE` (optional) - request remote desktop resize. Default: `false`.
 - `PORTAL_VNC_DEBUG` (optional) - enable VNC debug logging.
 

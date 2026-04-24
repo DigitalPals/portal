@@ -3,8 +3,8 @@
 //! This implements the iced Widget trait for rendering terminal content.
 
 use std::cell::RefCell;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use alacritty_terminal::grid::{Dimensions, Scroll};
 use alacritty_terminal::term::cell::Flags as CellFlags;
@@ -21,8 +21,8 @@ use parking_lot::Mutex;
 
 use super::backend::{CursorInfo, EventProxy, RenderCell};
 use super::block_elements::render_terminal_graphic;
-use super::colors::{ansi_to_iced_themed, cell_fg_to_iced, DEFAULT_BG, DEFAULT_FG};
-use crate::fonts::{TerminalFont, JETBRAINS_MONO_NERD};
+use super::colors::{DEFAULT_BG, DEFAULT_FG, ansi_to_iced_themed, cell_fg_to_iced};
+use crate::fonts::{JETBRAINS_MONO_NERD, TerminalFont};
 use crate::keybindings::{AppAction, KeybindingsConfig};
 use crate::theme::TerminalColors;
 

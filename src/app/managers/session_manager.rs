@@ -11,7 +11,6 @@ use uuid::Uuid;
 
 use crate::local::LocalSession;
 use crate::message::SessionId;
-use crate::message::{QualityLevel, VncScreen};
 use crate::ssh::SshSession;
 use crate::terminal::logger::SessionLogger;
 use crate::views::terminal_view::TerminalSession;
@@ -66,12 +65,6 @@ pub struct VncActiveSession {
     pub fullscreen: bool,
     /// Whether keyboard passthrough is active (all keys go to VNC)
     pub keyboard_passthrough: bool,
-    /// Current adaptive quality level
-    pub quality_level: QualityLevel,
-    /// Discovered remote monitors
-    pub monitors: Vec<VncScreen>,
-    /// Currently selected monitor (None = full desktop)
-    pub selected_monitor: Option<usize>,
     /// History entry ID for marking disconnection
     pub history_entry_id: uuid::Uuid,
 }
