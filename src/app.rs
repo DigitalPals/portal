@@ -120,6 +120,7 @@ pub struct PreferencesState {
     pub system_ui_scale: f32,           // Detected at startup, read-only
     pub ui_scale_override: Option<f32>, // User override from settings
     pub terminal_font_size: f32,
+    pub terminal_scroll_speed: f32,
     pub terminal_font: crate::fonts::TerminalFont,
     pub terminal_metric_adjustments: crate::config::settings::TerminalMetricAdjustments,
     pub sftp_column_widths: crate::views::sftp::ColumnWidths,
@@ -348,6 +349,7 @@ impl Portal {
                 system_ui_scale,
                 ui_scale_override: settings_config.ui_scale,
                 terminal_font_size: settings_config.terminal_font_size,
+                terminal_scroll_speed: settings_config.terminal_scroll_speed,
                 terminal_font: settings_config.terminal_font,
                 terminal_metric_adjustments: settings_config.terminal_metric_adjustments,
                 sftp_column_widths: settings_config.sftp_column_widths,
@@ -451,6 +453,7 @@ impl Portal {
                 SettingsPageContext {
                     current_theme: self.prefs.theme_id,
                     terminal_font_size: self.prefs.terminal_font_size,
+                    terminal_scroll_speed: self.prefs.terminal_scroll_speed,
                     terminal_font: self.prefs.terminal_font,
                     snippet_history_enabled: self.config.snippet_history.enabled,
                     snippet_store_command: self.config.snippet_history.store_command,
@@ -518,6 +521,7 @@ impl Portal {
                         &session.host_name,
                         status_message,
                         self.prefs.terminal_font_size,
+                        self.prefs.terminal_scroll_speed,
                         self.prefs.terminal_font,
                         self.prefs.terminal_metric_adjustments,
                         self.prefs.keybindings.clone(),
@@ -863,6 +867,7 @@ impl Portal {
     pub(crate) fn save_settings(&self) {
         let mut settings = SettingsConfig::default();
         settings.terminal_font_size = self.prefs.terminal_font_size;
+        settings.terminal_scroll_speed = self.prefs.terminal_scroll_speed;
         settings.terminal_font = self.prefs.terminal_font;
         settings.terminal_metric_adjustments = self.prefs.terminal_metric_adjustments;
         settings.theme = self.prefs.theme_id;

@@ -7,6 +7,10 @@ use crate::keybindings::KeybindingsConfig;
 use crate::theme::ThemeId;
 use crate::views::sftp::ColumnWidths;
 
+pub const TERMINAL_SCROLL_SPEED_BASE: f32 = 2.0;
+pub const TERMINAL_SCROLL_SPEED_MIN: f32 = TERMINAL_SCROLL_SPEED_BASE * 0.25;
+pub const TERMINAL_SCROLL_SPEED_MAX: f32 = TERMINAL_SCROLL_SPEED_BASE * 3.0;
+
 /// Ghostty-style terminal metric adjustment.
 ///
 /// Values are deltas: `2` means add 2 px, while `10%` means grow by 10%.
@@ -275,6 +279,10 @@ pub struct SettingsConfig {
     #[serde(default = "default_terminal_font_size")]
     pub terminal_font_size: f32,
 
+    /// Terminal mouse wheel / trackpad scroll speed multiplier
+    #[serde(default = "default_terminal_scroll_speed")]
+    pub terminal_scroll_speed: f32,
+
     /// Terminal font family
     #[serde(default)]
     pub terminal_font: TerminalFont,
@@ -370,6 +378,10 @@ fn default_terminal_font_size() -> f32 {
     9.0
 }
 
+fn default_terminal_scroll_speed() -> f32 {
+    TERMINAL_SCROLL_SPEED_BASE
+}
+
 fn default_auto_reconnect() -> bool {
     true
 }
@@ -414,6 +426,7 @@ impl Default for SettingsConfig {
     fn default() -> Self {
         Self {
             terminal_font_size: default_terminal_font_size(),
+            terminal_scroll_speed: default_terminal_scroll_speed(),
             terminal_font: TerminalFont::default(),
             terminal_metric_adjustments: TerminalMetricAdjustments::default(),
             theme: ThemeId::default(),
@@ -481,6 +494,14 @@ impl SettingsConfig {
             needs_save = true;
         }
 
+        let clamped_scroll_speed = config
+            .terminal_scroll_speed
+            .clamp(TERMINAL_SCROLL_SPEED_MIN, TERMINAL_SCROLL_SPEED_MAX);
+        if (config.terminal_scroll_speed - clamped_scroll_speed).abs() > f32::EPSILON {
+            config.terminal_scroll_speed = clamped_scroll_speed;
+            needs_save = true;
+        }
+
         // Save migrated config to persist the changes
         if needs_save {
             if let Err(e) = config.save() {
@@ -517,6 +538,7 @@ mod tests {
         let config: SettingsConfig = toml::from_str(
             r#"
 terminal_font_size = 13.0
+terminal_scroll_speed = 1.5
 adjust-cell-width = 1
 adjust-cell-height = "-5%"
 adjust-icon-height = "10%"
@@ -528,6 +550,7 @@ adjust-icon-height = "10%"
             config.terminal_metric_adjustments.adjust_cell_width,
             Some(MetricAdjustment::Absolute(1))
         );
+        assert!((config.terminal_scroll_speed - 1.5).abs() < f32::EPSILON);
         assert!(matches!(
             config.terminal_metric_adjustments.adjust_cell_height,
             Some(MetricAdjustment::Percent(value)) if (value - 0.95).abs() < f32::EPSILON

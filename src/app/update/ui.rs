@@ -6,6 +6,7 @@ use iced::keyboard::{self, Key};
 use crate::app::ActiveDialog;
 use crate::app::services;
 use crate::app::{FocusSection, Portal, SIDEBAR_AUTO_COLLAPSE_THRESHOLD, View};
+use crate::config::settings::{TERMINAL_SCROLL_SPEED_MAX, TERMINAL_SCROLL_SPEED_MIN};
 use crate::keybindings::AppAction;
 use crate::message::{
     DialogMessage, HistoryMessage, HostMessage, Message, SessionMessage, SftpMessage,
@@ -101,6 +102,12 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
         }
         UiMessage::FontSizeChange(size) => {
             portal.prefs.terminal_font_size = size;
+            portal.save_settings();
+            Task::none()
+        }
+        UiMessage::TerminalScrollSpeedChange(speed) => {
+            portal.prefs.terminal_scroll_speed =
+                speed.clamp(TERMINAL_SCROLL_SPEED_MIN, TERMINAL_SCROLL_SPEED_MAX);
             portal.save_settings();
             Task::none()
         }

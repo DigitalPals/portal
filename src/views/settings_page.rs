@@ -5,6 +5,9 @@ use iced::widget::{
 };
 use iced::{Alignment, Element, Fill, Length};
 
+use crate::config::settings::{
+    TERMINAL_SCROLL_SPEED_BASE, TERMINAL_SCROLL_SPEED_MAX, TERMINAL_SCROLL_SPEED_MIN,
+};
 use crate::fonts::TerminalFont;
 use crate::message::{Message, UiMessage};
 use crate::theme::{BORDER_RADIUS, CARD_BORDER_RADIUS, ScaledFonts, Theme, ThemeId, get_theme};
@@ -12,6 +15,7 @@ use crate::theme::{BORDER_RADIUS, CARD_BORDER_RADIUS, ScaledFonts, Theme, ThemeI
 pub struct SettingsPageContext {
     pub current_theme: ThemeId,
     pub terminal_font_size: f32,
+    pub terminal_scroll_speed: f32,
     pub terminal_font: TerminalFont,
     pub snippet_history_enabled: bool,
     pub snippet_store_command: bool,
@@ -66,6 +70,7 @@ pub fn settings_page_view(
         vec![
             font_selector_setting(context.terminal_font, theme, fonts),
             font_size_setting(context.terminal_font_size, theme, fonts),
+            terminal_scroll_speed_setting(context.terminal_scroll_speed, theme, fonts),
             toggle_setting(
                 "Enable session logging",
                 "Save terminal output to a log file per session",
@@ -448,6 +453,53 @@ fn font_size_setting(
     .width(140);
 
     let value_text = text(format!("{}px", current_size as u32))
+        .size(fonts.body)
+        .color(theme.text_secondary);
+
+    column![
+        row![
+            label,
+            Space::new().width(Length::Fill),
+            slider_widget,
+            Space::new().width(12),
+            value_text,
+        ]
+        .align_y(Alignment::Center),
+        Space::new().height(4),
+        description,
+    ]
+    .spacing(0)
+    .into()
+}
+
+/// Terminal scroll speed slider setting
+fn terminal_scroll_speed_setting(
+    current_speed: f32,
+    theme: Theme,
+    fonts: ScaledFonts,
+) -> Element<'static, Message> {
+    let relative_speed = current_speed / TERMINAL_SCROLL_SPEED_BASE;
+    let relative_min = TERMINAL_SCROLL_SPEED_MIN / TERMINAL_SCROLL_SPEED_BASE;
+    let relative_max = TERMINAL_SCROLL_SPEED_MAX / TERMINAL_SCROLL_SPEED_BASE;
+
+    let label = text("Scroll Speed")
+        .size(fonts.body)
+        .color(theme.text_primary);
+
+    let description = text("Mouse wheel and trackpad scrollback speed")
+        .size(fonts.label)
+        .color(theme.text_muted);
+
+    let slider_widget = slider(relative_min..=relative_max, relative_speed, |v| {
+        let rounded = (v * 4.0).round() / 4.0;
+        Message::Ui(UiMessage::TerminalScrollSpeedChange(
+            rounded * TERMINAL_SCROLL_SPEED_BASE,
+        ))
+    })
+    .step(0.25)
+    .width(140);
+
+    let value_text = text(format!("{}%", (relative_speed * 100.0).round() as u32))
         .size(fonts.body)
         .color(theme.text_secondary);
 

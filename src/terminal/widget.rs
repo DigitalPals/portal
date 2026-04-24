@@ -26,7 +26,10 @@ use super::colors::{DEFAULT_BG, DEFAULT_FG, ansi_to_iced_themed, cell_fg_to_iced
 use super::glyph_constraints::GlyphSize;
 use super::metrics::{TERMINAL_PADDING_LEFT, TerminalMetrics};
 use super::nerd_font_attributes;
-use crate::config::settings::TerminalMetricAdjustments;
+use crate::config::settings::{
+    TERMINAL_SCROLL_SPEED_BASE, TERMINAL_SCROLL_SPEED_MAX, TERMINAL_SCROLL_SPEED_MIN,
+    TerminalMetricAdjustments,
+};
 use crate::fonts::{JETBRAINS_MONO_NERD, TerminalFont};
 use crate::keybindings::{AppAction, KeybindingsConfig};
 use crate::theme::TerminalColors;
@@ -195,6 +198,7 @@ pub struct TerminalWidget<'a, Message> {
     terminal_colors: Option<TerminalColors>,
     render_epoch: Option<Arc<AtomicU64>>,
     keybindings: KeybindingsConfig,
+    scroll_speed: f32,
 }
 
 impl<'a, Message> TerminalWidget<'a, Message> {
@@ -214,12 +218,19 @@ impl<'a, Message> TerminalWidget<'a, Message> {
             terminal_colors: None,
             render_epoch: None,
             keybindings: KeybindingsConfig::default(),
+            scroll_speed: TERMINAL_SCROLL_SPEED_BASE,
         }
     }
 
     /// Set font size
     pub fn font_size(mut self, size: f32) -> Self {
         self.font_size = size;
+        self
+    }
+
+    /// Set mouse wheel / trackpad scroll speed multiplier.
+    pub fn scroll_speed(mut self, speed: f32) -> Self {
+        self.scroll_speed = speed.clamp(TERMINAL_SCROLL_SPEED_MIN, TERMINAL_SCROLL_SPEED_MAX);
         self
     }
 
@@ -572,6 +583,7 @@ struct TerminalState {
     cursor_visible: bool,
     last_size: Option<(u16, u16)>,
     scroll_pixels: f32, // Accumulated scroll pixels for trackpad
+    scroll_lines: f32,  // Accumulated fractional line scroll for mouse wheels
     // Cached render data (updated only when terminal content changes)
     render_cache: RefCell<RenderCache>,
     // Selection state (stored in buffer-absolute coordinates)
@@ -613,6 +625,7 @@ impl Default for TerminalState {
             cursor_visible: true,
             last_size: None,
             scroll_pixels: 0.0,
+            scroll_lines: 0.0,
             render_cache: RefCell::new(RenderCache {
                 needs_refresh: true,
                 ..RenderCache::default()
@@ -664,6 +677,7 @@ where
             cursor_visible: true,
             last_size: None,
             scroll_pixels: 0.0,
+            scroll_lines: 0.0,
             render_cache: RefCell::new(RenderCache {
                 needs_refresh: true,
                 ..RenderCache::default()
@@ -1421,12 +1435,15 @@ where
                         mouse::ScrollDelta::Lines { y, .. } => {
                             // Reset pixel accumulator on line-based scroll
                             state.scroll_pixels = 0.0;
-                            // 1:1 scrolling - OS handles scroll direction preference
-                            *y as i32
+                            state.scroll_lines += y * self.scroll_speed;
+                            let lines = state.scroll_lines as i32;
+                            state.scroll_lines -= lines as f32;
+                            lines
                         }
                         mouse::ScrollDelta::Pixels { y, .. } => {
+                            state.scroll_lines = 0.0;
                             // Accumulate pixels for smooth trackpad scrolling
-                            state.scroll_pixels += y;
+                            state.scroll_pixels += y * self.scroll_speed;
                             let line_height = metrics.cell_height;
                             let lines = (state.scroll_pixels / line_height) as i32;
                             // Keep remainder for next scroll event

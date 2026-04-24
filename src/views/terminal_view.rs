@@ -75,6 +75,7 @@ pub fn terminal_view_with_status<'a>(
     host_name: &'a str,
     status_message: Option<String>,
     font_size: f32,
+    scroll_speed: f32,
     terminal_font: TerminalFont,
     terminal_metric_adjustments: TerminalMetricAdjustments,
     keybindings: KeybindingsConfig,
@@ -87,6 +88,7 @@ pub fn terminal_view_with_status<'a>(
         .render_epoch(session.render_epoch())
         .on_resize(move |cols, rows| on_resize(session_id, cols, rows))
         .font_size(font_size)
+        .scroll_speed(scroll_speed)
         .font(terminal_font)
         .metric_adjustments(terminal_metric_adjustments)
         .keybindings(keybindings)
