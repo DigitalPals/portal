@@ -156,6 +156,29 @@ pub enum VncScalingMode {
     Stretch,
 }
 
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum VncQualityPreset {
+    #[default]
+    Auto,
+    Speed,
+    Balanced,
+    Quality,
+    Lossless,
+}
+
+impl VncQualityPreset {
+    pub const fn label(self) -> &'static str {
+        match self {
+            VncQualityPreset::Auto => "Auto",
+            VncQualityPreset::Speed => "Speed",
+            VncQualityPreset::Balanced => "Balanced",
+            VncQualityPreset::Quality => "Quality",
+            VncQualityPreset::Lossless => "Lossless",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 #[derive(Default)]
@@ -194,6 +217,22 @@ pub struct VncSettings {
     /// Scaling mode for VNC display
     #[serde(default)]
     pub scaling_mode: VncScalingMode,
+
+    /// Default to display-only VNC sessions
+    #[serde(default)]
+    pub view_only: bool,
+
+    /// Show a local cursor position dot over the remote framebuffer
+    #[serde(default = "default_vnc_show_cursor_dot")]
+    pub show_cursor_dot: bool,
+
+    /// Show detailed VNC runtime stats over the framebuffer
+    #[serde(default)]
+    pub show_stats_overlay: bool,
+
+    /// Quality/performance preset used for new VNC connections
+    #[serde(default)]
+    pub quality_preset: VncQualityPreset,
 }
 
 impl Default for VncSettings {
@@ -206,6 +245,10 @@ impl Default for VncSettings {
             remote_resize: default_vnc_remote_resize(),
             clipboard_sharing: default_vnc_clipboard_sharing(),
             scaling_mode: VncScalingMode::default(),
+            view_only: false,
+            show_cursor_dot: default_vnc_show_cursor_dot(),
+            show_stats_overlay: false,
+            quality_preset: VncQualityPreset::default(),
         }
     }
 }
@@ -233,7 +276,7 @@ impl VncSettings {
 
         if let Ok(raw) = std::env::var("PORTAL_VNC_REFRESH_FPS") {
             if let Ok(fps) = raw.trim().parse::<u32>() {
-                self.refresh_fps = fps.clamp(1, 60);
+                self.refresh_fps = fps.clamp(1, 20);
             }
         }
 
@@ -248,7 +291,48 @@ impl VncSettings {
             self.remote_resize = matches!(value.as_str(), "1" | "true" | "yes" | "on");
         }
 
+        if let Ok(raw) = std::env::var("PORTAL_VNC_QUALITY") {
+            let value = raw.trim().to_lowercase();
+            self.quality_preset = match value.as_str() {
+                "auto" => VncQualityPreset::Auto,
+                "speed" => VncQualityPreset::Speed,
+                "balanced" => VncQualityPreset::Balanced,
+                "quality" => VncQualityPreset::Quality,
+                "lossless" => VncQualityPreset::Lossless,
+                _ => self.quality_preset,
+            };
+        }
+
         self
+    }
+
+    pub fn effective_encoding(&self) -> VncEncodingPreference {
+        match self.quality_preset {
+            VncQualityPreset::Auto => self.encoding,
+            VncQualityPreset::Speed => VncEncodingPreference::Tight,
+            VncQualityPreset::Balanced => VncEncodingPreference::Auto,
+            VncQualityPreset::Quality => VncEncodingPreference::Tight,
+            VncQualityPreset::Lossless => VncEncodingPreference::Zrle,
+        }
+    }
+
+    pub fn effective_color_depth(&self) -> u8 {
+        match self.quality_preset {
+            VncQualityPreset::Speed => 16,
+            VncQualityPreset::Auto
+            | VncQualityPreset::Balanced
+            | VncQualityPreset::Quality
+            | VncQualityPreset::Lossless => self.color_depth,
+        }
+    }
+
+    pub fn effective_refresh_fps(&self) -> u32 {
+        match self.quality_preset {
+            VncQualityPreset::Speed => self.refresh_fps.max(20),
+            VncQualityPreset::Quality => self.refresh_fps.max(20),
+            _ => self.refresh_fps,
+        }
+        .clamp(1, 20)
     }
 }
 
@@ -269,6 +353,10 @@ fn default_vnc_remote_resize() -> bool {
 }
 
 fn default_vnc_clipboard_sharing() -> bool {
+    true
+}
+
+fn default_vnc_show_cursor_dot() -> bool {
     true
 }
 

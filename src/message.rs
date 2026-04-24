@@ -461,6 +461,18 @@ pub enum VncMessage {
     },
     /// Toggle keyboard passthrough mode
     ToggleKeyboardPassthrough,
+    /// Request a full framebuffer refresh
+    ManualRefresh(SessionId),
+    /// Toggle display-only mode for the active VNC session
+    ToggleViewOnly,
+    /// Toggle the local cursor position dot
+    ToggleCursorDot,
+    /// Toggle detailed VNC stats overlay
+    ToggleStatsOverlay,
+    /// Cycle the quality preset for new VNC sessions
+    CycleQualityPreset,
+    /// Remote server bell
+    Bell(SessionId),
 }
 
 /// UI state messages

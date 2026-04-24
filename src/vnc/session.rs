@@ -38,6 +38,116 @@ pub enum VncSessionEvent {
     ClipboardText(String),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VncUpdateKind {
+    Raw,
+    Jpeg,
+    Copy,
+}
+
+impl VncUpdateKind {
+    pub const fn label(self) -> &'static str {
+        match self {
+            VncUpdateKind::Raw => "raw",
+            VncUpdateKind::Jpeg => "jpeg",
+            VncUpdateKind::Copy => "copy",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct VncStatsSnapshot {
+    pub first_frame_received: bool,
+    pub last_update_at: Option<Instant>,
+    pub update_fps: f32,
+    pub updates_total: u64,
+    pub pixels_total: u64,
+    pub bytes_total: u64,
+    pub last_update_kind: Option<VncUpdateKind>,
+    pub last_update_rect: Option<(u16, u16, u16, u16)>,
+    pub bell_count: u64,
+    pub cursor_updates: u64,
+}
+
+#[derive(Debug)]
+struct VncStats {
+    first_frame_received: bool,
+    last_update_at: Option<Instant>,
+    fps_window_started_at: Instant,
+    fps_window_updates: u32,
+    update_fps: f32,
+    updates_total: u64,
+    pixels_total: u64,
+    bytes_total: u64,
+    last_update_kind: Option<VncUpdateKind>,
+    last_update_rect: Option<(u16, u16, u16, u16)>,
+    bell_count: u64,
+    cursor_updates: u64,
+}
+
+impl VncStats {
+    fn new(now: Instant) -> Self {
+        Self {
+            first_frame_received: false,
+            last_update_at: None,
+            fps_window_started_at: now,
+            fps_window_updates: 0,
+            update_fps: 0.0,
+            updates_total: 0,
+            pixels_total: 0,
+            bytes_total: 0,
+            last_update_kind: None,
+            last_update_rect: None,
+            bell_count: 0,
+            cursor_updates: 0,
+        }
+    }
+
+    fn record_update(&mut self, kind: VncUpdateKind, rect: (u16, u16, u16, u16), bytes: usize) {
+        let now = Instant::now();
+        self.first_frame_received = true;
+        self.last_update_at = Some(now);
+        self.fps_window_updates = self.fps_window_updates.saturating_add(1);
+        self.updates_total = self.updates_total.saturating_add(1);
+        self.pixels_total = self
+            .pixels_total
+            .saturating_add(rect.2 as u64 * rect.3 as u64);
+        self.bytes_total = self.bytes_total.saturating_add(bytes as u64);
+        self.last_update_kind = Some(kind);
+        self.last_update_rect = Some(rect);
+
+        let elapsed = self.fps_window_started_at.elapsed();
+        if elapsed.as_secs_f32() >= 1.0 {
+            self.update_fps = self.fps_window_updates as f32 / elapsed.as_secs_f32();
+            self.fps_window_updates = 0;
+            self.fps_window_started_at = now;
+        }
+    }
+
+    fn record_bell(&mut self) {
+        self.bell_count = self.bell_count.saturating_add(1);
+    }
+
+    fn record_cursor(&mut self) {
+        self.cursor_updates = self.cursor_updates.saturating_add(1);
+    }
+
+    fn snapshot(&self) -> VncStatsSnapshot {
+        VncStatsSnapshot {
+            first_frame_received: self.first_frame_received,
+            last_update_at: self.last_update_at,
+            update_fps: self.update_fps,
+            updates_total: self.updates_total,
+            pixels_total: self.pixels_total,
+            bytes_total: self.bytes_total,
+            last_update_kind: self.last_update_kind,
+            last_update_rect: self.last_update_rect,
+            bell_count: self.bell_count,
+            cursor_updates: self.cursor_updates,
+        }
+    }
+}
+
 // ── Apple Remote Desktop (ARD) authentication ───────────────────────────────
 //
 // Security type 30. Used by macOS Screen Sharing.
@@ -378,6 +488,8 @@ impl AsyncWrite for NegotiatedStream {
 pub struct VncSession {
     /// Shared framebuffer (updated by background task, read by widget)
     pub framebuffer: Arc<Mutex<FrameBuffer>>,
+    /// Runtime telemetry updated by the VNC event loop
+    stats: Arc<Mutex<VncStats>>,
     /// Channel to send X11 input events to the VNC client
     input_tx: mpsc::Sender<X11Event>,
     /// Hostname for display
@@ -456,11 +568,11 @@ impl VncSession {
         let (stream, detected_os) = NegotiatedStream::negotiate(tcp, user, pass).await?;
 
         let pw = password.clone().unwrap_or_default();
-        let pixel_format = pixel_format_from_depth(vnc_settings.color_depth);
+        let pixel_format = pixel_format_from_depth(vnc_settings.effective_color_depth());
         let allow_tight = pixel_format.bits_per_pixel == 32;
         let include_cursor = pixel_format.bits_per_pixel == 32;
         let encodings = build_encodings(
-            vnc_settings.encoding,
+            vnc_settings.effective_encoding(),
             is_private,
             allow_tight,
             include_cursor,
@@ -490,9 +602,11 @@ impl VncSession {
         let (input_tx, input_rx) = mpsc::channel::<X11Event>(256);
 
         let now = Instant::now();
+        let stats = Arc::new(Mutex::new(VncStats::new(now)));
         let disconnect_logged = Arc::new(AtomicBool::new(false));
         let session = Arc::new(Self {
             framebuffer: framebuffer.clone(),
+            stats: stats.clone(),
             input_tx,
             host_name,
             mouse_rate_limit: Duration::from_millis(vnc_settings.pointer_interval_ms),
@@ -516,7 +630,8 @@ impl VncSession {
             event_tx,
             input_rx,
             pixel_format,
-            vnc_settings.refresh_fps,
+            vnc_settings.effective_refresh_fps(),
+            stats,
             hostname.to_string(),
             port,
             disconnect_logged,
@@ -540,6 +655,7 @@ impl VncSession {
         mut input_rx: mpsc::Receiver<X11Event>,
         pixel_format: PixelFormat,
         refresh_fps: u32,
+        stats: Arc<Mutex<VncStats>>,
         host: String,
         port: u16,
         disconnect_logged: Arc<AtomicBool>,
@@ -547,7 +663,7 @@ impl VncSession {
         let refresh_ms = if refresh_fps == 0 {
             100
         } else {
-            (1000u64 / refresh_fps.min(60) as u64).max(1)
+            (1000u64 / refresh_fps.min(20) as u64).max(1)
         };
         let raw_bpp = (pixel_format.bits_per_pixel / 8) as usize;
         let raw_big_endian = pixel_format.big_endian_flag > 0;
@@ -635,6 +751,11 @@ impl VncSession {
                     }
                 }
                 VncEvent::RawImage(rect, data) => {
+                    stats.lock().record_update(
+                        VncUpdateKind::Raw,
+                        (rect.x, rect.y, rect.width, rect.height),
+                        data.len(),
+                    );
                     let mut fb = framebuffer.lock();
                     if raw_bpp == 2 {
                         fb.apply_raw_565(
@@ -660,6 +781,11 @@ impl VncSession {
                     let ry = rect.y as u32;
                     let rw = rect.width;
                     let rh = rect.height;
+                    stats.lock().record_update(
+                        VncUpdateKind::Jpeg,
+                        (rect.x, rect.y, rect.width, rect.height),
+                        data.len(),
+                    );
                     // Decode JPEG on a blocking thread to avoid stalling
                     // the async event loop (and thus input/refresh tasks)
                     let fb_ref = framebuffer.clone();
@@ -695,6 +821,11 @@ impl VncSession {
                     }
                 }
                 VncEvent::Copy(dst, src) => {
+                    stats.lock().record_update(
+                        VncUpdateKind::Copy,
+                        (dst.x, dst.y, dst.width, dst.height),
+                        0,
+                    );
                     framebuffer.lock().apply_copy(
                         dst.x as u32,
                         dst.y as u32,
@@ -705,9 +836,13 @@ impl VncSession {
                     );
                 }
                 VncEvent::Bell => {
+                    stats.lock().record_bell();
                     let _ = event_tx.send(VncSessionEvent::Bell).await;
                 }
-                VncEvent::SetCursor(_rect, _data) => {}
+                VncEvent::SetCursor(_rect, _data) => {
+                    stats.lock().record_cursor();
+                    framebuffer.lock().set_remote_cursor_seen();
+                }
                 VncEvent::Text(text) => {
                     if !text.is_empty() {
                         let _ = event_tx.send(VncSessionEvent::ClipboardText(text)).await;
@@ -783,6 +918,10 @@ impl VncSession {
         }
         *last = now;
         let _ = self.input_tx.try_send(X11Event::Refresh);
+    }
+
+    pub fn stats_snapshot(&self) -> VncStatsSnapshot {
+        self.stats.lock().snapshot()
     }
 
     /// Send a key event to the VNC server (async)
@@ -864,6 +1003,7 @@ mod tests {
         let now = Instant::now();
         VncSession {
             framebuffer: Arc::new(Mutex::new(FrameBuffer::new(16, 16))),
+            stats: Arc::new(Mutex::new(VncStats::new(now))),
             input_tx,
             host_name: "test".to_string(),
             mouse_rate_limit,
@@ -879,6 +1019,37 @@ mod tests {
             port: 5900,
             disconnect_logged: Arc::new(AtomicBool::new(true)),
         }
+    }
+
+    #[test]
+    fn stats_record_first_frame_and_last_update() {
+        let now = Instant::now();
+        let mut stats = VncStats::new(now);
+
+        stats.record_update(VncUpdateKind::Raw, (1, 2, 10, 20), 800);
+        let snapshot = stats.snapshot();
+
+        assert!(snapshot.first_frame_received);
+        assert_eq!(snapshot.updates_total, 1);
+        assert_eq!(snapshot.pixels_total, 200);
+        assert_eq!(snapshot.bytes_total, 800);
+        assert_eq!(snapshot.last_update_kind, Some(VncUpdateKind::Raw));
+        assert_eq!(snapshot.last_update_rect, Some((1, 2, 10, 20)));
+        assert!(snapshot.last_update_at.is_some());
+    }
+
+    #[test]
+    fn stats_record_bell_and_cursor_events() {
+        let now = Instant::now();
+        let mut stats = VncStats::new(now);
+
+        stats.record_bell();
+        stats.record_cursor();
+        stats.record_cursor();
+        let snapshot = stats.snapshot();
+
+        assert_eq!(snapshot.bell_count, 1);
+        assert_eq!(snapshot.cursor_updates, 2);
     }
 
     fn recv_pointer(rx: &mut mpsc::Receiver<X11Event>) -> (u16, u16, u8) {

@@ -62,8 +62,13 @@ pub fn handle_vnc(portal: &mut Portal, msg: VncMessage) -> Task<Message> {
                     frame_count: 0,
                     fps_last_check: now,
                     current_fps: 0.0,
+                    first_frame_received: false,
+                    status_text: "connecting".to_string(),
                     fullscreen: false,
                     keyboard_passthrough: false,
+                    view_only: portal.prefs.vnc_settings.view_only,
+                    show_cursor_dot: portal.prefs.vnc_settings.show_cursor_dot,
+                    show_stats_overlay: portal.prefs.vnc_settings.show_stats_overlay,
                     history_entry_id,
                 },
             );
@@ -87,10 +92,31 @@ pub fn handle_vnc(portal: &mut Portal, msg: VncMessage) -> Task<Message> {
             // Update FPS counter for the active VNC session
             if let crate::app::View::VncViewer(session_id) = portal.ui.active_view {
                 if let Some(vnc) = portal.vnc_sessions.get_mut(&session_id) {
+                    let stats = vnc.session.stats_snapshot();
+                    vnc.first_frame_received = stats.first_frame_received;
+                    let max_fps = portal.prefs.vnc_settings.effective_refresh_fps() as f32;
+                    vnc.current_fps = if let Some(last_update_at) = stats.last_update_at {
+                        if last_update_at.elapsed().as_millis() <= 1_000 {
+                            stats.update_fps.min(max_fps)
+                        } else {
+                            0.0
+                        }
+                    } else {
+                        0.0
+                    };
+                    vnc.status_text = if let Some(last_update_at) = stats.last_update_at {
+                        let age_ms = last_update_at.elapsed().as_millis();
+                        if age_ms > 2_000 {
+                            format!("idle {}s", age_ms / 1000)
+                        } else {
+                            "live".to_string()
+                        }
+                    } else {
+                        "waiting for frame".to_string()
+                    };
                     vnc.frame_count += 1;
                     let elapsed = vnc.fps_last_check.elapsed();
                     if elapsed.as_secs_f32() >= 1.0 {
-                        vnc.current_fps = vnc.frame_count as f32 / elapsed.as_secs_f32();
                         vnc.frame_count = 0;
                         vnc.fps_last_check = std::time::Instant::now();
                     }
@@ -104,6 +130,9 @@ pub fn handle_vnc(portal: &mut Portal, msg: VncMessage) -> Task<Message> {
             pressed,
         } => {
             if let Some(vnc) = portal.vnc_sessions.get(&session_id) {
+                if vnc.view_only {
+                    return Task::none();
+                }
                 tracing::debug!(
                     "VNC key event: keysym=0x{:04X} pressed={} char={:?}",
                     keysym,
@@ -164,6 +193,9 @@ pub fn handle_vnc(portal: &mut Portal, msg: VncMessage) -> Task<Message> {
             keysyms,
         } => {
             if let Some(vnc) = portal.vnc_sessions.get(&session_id) {
+                if vnc.view_only {
+                    return Task::none();
+                }
                 // Press all keys, then release in reverse order
                 for &keysym in &keysyms {
                     vnc.session.try_send_key(keysym, true);
@@ -246,6 +278,9 @@ pub fn handle_vnc(portal: &mut Portal, msg: VncMessage) -> Task<Message> {
             buttons,
         } => {
             if let Some(vnc) = portal.vnc_sessions.get(&session_id) {
+                if vnc.view_only {
+                    return Task::none();
+                }
                 vnc.session.try_send_mouse(x, y, buttons);
             }
             Task::none()
@@ -265,6 +300,60 @@ pub fn handle_vnc(portal: &mut Portal, msg: VncMessage) -> Task<Message> {
                 VncScalingMode::Stretch => VncScalingMode::Fit,
             };
             portal.save_settings();
+            Task::none()
+        }
+        VncMessage::ManualRefresh(session_id) => {
+            if let Some(vnc) = portal.vnc_sessions.get(&session_id) {
+                vnc.session.try_request_full_refresh();
+            }
+            Task::none()
+        }
+        VncMessage::ToggleViewOnly => {
+            if let crate::app::View::VncViewer(session_id) = portal.ui.active_view {
+                if let Some(vnc) = portal.vnc_sessions.get_mut(&session_id) {
+                    vnc.view_only = !vnc.view_only;
+                    vnc.keyboard_passthrough = false;
+                }
+            }
+            Task::none()
+        }
+        VncMessage::ToggleCursorDot => {
+            if let crate::app::View::VncViewer(session_id) = portal.ui.active_view {
+                if let Some(vnc) = portal.vnc_sessions.get_mut(&session_id) {
+                    vnc.show_cursor_dot = !vnc.show_cursor_dot;
+                }
+            }
+            Task::none()
+        }
+        VncMessage::ToggleStatsOverlay => {
+            if let crate::app::View::VncViewer(session_id) = portal.ui.active_view {
+                if let Some(vnc) = portal.vnc_sessions.get_mut(&session_id) {
+                    vnc.show_stats_overlay = !vnc.show_stats_overlay;
+                }
+            }
+            Task::none()
+        }
+        VncMessage::CycleQualityPreset => {
+            use crate::config::settings::VncQualityPreset;
+            portal.prefs.vnc_settings.quality_preset =
+                match portal.prefs.vnc_settings.quality_preset {
+                    VncQualityPreset::Auto => VncQualityPreset::Speed,
+                    VncQualityPreset::Speed => VncQualityPreset::Balanced,
+                    VncQualityPreset::Balanced => VncQualityPreset::Quality,
+                    VncQualityPreset::Quality => VncQualityPreset::Lossless,
+                    VncQualityPreset::Lossless => VncQualityPreset::Auto,
+                };
+            portal.save_settings();
+            portal.toast_manager.push(Toast::success(format!(
+                "VNC quality applies to new sessions: {}",
+                portal.prefs.vnc_settings.quality_preset.label()
+            )));
+            Task::none()
+        }
+        VncMessage::Bell(session_id) => {
+            if portal.vnc_sessions.contains_key(&session_id) {
+                portal.toast_manager.push(Toast::success("Remote bell"));
+            }
             Task::none()
         }
     }

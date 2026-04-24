@@ -202,9 +202,10 @@ Environment variables:
   from SSH exec calls. Default: 4194304 (4 MiB).
 - `PORTAL_VNC_ENCODING` (optional) - VNC encoding preference: `auto`, `tight`, `zrle`, or `raw`. Default: `auto`.
 - `PORTAL_VNC_COLOR_DEPTH` (optional) - color depth in bits: `16` or `32`. Default: `32`.
-- `PORTAL_VNC_REFRESH_FPS` (optional) - framebuffer refresh rate, 1-60. Default: `10`.
+- `PORTAL_VNC_REFRESH_FPS` (optional) - framebuffer refresh request rate, 1-20. Default: `10`.
 - `PORTAL_VNC_POINTER_INTERVAL_MS` (optional) - minimum interval between pointer events in ms. Default: `16`.
 - `PORTAL_VNC_REMOTE_RESIZE` (optional) - request remote desktop resize. Default: `false`.
+- `PORTAL_VNC_QUALITY` (optional) - quality preset for new VNC sessions: `auto`, `speed`, `balanced`, `quality`, or `lossless`. Default: `auto`.
 - `PORTAL_VNC_DEBUG` (optional) - enable VNC debug logging.
 
 Example:

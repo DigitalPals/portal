@@ -3,12 +3,13 @@
 //! Renders the VNC framebuffer with toolbar and special key dropdown.
 
 use iced::widget::{button, column, container, pick_list, row, stack, text};
-use iced::{Element, Fill};
+use iced::{Element, Fill, Length};
 
 use crate::app::managers::session_manager::VncActiveSession;
-use crate::config::settings::VncScalingMode;
+use crate::config::settings::{VncQualityPreset, VncScalingMode};
 use crate::message::{Message, SessionId, VncMessage};
 use crate::theme::{ScaledFonts, Theme};
+use crate::vnc::session::VncStatsSnapshot;
 use crate::vnc::widget::vnc_framebuffer_interactive;
 
 /// Special key combinations available in the Send Keys dropdown
@@ -72,6 +73,7 @@ pub fn vnc_viewer_view<'a>(
     theme: Theme,
     fonts: ScaledFonts,
     scaling_mode: VncScalingMode,
+    quality_preset: VncQualityPreset,
 ) -> Element<'a, Message> {
     let fb = vnc.session.framebuffer.lock();
     let resolution_text = format!("{}x{}", fb.width, fb.height);
@@ -88,16 +90,18 @@ pub fn vnc_viewer_view<'a>(
         VncScalingMode::Stretch => "Stretch",
     };
 
-    // FPS indicator with color coding
-    let fps = vnc.current_fps;
-    let fps_color = if fps >= 20.0 {
-        iced::Color::from_rgb8(0x40, 0xa0, 0x2b) // green
-    } else if fps >= 10.0 {
-        iced::Color::from_rgb8(0xdf, 0x8e, 0x1d) // yellow
+    let stats = vnc.session.stats_snapshot();
+
+    let fps_text = if stats.first_frame_received {
+        format!("{:>2} fps", vnc.current_fps.round().min(20.0) as u32)
     } else {
-        iced::Color::from_rgb8(0xd2, 0x0f, 0x39) // red
+        "-- fps".to_string()
     };
-    let fps_text = format!("{:.0} fps", fps);
+    let update_age_text = format_update_age(&stats);
+    let encoding_text = stats
+        .last_update_kind
+        .map(|kind| kind.label())
+        .unwrap_or("pending");
 
     // Single consolidated toolbar
     let send_keys_picker: Element<'a, Message> = {
@@ -123,26 +127,70 @@ pub fn vnc_viewer_view<'a>(
     let toolbar = container(
         row![
             // Status group: resolution, fps, scaling, quality
-            text(resolution_text)
-                .size(fonts.small)
-                .color(theme.text_secondary),
-            text(fps_text).size(fonts.small).color(fps_color),
-            vnc_action_button(
+            vnc_metric_label(resolution_text, 82.0, theme.text_secondary, theme, fonts),
+            vnc_metric_label(fps_text, 56.0, theme.text_secondary, theme, fonts),
+            vnc_metric_label(update_age_text, 58.0, theme.text_muted, theme, fonts),
+            vnc_metric_label(
+                encoding_text.to_string(),
+                54.0,
+                theme.text_muted,
+                theme,
+                fonts
+            ),
+            vnc_metric_label(
+                vnc.status_text.clone(),
+                96.0,
+                theme.text_muted,
+                theme,
+                fonts
+            ),
+            vnc_action_button_sized(
                 scaling_label,
                 Message::Vnc(VncMessage::CycleScalingMode),
+                54.0,
+                theme,
+                fonts
+            ),
+            vnc_action_button_sized(
+                quality_preset.label(),
+                Message::Vnc(VncMessage::CycleQualityPreset),
+                68.0,
                 theme,
                 fonts
             ),
             text("|").size(fonts.small).color(theme.text_muted),
             // Send Keys dropdown + Grab KB
             send_keys_picker,
-            vnc_action_button(
+            vnc_action_button_sized(
                 if vnc.keyboard_passthrough {
                     "Release KB"
                 } else {
                     "Grab KB"
                 },
                 Message::Vnc(VncMessage::ToggleKeyboardPassthrough),
+                78.0,
+                theme,
+                fonts,
+            ),
+            vnc_action_button_sized(
+                if vnc.view_only {
+                    "View Only"
+                } else {
+                    "Interactive"
+                },
+                Message::Vnc(VncMessage::ToggleViewOnly),
+                82.0,
+                theme,
+                fonts,
+            ),
+            vnc_action_button_sized(
+                if vnc.show_cursor_dot {
+                    "Cursor Dot"
+                } else {
+                    "No Cursor Dot"
+                },
+                Message::Vnc(VncMessage::ToggleCursorDot),
+                94.0,
                 theme,
                 fonts,
             ),
@@ -150,18 +198,36 @@ pub fn vnc_viewer_view<'a>(
             // Spacer
             iced::widget::Space::new().width(Fill),
             vnc_action_button(
+                "Refresh",
+                Message::Vnc(VncMessage::ManualRefresh(session_id)),
+                theme,
+                fonts,
+            ),
+            vnc_action_button_sized(
+                if vnc.show_stats_overlay {
+                    "Hide Stats"
+                } else {
+                    "Stats"
+                },
+                Message::Vnc(VncMessage::ToggleStatsOverlay),
+                70.0,
+                theme,
+                fonts,
+            ),
+            vnc_action_button(
                 "Screenshot",
                 Message::Vnc(VncMessage::CaptureScreenshot(session_id)),
                 theme,
                 fonts,
             ),
-            vnc_action_button(
+            vnc_action_button_sized(
                 if is_fullscreen {
                     "Exit Fullscreen"
                 } else {
                     "Fullscreen"
                 },
                 Message::Vnc(VncMessage::ToggleFullscreen),
+                104.0,
                 theme,
                 fonts,
             ),
@@ -183,6 +249,7 @@ pub fn vnc_viewer_view<'a>(
         session_id,
         fb_width,
         fb_height,
+        vnc.show_cursor_dot,
     );
 
     let framebuffer = container(fb_content)
@@ -194,6 +261,110 @@ pub fn vnc_viewer_view<'a>(
             background: Some(iced::Color::BLACK.into()),
             ..Default::default()
         });
+
+    let waiting_overlay: Option<Element<'a, Message>> = if !stats.first_frame_received {
+        Some(
+            container(
+                text("Waiting for first VNC frame")
+                    .size(fonts.body)
+                    .color(iced::Color::from_rgba8(255, 255, 255, 0.8)),
+            )
+            .padding([6, 12])
+            .style(move |_| iced::widget::container::Style {
+                background: Some(iced::Color::from_rgba8(0, 0, 0, 0.55).into()),
+                border: iced::Border {
+                    radius: 4.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            })
+            .into(),
+        )
+    } else {
+        None
+    };
+
+    let stats_overlay: Option<Element<'a, Message>> = if vnc.show_stats_overlay {
+        let rect_text = stats
+            .last_update_rect
+            .map(|(x, y, w, h)| format!("rect {}x{}+{}+{}", w, h, x, y))
+            .unwrap_or_else(|| "rect pending".to_string());
+        let bytes_text = format!("{} KB", stats.bytes_total / 1024);
+        Some(
+            container(
+                column![
+                    text(format!("updates {}", stats.updates_total))
+                        .size(fonts.small)
+                        .color(iced::Color::WHITE),
+                    text(format!("pixels {}", stats.pixels_total))
+                        .size(fonts.small)
+                        .color(iced::Color::WHITE),
+                    text(bytes_text).size(fonts.small).color(iced::Color::WHITE),
+                    text(rect_text).size(fonts.small).color(iced::Color::WHITE),
+                    text(format!("cursor updates {}", stats.cursor_updates))
+                        .size(fonts.small)
+                        .color(iced::Color::WHITE),
+                ]
+                .spacing(2),
+            )
+            .padding([6, 8])
+            .style(move |_| iced::widget::container::Style {
+                background: Some(iced::Color::from_rgba8(0, 0, 0, 0.55).into()),
+                border: iced::Border {
+                    radius: 4.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            })
+            .into(),
+        )
+    } else {
+        None
+    };
+
+    let framebuffer_stack: Element<'a, Message> = match (waiting_overlay, stats_overlay) {
+        (Some(waiting), Some(stats)) => stack![
+            framebuffer,
+            container(waiting)
+                .width(Fill)
+                .height(Fill)
+                .align_x(iced::Alignment::Center)
+                .align_y(iced::Alignment::Center),
+            container(stats)
+                .width(Fill)
+                .height(Fill)
+                .align_x(iced::Alignment::Start)
+                .align_y(iced::Alignment::Start)
+                .padding(10),
+        ]
+        .width(Fill)
+        .height(Fill)
+        .into(),
+        (Some(waiting), None) => stack![
+            framebuffer,
+            container(waiting)
+                .width(Fill)
+                .height(Fill)
+                .align_x(iced::Alignment::Center)
+                .align_y(iced::Alignment::Center),
+        ]
+        .width(Fill)
+        .height(Fill)
+        .into(),
+        (None, Some(stats)) => stack![
+            framebuffer,
+            container(stats)
+                .width(Fill)
+                .height(Fill)
+                .align_x(iced::Alignment::Start)
+                .align_y(iced::Alignment::Start)
+                .padding(10),
+        ]
+        .width(Fill)
+        .height(Fill)
+        .into(),
+        (None, None) => framebuffer.into(),
+    };
 
     if is_fullscreen {
         // In fullscreen, just show framebuffer with a small overlay hint
@@ -213,7 +384,7 @@ pub fn vnc_viewer_view<'a>(
         });
 
         stack![
-            framebuffer,
+            framebuffer_stack,
             container(hint)
                 .width(Fill)
                 .align_x(iced::Alignment::Center)
@@ -223,7 +394,7 @@ pub fn vnc_viewer_view<'a>(
         .height(Fill)
         .into()
     } else {
-        column![toolbar, framebuffer]
+        column![toolbar, framebuffer_stack]
             .width(Fill)
             .height(Fill)
             .into()
@@ -237,7 +408,31 @@ fn vnc_action_button<'a>(
     theme: Theme,
     fonts: ScaledFonts,
 ) -> Element<'a, Message> {
-    button(text(label).size(fonts.small).color(theme.text_secondary))
+    vnc_action_button_inner(label, on_press, None, theme, fonts)
+}
+
+fn vnc_action_button_sized<'a>(
+    label: &'a str,
+    on_press: Message,
+    width: f32,
+    theme: Theme,
+    fonts: ScaledFonts,
+) -> Element<'a, Message> {
+    vnc_action_button_inner(label, on_press, Some(width), theme, fonts)
+}
+
+fn vnc_action_button_inner<'a>(
+    label: &'a str,
+    on_press: Message,
+    width: Option<f32>,
+    theme: Theme,
+    fonts: ScaledFonts,
+) -> Element<'a, Message> {
+    let label = container(text(label).size(fonts.small).color(theme.text_secondary))
+        .width(width.map(Length::Fixed).unwrap_or(Length::Shrink))
+        .align_x(iced::Alignment::Center);
+
+    button(label)
         .on_press(on_press)
         .padding([2, 6])
         .style(move |_t, status| {
@@ -257,6 +452,46 @@ fn vnc_action_button<'a>(
             }
         })
         .into()
+}
+
+fn vnc_metric_label<'a>(
+    value: String,
+    width: f32,
+    color: iced::Color,
+    theme: Theme,
+    fonts: ScaledFonts,
+) -> Element<'a, Message> {
+    container(text(value).size(fonts.small).color(color))
+        .width(Length::Fixed(width))
+        .padding([2, 5])
+        .style(move |_| iced::widget::container::Style {
+            background: Some(theme.background.into()),
+            border: iced::Border {
+                radius: 3.0.into(),
+                width: 1.0,
+                color: theme.border,
+            },
+            ..Default::default()
+        })
+        .into()
+}
+
+fn format_update_age(stats: &VncStatsSnapshot) -> String {
+    let Some(last_update_at) = stats.last_update_at else {
+        return "pending".to_string();
+    };
+
+    let age_ms = last_update_at.elapsed().as_millis();
+    if age_ms < 1_000 {
+        format!("{:>3}ms", age_ms.min(999))
+    } else {
+        let age_s = age_ms / 1_000;
+        if age_s > 99 {
+            "99s+".to_string()
+        } else {
+            format!("{:>3}s", age_s)
+        }
+    }
 }
 
 /// Pick list style for VNC toolbar Send Keys dropdown

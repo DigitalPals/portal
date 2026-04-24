@@ -71,10 +71,20 @@ pub struct VncActiveSession {
     pub fps_last_check: Instant,
     /// Current estimated FPS
     pub current_fps: f32,
+    /// Whether this session has received at least one framebuffer update
+    pub first_frame_received: bool,
+    /// Short connection/quality status shown in the VNC toolbar
+    pub status_text: String,
     /// Whether fullscreen mode is active
     pub fullscreen: bool,
     /// Whether keyboard passthrough is active (all keys go to VNC)
     pub keyboard_passthrough: bool,
+    /// Whether local input forwarding is disabled
+    pub view_only: bool,
+    /// Whether the local cursor position dot is drawn over the framebuffer
+    pub show_cursor_dot: bool,
+    /// Whether to show detailed VNC stats over the framebuffer
+    pub show_stats_overlay: bool,
     /// History entry ID for marking disconnection
     pub history_entry_id: uuid::Uuid,
 }

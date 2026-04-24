@@ -23,10 +23,12 @@ use crate::vnc::framebuffer::{DirtyRect, FrameBuffer};
 pub fn vnc_framebuffer<'a>(
     framebuffer: &Arc<Mutex<FrameBuffer>>,
     scaling_mode: VncScalingMode,
+    show_cursor_dot: bool,
 ) -> Element<'a, Message> {
     let program = VncProgram {
         framebuffer: framebuffer.clone(),
         scaling_mode,
+        show_cursor_dot,
     };
 
     shader::Shader::new(program)
@@ -42,14 +44,24 @@ pub fn vnc_framebuffer_interactive<'a>(
     session_id: SessionId,
     fb_width: u32,
     fb_height: u32,
+    show_cursor_dot: bool,
 ) -> Element<'a, Message> {
-    let inner = vnc_framebuffer(framebuffer, scaling_mode);
-    VncMouseWrapper::new(inner, session_id, scaling_mode, fb_width, fb_height).into()
+    let inner = vnc_framebuffer(framebuffer, scaling_mode, show_cursor_dot);
+    VncMouseWrapper::new(
+        inner,
+        framebuffer.clone(),
+        session_id,
+        scaling_mode,
+        fb_width,
+        fb_height,
+    )
+    .into()
 }
 
 /// Widget wrapper that intercepts mouse events and maps them to VNC coordinates.
 struct VncMouseWrapper<'a> {
     inner: Element<'a, Message>,
+    framebuffer: Arc<Mutex<FrameBuffer>>,
     session_id: SessionId,
     scaling_mode: VncScalingMode,
     fb_width: u32,
@@ -69,6 +81,7 @@ struct VncMouseState {
 impl<'a> VncMouseWrapper<'a> {
     fn new(
         inner: Element<'a, Message>,
+        framebuffer: Arc<Mutex<FrameBuffer>>,
         session_id: SessionId,
         scaling_mode: VncScalingMode,
         fb_width: u32,
@@ -76,6 +89,7 @@ impl<'a> VncMouseWrapper<'a> {
     ) -> Self {
         Self {
             inner,
+            framebuffer,
             session_id,
             scaling_mode,
             fb_width,
@@ -241,6 +255,9 @@ impl<'a> advanced::Widget<Message, iced::Theme, iced::Renderer> for VncMouseWrap
                             _ => {}
                         }
                         if let Some((x, y)) = self.map_coordinates(&bounds, pos.x, pos.y) {
+                            self.framebuffer
+                                .lock()
+                                .set_cursor_position(x as u32, y as u32);
                             state.last_x = x;
                             state.last_y = y;
                             shell.publish(Message::Vnc(VncMessage::MouseEvent {
@@ -267,6 +284,9 @@ impl<'a> advanced::Widget<Message, iced::Theme, iced::Renderer> for VncMouseWrap
                     } else {
                         (state.last_x, state.last_y)
                     };
+                    self.framebuffer
+                        .lock()
+                        .set_cursor_position(x as u32, y as u32);
                     shell.publish(Message::Vnc(VncMessage::MouseEvent {
                         session_id: self.session_id,
                         x,
@@ -277,6 +297,9 @@ impl<'a> advanced::Widget<Message, iced::Theme, iced::Renderer> for VncMouseWrap
                 iced::mouse::Event::CursorMoved { .. } => {
                     if let Some(pos) = position {
                         if let Some((x, y)) = self.map_coordinates(&bounds, pos.x, pos.y) {
+                            self.framebuffer
+                                .lock()
+                                .set_cursor_position(x as u32, y as u32);
                             state.last_x = x;
                             state.last_y = y;
                             shell.publish(Message::Vnc(VncMessage::MouseEvent {
@@ -291,6 +314,9 @@ impl<'a> advanced::Widget<Message, iced::Theme, iced::Renderer> for VncMouseWrap
                 iced::mouse::Event::WheelScrolled { delta } => {
                     if let Some(pos) = position {
                         if let Some((x, y)) = self.map_coordinates(&bounds, pos.x, pos.y) {
+                            self.framebuffer
+                                .lock()
+                                .set_cursor_position(x as u32, y as u32);
                             // Scroll: bit3=up, bit4=down
                             let scroll_y = match delta {
                                 iced::mouse::ScrollDelta::Lines { y, .. } => *y,
@@ -349,6 +375,7 @@ impl<'a> advanced::Widget<Message, iced::Theme, iced::Renderer> for VncMouseWrap
 struct VncProgram {
     framebuffer: Arc<Mutex<FrameBuffer>>,
     scaling_mode: VncScalingMode,
+    show_cursor_dot: bool,
 }
 
 /// Primitive carrying framebuffer snapshot to the GPU pipeline.
@@ -356,6 +383,7 @@ struct VncProgram {
 struct VncPrimitive {
     framebuffer: Arc<Mutex<FrameBuffer>>,
     scaling_mode: VncScalingMode,
+    show_cursor_dot: bool,
 }
 
 /// The wgpu pipeline that owns the texture and renders it.
@@ -366,6 +394,7 @@ struct VncPipeline {
     bind_group_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
     vertex_buffer: wgpu::Buffer,
+    overlay_buffer: wgpu::Buffer,
     /// Current texture dimensions (to detect when resize is needed)
     tex_width: u32,
     tex_height: u32,
@@ -392,6 +421,12 @@ impl std::fmt::Debug for VncPipeline {
 struct Vertex {
     position: [f32; 2],
     tex_coords: [f32; 2],
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+struct OverlayUniform {
+    cursor: [f32; 4],
 }
 
 const QUAD_VERTICES: &[Vertex] = &[
@@ -444,10 +479,23 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 var t_framebuffer: texture_2d<f32>;
 @group(0) @binding(1)
 var s_framebuffer: sampler;
+@group(0) @binding(2)
+var<uniform> u_overlay: vec4<f32>;
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let color = textureSample(t_framebuffer, s_framebuffer, in.tex_coords);
+    if (u_overlay.w > 0.5) {
+        let dims = vec2<f32>(textureDimensions(t_framebuffer));
+        let px = vec2<f32>(in.tex_coords.x * dims.x, in.tex_coords.y * dims.y);
+        let dist = distance(px, u_overlay.xy);
+        if (dist <= 2.0) {
+            return vec4<f32>(1.0, 1.0, 1.0, 1.0);
+        }
+        if (dist <= 4.0) {
+            return vec4<f32>(0.0, 0.0, 0.0, 1.0);
+        }
+    }
     return vec4<f32>(color.rgb, 1.0);
 }
 "#;
@@ -475,6 +523,7 @@ impl VncPipeline {
         layout: &wgpu::BindGroupLayout,
         texture: &wgpu::Texture,
         sampler: &wgpu::Sampler,
+        overlay_buffer: &wgpu::Buffer,
     ) -> wgpu::BindGroup {
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -488,6 +537,10 @@ impl VncPipeline {
                 wgpu::BindGroupEntry {
                     binding: 1,
                     resource: wgpu::BindingResource::Sampler(sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: overlay_buffer.as_entire_binding(),
                 },
             ],
         })
@@ -509,7 +562,7 @@ impl shader::Primitive for VncPrimitive {
         // calling write_texture. This prevents the GPU upload from blocking
         // the VNC event loop which also needs the framebuffer lock to apply
         // incoming pixel updates (~2000+ tiles/sec at 4K).
-        let snapshot = {
+        let (snapshot, overlay) = {
             let mut fb = self.framebuffer.lock();
             if fb.width == 0 || fb.height == 0 {
                 return;
@@ -519,6 +572,19 @@ impl shader::Primitive for VncPrimitive {
             if fb.pixels.len() != expected {
                 return;
             }
+
+            let overlay = OverlayUniform {
+                cursor: [
+                    fb.cursor_x as f32,
+                    fb.cursor_y as f32,
+                    0.0,
+                    if self.show_cursor_dot && fb.cursor_visible {
+                        1.0
+                    } else {
+                        0.0
+                    },
+                ],
+            };
 
             // Recreate texture if dimensions changed
             let texture_recreated =
@@ -530,6 +596,7 @@ impl shader::Primitive for VncPrimitive {
                     &pipeline.bind_group_layout,
                     &pipeline.texture,
                     &pipeline.sampler,
+                    &pipeline.overlay_buffer,
                 );
                 pipeline.tex_width = fb.width;
                 pipeline.tex_height = fb.height;
@@ -539,70 +606,78 @@ impl shader::Primitive for VncPrimitive {
             // render an uninitialized (black) texture before real data arrives.
             let dirty = if texture_recreated {
                 fb.dirty.take();
-                DirtyRect {
+                Some(DirtyRect {
                     x: 0,
                     y: 0,
                     width: fb.width,
                     height: fb.height,
-                }
+                })
             } else {
-                let Some(dirty) = fb.dirty.take() else {
-                    return;
-                };
-                dirty
+                fb.dirty.take()
             };
 
-            let stride = fb.width as usize * 4;
-            let x = dirty.x.min(fb.width);
-            let y = dirty.y.min(fb.height);
-            let w = dirty.width.min(fb.width.saturating_sub(x));
-            let h = dirty.height.min(fb.height.saturating_sub(y));
-            if w == 0 || h == 0 {
-                return;
-            }
+            let snapshot = if let Some(dirty) = dirty {
+                let stride = fb.width as usize * 4;
+                let x = dirty.x.min(fb.width);
+                let y = dirty.y.min(fb.height);
+                let w = dirty.width.min(fb.width.saturating_sub(x));
+                let h = dirty.height.min(fb.height.saturating_sub(y));
+                if w == 0 || h == 0 {
+                    None
+                } else {
+                    let offset = (y as usize * stride) + (x as usize * 4);
+                    let len = ((h - 1) as usize * stride) + (w as usize * 4);
+                    let end = offset.saturating_add(len);
+                    if end > fb.pixels.len() {
+                        None
+                    } else {
+                        // Copy the dirty region into the reusable staging buffer so
+                        // GPU upload never holds the framebuffer lock. We keep the
+                        // full framebuffer stride because Queue::write_texture can
+                        // then address each row at its original x offset without
+                        // repacking row padding.
+                        let data_len = end - offset;
+                        pipeline.staging_buf.clear();
+                        pipeline.staging_buf.reserve(data_len);
+                        pipeline
+                            .staging_buf
+                            .extend_from_slice(&fb.pixels[offset..end]);
+                        Some((stride as u32, x, y, w, h))
+                    }
+                }
+            } else {
+                None
+            };
 
-            let offset = (y as usize * stride) + (x as usize * 4);
-            let len = ((h - 1) as usize * stride) + (w as usize * 4);
-            let end = offset.saturating_add(len);
-            if end > fb.pixels.len() {
-                return;
-            }
-
-            // Copy the dirty region into the reusable staging buffer
-            // so we can release the lock before the GPU upload
-            let data_len = end - offset;
-            pipeline.staging_buf.clear();
-            pipeline.staging_buf.reserve(data_len);
-            pipeline
-                .staging_buf
-                .extend_from_slice(&fb.pixels[offset..end]);
-            (stride as u32, x, y, w, h)
+            (snapshot, overlay)
         };
         // framebuffer lock released here
 
-        let (stride, x, y, w, h) = snapshot;
+        queue.write_buffer(&pipeline.overlay_buffer, 0, bytemuck::bytes_of(&overlay));
 
-        // Upload pixel data to GPU — this may block briefly for DMA/staging
-        // but no longer holds the framebuffer lock
-        queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &pipeline.texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d { x, y, z: 0 },
-                aspect: wgpu::TextureAspect::All,
-            },
-            &pipeline.staging_buf,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(stride),
-                rows_per_image: Some(h),
-            },
-            wgpu::Extent3d {
-                width: w,
-                height: h,
-                depth_or_array_layers: 1,
-            },
-        );
+        if let Some((stride, x, y, w, h)) = snapshot {
+            // Upload pixel data to GPU — this may block briefly for DMA/staging
+            // but no longer holds the framebuffer lock.
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &pipeline.texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d { x, y, z: 0 },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                &pipeline.staging_buf,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(stride),
+                    rows_per_image: Some(h),
+                },
+                wgpu::Extent3d {
+                    width: w,
+                    height: h,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
 
         // Update vertex positions based on scaling mode
         let (sx, sy) = match self.scaling_mode {
@@ -705,6 +780,16 @@ impl shader::Pipeline for VncPipeline {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
             ],
         });
 
@@ -774,7 +859,20 @@ impl shader::Pipeline for VncPipeline {
 
         // Initial 1x1 texture (will be resized on first frame)
         let texture = Self::create_texture(device, 1, 1);
-        let bind_group = Self::create_bind_group(device, &bind_group_layout, &texture, &sampler);
+        let overlay_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("vnc_overlay_buffer"),
+            contents: bytemuck::bytes_of(&OverlayUniform {
+                cursor: [0.0, 0.0, 0.0, 0.0],
+            }),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+        let bind_group = Self::create_bind_group(
+            device,
+            &bind_group_layout,
+            &texture,
+            &sampler,
+            &overlay_buffer,
+        );
 
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("vnc_vertex_buffer"),
@@ -789,6 +887,7 @@ impl shader::Pipeline for VncPipeline {
             bind_group_layout,
             sampler,
             vertex_buffer,
+            overlay_buffer,
             tex_width: 1,
             tex_height: 1,
             staging_buf: Vec::new(),
@@ -809,6 +908,7 @@ impl shader::Program<Message> for VncProgram {
         VncPrimitive {
             framebuffer: self.framebuffer.clone(),
             scaling_mode: self.scaling_mode,
+            show_cursor_dot: self.show_cursor_dot,
         }
     }
 }

@@ -328,7 +328,7 @@ impl Portal {
                                 VncSessionEvent::Disconnected => {
                                     Message::Vnc(VncMessage::Disconnected(session_id))
                                 }
-                                VncSessionEvent::Bell => continue,
+                                VncSessionEvent::Bell => Message::Vnc(VncMessage::Bell(session_id)),
                                 VncSessionEvent::ClipboardText(text) => {
                                     Message::Vnc(VncMessage::ClipboardReceived(session_id, text))
                                 }

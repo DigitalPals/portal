@@ -5,6 +5,10 @@ pub struct FrameBuffer {
     pub height: u32,
     pub pixels: Vec<u8>,
     pub dirty: Option<DirtyRect>,
+    pub cursor_x: u32,
+    pub cursor_y: u32,
+    pub cursor_visible: bool,
+    pub remote_cursor_seen: bool,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -29,7 +33,25 @@ impl FrameBuffer {
             height,
             pixels: vec![0; (width * height * 4) as usize],
             dirty: None,
+            cursor_x: 0,
+            cursor_y: 0,
+            cursor_visible: false,
+            remote_cursor_seen: false,
         }
+    }
+
+    pub fn set_cursor_position(&mut self, x: u32, y: u32) {
+        if self.width == 0 || self.height == 0 {
+            return;
+        }
+
+        self.cursor_x = x.min(self.width - 1);
+        self.cursor_y = y.min(self.height - 1);
+        self.cursor_visible = true;
+    }
+
+    pub fn set_remote_cursor_seen(&mut self) {
+        self.remote_cursor_seen = true;
     }
 
     fn mark_dirty(&mut self, x: u32, y: u32, w: u32, h: u32) {
@@ -141,11 +163,61 @@ impl FrameBuffer {
         self.width = width;
         self.height = height;
         self.pixels = vec![0; (width * height * 4) as usize];
+        if width > 0 && height > 0 {
+            self.cursor_x = self.cursor_x.min(width - 1);
+            self.cursor_y = self.cursor_y.min(height - 1);
+        } else {
+            self.cursor_visible = false;
+        }
         // Don't mark dirty here — the pixels are all black (zeroed) and
         // uploading them causes a black flash before real pixel data arrives.
         // The GPU texture will still be recreated on the next prepare() call
         // via the dimension mismatch check, and real pixel data from the
         // server will set the dirty flag when it arrives.
         self.dirty = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dirty_rects_are_merged() {
+        let mut fb = FrameBuffer::new(100, 100);
+
+        fb.mark_dirty(10, 20, 5, 5);
+        fb.mark_dirty(20, 10, 10, 30);
+
+        let dirty = fb.dirty.unwrap();
+        assert_eq!(dirty.x, 10);
+        assert_eq!(dirty.y, 10);
+        assert_eq!(dirty.width, 20);
+        assert_eq!(dirty.height, 30);
+    }
+
+    #[test]
+    fn cursor_position_is_clamped_to_framebuffer() {
+        let mut fb = FrameBuffer::new(16, 9);
+
+        fb.set_cursor_position(40, 20);
+
+        assert_eq!(fb.cursor_x, 15);
+        assert_eq!(fb.cursor_y, 8);
+        assert!(fb.cursor_visible);
+    }
+
+    #[test]
+    fn resize_clears_dirty_but_keeps_valid_cursor_state() {
+        let mut fb = FrameBuffer::new(16, 9);
+        fb.apply_raw(0, 0, 1, 1, &[1, 2, 3, 4]);
+        fb.set_cursor_position(4, 5);
+
+        fb.resize(8, 4);
+
+        assert!(fb.dirty.is_none());
+        assert_eq!(fb.pixels.len(), 8 * 4 * 4);
+        assert_eq!(fb.cursor_x, 4);
+        assert_eq!(fb.cursor_y, 3);
     }
 }

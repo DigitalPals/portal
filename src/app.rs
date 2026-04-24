@@ -566,6 +566,7 @@ impl Portal {
                         theme,
                         fonts,
                         self.prefs.vnc_settings.scaling_mode,
+                        self.prefs.vnc_settings.quality_preset,
                     )
                 } else {
                     text("VNC session not found").into()
@@ -916,9 +917,9 @@ impl Portal {
             );
         }
 
-        // VNC render tick (~30fps, only when viewing VNC)
+        // VNC render tick, capped by the configured VNC refresh rate.
         if matches!(self.ui.active_view, View::VncViewer(_)) && !self.vnc_sessions.is_empty() {
-            let fps = self.prefs.vnc_settings.refresh_fps.clamp(1, 60);
+            let fps = self.prefs.vnc_settings.effective_refresh_fps();
             let interval_ms = (1000u64 / fps as u64).max(1);
             subscriptions.push(
                 time::every(Duration::from_millis(interval_ms))
