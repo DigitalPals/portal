@@ -45,6 +45,7 @@ Portal is a native SSH and VNC client built for speed and simplicity. Manage you
 - **Multi-tab sessions** — Open multiple SSH connections in tabs
 - **Local terminal** — Launch local shell sessions alongside remote connections
 - **Adjustable font size** — Scale from 6px to 20px for your preference
+- **Configurable scroll speed** — Tune mouse wheel and trackpad scrollback speed
 - **SSH key installation** — Install your public key on remote servers with `Ctrl+Shift+K`
 - **Status bar** — See hostname and connection duration at a glance
 - **Session history** — Quick reconnect to recent servers
@@ -303,7 +304,7 @@ Configuration files:
 - `hosts.toml` — Saved host definitions (SSH and VNC protocols)
 - `snippets.toml` — Command snippets
 - `snippet_history.toml` — Snippet execution history (`enabled`, `store_command`, `store_output`, `redact_output`)
-- `settings.toml` — Theme, font preferences, and VNC settings (encoding, color depth, refresh rate, scaling mode)
+- `settings.toml` — Theme, terminal font and scroll preferences, and VNC settings (encoding, color depth, refresh rate, scaling mode)
 - `history.toml` — Connection history
 - `known_hosts` — SSH host key storage
 

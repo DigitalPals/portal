@@ -122,6 +122,7 @@ The terminal widget (`src/terminal/widget.rs`) is a custom Iced component built 
 **Scrollback**:
 - Mouse wheel scrolling through terminal history
 - Trackpad pixel-perfect smooth scrolling
+- Configurable mouse wheel / trackpad scroll speed via `terminal_scroll_speed` in settings
 - Scroll to bottom on user input
 
 ### VNC Framebuffer Rendering
