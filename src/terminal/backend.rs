@@ -120,6 +120,7 @@ pub struct RenderCell {
     pub fg: AnsiColor,
     pub bg: AnsiColor,
     pub flags: CellFlags,
+    pub constraint_width: u8,
 }
 
 /// Cursor information for rendering

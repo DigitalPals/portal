@@ -7,6 +7,132 @@ use crate::keybindings::KeybindingsConfig;
 use crate::theme::ThemeId;
 use crate::views::sftp::ColumnWidths;
 
+/// Ghostty-style terminal metric adjustment.
+///
+/// Values are deltas: `2` means add 2 px, while `10%` means grow by 10%.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum MetricAdjustment {
+    Absolute(i32),
+    Percent(f32),
+}
+
+impl MetricAdjustment {
+    pub fn apply_u32(self, value: f32) -> f32 {
+        match self {
+            Self::Absolute(delta) => value + delta as f32,
+            Self::Percent(scale) => (value * scale).round(),
+        }
+    }
+
+    pub fn apply_f32(self, value: f32) -> f32 {
+        match self {
+            Self::Absolute(delta) => value + delta as f32,
+            Self::Percent(scale) => value * scale,
+        }
+    }
+}
+
+impl Serialize for MetricAdjustment {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        match self {
+            Self::Absolute(value) => serializer.serialize_i32(*value),
+            Self::Percent(scale) => {
+                serializer.serialize_str(&format!("{}%", (scale - 1.0) * 100.0))
+            }
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for MetricAdjustment {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct Visitor;
+
+        impl serde::de::Visitor<'_> for Visitor {
+            type Value = MetricAdjustment;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("an integer pixel delta or a percentage string")
+            }
+
+            fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                let value = i32::try_from(value).map_err(E::custom)?;
+                Ok(MetricAdjustment::Absolute(value))
+            }
+
+            fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                let value = i32::try_from(value).map_err(E::custom)?;
+                Ok(MetricAdjustment::Absolute(value))
+            }
+
+            fn visit_f64<E>(self, value: f64) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                Ok(MetricAdjustment::Absolute(value.round() as i32))
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                let trimmed = value.trim();
+                if let Some(percent) = trimmed.strip_suffix('%') {
+                    let percent = percent.parse::<f32>().map_err(E::custom)? / 100.0;
+                    return Ok(MetricAdjustment::Percent((1.0 + percent).max(0.0)));
+                }
+
+                let value = trimmed.parse::<i32>().map_err(E::custom)?;
+                Ok(MetricAdjustment::Absolute(value))
+            }
+        }
+
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+pub struct TerminalMetricAdjustments {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adjust_cell_width: Option<MetricAdjustment>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adjust_cell_height: Option<MetricAdjustment>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adjust_font_baseline: Option<MetricAdjustment>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adjust_underline_position: Option<MetricAdjustment>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adjust_underline_thickness: Option<MetricAdjustment>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adjust_strikethrough_position: Option<MetricAdjustment>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adjust_strikethrough_thickness: Option<MetricAdjustment>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adjust_overline_position: Option<MetricAdjustment>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adjust_overline_thickness: Option<MetricAdjustment>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adjust_cursor_thickness: Option<MetricAdjustment>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adjust_cursor_height: Option<MetricAdjustment>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adjust_box_thickness: Option<MetricAdjustment>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub adjust_icon_height: Option<MetricAdjustment>,
+}
+
 #[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "lowercase")]
 pub enum VncEncodingPreference {
@@ -153,6 +279,10 @@ pub struct SettingsConfig {
     #[serde(default)]
     pub terminal_font: TerminalFont,
 
+    /// Ghostty-style terminal metric adjustments.
+    #[serde(default, flatten)]
+    pub terminal_metric_adjustments: TerminalMetricAdjustments,
+
     /// Selected theme
     #[serde(default)]
     pub theme: ThemeId,
@@ -285,6 +415,7 @@ impl Default for SettingsConfig {
         Self {
             terminal_font_size: default_terminal_font_size(),
             terminal_font: TerminalFont::default(),
+            terminal_metric_adjustments: TerminalMetricAdjustments::default(),
             theme: ThemeId::default(),
             ui_scale: None,
             sftp_column_widths: ColumnWidths::default(),
@@ -374,5 +505,36 @@ impl SettingsConfig {
 
         let content = toml::to_string_pretty(self).map_err(ConfigError::Serialize)?;
         super::write_atomic(&path, &content).map_err(|e| ConfigError::WriteFile { path, source: e })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_terminal_metric_adjustments_from_top_level_settings() {
+        let config: SettingsConfig = toml::from_str(
+            r#"
+terminal_font_size = 13.0
+adjust-cell-width = 1
+adjust-cell-height = "-5%"
+adjust-icon-height = "10%"
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            config.terminal_metric_adjustments.adjust_cell_width,
+            Some(MetricAdjustment::Absolute(1))
+        );
+        assert!(matches!(
+            config.terminal_metric_adjustments.adjust_cell_height,
+            Some(MetricAdjustment::Percent(value)) if (value - 0.95).abs() < f32::EPSILON
+        ));
+        assert!(matches!(
+            config.terminal_metric_adjustments.adjust_icon_height,
+            Some(MetricAdjustment::Percent(value)) if (value - 1.1).abs() < f32::EPSILON
+        ));
     }
 }

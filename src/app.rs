@@ -121,6 +121,7 @@ pub struct PreferencesState {
     pub ui_scale_override: Option<f32>, // User override from settings
     pub terminal_font_size: f32,
     pub terminal_font: crate::fonts::TerminalFont,
+    pub terminal_metric_adjustments: crate::config::settings::TerminalMetricAdjustments,
     pub sftp_column_widths: crate::views::sftp::ColumnWidths,
     pub vnc_settings: crate::config::settings::VncSettings,
     pub auto_reconnect: bool,
@@ -346,6 +347,7 @@ impl Portal {
                 ui_scale_override: settings_config.ui_scale,
                 terminal_font_size: settings_config.terminal_font_size,
                 terminal_font: settings_config.terminal_font,
+                terminal_metric_adjustments: settings_config.terminal_metric_adjustments,
                 sftp_column_widths: settings_config.sftp_column_widths,
                 vnc_settings: settings_config.vnc.apply_env_overrides(),
                 auto_reconnect: settings_config.auto_reconnect,
@@ -515,6 +517,7 @@ impl Portal {
                         status_message,
                         self.prefs.terminal_font_size,
                         self.prefs.terminal_font,
+                        self.prefs.terminal_metric_adjustments,
                         self.prefs.keybindings.clone(),
                         move |_sid, bytes| {
                             Message::Session(SessionMessage::Input(session_id, bytes))
@@ -859,6 +862,7 @@ impl Portal {
         let mut settings = SettingsConfig::default();
         settings.terminal_font_size = self.prefs.terminal_font_size;
         settings.terminal_font = self.prefs.terminal_font;
+        settings.terminal_metric_adjustments = self.prefs.terminal_metric_adjustments;
         settings.theme = self.prefs.theme_id;
         settings.ui_scale = self.prefs.ui_scale_override;
         settings.vnc = self.prefs.vnc_settings.clone();

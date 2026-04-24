@@ -10,6 +10,7 @@ use iced::{Element, Fill};
 use parking_lot::Mutex;
 use uuid::Uuid;
 
+use crate::config::settings::TerminalMetricAdjustments;
 use crate::fonts::TerminalFont;
 use crate::keybindings::KeybindingsConfig;
 use crate::message::{Message, SessionId};
@@ -75,6 +76,7 @@ pub fn terminal_view_with_status<'a>(
     status_message: Option<String>,
     font_size: f32,
     terminal_font: TerminalFont,
+    terminal_metric_adjustments: TerminalMetricAdjustments,
     keybindings: KeybindingsConfig,
     on_input: impl Fn(SessionId, Vec<u8>) -> Message + 'a,
     on_resize: impl Fn(SessionId, u16, u16) -> Message + 'a,
@@ -86,6 +88,7 @@ pub fn terminal_view_with_status<'a>(
         .on_resize(move |cols, rows| on_resize(session_id, cols, rows))
         .font_size(font_size)
         .font(terminal_font)
+        .metric_adjustments(terminal_metric_adjustments)
         .keybindings(keybindings)
         .terminal_colors(theme.terminal);
 

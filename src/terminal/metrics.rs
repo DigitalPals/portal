@@ -3,6 +3,7 @@
 use iced::Rectangle;
 use ttf_parser::{Face, GlyphId};
 
+use crate::config::settings::{MetricAdjustment, TerminalMetricAdjustments};
 use crate::fonts::TerminalFont;
 
 /// Horizontal padding before the terminal grid starts.
@@ -88,10 +89,20 @@ pub struct TerminalMetrics {
 }
 
 impl TerminalMetrics {
+    #[allow(dead_code)]
     pub fn for_font(font: TerminalFont, font_size: f32) -> Self {
+        Self::for_font_with_adjustments(font, font_size, TerminalMetricAdjustments::default())
+    }
+
+    pub fn for_font_with_adjustments(
+        font: TerminalFont,
+        font_size: f32,
+        adjustments: TerminalMetricAdjustments,
+    ) -> Self {
         measured_face_metrics(font, font_size)
             .map(Self::from_face_metrics)
             .unwrap_or_else(|| Self::fallback(font_size, font.line_height_ratio()))
+            .with_adjustments(adjustments)
     }
 
     pub fn columns_for_bounds(self, bounds: Rectangle) -> usize {
@@ -178,6 +189,86 @@ impl TerminalMetrics {
         self.face_width = self.face_width.max(1.0);
         self.face_height = self.face_height.max(1.0);
     }
+
+    fn with_adjustments(mut self, adjustments: TerminalMetricAdjustments) -> Self {
+        if let Some(adjustment) = adjustments.adjust_cell_width {
+            self.cell_width = apply_min_u32(self.cell_width, adjustment, 1.0);
+        }
+
+        if let Some(adjustment) = adjustments.adjust_cell_height {
+            let original = self.cell_height;
+            let new = apply_min_u32(original, adjustment, 1.0);
+            if (new - original).abs() > f32::EPSILON {
+                let diff = new - original;
+                let half_diff = diff / 2.0;
+                let centered_face_y = (original - self.face_height) / 2.0;
+                let (diff_top, diff_bottom) = if self.face_y - centered_face_y > 0.0 {
+                    (half_diff.ceil(), half_diff.floor())
+                } else {
+                    (half_diff.floor(), half_diff.ceil())
+                };
+
+                self.cell_height = new;
+                self.cell_baseline = (self.cell_baseline + diff_bottom).max(1.0);
+                self.face_y += diff_bottom;
+                self.underline_position += diff_top;
+                self.strikethrough_position += diff_top;
+                self.overline_position += diff_top;
+            }
+        }
+
+        if let Some(adjustment) = adjustments.adjust_font_baseline {
+            let delta = adjustment_delta(self.cell_baseline, adjustment);
+            self.cell_baseline = (self.cell_baseline + delta).max(1.0);
+            self.face_y += delta;
+            self.underline_position -= delta;
+            self.strikethrough_position -= delta;
+        }
+
+        if let Some(adjustment) = adjustments.adjust_underline_position {
+            self.underline_position = adjustment.apply_u32(self.underline_position);
+        }
+        if let Some(adjustment) = adjustments.adjust_underline_thickness {
+            self.underline_thickness = apply_min_u32(self.underline_thickness, adjustment, 1.0);
+        }
+        if let Some(adjustment) = adjustments.adjust_strikethrough_position {
+            self.strikethrough_position = adjustment.apply_u32(self.strikethrough_position);
+        }
+        if let Some(adjustment) = adjustments.adjust_strikethrough_thickness {
+            self.strikethrough_thickness =
+                apply_min_u32(self.strikethrough_thickness, adjustment, 1.0);
+        }
+        if let Some(adjustment) = adjustments.adjust_overline_position {
+            self.overline_position = adjustment.apply_u32(self.overline_position);
+        }
+        if let Some(adjustment) = adjustments.adjust_overline_thickness {
+            self.overline_thickness = apply_min_u32(self.overline_thickness, adjustment, 1.0);
+        }
+        if let Some(adjustment) = adjustments.adjust_cursor_thickness {
+            self.cursor_thickness = apply_min_u32(self.cursor_thickness, adjustment, 1.0);
+        }
+        if let Some(adjustment) = adjustments.adjust_cursor_height {
+            self.cursor_height = apply_min_u32(self.cursor_height, adjustment, 1.0);
+        }
+        if let Some(adjustment) = adjustments.adjust_box_thickness {
+            self.box_thickness = apply_min_u32(self.box_thickness, adjustment, 1.0);
+        }
+        if let Some(adjustment) = adjustments.adjust_icon_height {
+            self.icon_height = adjustment.apply_f32(self.icon_height).max(1.0);
+            self.icon_height_single = adjustment.apply_f32(self.icon_height_single).max(1.0);
+        }
+
+        self.clamp();
+        self
+    }
+}
+
+fn apply_min_u32(value: f32, adjustment: MetricAdjustment, min: f32) -> f32 {
+    adjustment.apply_u32(value).round().max(min)
+}
+
+fn adjustment_delta(value: f32, adjustment: MetricAdjustment) -> f32 {
+    adjustment.apply_u32(value).round() - value
 }
 
 fn measured_face_metrics(font: TerminalFont, font_size: f32) -> Option<FaceMetrics> {

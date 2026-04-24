@@ -10,6 +10,7 @@ use alacritty_terminal::grid::{Dimensions, Scroll};
 use alacritty_terminal::term::cell::Flags as CellFlags;
 use alacritty_terminal::term::{Term, TermMode};
 use alacritty_terminal::vte::ansi::CursorShape;
+use iced::advanced::graphics::geometry::{Frame, LineCap, Path, Stroke};
 use iced::advanced::layout::{self, Layout};
 use iced::advanced::renderer::{self, Quad};
 use iced::advanced::widget::{self, Tree, Widget};
@@ -22,13 +23,164 @@ use parking_lot::Mutex;
 use super::backend::{CursorInfo, EventProxy, RenderCell};
 use super::block_elements::{TerminalGraphicCell, render_terminal_graphic};
 use super::colors::{DEFAULT_BG, DEFAULT_FG, ansi_to_iced_themed, cell_fg_to_iced};
+use super::glyph_constraints::GlyphSize;
 use super::metrics::{TERMINAL_PADDING_LEFT, TerminalMetrics};
+use super::nerd_font_attributes;
+use crate::config::settings::TerminalMetricAdjustments;
 use crate::fonts::{JETBRAINS_MONO_NERD, TerminalFont};
 use crate::keybindings::{AppAction, KeybindingsConfig};
 use crate::theme::TerminalColors;
 
 fn is_powerline_separator(c: char) -> bool {
     matches!(c, '\u{E0B0}' | '\u{E0B2}' | '\u{E0B4}' | '\u{E0B6}')
+}
+
+fn draw_metric_rect<Renderer>(renderer: &mut Renderer, bounds: Rectangle, color: Color)
+where
+    Renderer: renderer::Renderer,
+{
+    renderer.fill_quad(
+        Quad {
+            bounds,
+            border: Border::default(),
+            shadow: Shadow::default(),
+            snap: true,
+        },
+        Background::Color(color),
+    );
+}
+
+fn draw_text_decorations<Renderer>(
+    renderer: &mut Renderer,
+    flags: CellFlags,
+    cell_rect: Rectangle,
+    metrics: TerminalMetrics,
+    color: Color,
+) where
+    Renderer: renderer::Renderer + iced::advanced::graphics::geometry::Renderer,
+{
+    if flags.contains(CellFlags::UNDERLINE) {
+        draw_metric_rect(
+            renderer,
+            Rectangle {
+                y: cell_rect.y + metrics.underline_position,
+                height: metrics.underline_thickness,
+                ..cell_rect
+            },
+            color,
+        );
+    }
+
+    if flags.contains(CellFlags::DOUBLE_UNDERLINE) {
+        let thickness = metrics.underline_thickness;
+        let y = cell_rect.y + metrics.underline_position;
+        draw_metric_rect(
+            renderer,
+            Rectangle {
+                y: y - thickness,
+                height: thickness,
+                ..cell_rect
+            },
+            color,
+        );
+        draw_metric_rect(
+            renderer,
+            Rectangle {
+                y: y + thickness,
+                height: thickness,
+                ..cell_rect
+            },
+            color,
+        );
+    }
+
+    if flags.contains(CellFlags::DOTTED_UNDERLINE) {
+        let diameter = (metrics.underline_thickness * std::f32::consts::SQRT_2)
+            .round()
+            .max(1.0);
+        let y = cell_rect.y + metrics.underline_position;
+        let step = (diameter * 2.0).max(2.0);
+        let mut x = cell_rect.x;
+        while x < cell_rect.x + cell_rect.width {
+            draw_metric_rect(
+                renderer,
+                Rectangle {
+                    x,
+                    y,
+                    width: diameter.min(cell_rect.x + cell_rect.width - x),
+                    height: diameter,
+                },
+                color,
+            );
+            x += step;
+        }
+    }
+
+    if flags.contains(CellFlags::DASHED_UNDERLINE) {
+        let dash_width = (cell_rect.width / 3.0).ceil().max(1.0);
+        let y = cell_rect.y + metrics.underline_position;
+        let mut x = cell_rect.x;
+        while x < cell_rect.x + cell_rect.width {
+            draw_metric_rect(
+                renderer,
+                Rectangle {
+                    x,
+                    y,
+                    width: dash_width.min(cell_rect.x + cell_rect.width - x),
+                    height: metrics.underline_thickness,
+                },
+                color,
+            );
+            x += dash_width * 2.0;
+        }
+    }
+
+    if flags.contains(CellFlags::UNDERCURL) {
+        let amplitude = (cell_rect.width / std::f32::consts::PI)
+            .min(cell_rect.height / 4.0)
+            .max(metrics.underline_thickness);
+        let y = metrics
+            .underline_position
+            .min(cell_rect.height - amplitude - metrics.underline_thickness);
+        renderer.with_translation(iced::Vector::new(cell_rect.x, cell_rect.y), |renderer| {
+            let mut frame = Frame::new(renderer, Size::new(cell_rect.width, cell_rect.height));
+            let path = Path::new(|path| {
+                let center = cell_rect.width / 2.0;
+                let bottom = y + amplitude;
+                path.move_to(iced::Point::new(0.0, bottom));
+                path.bezier_curve_to(
+                    iced::Point::new(center * 0.4, bottom),
+                    iced::Point::new(center * 0.6, y),
+                    iced::Point::new(center, y),
+                );
+                path.bezier_curve_to(
+                    iced::Point::new(center * 1.4, y),
+                    iced::Point::new(center * 1.6, bottom),
+                    iced::Point::new(cell_rect.width, bottom),
+                );
+            });
+            frame.stroke(
+                &path,
+                Stroke::default()
+                    .with_color(color)
+                    .with_width(metrics.underline_thickness)
+                    .with_line_cap(LineCap::Round),
+            );
+            renderer.draw_geometry(frame.into_geometry());
+        });
+    }
+
+    if flags.contains(CellFlags::STRIKEOUT) {
+        draw_metric_rect(
+            renderer,
+            Rectangle {
+                y: cell_rect.y + metrics.strikethrough_position,
+                height: metrics.strikethrough_thickness,
+                ..cell_rect
+            },
+            color,
+        );
+    }
 }
 
 /// Terminal widget for iced
@@ -39,6 +191,7 @@ pub struct TerminalWidget<'a, Message> {
     font_size: f32,
     font: iced::Font,
     terminal_font: TerminalFont,
+    terminal_metric_adjustments: TerminalMetricAdjustments,
     terminal_colors: Option<TerminalColors>,
     render_epoch: Option<Arc<AtomicU64>>,
     keybindings: KeybindingsConfig,
@@ -57,6 +210,7 @@ impl<'a, Message> TerminalWidget<'a, Message> {
             font_size: 9.0,
             font: JETBRAINS_MONO_NERD,
             terminal_font: TerminalFont::default(),
+            terminal_metric_adjustments: TerminalMetricAdjustments::default(),
             terminal_colors: None,
             render_epoch: None,
             keybindings: KeybindingsConfig::default(),
@@ -73,6 +227,12 @@ impl<'a, Message> TerminalWidget<'a, Message> {
     pub fn font(mut self, font: TerminalFont) -> Self {
         self.font = font.to_iced_font();
         self.terminal_font = font;
+        self
+    }
+
+    /// Set Ghostty-style terminal metric adjustments.
+    pub fn metric_adjustments(mut self, adjustments: TerminalMetricAdjustments) -> Self {
+        self.terminal_metric_adjustments = adjustments;
         self
     }
 
@@ -101,7 +261,11 @@ impl<'a, Message> TerminalWidget<'a, Message> {
     }
 
     fn cell_metrics(&self) -> TerminalMetrics {
-        TerminalMetrics::for_font(self.terminal_font, self.font_size)
+        TerminalMetrics::for_font_with_adjustments(
+            self.terminal_font,
+            self.font_size,
+            self.terminal_metric_adjustments,
+        )
     }
 
     /// Calculate cell width based on font size.
@@ -121,7 +285,10 @@ impl<'a, Message> TerminalWidget<'a, Message> {
         let term = self.term.lock();
         let content = term.renderable_content();
         let display_offset = content.display_offset;
-        let mut cells = Vec::new();
+        let rows = term.screen_lines();
+        let cols = term.columns();
+        let mut row_chars = vec![vec!['\0'; cols]; rows];
+        let mut pending = Vec::new();
 
         for indexed in content.display_iter {
             let cell = &indexed.cell;
@@ -136,6 +303,15 @@ impl<'a, Message> TerminalWidget<'a, Message> {
                 continue;
             }
             let line = screen_line as usize;
+            if line >= rows {
+                continue;
+            }
+            let column = indexed.point.column.0;
+            if column >= cols {
+                continue;
+            }
+
+            row_chars[line][column] = cell.c;
 
             // Skip wide character spacer cells (placeholder for 2nd column of wide chars)
             if cell.flags.contains(CellFlags::WIDE_CHAR_SPACER) {
@@ -147,8 +323,8 @@ impl<'a, Message> TerminalWidget<'a, Message> {
                 || cell.bg != alacritty_terminal::vte::ansi::Color::Named(NamedColor::Background)
                 || !cell.flags.is_empty()
             {
-                cells.push(RenderCell {
-                    column: indexed.point.column.0,
+                pending.push(RenderCell {
+                    column,
                     line,
                     character: cell.c,
                     zerowidth: cell
@@ -158,11 +334,27 @@ impl<'a, Message> TerminalWidget<'a, Message> {
                     fg: cell.fg,
                     bg: cell.bg,
                     flags: cell.flags,
+                    constraint_width: 1,
                 });
             }
         }
 
-        cells
+        pending
+            .into_iter()
+            .map(|mut cell| {
+                let grid_width = if cell.flags.contains(CellFlags::WIDE_CHAR) {
+                    2
+                } else {
+                    1
+                };
+                cell.constraint_width = nerd_font_attributes::constraint_width(
+                    &row_chars[cell.line],
+                    cell.column,
+                    grid_width,
+                );
+                cell
+            })
+            .collect()
     }
 
     /// Get cursor information
@@ -635,15 +827,39 @@ where
                     let italic = cell.flags.contains(CellFlags::ITALIC);
                     let font = self.terminal_font.variant(bold, italic);
 
-                    // Draw the character using text renderer
+                    let mut text_x = x;
+                    let mut text_y = y;
+                    let mut text_size = self.font_size;
+                    let mut text_width = char_width;
+                    let mut glyph_clip_width = char_width;
+
+                    if let Some(constraint) = nerd_font_attributes::constraint_for(cell.character) {
+                        let constraint_width = cell.constraint_width.max(1);
+                        glyph_clip_width = cell_width * constraint_width as f32;
+                        text_width = glyph_clip_width;
+
+                        let glyph = GlyphSize {
+                            width: metrics.face_width,
+                            height: metrics.face_height,
+                            x: 0.0,
+                            y: metrics.face_y,
+                        };
+                        let constrained = constraint.constrain(glyph, metrics, constraint_width);
+                        let scale = (constrained.height / glyph.height).clamp(0.25, 4.0);
+                        text_size *= scale;
+                        text_x += constrained.x;
+                        text_y += constrained.y;
+                    }
+
+                    // Draw the character using text renderer.
                     let text = iced::advanced::Text {
                         content: {
                             let mut content = cell.character.to_string();
                             content.push_str(&cell.zerowidth);
                             content
                         },
-                        bounds: Size::new(char_width, cell_height),
-                        size: iced::Pixels(self.font_size),
+                        bounds: Size::new(text_width, cell_height),
+                        size: iced::Pixels(text_size),
                         line_height: iced::advanced::text::LineHeight::Absolute(iced::Pixels(
                             cell_height,
                         )),
@@ -661,13 +877,64 @@ where
                             width: bounds.width,
                             height: cell_height,
                         }
+                    } else if nerd_font_attributes::is_symbol(cell.character) {
+                        Rectangle {
+                            x,
+                            y,
+                            width: glyph_clip_width,
+                            height: cell_height,
+                        }
                     } else {
                         bounds
                     };
 
-                    renderer.fill_text(text, iced::Point::new(x, y), fg_color, clip_bounds);
+                    renderer.fill_text(
+                        text,
+                        iced::Point::new(text_x, text_y),
+                        fg_color,
+                        clip_bounds,
+                    );
                 }
             }
+        }
+
+        // Draw line decorations as metric sprites so underline styles line up
+        // across adjacent cells independent of the selected font face.
+        for cell in &render_cache.cells {
+            if !cell
+                .flags
+                .intersects(CellFlags::ALL_UNDERLINES | CellFlags::STRIKEOUT)
+            {
+                continue;
+            }
+
+            let x = bounds.x + TERMINAL_PADDING_LEFT + cell.column as f32 * cell_width;
+            let y = bounds.y + cell.line as f32 * cell_height;
+            let mut fg_color = cell_fg_to_iced(cell.fg, cell.flags, colors);
+            let mut bg_color = ansi_to_iced_themed(cell.bg, colors);
+
+            if cell.flags.contains(CellFlags::INVERSE) {
+                std::mem::swap(&mut fg_color, &mut bg_color);
+            }
+
+            let decoration_width = if cell.flags.contains(CellFlags::WIDE_CHAR) {
+                cell_width * 2.0
+            } else {
+                cell_width
+            };
+
+            draw_text_decorations(
+                renderer,
+                cell.flags,
+                Rectangle {
+                    x,
+                    y,
+                    width: decoration_width,
+                    height: cell_height,
+                },
+                metrics,
+                fg_color,
+            );
         }
 
         // Draw selection highlight (convert buffer coords to screen coords for rendering)

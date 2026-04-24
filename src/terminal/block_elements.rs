@@ -482,7 +482,7 @@ where
             color,
         ),
         _ => {
-            if (0x1fb00..=0x1fbef).contains(&cp) || (0x1cc00..=0x1ceaf).contains(&cp) {
+            if (0x1fb00..=0x1fbff).contains(&cp) || (0x1cc00..=0x1cebf).contains(&cp) {
                 return draw_codepoint_pattern(renderer, cp, cell, color);
             }
             return false;
