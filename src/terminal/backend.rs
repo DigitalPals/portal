@@ -115,7 +115,7 @@ impl Dimensions for TerminalSize {
 pub struct RenderCell {
     pub column: usize,
     pub line: usize,
-    pub content: String,
+    pub character: char,
     pub fg: AnsiColor,
     pub bg: AnsiColor,
     pub flags: CellFlags,

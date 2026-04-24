@@ -51,7 +51,6 @@ hmac = "0.12"
 sha1 = "0.10"
 secrecy = { version = "0.10", features = ["serde"] }
 regex = "1"
-ttf-parser = "0.25"
 
 # Additional
 parking_lot = "0.12"

@@ -22,8 +22,7 @@ use parking_lot::Mutex;
 use super::backend::{CursorInfo, EventProxy, RenderCell};
 use super::block_elements::render_terminal_graphic;
 use super::colors::{DEFAULT_BG, DEFAULT_FG, ansi_to_iced_themed, cell_fg_to_iced};
-use super::text::{build_cell_content, presentation_for_cell_content};
-use crate::fonts::TerminalFont;
+use crate::fonts::{JETBRAINS_MONO_NERD, TerminalFont};
 use crate::keybindings::{AppAction, KeybindingsConfig};
 use crate::theme::TerminalColors;
 
@@ -37,10 +36,10 @@ struct CellMetrics {
 }
 
 impl CellMetrics {
-    fn for_font(font_size: f32, font: TerminalFont) -> Self {
+    fn for_font(font_size: f32, line_height_ratio: f32) -> Self {
         Self {
-            width: font_size * font.cell_width_ratio(),
-            height: font_size * font.line_height_ratio(),
+            width: font_size * 0.6,
+            height: font_size * line_height_ratio,
         }
     }
 
@@ -59,6 +58,7 @@ pub struct TerminalWidget<'a, Message> {
     on_input: Box<dyn Fn(Vec<u8>) -> Message + 'a>,
     on_resize: Option<Box<dyn Fn(u16, u16) -> Message + 'a>>,
     font_size: f32,
+    font: iced::Font,
     terminal_font: TerminalFont,
     terminal_colors: Option<TerminalColors>,
     render_epoch: Option<Arc<AtomicU64>>,
@@ -76,6 +76,7 @@ impl<'a, Message> TerminalWidget<'a, Message> {
             on_input: Box::new(on_input),
             on_resize: None,
             font_size: 9.0,
+            font: JETBRAINS_MONO_NERD,
             terminal_font: TerminalFont::default(),
             terminal_colors: None,
             render_epoch: None,
@@ -91,6 +92,7 @@ impl<'a, Message> TerminalWidget<'a, Message> {
 
     /// Set terminal font
     pub fn font(mut self, font: TerminalFont) -> Self {
+        self.font = font.to_iced_font();
         self.terminal_font = font;
         self
     }
@@ -120,7 +122,7 @@ impl<'a, Message> TerminalWidget<'a, Message> {
     }
 
     fn cell_metrics(&self) -> CellMetrics {
-        CellMetrics::for_font(self.font_size, self.terminal_font)
+        CellMetrics::for_font(self.font_size, self.terminal_font.line_height_ratio())
     }
 
     /// Calculate cell width based on font size.
@@ -169,7 +171,7 @@ impl<'a, Message> TerminalWidget<'a, Message> {
                 cells.push(RenderCell {
                     column: indexed.point.column.0,
                     line,
-                    content: build_cell_content(cell.c, cell.zerowidth()),
+                    character: cell.c,
                     fg: cell.fg,
                     bg: cell.bg,
                     flags: cell.flags,
@@ -619,7 +621,7 @@ where
             }
 
             // Draw character
-            if cell.content != " " && !cell.flags.contains(CellFlags::HIDDEN) {
+            if cell.character != ' ' && !cell.flags.contains(CellFlags::HIDDEN) {
                 // Wide characters (e.g. CJK, emoji) occupy 2 cells
                 let char_width = if cell.flags.contains(CellFlags::WIDE_CHAR) {
                     cell_width * 2.0
@@ -627,47 +629,44 @@ where
                     cell_width
                 };
 
-                let mut chars = cell.content.chars();
-                let first_char = chars.next();
-                let only_single_scalar = first_char.is_some() && chars.next().is_none();
+                // Try to render terminal graphics as rectangles for pixel-perfect rendering
+                if render_terminal_graphic(
+                    renderer,
+                    cell.character,
+                    x,
+                    y,
+                    cell_width,
+                    cell_height,
+                    fg_color,
+                ) {
+                    // Block element was rendered as rectangles
+                } else {
+                    let bold = cell.flags.contains(CellFlags::BOLD);
+                    let italic = cell.flags.contains(CellFlags::ITALIC);
+                    let font = self.terminal_font.variant(bold, italic);
 
-                if let Some(character) = first_char.filter(|_| only_single_scalar) {
-                    if render_terminal_graphic(
-                        renderer,
-                        character,
-                        x,
-                        y,
-                        cell_width,
-                        cell_height,
+                    // Draw the character using text renderer
+                    let text = iced::advanced::Text {
+                        content: cell.character.to_string(),
+                        bounds: Size::new(char_width, cell_height),
+                        size: iced::Pixels(self.font_size),
+                        line_height: iced::advanced::text::LineHeight::Absolute(iced::Pixels(
+                            cell_height,
+                        )),
+                        font,
+                        align_x: iced::alignment::Horizontal::Left.into(),
+                        align_y: iced::alignment::Vertical::Top,
+                        shaping: iced::advanced::text::Shaping::Advanced,
+                        wrapping: iced::advanced::text::Wrapping::None,
+                    };
+
+                    renderer.fill_text(
+                        text,
+                        iced::Point::new(x, y),
                         fg_color,
-                    ) {
-                        continue;
-                    }
+                        bounds,
+                    );
                 }
-
-                let bold = cell.flags.contains(CellFlags::BOLD);
-                let italic = cell.flags.contains(CellFlags::ITALIC);
-                let presentation =
-                    presentation_for_cell_content(self.terminal_font, &cell.content, bold, italic);
-                let text_y = y
-                    + cell_height * presentation.anchor_y_ratio
-                    + cell_height * presentation.y_offset_ratio;
-
-                let text = iced::advanced::Text {
-                    content: cell.content.clone(),
-                    bounds: Size::new(char_width, cell_height),
-                    size: iced::Pixels(self.font_size * presentation.size_scale),
-                    line_height: iced::advanced::text::LineHeight::Absolute(iced::Pixels(
-                        cell_height,
-                    )),
-                    font: presentation.font,
-                    align_x: iced::alignment::Horizontal::Left.into(),
-                    align_y: presentation.align_y,
-                    shaping: iced::advanced::text::Shaping::Advanced,
-                    wrapping: iced::advanced::text::Wrapping::None,
-                };
-
-                renderer.fill_text(text, iced::Point::new(x, text_y), fg_color, bounds);
             }
         }
 

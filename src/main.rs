@@ -28,7 +28,5 @@ fn main() -> iced::Result {
         .font(fonts::HACK_NERD_BOLD_BYTES)
         .font(fonts::HACK_NERD_ITALIC_BYTES)
         .font(fonts::HACK_NERD_BOLD_ITALIC_BYTES)
-        .font(fonts::SYMBOLS_NERD_FONT_MONO_BYTES)
-        .font(fonts::NOTO_COLOR_EMOJI_BYTES)
         .run()
 }
