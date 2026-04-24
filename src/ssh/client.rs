@@ -304,7 +304,7 @@ impl SshClient {
             }
 
             // Request PTY
-            channel
+            if let Err(e) = channel
                 .request_pty(
                     false,
                     SSH_TERMINAL_TYPE,
@@ -315,13 +315,22 @@ impl SshClient {
                     default_pty_modes(),
                 )
                 .await
-                .map_err(|e| SshError::Channel(format!("PTY request failed: {}", e)))?;
+            {
+                pool.invalidate_if_matches(&key, &connection).await;
+                if attempt == 0 && !created_new_connection {
+                    continue;
+                }
+                return Err(SshError::Channel(format!("PTY request failed: {}", e)));
+            }
 
             // Request shell
-            channel
-                .request_shell(false)
-                .await
-                .map_err(|e| SshError::Channel(format!("Shell request failed: {}", e)))?;
+            if let Err(e) = channel.request_shell(false).await {
+                pool.invalidate_if_matches(&key, &connection).await;
+                if attempt == 0 && !created_new_connection {
+                    continue;
+                }
+                return Err(SshError::Channel(format!("Shell request failed: {}", e)));
+            }
 
             // Run host OS detection only after the user-facing shell has been
             // requested. Opening exec channels first can consume login/PAM

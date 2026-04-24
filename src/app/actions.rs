@@ -18,6 +18,7 @@ use crate::views::sftp::{ContextMenuAction, PaneId, PaneSource, PermissionBits, 
 use crate::views::tabs::Tab;
 use crate::views::toast::Toast;
 
+use super::managers::SessionBackend;
 use super::services::{connection, file_viewer, history};
 use super::{FocusSection, Portal, View};
 
@@ -82,12 +83,29 @@ impl Portal {
 
     pub(super) fn close_tab(&mut self, tab_id: Uuid) {
         let sftp_sessions_to_close = self.sftp.remove_tab_and_collect_sessions(tab_id);
+        let mut history_changed = false;
 
         self.tabs.retain(|t| t.id != tab_id);
         if let Some(session) = self.sessions.remove(tab_id) {
+            if history::mark_entry_disconnected(&mut self.config.history, session.history_entry_id)
+            {
+                history_changed = true;
+            }
+
+            let ssh_session_to_cleanup = match &session.backend {
+                SessionBackend::Ssh(ssh_session) => Some(ssh_session.clone()),
+                SessionBackend::Local(_) => None,
+            };
+
             if let Some(logger) = session.logger {
                 tokio::spawn(async move {
                     logger.shutdown().await;
+                });
+            }
+
+            if let Some(ssh_session) = ssh_session_to_cleanup {
+                tokio::spawn(async move {
+                    ssh_session.stop_all_forwards().await;
                 });
             }
         }
@@ -104,7 +122,6 @@ impl Portal {
             }
         }
 
-        let mut history_changed = false;
         for session_id in sftp_sessions_to_close {
             let still_used = self.sftp.is_connection_in_use(session_id);
             if !still_used {

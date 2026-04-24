@@ -9,7 +9,6 @@ use tokio::sync::Mutex;
 
 use crate::config::PortForward;
 use crate::error::SshError;
-use crate::security_log;
 
 use super::handler::ClientHandler;
 
@@ -52,7 +51,6 @@ pub struct SshConnection {
     agent_forwarding_enabled: Arc<AtomicBool>,
     host: Arc<str>,
     port: u16,
-    disconnect_logged: AtomicBool,
 }
 
 impl std::fmt::Debug for SshConnection {
@@ -78,7 +76,6 @@ impl SshConnection {
             agent_forwarding_enabled,
             host,
             port,
-            disconnect_logged: AtomicBool::new(false),
         })
     }
 
@@ -117,9 +114,6 @@ impl SshConnection {
 
 impl Drop for SshConnection {
     fn drop(&mut self) {
-        if !self.disconnect_logged.swap(true, Ordering::SeqCst) {
-            security_log::log_ssh_disconnect(self.host.as_ref(), self.port, false);
-        }
         let handle = self.handle.clone();
         let host = self.host.to_string();
         let port = self.port;

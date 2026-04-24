@@ -9,7 +9,7 @@ use std::time::Instant;
 use uuid::Uuid;
 
 use crate::app::managers::{ActiveSession, SessionBackend};
-use crate::app::services::connection;
+use crate::app::services::{connection, history};
 use crate::app::{Portal, Tab};
 use crate::config::AuthMethod;
 use crate::message::{Message, SessionId, SessionMessage};
@@ -89,6 +89,7 @@ fn start_terminal_session(
             reconnect_attempts: 0,
             reconnect_next_attempt: None,
             pending_output: VecDeque::new(),
+            pending_output_bytes: 0,
             last_data_received_at: None,
             logger: None,
         },
@@ -113,12 +114,10 @@ fn start_terminal_session(
 
 fn finalize_disconnection(portal: &mut Portal, session_id: SessionId) {
     if let Some(session) = portal.sessions.get(session_id) {
-        portal
-            .config
-            .history
-            .mark_disconnected(session.history_entry_id);
-        if let Err(e) = portal.config.history.save() {
-            tracing::error!("Failed to save history config: {}", e);
+        if history::mark_entry_disconnected(&mut portal.config.history, session.history_entry_id) {
+            if let Err(e) = portal.config.history.save() {
+                tracing::error!("Failed to save history config: {}", e);
+            }
         }
     }
     portal.close_tab(session_id);
@@ -293,17 +292,18 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                     if let Some(logger) = session.logger.as_ref() {
                         logger.write(&data);
                     }
+                    session.pending_output_bytes =
+                        session.pending_output_bytes.saturating_add(data.len());
                     session.pending_output.push_back(data);
                     session.last_data_received_at = Some(Instant::now());
 
                     // Enforce buffer size limit by dropping oldest data
-                    let mut total_size: usize =
-                        session.pending_output.iter().map(|chunk| chunk.len()).sum();
-
-                    while total_size > MAX_PENDING_OUTPUT_BYTES {
+                    while session.pending_output_bytes > MAX_PENDING_OUTPUT_BYTES {
                         if let Some(dropped) = session.pending_output.pop_front() {
-                            total_size -= dropped.len();
+                            session.pending_output_bytes =
+                                session.pending_output_bytes.saturating_sub(dropped.len());
                         } else {
+                            session.pending_output_bytes = 0;
                             break;
                         }
                     }
@@ -329,8 +329,7 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
             const COALESCE_BYPASS_BYTES: usize = 8 * 1024;
 
             for session in portal.sessions.values_mut() {
-                let pending_bytes: usize =
-                    session.pending_output.iter().map(|c| c.len()).sum();
+                let pending_bytes = session.pending_output_bytes;
 
                 let in_coalesce_window = session
                     .last_data_received_at
@@ -349,11 +348,16 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                     if chunk.len() > budget {
                         let remainder = chunk.split_off(budget);
                         session.terminal.process_output(&chunk);
+                        session.pending_output_bytes =
+                            session.pending_output_bytes.saturating_sub(chunk.len());
                         session.pending_output.push_front(remainder);
                         budget = 0;
                     } else {
+                        let chunk_len = chunk.len();
                         session.terminal.process_output(&chunk);
-                        budget -= chunk.len();
+                        session.pending_output_bytes =
+                            session.pending_output_bytes.saturating_sub(chunk_len);
+                        budget -= chunk_len;
                     }
                 }
             }

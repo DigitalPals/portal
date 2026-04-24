@@ -41,6 +41,8 @@ pub struct ActiveSession {
     pub reconnect_next_attempt: Option<Instant>,
     /// Buffered output to process in small chunks for UI responsiveness
     pub pending_output: VecDeque<Vec<u8>>,
+    /// Total bytes currently held in pending_output.
+    pub pending_output_bytes: usize,
     /// Timestamp of the most recent data push into pending_output.
     /// Used to coalesce rapid back-to-back SSH writes (e.g. multi-flush prompts)
     /// into a single terminal update cycle to avoid rendering partial state.
@@ -121,7 +123,7 @@ impl SessionManager {
     pub fn has_pending_output(&self) -> bool {
         self.sessions
             .values()
-            .any(|session| !session.pending_output.is_empty())
+            .any(|session| session.pending_output_bytes > 0)
     }
 
     /// Get mutable iterator over all sessions
@@ -165,6 +167,7 @@ mod tests {
             reconnect_attempts: 0,
             reconnect_next_attempt: None,
             pending_output: VecDeque::new(),
+            pending_output_bytes: 0,
             last_data_received_at: None,
             logger: None,
         }
@@ -298,6 +301,7 @@ mod tests {
         let mut session = create_test_session("test");
 
         session.pending_output.push_back(vec![1, 2, 3]);
+        session.pending_output_bytes = 3;
 
         manager.insert(session_id, session);
 
@@ -316,6 +320,7 @@ mod tests {
         // Second session with pending output
         let mut session2 = create_test_session("has-data");
         session2.pending_output.push_back(vec![1, 2, 3]);
+        session2.pending_output_bytes = 3;
         manager.insert(id2, session2);
 
         assert!(manager.has_pending_output());
@@ -328,6 +333,7 @@ mod tests {
         let mut session = create_test_session("test");
 
         session.pending_output.push_back(vec![1, 2, 3]);
+        session.pending_output_bytes = 3;
         manager.insert(session_id, session);
 
         assert!(manager.has_pending_output());
@@ -335,6 +341,7 @@ mod tests {
         // Simulate processing output
         if let Some(session) = manager.get_mut(session_id) {
             session.pending_output.clear();
+            session.pending_output_bytes = 0;
         }
 
         assert!(!manager.has_pending_output());
@@ -366,6 +373,7 @@ mod tests {
         // Add pending output to all sessions
         for session in manager.values_mut() {
             session.pending_output.push_back(vec![42]);
+            session.pending_output_bytes = 1;
         }
 
         // Both sessions should now have pending output
