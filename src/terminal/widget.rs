@@ -37,9 +37,13 @@ struct CellMetrics {
 
 impl CellMetrics {
     fn for_font(font_size: f32, line_height_ratio: f32) -> Self {
+        // Match Ghostty's terminal grid behavior: cell dimensions are integer
+        // pixel sizes. Terminal-art sprites such as block elements are drawn
+        // cell-by-cell, so fractional grid steps can leave 1px seams between
+        // adjacent snapped quads.
         Self {
-            width: font_size * 0.6,
-            height: font_size * line_height_ratio,
+            width: (font_size * 0.6).round().max(1.0),
+            height: (font_size * line_height_ratio).round().max(1.0),
         }
     }
 
@@ -462,7 +466,9 @@ impl Default for TerminalState {
 
 impl<Message, Theme, Renderer> Widget<Message, Theme, Renderer> for TerminalWidget<'_, Message>
 where
-    Renderer: renderer::Renderer + iced::advanced::text::Renderer<Font = iced::Font>,
+    Renderer: renderer::Renderer
+        + iced::advanced::graphics::geometry::Renderer
+        + iced::advanced::text::Renderer<Font = iced::Font>,
 {
     fn size(&self) -> Size<Length> {
         Size {
@@ -1442,6 +1448,14 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cell_metrics_round_to_integer_pixels() {
+        let metrics = CellMetrics::for_font(13.0, 1.2);
+
+        assert_eq!(metrics.width, 8.0);
+        assert_eq!(metrics.height, 16.0);
+    }
 
     #[test]
     fn arrow_keys_use_normal_cursor_sequences_by_default() {
