@@ -78,6 +78,7 @@ pub fn render_terminal_graphic<Renderer>(
     y: f32,
     width: f32,
     height: f32,
+    box_thickness: f32,
     fg_color: Color,
 ) -> bool
 where
@@ -92,11 +93,11 @@ where
 
     if draw_block(renderer, c, cell, fg_color)
         || draw_braille(renderer, c, cell, fg_color)
-        || draw_powerline(renderer, c, cell, fg_color)
+        || draw_powerline(renderer, c, cell, box_thickness, fg_color)
         || draw_geometric(renderer, c, cell, fg_color)
-        || draw_box(renderer, c, cell, fg_color)
-        || draw_legacy_computing(renderer, c, cell, fg_color)
-        || draw_branch(renderer, c, cell, fg_color)
+        || draw_box(renderer, c, cell, box_thickness, fg_color)
+        || draw_legacy_computing(renderer, c, cell, box_thickness, fg_color)
+        || draw_branch(renderer, c, cell, box_thickness, fg_color)
     {
         return true;
     }
@@ -224,7 +225,13 @@ where
     true
 }
 
-fn draw_powerline<Renderer>(renderer: &mut Renderer, c: char, cell: Rectangle, color: Color) -> bool
+fn draw_powerline<Renderer>(
+    renderer: &mut Renderer,
+    c: char,
+    cell: Rectangle,
+    box_thickness: f32,
+    color: Color,
+) -> bool
 where
     Renderer: renderer::Renderer + geometry::Renderer,
 {
@@ -235,16 +242,28 @@ where
         '\u{E0BA}' => fill_triangle(renderer, cell, color, [(1.0, 0.0), (1.0, 1.0), (0.0, 1.0)]),
         '\u{E0BC}' => fill_triangle(renderer, cell, color, [(0.0, 0.0), (1.0, 0.0), (0.0, 1.0)]),
         '\u{E0BE}' => fill_triangle(renderer, cell, color, [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0)]),
-        '\u{E0B1}' => stroke_polyline(renderer, cell, color, &[(0.0, 0.0), (1.0, 0.5), (0.0, 1.0)]),
-        '\u{E0B3}' => stroke_polyline(renderer, cell, color, &[(1.0, 0.0), (0.0, 0.5), (1.0, 1.0)]),
+        '\u{E0B1}' => stroke_polyline(
+            renderer,
+            cell,
+            color,
+            box_thickness,
+            &[(0.0, 0.0), (1.0, 0.5), (0.0, 1.0)],
+        ),
+        '\u{E0B3}' => stroke_polyline(
+            renderer,
+            cell,
+            color,
+            box_thickness,
+            &[(1.0, 0.0), (0.0, 0.5), (1.0, 1.0)],
+        ),
         '\u{E0B4}' => fill_soft_powerline(renderer, cell, color, false),
         '\u{E0B6}' => fill_soft_powerline(renderer, cell, color, true),
-        '\u{E0B5}' => stroke_soft_powerline(renderer, cell, color, false),
-        '\u{E0B7}' => stroke_soft_powerline(renderer, cell, color, true),
-        '\u{E0B9}' | '\u{E0BF}' => stroke_diagonal(renderer, cell, color, false),
-        '\u{E0BB}' | '\u{E0BD}' => stroke_diagonal(renderer, cell, color, true),
-        '\u{E0D2}' => fill_chevron_cap(renderer, cell, color, false),
-        '\u{E0D4}' => fill_chevron_cap(renderer, cell, color, true),
+        '\u{E0B5}' => stroke_soft_powerline(renderer, cell, color, box_thickness, false),
+        '\u{E0B7}' => stroke_soft_powerline(renderer, cell, color, box_thickness, true),
+        '\u{E0B9}' | '\u{E0BF}' => stroke_diagonal(renderer, cell, color, box_thickness, false),
+        '\u{E0BB}' | '\u{E0BD}' => stroke_diagonal(renderer, cell, color, box_thickness, true),
+        '\u{E0D2}' => fill_chevron_cap(renderer, cell, color, box_thickness, false),
+        '\u{E0D4}' => fill_chevron_cap(renderer, cell, color, box_thickness, true),
         _ => return false,
     }
 
@@ -270,28 +289,34 @@ where
     true
 }
 
-fn draw_box<Renderer>(renderer: &mut Renderer, c: char, cell: Rectangle, color: Color) -> bool
+fn draw_box<Renderer>(
+    renderer: &mut Renderer,
+    c: char,
+    cell: Rectangle,
+    box_thickness: f32,
+    color: Color,
+) -> bool
 where
     Renderer: renderer::Renderer + geometry::Renderer,
 {
     match c {
         '╱' => {
-            stroke_diagonal(renderer, cell, color, false);
+            stroke_diagonal(renderer, cell, color, box_thickness, false);
             true
         }
         '╲' => {
-            stroke_diagonal(renderer, cell, color, true);
+            stroke_diagonal(renderer, cell, color, box_thickness, true);
             true
         }
         '╳' => {
-            stroke_diagonal(renderer, cell, color, false);
-            stroke_diagonal(renderer, cell, color, true);
+            stroke_diagonal(renderer, cell, color, box_thickness, false);
+            stroke_diagonal(renderer, cell, color, box_thickness, true);
             true
         }
-        '╭' => stroke_corner_arc(renderer, cell, color, Corner::TopLeft),
-        '╮' => stroke_corner_arc(renderer, cell, color, Corner::TopRight),
-        '╯' => stroke_corner_arc(renderer, cell, color, Corner::BottomRight),
-        '╰' => stroke_corner_arc(renderer, cell, color, Corner::BottomLeft),
+        '╭' => stroke_corner_arc(renderer, cell, color, box_thickness, Corner::TopLeft),
+        '╮' => stroke_corner_arc(renderer, cell, color, box_thickness, Corner::TopRight),
+        '╯' => stroke_corner_arc(renderer, cell, color, box_thickness, Corner::BottomRight),
+        '╰' => stroke_corner_arc(renderer, cell, color, box_thickness, Corner::BottomLeft),
         _ => {
             let lines = box_lines(c).or_else(|| {
                 if ('\u{2500}'..='\u{257f}').contains(&c) {
@@ -307,7 +332,7 @@ where
             });
 
             if let Some(lines) = lines {
-                draw_box_lines(renderer, lines, cell, color);
+                draw_box_lines(renderer, lines, cell, box_thickness, color);
                 true
             } else {
                 false
@@ -320,6 +345,7 @@ fn draw_legacy_computing<Renderer>(
     renderer: &mut Renderer,
     c: char,
     cell: Rectangle,
+    box_thickness: f32,
     color: Color,
 ) -> bool
 where
@@ -445,8 +471,8 @@ where
         0x1fb90 => draw_rects(renderer, &[cell], color_with_alpha(color, 0.5)),
         0x1fb95 => return draw_checker(renderer, cell, color, 2, 0),
         0x1fb96 => return draw_checker(renderer, cell, color, 2, 1),
-        0x1fb98 => return draw_stripes(renderer, cell, color, false),
-        0x1fb99 => return draw_stripes(renderer, cell, color, true),
+        0x1fb98 => return draw_stripes(renderer, cell, color, box_thickness, false),
+        0x1fb99 => return draw_stripes(renderer, cell, color, box_thickness, true),
         0x1fbce => draw_rects(
             renderer,
             &[local_rect(cell, 0.0, 0.0, TWO_THIRDS, 1.0)],
@@ -468,7 +494,13 @@ where
     true
 }
 
-fn draw_branch<Renderer>(renderer: &mut Renderer, c: char, cell: Rectangle, color: Color) -> bool
+fn draw_branch<Renderer>(
+    renderer: &mut Renderer,
+    c: char,
+    cell: Rectangle,
+    box_thickness: f32,
+    color: Color,
+) -> bool
 where
     Renderer: renderer::Renderer + geometry::Renderer,
 {
@@ -480,13 +512,31 @@ where
     let stem_x = if cp & 1 == 0 { HALF } else { ONE_QUARTER };
     let y0 = 0.0;
     let y1 = 1.0;
-    stroke_polyline(renderer, cell, color, &[(stem_x, y0), (stem_x, y1)]);
+    stroke_polyline(
+        renderer,
+        cell,
+        color,
+        box_thickness,
+        &[(stem_x, y0), (stem_x, y1)],
+    );
 
     if cp & 0b10 != 0 {
-        stroke_polyline(renderer, cell, color, &[(stem_x, HALF), (1.0, HALF)]);
+        stroke_polyline(
+            renderer,
+            cell,
+            color,
+            box_thickness,
+            &[(stem_x, HALF), (1.0, HALF)],
+        );
     }
     if cp & 0b100 != 0 {
-        stroke_polyline(renderer, cell, color, &[(stem_x, HALF), (0.0, HALF)]);
+        stroke_polyline(
+            renderer,
+            cell,
+            color,
+            box_thickness,
+            &[(stem_x, HALF), (0.0, HALF)],
+        );
     }
     if cp & 0b1000 != 0 {
         fill_corner_square(renderer, cell, color, Corner::TopRight);
@@ -596,13 +646,15 @@ fn draw_stripes<Renderer>(
     renderer: &mut Renderer,
     cell: Rectangle,
     color: Color,
+    box_thickness: f32,
     falling: bool,
 ) -> bool
 where
     Renderer: renderer::Renderer + geometry::Renderer,
 {
-    let count =
-        ((cell.width / (2.0 * stroke_width(StrokeWeight::Light, cell))).ceil() as i32).max(1);
+    let count = ((cell.width / (2.0 * stroke_width(StrokeWeight::Light, cell, box_thickness)))
+        .ceil() as i32)
+        .max(1);
     for i in -count..=count {
         let offset = i as f32 / count as f32;
         let points = if falling {
@@ -610,7 +662,7 @@ where
         } else {
             [(offset, 0.0), (1.0 + offset, 1.0)]
         };
-        stroke_polyline(renderer, cell, color, &points);
+        stroke_polyline(renderer, cell, color, box_thickness, &points);
     }
     true
 }
@@ -664,8 +716,13 @@ fn box_lines(c: char) -> Option<Lines> {
     })
 }
 
-fn draw_box_lines<Renderer>(renderer: &mut Renderer, lines: Lines, cell: Rectangle, color: Color)
-where
+fn draw_box_lines<Renderer>(
+    renderer: &mut Renderer,
+    lines: Lines,
+    cell: Rectangle,
+    box_thickness: f32,
+    color: Color,
+) where
     Renderer: renderer::Renderer,
 {
     let mut rects = Vec::new();
@@ -675,12 +732,18 @@ where
         (Side::Bottom, lines.down),
         (Side::Left, lines.left),
     ] {
-        push_line_rects(&mut rects, cell, side, style);
+        push_line_rects(&mut rects, cell, side, style, box_thickness);
     }
     draw_rects(renderer, &rects, color);
 }
 
-fn push_line_rects(rects: &mut Vec<Rectangle>, cell: Rectangle, side: Side, style: LineStyle) {
+fn push_line_rects(
+    rects: &mut Vec<Rectangle>,
+    cell: Rectangle,
+    side: Side,
+    style: LineStyle,
+    box_thickness: f32,
+) {
     match style {
         LineStyle::None => {}
         LineStyle::Light | LineStyle::Heavy => {
@@ -689,11 +752,15 @@ fn push_line_rects(rects: &mut Vec<Rectangle>, cell: Rectangle, side: Side, styl
             } else {
                 StrokeWeight::Light
             };
-            rects.push(single_line_rect(cell, side, stroke_width(weight, cell)));
+            rects.push(single_line_rect(
+                cell,
+                side,
+                stroke_width(weight, cell, box_thickness),
+            ));
         }
         LineStyle::Double => {
-            for offset in double_offsets(cell) {
-                rects.push(double_line_rect(cell, side, offset));
+            for offset in double_offsets(cell, box_thickness) {
+                rects.push(double_line_rect(cell, side, offset, box_thickness));
             }
         }
     }
@@ -731,8 +798,8 @@ fn single_line_rect(cell: Rectangle, side: Side, stroke: f32) -> Rectangle {
     }
 }
 
-fn double_line_rect(cell: Rectangle, side: Side, offset: f32) -> Rectangle {
-    let stroke = stroke_width(StrokeWeight::Light, cell);
+fn double_line_rect(cell: Rectangle, side: Side, offset: f32, box_thickness: f32) -> Rectangle {
+    let stroke = stroke_width(StrokeWeight::Light, cell, box_thickness);
     let cx = cell.x + cell.width / 2.0;
     let cy = cell.y + cell.height / 2.0;
     match side {
@@ -763,14 +830,17 @@ fn double_line_rect(cell: Rectangle, side: Side, offset: f32) -> Rectangle {
     }
 }
 
-fn double_offsets(cell: Rectangle) -> [f32; 2] {
-    let stroke = stroke_width(StrokeWeight::Light, cell);
-    let gap = stroke.max(cell.width.min(cell.height) / 8.0);
+fn double_offsets(cell: Rectangle, box_thickness: f32) -> [f32; 2] {
+    let stroke = stroke_width(StrokeWeight::Light, cell, box_thickness);
+    let gap = stroke.max(box_thickness.round().max(1.0));
     [-gap / 2.0 - stroke, gap / 2.0]
 }
 
-fn stroke_width(weight: StrokeWeight, cell: Rectangle) -> f32 {
-    let base = (cell.width.min(cell.height) / 8.0).round().max(1.0);
+fn stroke_width(weight: StrokeWeight, cell: Rectangle, box_thickness: f32) -> f32 {
+    let base = box_thickness
+        .round()
+        .max(1.0)
+        .min(cell.width.min(cell.height));
     match weight {
         StrokeWeight::Light => base,
         StrokeWeight::Heavy => (base * 2.0)
@@ -799,6 +869,7 @@ fn stroke_polyline<Renderer>(
     renderer: &mut Renderer,
     cell: Rectangle,
     color: Color,
+    box_thickness: f32,
     points: &[(f32, f32)],
 ) where
     Renderer: renderer::Renderer + geometry::Renderer,
@@ -811,7 +882,7 @@ fn stroke_polyline<Renderer>(
         renderer,
         cell,
         color,
-        stroke_width(StrokeWeight::Light, cell),
+        stroke_width(StrokeWeight::Light, cell, box_thickness),
         |path| {
             path.move_to(local_point(cell, points[0]));
             for point in &points[1..] {
@@ -821,8 +892,13 @@ fn stroke_polyline<Renderer>(
     );
 }
 
-fn stroke_diagonal<Renderer>(renderer: &mut Renderer, cell: Rectangle, color: Color, falling: bool)
-where
+fn stroke_diagonal<Renderer>(
+    renderer: &mut Renderer,
+    cell: Rectangle,
+    color: Color,
+    box_thickness: f32,
+    falling: bool,
+) where
     Renderer: renderer::Renderer + geometry::Renderer,
 {
     let points = if falling {
@@ -830,7 +906,7 @@ where
     } else {
         [(0.0, 1.0), (1.0, 0.0)]
     };
-    stroke_polyline(renderer, cell, color, &points);
+    stroke_polyline(renderer, cell, color, box_thickness, &points);
 }
 
 fn fill_soft_powerline<Renderer>(renderer: &mut Renderer, cell: Rectangle, color: Color, flip: bool)
@@ -876,6 +952,7 @@ fn stroke_soft_powerline<Renderer>(
     renderer: &mut Renderer,
     cell: Rectangle,
     color: Color,
+    box_thickness: f32,
     flip: bool,
 ) where
     Renderer: renderer::Renderer + geometry::Renderer,
@@ -886,7 +963,7 @@ fn stroke_soft_powerline<Renderer>(
         renderer,
         cell,
         color,
-        stroke_width(StrokeWeight::Light, cell),
+        stroke_width(StrokeWeight::Light, cell, box_thickness),
         |path| {
             if flip {
                 path.move_to(Point::new(cell.width, 0.0));
@@ -919,11 +996,16 @@ fn stroke_soft_powerline<Renderer>(
     );
 }
 
-fn fill_chevron_cap<Renderer>(renderer: &mut Renderer, cell: Rectangle, color: Color, flip: bool)
-where
+fn fill_chevron_cap<Renderer>(
+    renderer: &mut Renderer,
+    cell: Rectangle,
+    color: Color,
+    box_thickness: f32,
+    flip: bool,
+) where
     Renderer: renderer::Renderer + geometry::Renderer,
 {
-    let thick = stroke_width(StrokeWeight::Light, cell);
+    let thick = stroke_width(StrokeWeight::Light, cell, box_thickness);
     fill_path(renderer, cell, color, |path| {
         if flip {
             path.move_to(Point::new(cell.width, 0.0));
@@ -967,12 +1049,13 @@ fn stroke_corner_arc<Renderer>(
     renderer: &mut Renderer,
     cell: Rectangle,
     color: Color,
+    box_thickness: f32,
     corner: Corner,
 ) -> bool
 where
     Renderer: renderer::Renderer + geometry::Renderer,
 {
-    let thick = stroke_width(StrokeWeight::Light, cell);
+    let thick = stroke_width(StrokeWeight::Light, cell, box_thickness);
     let center_x = cell.width / 2.0;
     let center_y = cell.height / 2.0;
     let radius = cell.width.min(cell.height) / 2.0;

@@ -116,6 +116,7 @@ pub struct RenderCell {
     pub column: usize,
     pub line: usize,
     pub character: char,
+    pub zerowidth: String,
     pub fg: AnsiColor,
     pub bg: AnsiColor,
     pub flags: CellFlags,

@@ -22,39 +22,10 @@ use parking_lot::Mutex;
 use super::backend::{CursorInfo, EventProxy, RenderCell};
 use super::block_elements::render_terminal_graphic;
 use super::colors::{DEFAULT_BG, DEFAULT_FG, ansi_to_iced_themed, cell_fg_to_iced};
+use super::metrics::{TERMINAL_PADDING_LEFT, TerminalMetrics};
 use crate::fonts::{JETBRAINS_MONO_NERD, TerminalFont};
 use crate::keybindings::{AppAction, KeybindingsConfig};
 use crate::theme::TerminalColors;
-
-/// Left padding for terminal content (matches Termius style)
-const TERMINAL_PADDING_LEFT: f32 = 12.0;
-
-#[derive(Debug, Clone, Copy)]
-struct CellMetrics {
-    width: f32,
-    height: f32,
-}
-
-impl CellMetrics {
-    fn for_font(font_size: f32, line_height_ratio: f32) -> Self {
-        // Match Ghostty's terminal grid behavior: cell dimensions are integer
-        // pixel sizes. Terminal-art sprites such as block elements are drawn
-        // cell-by-cell, so fractional grid steps can leave 1px seams between
-        // adjacent snapped quads.
-        Self {
-            width: (font_size * 0.6).round().max(1.0),
-            height: (font_size * line_height_ratio).round().max(1.0),
-        }
-    }
-
-    fn columns_for_bounds(self, bounds: Rectangle) -> usize {
-        ((bounds.width - TERMINAL_PADDING_LEFT).max(0.0) / self.width) as usize
-    }
-
-    fn rows_for_bounds(self, bounds: Rectangle) -> usize {
-        (bounds.height / self.height) as usize
-    }
-}
 
 fn is_powerline_separator(c: char) -> bool {
     matches!(c, '\u{E0B0}' | '\u{E0B2}' | '\u{E0B4}' | '\u{E0B6}')
@@ -129,18 +100,18 @@ impl<'a, Message> TerminalWidget<'a, Message> {
         self
     }
 
-    fn cell_metrics(&self) -> CellMetrics {
-        CellMetrics::for_font(self.font_size, self.terminal_font.line_height_ratio())
+    fn cell_metrics(&self) -> TerminalMetrics {
+        TerminalMetrics::for_font(self.terminal_font, self.font_size)
     }
 
     /// Calculate cell width based on font size.
     fn cell_width(&self) -> f32 {
-        self.cell_metrics().width
+        self.cell_metrics().cell_width
     }
 
     /// Calculate cell height based on font size.
     fn cell_height(&self) -> f32 {
-        self.cell_metrics().height
+        self.cell_metrics().cell_height
     }
 
     /// Get renderable cells from the terminal
@@ -180,6 +151,10 @@ impl<'a, Message> TerminalWidget<'a, Message> {
                     column: indexed.point.column.0,
                     line,
                     character: cell.c,
+                    zerowidth: cell
+                        .zerowidth()
+                        .map(|chars| chars.iter().copied().collect())
+                        .unwrap_or_default(),
                     fg: cell.fg,
                     bg: cell.bg,
                     flags: cell.flags,
@@ -551,8 +526,8 @@ where
         );
 
         let metrics = self.cell_metrics();
-        let cell_width = metrics.width;
-        let cell_height = metrics.height;
+        let cell_width = metrics.cell_width;
+        let cell_height = metrics.cell_height;
 
         // Refresh cached render data if terminal content changed.
         let mut cache = state.render_cache.borrow_mut();
@@ -647,6 +622,7 @@ where
                     y,
                     cell_width,
                     cell_height,
+                    metrics.box_thickness,
                     fg_color,
                 ) {
                     // Block element was rendered as rectangles
@@ -657,7 +633,11 @@ where
 
                     // Draw the character using text renderer
                     let text = iced::advanced::Text {
-                        content: cell.character.to_string(),
+                        content: {
+                            let mut content = cell.character.to_string();
+                            content.push_str(&cell.zerowidth);
+                            content
+                        },
                         bounds: Size::new(char_width, cell_height),
                         size: iced::Pixels(self.font_size),
                         line_height: iced::advanced::text::LineHeight::Absolute(iced::Pixels(
@@ -782,13 +762,14 @@ where
                             );
                         }
                         CursorShape::Underline => {
+                            let thickness = metrics.cursor_thickness.max(1.0);
                             renderer.fill_quad(
                                 Quad {
                                     bounds: Rectangle {
                                         x: cursor_x,
-                                        y: cursor_y + cell_height - 2.0,
+                                        y: cursor_y + cell_height - thickness,
                                         width: cell_width,
-                                        height: 2.0,
+                                        height: thickness,
                                     },
                                     border: Border::default(),
                                     shadow: Shadow::default(),
@@ -798,13 +779,14 @@ where
                             );
                         }
                         CursorShape::Beam => {
+                            let thickness = metrics.cursor_thickness.max(1.0);
                             renderer.fill_quad(
                                 Quad {
                                     bounds: Rectangle {
                                         x: cursor_x,
                                         y: cursor_y,
-                                        width: 2.0,
-                                        height: cell_height,
+                                        width: thickness,
+                                        height: metrics.cursor_height.min(cell_height),
                                     },
                                     border: Border::default(),
                                     shadow: Shadow::default(),
@@ -1176,7 +1158,7 @@ where
                         mouse::ScrollDelta::Pixels { y, .. } => {
                             // Accumulate pixels for smooth trackpad scrolling
                             state.scroll_pixels += y;
-                            let line_height = metrics.height;
+                            let line_height = metrics.cell_height;
                             let lines = (state.scroll_pixels / line_height) as i32;
                             // Keep remainder for next scroll event
                             state.scroll_pixels -= lines as f32 * line_height;
@@ -1451,10 +1433,10 @@ mod tests {
 
     #[test]
     fn cell_metrics_round_to_integer_pixels() {
-        let metrics = CellMetrics::for_font(13.0, 1.2);
+        let metrics = TerminalMetrics::for_font(TerminalFont::JetBrainsMono, 13.0);
 
-        assert_eq!(metrics.width, 8.0);
-        assert_eq!(metrics.height, 16.0);
+        assert_eq!(metrics.cell_width.fract(), 0.0);
+        assert_eq!(metrics.cell_height.fract(), 0.0);
     }
 
     #[test]

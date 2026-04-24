@@ -7,6 +7,9 @@ Ghostty terminal emulator sprite renderer.
 
 - Project: https://github.com/ghostty-org/ghostty
 - Reference source: `src/font/sprite`
+- Metrics/constraint reference source: `src/font/Metrics.zig`, `src/font/face.zig`,
+  `src/font/nerd_font_attributes.zig`
+- Reference commit: `b0d359cbbd945f9f3807327526ef79fcaf0477df`
 - License: MIT
 
 MIT License

@@ -35,6 +35,14 @@ impl TerminalFont {
         }
     }
 
+    /// Raw bytes for the bundled regular face.
+    pub const fn bytes(self) -> &'static [u8] {
+        match self {
+            TerminalFont::JetBrainsMono => JETBRAINS_MONO_NERD_BYTES,
+            TerminalFont::Hack => HACK_NERD_BYTES,
+        }
+    }
+
     /// Resolve the font used for terminal cells.
     ///
     /// Portal currently bundles only the regular Nerd Font faces. Returning the
@@ -45,10 +53,9 @@ impl TerminalFont {
         self.to_iced_font()
     }
 
-    /// Natural line height as a multiple of the font's em size, derived from
-    /// the hhea table (ascent + |descent| + lineGap) / unitsPerEm.
-    /// Cell height is set to this value so box-drawing glyphs fill the cell
-    /// exactly and connect across line boundaries.
+    /// Legacy fallback line height ratio.
+    ///
+    /// New terminal rendering should use measured `TerminalMetrics` instead.
     pub const fn line_height_ratio(self) -> f32 {
         match self {
             // JetBrains Mono: ascent=1020 descent=300 gap=0 unitsPerEm=1000 → natural 1.32×.
