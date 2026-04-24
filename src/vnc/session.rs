@@ -1034,6 +1034,7 @@ mod tests {
             mouse_rate_limit,
             last_mouse_sent: Mutex::new(now),
             last_mouse_buttons: Mutex::new(0),
+            pressed_keys: Mutex::new(HashSet::new()),
             resize_rate_limit: Duration::from_millis(100),
             last_resize_sent: Mutex::new(now - Duration::from_millis(500)),
             last_resize_size: Mutex::new((0, 0)),
