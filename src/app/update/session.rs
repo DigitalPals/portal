@@ -5,7 +5,7 @@ use iced::Task;
 use iced::clipboard;
 use std::collections::VecDeque;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 use crate::app::managers::{ActiveSession, SessionBackend};
@@ -22,6 +22,266 @@ use crate::views::toast::Toast;
 /// Maximum bytes to buffer before dropping oldest data.
 /// 16MB is generous - if we hit this, data is arriving faster than humanly readable.
 const MAX_PENDING_OUTPUT_BYTES: usize = 16 * 1024 * 1024;
+const BASE_OUTPUT_BYTES_PER_TICK: usize = 64 * 1024;
+const MEDIUM_OUTPUT_BYTES_PER_TICK: usize = 256 * 1024;
+const LARGE_OUTPUT_BYTES_PER_TICK: usize = 1024 * 1024;
+const MEDIUM_BACKLOG_THRESHOLD: usize = 512 * 1024;
+const LARGE_BACKLOG_THRESHOLD: usize = 4 * 1024 * 1024;
+const OUTPUT_PROCESS_TIME_BUDGET: Duration = Duration::from_millis(8);
+const OUTPUT_COALESCE_DELAY: Duration = Duration::from_millis(8);
+const OUTPUT_COALESCE_BYPASS_BYTES: usize = 8 * 1024;
+const BACKLOG_WARNING_THRESHOLD: usize = 1024 * 1024;
+const BACKLOG_AGE_WARNING: Duration = Duration::from_millis(500);
+const BACKLOG_WARNING_INTERVAL: Duration = Duration::from_secs(5);
+
+fn output_budget_for_pending(pending_bytes: usize) -> usize {
+    if pending_bytes >= LARGE_BACKLOG_THRESHOLD {
+        LARGE_OUTPUT_BYTES_PER_TICK
+    } else if pending_bytes >= MEDIUM_BACKLOG_THRESHOLD {
+        MEDIUM_OUTPUT_BYTES_PER_TICK
+    } else {
+        BASE_OUTPUT_BYTES_PER_TICK
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::local::LocalSession;
+
+    fn create_test_session() -> ActiveSession {
+        let (terminal, _rx) = TerminalSession::new("test-host");
+        ActiveSession {
+            backend: SessionBackend::Local(Arc::new(LocalSession::new_test_stub())),
+            terminal,
+            session_start: Instant::now(),
+            host_name: "test-host".to_string(),
+            host_id: None,
+            history_entry_id: Uuid::new_v4(),
+            status_message: None,
+            reconnect_attempts: 0,
+            reconnect_next_attempt: None,
+            pending_output: VecDeque::new(),
+            pending_output_bytes: 0,
+            last_data_received_at: None,
+            pending_output_started_at: None,
+            max_pending_output_bytes: 0,
+            dropped_output_bytes: 0,
+            last_output_process_duration: None,
+            last_backlog_warning_at: None,
+            logger: None,
+        }
+    }
+
+    #[test]
+    fn output_budget_scales_with_backlog() {
+        assert_eq!(
+            output_budget_for_pending(MEDIUM_BACKLOG_THRESHOLD - 1),
+            BASE_OUTPUT_BYTES_PER_TICK
+        );
+        assert_eq!(
+            output_budget_for_pending(MEDIUM_BACKLOG_THRESHOLD),
+            MEDIUM_OUTPUT_BYTES_PER_TICK
+        );
+        assert_eq!(
+            output_budget_for_pending(LARGE_BACKLOG_THRESHOLD),
+            LARGE_OUTPUT_BYTES_PER_TICK
+        );
+    }
+
+    #[test]
+    fn small_recent_output_defers_for_coalescing() {
+        let mut session = create_test_session();
+        let now = Instant::now();
+        queue_terminal_output(&mut session, b"prompt".to_vec(), now);
+
+        process_terminal_output_tick(&mut session, now);
+
+        assert_eq!(session.pending_output_bytes, b"prompt".len());
+        assert_eq!(session.pending_output.len(), 1);
+    }
+
+    #[test]
+    fn large_backlog_uses_catch_up_budget() {
+        let mut session = create_test_session();
+        let now = Instant::now();
+        queue_terminal_output(&mut session, vec![b'x'; 600 * 1024], now);
+
+        process_terminal_output_tick(&mut session, now + OUTPUT_COALESCE_DELAY);
+
+        assert_eq!(
+            session.pending_output_bytes,
+            600 * 1024 - MEDIUM_OUTPUT_BYTES_PER_TICK
+        );
+        assert_eq!(session.pending_output.len(), 1);
+        assert!(session.last_output_process_duration.is_some());
+    }
+
+    #[test]
+    fn overflow_drops_whole_chunks_and_records_status() {
+        let mut session = create_test_session();
+        let now = Instant::now();
+        let chunk_len = 8 * 1024 * 1024;
+
+        queue_terminal_output(&mut session, vec![b'a'; chunk_len], now);
+        queue_terminal_output(&mut session, vec![b'b'; chunk_len], now);
+        queue_terminal_output(&mut session, vec![b'c'; 1], now);
+
+        assert_eq!(session.pending_output_bytes, chunk_len + 1);
+        assert_eq!(session.dropped_output_bytes, chunk_len);
+        assert_eq!(session.pending_output.len(), 2);
+        assert_eq!(
+            session
+                .status_message
+                .as_ref()
+                .map(|(message, _)| message.as_str()),
+            Some("Terminal output skipped; catching up")
+        );
+    }
+}
+
+fn should_defer_for_output_coalesce(session: &ActiveSession, now: Instant) -> bool {
+    session.pending_output_bytes < OUTPUT_COALESCE_BYPASS_BYTES
+        && session
+            .last_data_received_at
+            .is_some_and(|t| now.duration_since(t) < OUTPUT_COALESCE_DELAY)
+}
+
+fn queue_terminal_output(session: &mut ActiveSession, data: Vec<u8>, now: Instant) {
+    if session.pending_output_bytes == 0 {
+        session.pending_output_started_at = Some(now);
+    }
+
+    session.pending_output_bytes = session.pending_output_bytes.saturating_add(data.len());
+    session.max_pending_output_bytes = session
+        .max_pending_output_bytes
+        .max(session.pending_output_bytes);
+    session.pending_output.push_back(data);
+    session.last_data_received_at = Some(now);
+
+    enforce_pending_output_limit(session, now);
+}
+
+fn enforce_pending_output_limit(session: &mut ActiveSession, now: Instant) {
+    let mut dropped_this_pass = 0usize;
+
+    while session.pending_output_bytes > MAX_PENDING_OUTPUT_BYTES {
+        if let Some(dropped) = session.pending_output.pop_front() {
+            let dropped_len = dropped.len();
+            session.pending_output_bytes = session.pending_output_bytes.saturating_sub(dropped_len);
+            session.dropped_output_bytes = session.dropped_output_bytes.saturating_add(dropped_len);
+            dropped_this_pass = dropped_this_pass.saturating_add(dropped_len);
+        } else {
+            session.pending_output_bytes = 0;
+            session.pending_output_started_at = None;
+            break;
+        }
+    }
+
+    if session.pending_output_bytes == 0 {
+        session.pending_output_started_at = None;
+    }
+
+    if dropped_this_pass > 0 {
+        tracing::warn!(
+            host = %session.host_name,
+            dropped_bytes = dropped_this_pass,
+            total_dropped_bytes = session.dropped_output_bytes,
+            pending_bytes = session.pending_output_bytes,
+            "Terminal output backlog exceeded limit; dropped oldest queued output"
+        );
+        session.status_message = Some(("Terminal output skipped; catching up".to_string(), now));
+    }
+}
+
+fn maybe_warn_terminal_backlog(session: &mut ActiveSession, now: Instant) {
+    let backlog_age = session
+        .pending_output_started_at
+        .map(|started| now.duration_since(started));
+    let should_warn = session.pending_output_bytes >= BACKLOG_WARNING_THRESHOLD
+        || backlog_age.is_some_and(|age| age >= BACKLOG_AGE_WARNING);
+
+    if !should_warn {
+        return;
+    }
+
+    if session
+        .last_backlog_warning_at
+        .is_some_and(|last| now.duration_since(last) < BACKLOG_WARNING_INTERVAL)
+    {
+        return;
+    }
+
+    session.last_backlog_warning_at = Some(now);
+    let (alt_screen, app_cursor) = {
+        let term = session.terminal.term();
+        let term = term.lock();
+        let mode = term.mode();
+        (
+            mode.contains(alacritty_terminal::term::TermMode::ALT_SCREEN),
+            mode.contains(alacritty_terminal::term::TermMode::APP_CURSOR),
+        )
+    };
+    tracing::warn!(
+        host = %session.host_name,
+        pending_bytes = session.pending_output_bytes,
+        pending_chunks = session.pending_output.len(),
+        max_pending_bytes = session.max_pending_output_bytes,
+        dropped_bytes = session.dropped_output_bytes,
+        alt_screen,
+        app_cursor,
+        backlog_age_ms = backlog_age.map(|age| age.as_millis()),
+        last_process_ms = session
+            .last_output_process_duration
+            .map(|duration| duration.as_millis()),
+        "Terminal output backlog is delaying rendering"
+    );
+}
+
+fn process_terminal_output_tick(session: &mut ActiveSession, now: Instant) {
+    if should_defer_for_output_coalesce(session, now) {
+        return;
+    }
+
+    let mut byte_budget = output_budget_for_pending(session.pending_output_bytes);
+    let started = Instant::now();
+    let mut processed_any = false;
+
+    while byte_budget > 0 {
+        if processed_any && started.elapsed() >= OUTPUT_PROCESS_TIME_BUDGET {
+            break;
+        }
+
+        let Some(mut chunk) = session.pending_output.pop_front() else {
+            break;
+        };
+
+        if chunk.len() > byte_budget {
+            let remainder = chunk.split_off(byte_budget);
+            session.terminal.process_output(&chunk);
+            session.pending_output_bytes = session.pending_output_bytes.saturating_sub(chunk.len());
+            session.pending_output.push_front(remainder);
+            processed_any = true;
+            break;
+        }
+
+        let chunk_len = chunk.len();
+        session.terminal.process_output(&chunk);
+        session.pending_output_bytes = session.pending_output_bytes.saturating_sub(chunk_len);
+        byte_budget = byte_budget.saturating_sub(chunk_len);
+        processed_any = true;
+    }
+
+    if processed_any {
+        session.last_output_process_duration = Some(started.elapsed());
+    }
+
+    if session.pending_output_bytes == 0 {
+        session.pending_output_started_at = None;
+    } else {
+        maybe_warn_terminal_backlog(session, now);
+    }
+}
 
 fn start_session_logger(portal: &mut Portal, session_id: SessionId) {
     if !portal.prefs.session_logging_enabled {
@@ -91,6 +351,11 @@ fn start_terminal_session(
             pending_output: VecDeque::new(),
             pending_output_bytes: 0,
             last_data_received_at: None,
+            pending_output_started_at: None,
+            max_pending_output_bytes: 0,
+            dropped_output_bytes: 0,
+            last_output_process_duration: None,
+            last_backlog_warning_at: None,
             logger: None,
         },
     );
@@ -292,74 +557,15 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                     if let Some(logger) = session.logger.as_ref() {
                         logger.write(&data);
                     }
-                    session.pending_output_bytes =
-                        session.pending_output_bytes.saturating_add(data.len());
-                    session.pending_output.push_back(data);
-                    session.last_data_received_at = Some(Instant::now());
-
-                    // Enforce buffer size limit by dropping oldest data
-                    while session.pending_output_bytes > MAX_PENDING_OUTPUT_BYTES {
-                        if let Some(dropped) = session.pending_output.pop_front() {
-                            session.pending_output_bytes =
-                                session.pending_output_bytes.saturating_sub(dropped.len());
-                        } else {
-                            session.pending_output_bytes = 0;
-                            break;
-                        }
-                    }
+                    queue_terminal_output(session, data, Instant::now());
                 }
             }
             Task::none()
         }
         SessionMessage::ProcessOutputTick => {
-            // Increased from 16KB to 64KB for better throughput in fast SSH sessions.
-            // At 60fps (16ms ticks), this allows ~4MB/s vs previous ~1MB/s.
-            const MAX_OUTPUT_BYTES_PER_TICK: usize = 64 * 1024;
-
-            // Coalesce rapid back-to-back SSH writes before feeding them to the
-            // terminal emulator. Shell prompts (e.g. oh-my-posh) may arrive in
-            // multiple SSH packets within a few ms. Without this delay we can
-            // snapshot a partial prompt and render it before the trailing
-            // characters (e.g. Powerline end-cap) arrive.
-            //
-            // Skip processing if data arrived less than 8ms ago AND the buffer
-            // is small (interactive/prompt traffic). Large buffers (>8KB) bypass
-            // the delay so bulk transfers are not throttled.
-            const COALESCE_MS: u128 = 8;
-            const COALESCE_BYPASS_BYTES: usize = 8 * 1024;
-
+            let now = Instant::now();
             for session in portal.sessions.values_mut() {
-                let pending_bytes = session.pending_output_bytes;
-
-                let in_coalesce_window = session
-                    .last_data_received_at
-                    .is_some_and(|t| t.elapsed().as_millis() < COALESCE_MS);
-
-                if in_coalesce_window && pending_bytes < COALESCE_BYPASS_BYTES {
-                    continue;
-                }
-
-                let mut budget = MAX_OUTPUT_BYTES_PER_TICK;
-                while budget > 0 {
-                    let Some(mut chunk) = session.pending_output.pop_front() else {
-                        break;
-                    };
-
-                    if chunk.len() > budget {
-                        let remainder = chunk.split_off(budget);
-                        session.terminal.process_output(&chunk);
-                        session.pending_output_bytes =
-                            session.pending_output_bytes.saturating_sub(chunk.len());
-                        session.pending_output.push_front(remainder);
-                        budget = 0;
-                    } else {
-                        let chunk_len = chunk.len();
-                        session.terminal.process_output(&chunk);
-                        session.pending_output_bytes =
-                            session.pending_output_bytes.saturating_sub(chunk_len);
-                        budget -= chunk_len;
-                    }
-                }
+                process_terminal_output_tick(session, now);
             }
 
             Task::none()

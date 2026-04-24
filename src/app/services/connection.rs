@@ -19,6 +19,7 @@ use crate::ssh::{SshClient, SshEvent};
 use crate::views::sftp::PaneId;
 
 const SSH_EVENT_CHANNEL_CAPACITY: usize = 1024;
+const SSH_DATA_COALESCE_LIMIT: usize = 256 * 1024;
 const SSH_KEEPALIVE_INTERVAL_SECS: u64 = 60;
 const DEFAULT_CREDENTIAL_TIMEOUT: u64 = 300; // 5 minutes
 
@@ -91,8 +92,10 @@ pub fn should_detect_os(detected_os: Option<&DetectedOs>) -> bool {
 
 fn ssh_event_listener(session_id: SessionId, event_rx: mpsc::Receiver<SshEvent>) -> Task<Message> {
     Task::run(
-        stream::unfold(event_rx, |mut rx| async move {
-            rx.recv().await.map(|event| (event, rx))
+        stream::unfold(SshEventStreamState::new(event_rx), |mut state| async move {
+            next_coalesced_ssh_event(&mut state)
+                .await
+                .map(|event| (event, state))
         }),
         move |event| match event {
             SshEvent::Data(data) => Message::Session(SessionMessage::Data(session_id, data)),
@@ -105,6 +108,44 @@ fn ssh_event_listener(session_id: SessionId, event_rx: mpsc::Receiver<SshEvent>)
             SshEvent::Connected => Message::Noop,
         },
     )
+}
+
+struct SshEventStreamState {
+    rx: mpsc::Receiver<SshEvent>,
+    pending: Option<SshEvent>,
+}
+
+impl SshEventStreamState {
+    fn new(rx: mpsc::Receiver<SshEvent>) -> Self {
+        Self { rx, pending: None }
+    }
+}
+
+async fn next_coalesced_ssh_event(state: &mut SshEventStreamState) -> Option<SshEvent> {
+    let event = match state.pending.take() {
+        Some(event) => event,
+        None => state.rx.recv().await?,
+    };
+
+    let SshEvent::Data(mut data) = event else {
+        return Some(event);
+    };
+
+    while data.len() < SSH_DATA_COALESCE_LIMIT {
+        match state.rx.try_recv() {
+            Ok(SshEvent::Data(next)) if data.len() + next.len() <= SSH_DATA_COALESCE_LIMIT => {
+                data.extend_from_slice(&next);
+            }
+            Ok(event) => {
+                state.pending = Some(event);
+                break;
+            }
+            Err(mpsc::error::TryRecvError::Empty) => break,
+            Err(mpsc::error::TryRecvError::Disconnected) => break,
+        }
+    }
+
+    Some(SshEvent::Data(data))
 }
 
 fn sftp_event_listener(event_rx: mpsc::Receiver<SshEvent>) -> Task<Message> {
@@ -461,6 +502,69 @@ mod tests {
     use crate::error::{SftpError, SshError};
     use chrono::Utc;
     use std::path::PathBuf;
+
+    #[tokio::test]
+    async fn coalesces_consecutive_ssh_data_events() {
+        let (tx, rx) = mpsc::channel(8);
+        tx.send(SshEvent::Data(b"a".to_vec())).await.unwrap();
+        tx.send(SshEvent::Data(b"b".to_vec())).await.unwrap();
+        drop(tx);
+
+        let mut state = SshEventStreamState::new(rx);
+        match next_coalesced_ssh_event(&mut state).await {
+            Some(SshEvent::Data(data)) => assert_eq!(data, b"ab"),
+            other => panic!("unexpected event: {:?}", other),
+        }
+        assert!(next_coalesced_ssh_event(&mut state).await.is_none());
+    }
+
+    #[tokio::test]
+    async fn coalescing_preserves_non_data_event_order() {
+        let (tx, rx) = mpsc::channel(8);
+        tx.send(SshEvent::Data(b"a".to_vec())).await.unwrap();
+        tx.send(SshEvent::Disconnected { clean: false })
+            .await
+            .unwrap();
+        tx.send(SshEvent::Data(b"b".to_vec())).await.unwrap();
+        drop(tx);
+
+        let mut state = SshEventStreamState::new(rx);
+        match next_coalesced_ssh_event(&mut state).await {
+            Some(SshEvent::Data(data)) => assert_eq!(data, b"a"),
+            other => panic!("unexpected first event: {:?}", other),
+        }
+        match next_coalesced_ssh_event(&mut state).await {
+            Some(SshEvent::Disconnected { clean }) => assert!(!clean),
+            other => panic!("unexpected second event: {:?}", other),
+        }
+        match next_coalesced_ssh_event(&mut state).await {
+            Some(SshEvent::Data(data)) => assert_eq!(data, b"b"),
+            other => panic!("unexpected third event: {:?}", other),
+        }
+    }
+
+    #[tokio::test]
+    async fn coalescing_stops_at_limit() {
+        let (tx, rx) = mpsc::channel(8);
+        tx.send(SshEvent::Data(vec![b'a'; SSH_DATA_COALESCE_LIMIT - 1]))
+            .await
+            .unwrap();
+        tx.send(SshEvent::Data(vec![b'b'; 2])).await.unwrap();
+        drop(tx);
+
+        let mut state = SshEventStreamState::new(rx);
+        match next_coalesced_ssh_event(&mut state).await {
+            Some(SshEvent::Data(data)) => {
+                assert_eq!(data.len(), SSH_DATA_COALESCE_LIMIT - 1);
+                assert!(data.iter().all(|byte| *byte == b'a'));
+            }
+            other => panic!("unexpected first event: {:?}", other),
+        }
+        match next_coalesced_ssh_event(&mut state).await {
+            Some(SshEvent::Data(data)) => assert_eq!(data, vec![b'b'; 2]),
+            other => panic!("unexpected second event: {:?}", other),
+        }
+    }
 
     #[test]
     fn should_detect_os_when_missing() {

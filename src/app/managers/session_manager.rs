@@ -6,7 +6,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 use crate::local::LocalSession;
@@ -46,6 +46,16 @@ pub struct ActiveSession {
     /// Used to coalesce rapid back-to-back SSH writes (e.g. multi-flush prompts)
     /// into a single terminal update cycle to avoid rendering partial state.
     pub last_data_received_at: Option<Instant>,
+    /// Timestamp when the current pending output backlog first became non-empty.
+    pub pending_output_started_at: Option<Instant>,
+    /// Largest observed pending output backlog for diagnostics.
+    pub max_pending_output_bytes: usize,
+    /// Total bytes dropped because the terminal output backlog exceeded the cap.
+    pub dropped_output_bytes: usize,
+    /// Duration of the most recent terminal output processing pass.
+    pub last_output_process_duration: Option<Duration>,
+    /// Last time a backlog warning was emitted for this session.
+    pub last_backlog_warning_at: Option<Instant>,
     /// Optional session logger for terminal output
     pub logger: Option<SessionLogger>,
 }
@@ -162,6 +172,11 @@ mod tests {
             pending_output: VecDeque::new(),
             pending_output_bytes: 0,
             last_data_received_at: None,
+            pending_output_started_at: None,
+            max_pending_output_bytes: 0,
+            dropped_output_bytes: 0,
+            last_output_process_duration: None,
+            last_backlog_warning_at: None,
             logger: None,
         }
     }
