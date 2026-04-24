@@ -76,6 +76,32 @@ struct VncMouseState {
     /// Last known coordinates (for sending release when cursor is outside widget)
     last_x: u16,
     last_y: u16,
+    /// Accumulates smooth horizontal scroll until it reaches one RFB wheel step.
+    scroll_x_accumulator: f32,
+    /// Accumulates smooth vertical scroll until it reaches one RFB wheel step.
+    scroll_y_accumulator: f32,
+}
+
+impl VncMouseState {
+    fn scroll_mask_from_delta(&mut self, delta_x: f32, delta_y: f32) -> u8 {
+        let mut mask = 0;
+        mask |= scroll_axis_mask(delta_y, &mut self.scroll_y_accumulator, 8, 16);
+        mask |= scroll_axis_mask(delta_x, &mut self.scroll_x_accumulator, 32, 64);
+        mask
+    }
+}
+
+fn scroll_axis_mask(delta: f32, accumulator: &mut f32, positive_mask: u8, negative_mask: u8) -> u8 {
+    *accumulator += delta;
+    if *accumulator >= 1.0 {
+        *accumulator = 0.0;
+        positive_mask
+    } else if *accumulator <= -1.0 {
+        *accumulator = 0.0;
+        negative_mask
+    } else {
+        0
+    }
 }
 
 impl<'a> VncMouseWrapper<'a> {
@@ -317,21 +343,17 @@ impl<'a> advanced::Widget<Message, iced::Theme, iced::Renderer> for VncMouseWrap
                             self.framebuffer
                                 .lock()
                                 .set_cursor_position(x as u32, y as u32);
-                            // Scroll: bit3=up, bit4=down
-                            let scroll_y = match delta {
-                                iced::mouse::ScrollDelta::Lines { y, .. } => *y,
-                                iced::mouse::ScrollDelta::Pixels { y, .. } => {
-                                    if *y > 0.0 {
-                                        1.0
-                                    } else if *y < 0.0 {
-                                        -1.0
-                                    } else {
-                                        0.0
-                                    }
+                            // RFB wheel bits: 3/4 vertical, 5/6 horizontal.
+                            let (scroll_x, scroll_y) = match delta {
+                                iced::mouse::ScrollDelta::Lines { x, y } => (*x, *y),
+                                iced::mouse::ScrollDelta::Pixels { x, y } => {
+                                    // Trackpads produce many small pixel deltas; accumulate
+                                    // them into discrete RFB wheel steps like Remmina/TigerVNC.
+                                    (*x / 120.0, *y / 120.0)
                                 }
                             };
-                            if scroll_y != 0.0 {
-                                let scroll_btn = if scroll_y > 0.0 { 8 } else { 16 };
+                            let scroll_btn = state.scroll_mask_from_delta(scroll_x, scroll_y);
+                            if scroll_btn != 0 {
                                 // Press scroll button
                                 shell.publish(Message::Vnc(VncMessage::MouseEvent {
                                     session_id: self.session_id,

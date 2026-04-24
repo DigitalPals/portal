@@ -288,6 +288,7 @@ pub fn handle_vnc(portal: &mut Portal, msg: VncMessage) -> Task<Message> {
         VncMessage::ToggleKeyboardPassthrough => {
             if let crate::app::View::VncViewer(session_id) = portal.ui.active_view {
                 if let Some(vnc) = portal.vnc_sessions.get_mut(&session_id) {
+                    vnc.session.release_all_keys();
                     vnc.keyboard_passthrough = !vnc.keyboard_passthrough;
                 }
             }
@@ -311,6 +312,7 @@ pub fn handle_vnc(portal: &mut Portal, msg: VncMessage) -> Task<Message> {
         VncMessage::ToggleViewOnly => {
             if let crate::app::View::VncViewer(session_id) = portal.ui.active_view {
                 if let Some(vnc) = portal.vnc_sessions.get_mut(&session_id) {
+                    vnc.session.release_all_keys();
                     vnc.view_only = !vnc.view_only;
                     vnc.keyboard_passthrough = false;
                 }

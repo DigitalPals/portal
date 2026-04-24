@@ -514,6 +514,8 @@ pub enum UiMessage {
     SecurityAuditLoggingEnabled(bool),
     /// Window resized
     WindowResized(iced::Size),
+    /// Window lost focus
+    WindowUnfocused,
     /// Dismiss toast notification
     ToastDismiss(Uuid),
     /// Toast timer tick

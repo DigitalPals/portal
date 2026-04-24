@@ -904,6 +904,9 @@ impl Portal {
                 iced::Event::Keyboard(keyboard::Event::KeyReleased { key, modifiers, .. }) => {
                     Some(Message::Ui(UiMessage::KeyReleased(key, modifiers)))
                 }
+                iced::Event::Window(window::Event::Unfocused) => {
+                    Some(Message::Ui(UiMessage::WindowUnfocused))
+                }
                 _ => None,
             }),
             // Window resize events

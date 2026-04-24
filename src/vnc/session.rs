@@ -4,6 +4,7 @@
 //! and input forwarding. Includes Apple Remote Desktop (ARD) authentication
 //! support for macOS Screen Sharing.
 
+use std::collections::HashSet;
 use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -492,6 +493,8 @@ pub struct VncSession {
     stats: Arc<Mutex<VncStats>>,
     /// Channel to send X11 input events to the VNC client
     input_tx: mpsc::Sender<X11Event>,
+    /// Keysyms currently pressed remotely, used to release them on focus loss.
+    pressed_keys: Mutex<HashSet<u32>>,
     /// Hostname for display
     pub host_name: String,
     /// Minimum interval between pointer events
@@ -608,6 +611,7 @@ impl VncSession {
             framebuffer: framebuffer.clone(),
             stats: stats.clone(),
             input_tx,
+            pressed_keys: Mutex::new(HashSet::new()),
             host_name,
             mouse_rate_limit: Duration::from_millis(vnc_settings.pointer_interval_ms),
             last_mouse_sent: Mutex::new(now),
@@ -926,6 +930,7 @@ impl VncSession {
 
     /// Send a key event to the VNC server (async)
     pub async fn send_key(&self, keysym: u32, pressed: bool) {
+        self.track_key_state(keysym, pressed);
         let _ = self
             .input_tx
             .send(X11Event::KeyEvent((keysym, pressed).into()))
@@ -934,9 +939,29 @@ impl VncSession {
 
     /// Send a key event synchronously (non-blocking, for use from update handlers)
     pub fn try_send_key(&self, keysym: u32, pressed: bool) {
+        self.track_key_state(keysym, pressed);
         let _ = self
             .input_tx
             .try_send(X11Event::KeyEvent((keysym, pressed).into()));
+    }
+
+    fn track_key_state(&self, keysym: u32, pressed: bool) {
+        let mut pressed_keys = self.pressed_keys.lock();
+        if pressed {
+            pressed_keys.insert(keysym);
+        } else {
+            pressed_keys.remove(&keysym);
+        }
+    }
+
+    /// Release every key that Portal believes is still pressed remotely.
+    pub fn release_all_keys(&self) {
+        let keysyms: Vec<u32> = self.pressed_keys.lock().drain().collect();
+        for keysym in keysyms {
+            let _ = self
+                .input_tx
+                .try_send(X11Event::KeyEvent((keysym, false).into()));
+        }
     }
 
     /// Send a mouse event synchronously (non-blocking, for use from widget events)
