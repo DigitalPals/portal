@@ -185,7 +185,7 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
             detected_os,
         } => {
             tracing::info!("SSH connected");
-            portal.dialogs.close_connecting();
+            portal.finish_pending_connect();
 
             if let Some(session) = portal.sessions.get_mut(session_id) {
                 if let Some(os) = detected_os {
@@ -429,13 +429,13 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
         }
         SessionMessage::Error(error) => {
             tracing::error!("Session error: {}", error);
-            portal.dialogs.close_connecting();
+            portal.finish_pending_connect();
             portal.toast_manager.push(Toast::error(error));
             Task::none()
         }
         SessionMessage::ConnectFailed { session_id, error } => {
             tracing::error!("Session connection failed: {}", error);
-            portal.dialogs.close_connecting();
+            portal.finish_pending_connect();
             if portal.sessions.contains(session_id) {
                 return schedule_reconnect(portal, session_id);
             }

@@ -222,6 +222,7 @@ pub struct Portal {
     sftp: SftpManager,
     file_viewers: FileViewerManager,
     dialogs: DialogManager,
+    pending_connect: Option<iced::task::Handle>,
 
     // VNC sessions (separate from terminal sessions)
     pub(crate) vnc_sessions: std::collections::HashMap<SessionId, VncActiveSession>,
@@ -340,6 +341,7 @@ impl Portal {
             sftp: SftpManager::new(),
             file_viewers: FileViewerManager::new(),
             dialogs: DialogManager::new(),
+            pending_connect: None,
             vnc_sessions: std::collections::HashMap::new(),
             prefs: PreferencesState {
                 theme_id: settings_config.theme,

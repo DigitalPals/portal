@@ -23,6 +23,40 @@ use super::services::{connection, file_viewer, history};
 use super::{FocusSection, Portal, View};
 
 impl Portal {
+    pub(super) fn begin_connecting(
+        &mut self,
+        host_name: String,
+        protocol: &str,
+        task: Task<Message>,
+    ) -> Task<Message> {
+        self.dialogs.open_connecting(host_name, protocol);
+        self.track_pending_connect(task)
+    }
+
+    pub(super) fn track_pending_connect(&mut self, task: Task<Message>) -> Task<Message> {
+        if let Some(handle) = self.pending_connect.take() {
+            handle.abort();
+        }
+
+        let (task, handle) = task.abortable();
+        self.pending_connect = Some(handle);
+        task
+    }
+
+    pub(super) fn finish_pending_connect(&mut self) {
+        self.pending_connect = None;
+        self.dialogs.close_connecting();
+    }
+
+    pub(super) fn cancel_pending_connect(&mut self) {
+        if let Some(handle) = self.pending_connect.take() {
+            handle.abort();
+            self.toast_manager
+                .push(Toast::warning("Connection cancelled"));
+        }
+        self.dialogs.close_connecting();
+    }
+
     fn hide_sidebar_for_session(&mut self) {
         if self.ui.sidebar_state != crate::app::SidebarState::Hidden {
             self.ui.sidebar_state_before_session = Some(self.ui.sidebar_state);
@@ -253,9 +287,8 @@ impl Portal {
         use crate::vnc::session::VncSessionEvent;
         use secrecy::ExposeSecret;
 
-        self.dialogs.open_connecting(host.name.clone(), "VNC");
-
         let session_id = Uuid::new_v4();
+        let dialog_host_name = host.name.clone();
         let host = Arc::new(host.clone());
         let port = host.effective_vnc_port();
         let host_name = host.name.clone();
@@ -320,7 +353,11 @@ impl Portal {
             |msg| msg,
         );
 
-        Task::batch([connect_task, event_listener])
+        self.begin_connecting(
+            dialog_host_name,
+            "VNC",
+            Task::batch([connect_task, event_listener]),
+        )
     }
 
     pub(super) fn connect_to_host(&mut self, host: &Host) -> Task<Message> {
@@ -338,22 +375,23 @@ impl Portal {
             return Task::none();
         }
 
-        self.dialogs.open_connecting(host.name.clone(), "SSH");
-
         // Use Arc to avoid multiple deep clones of Host data
+        let dialog_host_name = host.name.clone();
         let host = Arc::new(host.clone());
         let session_id = Uuid::new_v4();
         let host_id = host.id;
 
         let should_detect_os = connection::should_detect_os(host.detected_os.as_ref());
 
-        connection::ssh_connect_tasks(
+        let task = connection::ssh_connect_tasks(
             host,
             session_id,
             host_id,
             should_detect_os,
             self.prefs.allow_agent_forwarding,
-        )
+        );
+
+        self.begin_connecting(dialog_host_name, "SSH", task)
     }
 
     /// Spawn a local terminal session

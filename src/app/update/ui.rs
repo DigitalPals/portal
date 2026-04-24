@@ -641,6 +641,12 @@ fn handle_dialog_keyboard(
             }
             Task::none()
         }
+        ActiveDialog::Connecting(_) => {
+            if let Key::Named(keyboard::key::Named::Escape) = key {
+                portal.cancel_pending_connect();
+            }
+            Task::none()
+        }
         _ => {
             // Other dialogs: just handle Escape
             if let Key::Named(keyboard::key::Named::Escape) = key {

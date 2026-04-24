@@ -20,7 +20,7 @@ pub fn handle_vnc(portal: &mut Portal, msg: VncMessage) -> Task<Message> {
             detected_os,
         } => {
             tracing::info!("VNC connected to {}", host_name);
-            portal.dialogs.close_connecting();
+            portal.finish_pending_connect();
 
             // Update host with detected OS and last_connected
             if let Some(host) = portal.config.hosts.find_host_mut(host_id) {
@@ -134,7 +134,7 @@ pub fn handle_vnc(portal: &mut Portal, msg: VncMessage) -> Task<Message> {
         }
         VncMessage::Error(err) => {
             tracing::error!("VNC error: {}", err);
-            portal.dialogs.close_connecting();
+            portal.finish_pending_connect();
             portal
                 .toast_manager
                 .push(Toast::error(format!("VNC: {}", err)));

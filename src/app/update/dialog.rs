@@ -305,21 +305,14 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                     portal.dialogs.close();
 
                     use crate::views::dialogs::password_dialog::PasswordConnectionKind;
-                    let protocol_label = match &connection_kind {
-                        PasswordConnectionKind::Ssh => "SSH",
-                        PasswordConnectionKind::Sftp => "SFTP",
-                        PasswordConnectionKind::Vnc => "VNC",
-                    };
-                    portal
-                        .dialogs
-                        .open_connecting(host.name.clone(), protocol_label);
 
                     match connection_kind {
                         PasswordConnectionKind::Ssh => {
                             let session_id = uuid::Uuid::new_v4();
                             let should_detect_os =
                                 connection::should_detect_os(host.detected_os.as_ref());
-                            return connection::ssh_connect_tasks_with_password(
+                            let dialog_host_name = host.name.clone();
+                            let task = connection::ssh_connect_tasks_with_password(
                                 host,
                                 session_id,
                                 host_id,
@@ -327,10 +320,12 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                                 portal.prefs.allow_agent_forwarding,
                                 password,
                             );
+                            return portal.begin_connecting(dialog_host_name, "SSH", task);
                         }
                         PasswordConnectionKind::Sftp => {
                             if let Some(ctx) = sftp_context {
                                 let sftp_session_id = uuid::Uuid::new_v4();
+                                portal.dialogs.open_connecting(host.name.clone(), "SFTP");
                                 return connection::sftp_connect_tasks_with_password(
                                     host,
                                     ctx.tab_id,
@@ -380,13 +375,18 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                         let host = std::sync::Arc::new(host.clone());
                         if request.is_ssh {
                             if let Some(session_id) = request.session_id {
-                                return connection::ssh_connect_tasks_with_passphrase(
+                                let task = connection::ssh_connect_tasks_with_passphrase(
                                     host,
                                     session_id,
                                     request.host_id,
                                     request.should_detect_os,
                                     portal.prefs.allow_agent_forwarding,
                                     cached_passphrase,
+                                );
+                                return portal.begin_connecting(
+                                    request.host_name.clone(),
+                                    "SSH",
+                                    task,
                                 );
                             }
                         } else if let Some(ctx) = request.sftp_context {
@@ -456,7 +456,8 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
 
                     if is_ssh {
                         if let Some(session_id) = session_id {
-                            return connection::ssh_connect_tasks_with_passphrase(
+                            let dialog_host_name = host.name.clone();
+                            let task = connection::ssh_connect_tasks_with_passphrase(
                                 host,
                                 session_id,
                                 host_id,
@@ -464,6 +465,7 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                                 portal.prefs.allow_agent_forwarding,
                                 passphrase,
                             );
+                            return portal.begin_connecting(dialog_host_name, "SSH", task);
                         }
                     } else if let Some(ctx) = sftp_context {
                         return connection::sftp_connect_tasks_with_passphrase(
