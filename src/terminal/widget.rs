@@ -3,8 +3,8 @@
 //! This implements the iced Widget trait for rendering terminal content.
 
 use std::cell::RefCell;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 use alacritty_terminal::grid::{Dimensions, Scroll};
 use alacritty_terminal::term::cell::Flags as CellFlags;
@@ -21,8 +21,8 @@ use parking_lot::Mutex;
 
 use super::backend::{CursorInfo, EventProxy, RenderCell};
 use super::block_elements::render_terminal_graphic;
-use super::colors::{DEFAULT_BG, DEFAULT_FG, ansi_to_iced_themed, cell_fg_to_iced};
-use crate::fonts::{JETBRAINS_MONO_NERD, TerminalFont};
+use super::colors::{ansi_to_iced_themed, cell_fg_to_iced, DEFAULT_BG, DEFAULT_FG};
+use crate::fonts::{TerminalFont, JETBRAINS_MONO_NERD};
 use crate::keybindings::{AppAction, KeybindingsConfig};
 use crate::theme::TerminalColors;
 
@@ -50,6 +50,10 @@ impl CellMetrics {
     fn rows_for_bounds(self, bounds: Rectangle) -> usize {
         (bounds.height / self.height) as usize
     }
+}
+
+fn is_powerline_separator(c: char) -> bool {
+    matches!(c, '\u{E0B0}' | '\u{E0B2}' | '\u{E0B4}' | '\u{E0B6}')
 }
 
 /// Terminal widget for iced
@@ -660,12 +664,18 @@ where
                         wrapping: iced::advanced::text::Wrapping::None,
                     };
 
-                    renderer.fill_text(
-                        text,
-                        iced::Point::new(x, y),
-                        fg_color,
-                        bounds,
-                    );
+                    let clip_bounds = if is_powerline_separator(cell.character) {
+                        Rectangle {
+                            x: bounds.x,
+                            y,
+                            width: bounds.width,
+                            height: cell_height,
+                        }
+                    } else {
+                        bounds
+                    };
+
+                    renderer.fill_text(text, iced::Point::new(x, y), fg_color, clip_bounds);
                 }
             }
         }

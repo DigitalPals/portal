@@ -1,7 +1,6 @@
 //! Font system for Portal SSH client
 
 use iced::Font;
-use iced::font::{Style, Weight};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -36,14 +35,14 @@ impl TerminalFont {
         }
     }
 
-    /// Resolve the correct font variant for a given bold/italic combination.
-    pub fn variant(self, bold: bool, italic: bool) -> Font {
-        let base = self.to_iced_font();
-        Font {
-            weight: if bold { Weight::Bold } else { Weight::Normal },
-            style: if italic { Style::Italic } else { Style::Normal },
-            ..base
-        }
+    /// Resolve the font used for terminal cells.
+    ///
+    /// Portal currently bundles only the regular Nerd Font faces. Returning the
+    /// regular face for styled cells keeps Private Use Area glyph coverage
+    /// stable instead of letting the renderer fall back to an unrelated system
+    /// bold/italic face that may not contain prompt symbols.
+    pub fn variant(self, _bold: bool, _italic: bool) -> Font {
+        self.to_iced_font()
     }
 
     /// Natural line height as a multiple of the font's em size, derived from
@@ -83,17 +82,6 @@ pub const INTER_BYTES: &[u8] = include_bytes!("../assets/fonts/Inter-Regular.ttf
 /// Raw font bytes — JetBrains Mono Nerd Font
 pub const JETBRAINS_MONO_NERD_BYTES: &[u8] =
     include_bytes!("../assets/fonts/JetBrainsMonoNerdFont-Regular.ttf");
-pub const JETBRAINS_MONO_NERD_BOLD_BYTES: &[u8] =
-    include_bytes!("../assets/fonts/JetBrainsMonoNerdFont-Bold.ttf");
-pub const JETBRAINS_MONO_NERD_ITALIC_BYTES: &[u8] =
-    include_bytes!("../assets/fonts/JetBrainsMonoNerdFont-Italic.ttf");
-pub const JETBRAINS_MONO_NERD_BOLD_ITALIC_BYTES: &[u8] =
-    include_bytes!("../assets/fonts/JetBrainsMonoNerdFont-BoldItalic.ttf");
 
 /// Raw font bytes — Hack Nerd Font
 pub const HACK_NERD_BYTES: &[u8] = include_bytes!("../assets/fonts/HackNerdFont-Regular.ttf");
-pub const HACK_NERD_BOLD_BYTES: &[u8] = include_bytes!("../assets/fonts/HackNerdFont-Bold.ttf");
-pub const HACK_NERD_ITALIC_BYTES: &[u8] =
-    include_bytes!("../assets/fonts/HackNerdFont-Italic.ttf");
-pub const HACK_NERD_BOLD_ITALIC_BYTES: &[u8] =
-    include_bytes!("../assets/fonts/HackNerdFont-BoldItalic.ttf");
