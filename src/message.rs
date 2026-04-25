@@ -313,8 +313,19 @@ pub enum TabContextMenuAction {
 /// Host management messages
 #[derive(Debug, Clone)]
 pub enum HostMessage {
-    /// Connect to a host by ID
+    /// Connect to a host by ID, showing session choices when existing sessions are available
     Connect(Uuid),
+    /// Create a brand-new session for a host by ID
+    CreateNewSession(Uuid),
+    /// Open an existing local Portal session tab
+    OpenExistingSession(SessionId),
+    /// Resume an existing detached Portal Proxy session
+    OpenDetachedProxySession(SessionId),
+    /// Detached Portal Proxy sessions loaded for duplicate-session picker
+    DetachedProxySessionsLoaded {
+        host_id: Uuid,
+        result: Result<Vec<ListedProxySession>, String>,
+    },
     /// Open add host dialog
     Add,
     /// Open edit host dialog for existing host

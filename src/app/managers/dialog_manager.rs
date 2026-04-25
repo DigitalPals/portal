@@ -10,6 +10,7 @@ use crate::views::dialogs::host_key_dialog::HostKeyDialogState;
 use crate::views::dialogs::passphrase_dialog::PassphraseDialogState;
 use crate::views::dialogs::password_dialog::PasswordDialogState;
 use crate::views::dialogs::quick_connect_dialog::QuickConnectDialogState;
+use crate::views::dialogs::session_choice_dialog::SessionChoiceDialogState;
 
 /// The currently active dialog, if any
 #[derive(Default)]
@@ -32,6 +33,8 @@ pub enum ActiveDialog {
     QuickConnect(QuickConnectDialogState),
     /// Connecting progress dialog
     Connecting(ConnectingDialogState),
+    /// Existing-session picker for duplicate host clicks
+    SessionChoice(SessionChoiceDialogState),
 }
 
 /// Manages the active dialog state
@@ -175,6 +178,27 @@ impl DialogManager {
     pub fn quick_connect_mut(&mut self) -> Option<&mut QuickConnectDialogState> {
         match &mut self.active {
             ActiveDialog::QuickConnect(state) => Some(state),
+            _ => None,
+        }
+    }
+
+    /// Open the duplicate host session choice dialog.
+    pub fn open_session_choice(&mut self, state: SessionChoiceDialogState) {
+        self.active = ActiveDialog::SessionChoice(state);
+    }
+
+    /// Get mutable session choice dialog state if it is active.
+    pub fn session_choice_mut(&mut self) -> Option<&mut SessionChoiceDialogState> {
+        match &mut self.active {
+            ActiveDialog::SessionChoice(state) => Some(state),
+            _ => None,
+        }
+    }
+
+    /// Get session choice dialog state if it is active.
+    pub fn session_choice(&self) -> Option<&SessionChoiceDialogState> {
+        match &self.active {
+            ActiveDialog::SessionChoice(state) => Some(state),
             _ => None,
         }
     }

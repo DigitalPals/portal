@@ -142,6 +142,16 @@ impl SessionManager {
             .any(|session| session.pending_output_bytes > 0)
     }
 
+    /// Return active terminal sessions associated with a host.
+    pub fn sessions_for_host(&self, host_id: Uuid) -> Vec<(SessionId, String)> {
+        self.sessions
+            .iter()
+            .filter_map(|(session_id, session)| {
+                (session.host_id == Some(host_id)).then(|| (*session_id, session.host_name.clone()))
+            })
+            .collect()
+    }
+
     /// Get mutable iterator over all sessions
     pub fn values_mut(&mut self) -> impl Iterator<Item = &mut ActiveSession> {
         self.sessions.values_mut()
@@ -230,6 +240,26 @@ mod tests {
         let manager = SessionManager::new();
         let random_id = Uuid::new_v4();
         assert!(manager.get(random_id).is_none());
+    }
+
+    #[test]
+    fn sessions_for_host_returns_matching_active_sessions() {
+        let mut manager = SessionManager::new();
+        let host_id = Uuid::new_v4();
+        let other_host_id = Uuid::new_v4();
+        let matching_id = Uuid::new_v4();
+        let other_id = Uuid::new_v4();
+
+        let mut matching = create_test_session("Pulse");
+        matching.host_id = Some(host_id);
+        manager.insert(matching_id, matching);
+
+        let mut other = create_test_session("Hermes");
+        other.host_id = Some(other_host_id);
+        manager.insert(other_id, other);
+
+        let sessions = manager.sessions_for_host(host_id);
+        assert_eq!(sessions, vec![(matching_id, "Pulse".to_string())]);
     }
 
     #[test]

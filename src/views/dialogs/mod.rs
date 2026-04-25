@@ -6,3 +6,4 @@ pub mod host_key_dialog;
 pub mod passphrase_dialog;
 pub mod password_dialog;
 pub mod quick_connect_dialog;
+pub mod session_choice_dialog;

@@ -24,6 +24,7 @@ use crate::views::dialogs::host_key_dialog::host_key_dialog_view;
 use crate::views::dialogs::passphrase_dialog::passphrase_dialog_view;
 use crate::views::dialogs::password_dialog::password_dialog_view;
 use crate::views::dialogs::quick_connect_dialog::quick_connect_dialog_view;
+use crate::views::dialogs::session_choice_dialog::session_choice_dialog_view;
 use crate::views::file_viewer::file_viewer_view;
 use crate::views::history_view::history_view;
 use crate::views::host_grid::{calculate_columns, host_grid_view, search_input_id};
@@ -752,6 +753,10 @@ impl Portal {
             }
             ActiveDialog::Connecting(connecting_state) => {
                 let dialog = connecting_dialog_view(connecting_state, theme);
+                stack![main_layout, dialog].into()
+            }
+            ActiveDialog::SessionChoice(session_choice_state) => {
+                let dialog = session_choice_dialog_view(session_choice_state, theme);
                 stack![main_layout, dialog].into()
             }
             ActiveDialog::None => main_layout,
