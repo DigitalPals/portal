@@ -30,10 +30,10 @@ impl FileType {
             "py" => Self::Text {
                 language: Some("python".to_string()),
             },
-            "js" => Self::Text {
+            "js" | "mjs" | "cjs" => Self::Text {
                 language: Some("javascript".to_string()),
             },
-            "ts" => Self::Text {
+            "ts" | "mts" | "cts" => Self::Text {
                 language: Some("typescript".to_string()),
             },
             "jsx" | "tsx" => Self::Text {
@@ -104,7 +104,9 @@ impl FileType {
             "md" | "markdown" => Self::Markdown,
 
             // Images
-            "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "ico" | "svg" => Self::Image,
+            "png" | "jpg" | "jpeg" | "gif" | "bmp" | "webp" | "ico" | "svg" | "tif" | "tiff" => {
+                Self::Image
+            }
 
             // PDF
             "pdf" => Self::Pdf,
@@ -183,6 +185,23 @@ mod tests {
     fn file_type_from_extension_detects_markdown_and_image() {
         assert_eq!(FileType::from_extension("md"), FileType::Markdown);
         assert_eq!(FileType::from_extension("png"), FileType::Image);
+        assert_eq!(FileType::from_extension("tif"), FileType::Image);
+    }
+
+    #[test]
+    fn file_type_from_extension_detects_module_source_files() {
+        assert_eq!(
+            FileType::from_extension("mjs"),
+            FileType::Text {
+                language: Some("javascript".to_string())
+            }
+        );
+        assert_eq!(
+            FileType::from_extension("mts"),
+            FileType::Text {
+                language: Some("typescript".to_string())
+            }
+        );
     }
 
     #[test]

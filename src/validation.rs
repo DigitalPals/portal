@@ -28,7 +28,7 @@ static DNS_LABEL_REGEX: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$").unwrap());
 
 static USERNAME_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^[a-zA-Z_][a-zA-Z0-9_-]{0,31}$").unwrap());
+    LazyLock::new(|| Regex::new(r"^[a-zA-Z_][a-zA-Z0-9_.-]{0,254}\$?$").unwrap());
 
 /// Validate a hostname (DNS name or IP address).
 ///
@@ -58,8 +58,17 @@ pub fn validate_hostname(hostname: &str) -> Result<(), ValidationError> {
         });
     }
 
-    // Try parsing as IP address first
-    if hostname.parse::<IpAddr>().is_ok() {
+    let ip_candidate = hostname
+        .strip_prefix('[')
+        .and_then(|value| value.strip_suffix(']'))
+        .unwrap_or(hostname);
+    let ip_without_scope = ip_candidate
+        .split_once('%')
+        .map_or(ip_candidate, |(ip, _)| ip);
+
+    // Try parsing as IP address first. Bracketed IPv6 literals and scoped
+    // link-local IPv6 addresses are common in SSH/VNC connection UIs.
+    if ip_without_scope.parse::<IpAddr>().is_ok() {
         return Ok(());
     }
 
@@ -142,10 +151,11 @@ pub fn validate_port(port_str: &str) -> Result<u16, ValidationError> {
 /// Validate a username for SSH connections.
 ///
 /// Accepts empty usernames (will default to current user).
-/// Non-empty usernames must follow POSIX conventions:
+/// Non-empty usernames must follow common Unix login-name conventions:
 /// - Start with a letter or underscore
-/// - Contain only alphanumeric, underscore, or hyphen
-/// - Maximum 32 characters
+/// - Contain only alphanumeric, dot, underscore, or hyphen
+/// - May end with a dollar sign for service accounts
+/// - Maximum 256 characters
 ///
 /// # Errors
 ///
@@ -159,10 +169,10 @@ pub fn validate_username(username: &str) -> Result<(), ValidationError> {
     }
 
     // Check length
-    if username.len() > 32 {
+    if username.len() > 256 {
         return Err(ValidationError {
             field: "username".to_string(),
-            message: "Username exceeds maximum length of 32 characters".to_string(),
+            message: "Username exceeds maximum length of 256 characters".to_string(),
         });
     }
 
@@ -170,7 +180,7 @@ pub fn validate_username(username: &str) -> Result<(), ValidationError> {
     if !USERNAME_REGEX.is_match(username) {
         return Err(ValidationError {
             field: "username".to_string(),
-            message: "Username must start with letter or underscore, and contain only alphanumeric, underscore, or hyphen".to_string(),
+            message: "Username must start with letter or underscore, and contain only alphanumeric, dot, underscore, hyphen, or a trailing dollar sign".to_string(),
         });
     }
 
@@ -197,6 +207,8 @@ mod tests {
         assert!(validate_hostname("2001:db8::1").is_ok());
         assert!(validate_hostname("fe80::1").is_ok());
         assert!(validate_hostname("::ffff:192.168.1.1").is_ok());
+        assert!(validate_hostname("[2001:db8::1]").is_ok());
+        assert!(validate_hostname("fe80::1%eth0").is_ok());
     }
 
     #[test]
@@ -282,6 +294,8 @@ mod tests {
         assert!(validate_username("_system").is_ok());
         assert!(validate_username("user-name").is_ok());
         assert!(validate_username("user_name").is_ok());
+        assert!(validate_username("user.name").is_ok());
+        assert!(validate_username("svc-account$").is_ok());
         assert!(validate_username("User123").is_ok());
         assert!(validate_username("a").is_ok());
     }
@@ -304,12 +318,12 @@ mod tests {
     fn username_invalid_characters() {
         assert!(validate_username("user@host").is_err());
         assert!(validate_username("user name").is_err());
-        assert!(validate_username("user.name").is_err());
+        assert!(validate_username("svc$account").is_err());
     }
 
     #[test]
     fn username_invalid_too_long() {
-        let long_name = "a".repeat(33);
+        let long_name = "a".repeat(257);
         assert!(validate_username(&long_name).is_err());
     }
 }

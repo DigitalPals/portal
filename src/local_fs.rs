@@ -19,18 +19,16 @@ pub async fn list_local_dir(path: &Path) -> Result<Vec<FileEntry>, String> {
 fn list_local_dir_sync(path: &Path) -> Result<Vec<FileEntry>, String> {
     let mut result = Vec::new();
 
-    // Add parent directory entry if not at root
-    if let Some(parent) = path.parent() {
-        if path.to_string_lossy() != "/" {
-            result.push(FileEntry {
-                name: "..".to_string(),
-                path: parent.to_path_buf(),
-                is_dir: true,
-                is_symlink: false,
-                size: 0,
-                modified: None,
-            });
-        }
+    // Add parent directory entry if there is a real navigable parent.
+    if let Some(parent) = parent_entry_path(path) {
+        result.push(FileEntry {
+            name: "..".to_string(),
+            path: parent.to_path_buf(),
+            is_dir: true,
+            is_symlink: false,
+            size: 0,
+            modified: None,
+        });
     }
 
     let entries =
@@ -79,4 +77,29 @@ fn list_local_dir_sync(path: &Path) -> Result<Vec<FileEntry>, String> {
     }
 
     Ok(result)
+}
+
+fn parent_entry_path(path: &Path) -> Option<&Path> {
+    let parent = path.parent()?;
+    if parent.as_os_str().is_empty() {
+        return None;
+    }
+    Some(parent)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parent_entry_path;
+    use std::path::Path;
+
+    #[test]
+    fn parent_entry_path_skips_relative_empty_parent() {
+        assert!(parent_entry_path(Path::new(".")).is_none());
+        assert!(parent_entry_path(Path::new("relative")).is_none());
+    }
+
+    #[test]
+    fn parent_entry_path_keeps_absolute_parent() {
+        assert_eq!(parent_entry_path(Path::new("/home")), Some(Path::new("/")));
+    }
 }

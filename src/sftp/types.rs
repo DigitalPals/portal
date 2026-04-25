@@ -76,8 +76,8 @@ impl FileEntry {
                 Some(
                     "rs" | "py" | "js" | "ts" | "jsx" | "tsx" | "c" | "cpp" | "cc" | "cxx" | "h"
                     | "hpp" | "go" | "java" | "rb" | "php" | "swift" | "kt" | "html" | "htm"
-                    | "css" | "scss" | "sass" | "sql" | "lua" | "vim" | "dockerfile" | "makefile"
-                    | "gnumakefile",
+                    | "css" | "scss" | "sass" | "sql" | "lua" | "vim" | "mjs" | "cjs" | "mts"
+                    | "cts" | "dockerfile" | "makefile" | "gnumakefile",
                 ) => FileIcon::Code,
                 Some("txt" | "md" | "markdown" | "rst" | "doc" | "docx" | "rtf" | "log") => {
                     FileIcon::Text
@@ -85,9 +85,10 @@ impl FileEntry {
                 Some("json" | "toml" | "yaml" | "yml" | "xml" | "ini" | "conf" | "cfg") => {
                     FileIcon::Config
                 }
-                Some("jpg" | "jpeg" | "png" | "gif" | "bmp" | "svg" | "ico" | "webp" | "tiff") => {
-                    FileIcon::Image
-                }
+                Some(
+                    "jpg" | "jpeg" | "png" | "gif" | "bmp" | "svg" | "ico" | "webp" | "tif"
+                    | "tiff",
+                ) => FileIcon::Image,
                 Some("mp3" | "wav" | "ogg" | "flac" | "m4a" | "aac" | "wma") => FileIcon::Audio,
                 Some("mp4" | "mkv" | "avi" | "mov" | "webm" | "wmv" | "flv") => FileIcon::Video,
                 Some("zip" | "tar" | "gz" | "xz" | "7z" | "rar" | "bz2" | "tgz") => {
@@ -116,7 +117,11 @@ impl FileEntry {
                 Some("rs") => "Rust Source",
                 Some("py") => "Python Script",
                 Some("js") => "JavaScript",
+                Some("mjs") => "JavaScript Module",
+                Some("cjs") => "CommonJS Module",
                 Some("ts") => "TypeScript",
+                Some("mts") => "TypeScript Module",
+                Some("cts") => "CommonJS TypeScript",
                 Some("jsx") => "JavaScript JSX",
                 Some("tsx") => "TypeScript JSX",
                 Some("c") => "C Source",
@@ -146,6 +151,7 @@ impl FileEntry {
                 Some("ico") => "Icon",
                 Some("webp") => "WebP Image",
                 Some("tiff") => "TIFF Image",
+                Some("tif") => "TIFF Image",
                 Some("mp3") => "MP3 Audio",
                 Some("wav") => "WAV Audio",
                 Some("ogg") => "Ogg Audio",
@@ -401,7 +407,9 @@ mod tests {
         assert_eq!(make_file("main.rs").icon_type(), FileIcon::Code);
         assert_eq!(make_file("script.py").icon_type(), FileIcon::Code);
         assert_eq!(make_file("app.js").icon_type(), FileIcon::Code);
+        assert_eq!(make_file("app.mjs").icon_type(), FileIcon::Code);
         assert_eq!(make_file("index.ts").icon_type(), FileIcon::Code);
+        assert_eq!(make_file("index.mts").icon_type(), FileIcon::Code);
         assert_eq!(make_file("view.tsx").icon_type(), FileIcon::Code);
         assert_eq!(make_file("styles.css").icon_type(), FileIcon::Code);
         assert_eq!(make_file("query.sql").icon_type(), FileIcon::Code);
@@ -438,6 +446,7 @@ mod tests {
         assert_eq!(make_file("PHOTO.JPG").icon_type(), FileIcon::Image);
         assert_eq!(make_file("logo.png").icon_type(), FileIcon::Image);
         assert_eq!(make_file("icon.svg").icon_type(), FileIcon::Image);
+        assert_eq!(make_file("scan.tif").icon_type(), FileIcon::Image);
         assert_eq!(make_file("animation.gif").icon_type(), FileIcon::Image);
     }
 

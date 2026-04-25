@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use iced::widget::{Space, button, column, pick_list, row, text, text_input};
 use iced::{Alignment, Element, Length};
 
+use crate::config::hosts::default_username;
 use crate::message::{DialogMessage, Message, QuickConnectField};
 use crate::theme::Theme;
 use crate::validation::{validate_hostname, validate_port, validate_username};
@@ -32,14 +33,10 @@ impl Default for QuickConnectDialogState {
 impl QuickConnectDialogState {
     /// Create a new quick connect dialog with defaults
     pub fn new() -> Self {
-        let username = std::env::var("USER")
-            .or_else(|_| std::env::var("USERNAME"))
-            .unwrap_or_default();
-
         Self {
             hostname: String::new(),
             port: "22".to_string(),
-            username,
+            username: default_username(),
             auth_method: AuthMethodChoice::Agent,
             validation_errors: HashMap::new(),
         }
@@ -88,9 +85,7 @@ impl QuickConnectDialogState {
     /// Get the username, defaulting to current user if empty
     pub fn effective_username(&self) -> String {
         if self.username.trim().is_empty() {
-            std::env::var("USER")
-                .or_else(|_| std::env::var("USERNAME"))
-                .unwrap_or_else(|_| "root".to_string())
+            default_username()
         } else {
             self.username.trim().to_string()
         }

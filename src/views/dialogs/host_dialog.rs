@@ -4,6 +4,7 @@ use iced::widget::{Space, button, checkbox, column, pick_list, row, text, text_i
 use iced::{Alignment, Element, Length};
 use uuid::Uuid;
 
+use crate::config::hosts::default_username;
 use crate::config::{AuthMethod, Host, PortForward, PortForwardKind, Protocol};
 use crate::message::{DialogMessage, HostDialogField, Message};
 use crate::theme::Theme;
@@ -319,7 +320,7 @@ impl HostDialogState {
         });
 
         let username = if self.username.trim().is_empty() {
-            std::env::var("USER").unwrap_or_else(|_| "root".to_string())
+            default_username()
         } else {
             self.username.trim().to_string()
         };

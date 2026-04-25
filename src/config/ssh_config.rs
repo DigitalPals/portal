@@ -14,7 +14,7 @@ struct HostBlock {
     hostname: Option<String>,
     user: Option<String>,
     port: Option<u16>,
-    identity_file: Option<Option<PathBuf>>,
+    identity_file: Option<Option<String>>,
 }
 
 pub fn load_hosts_from_ssh_config() -> Result<Vec<Host>, ConfigError> {
@@ -41,8 +41,11 @@ pub fn load_hosts_from_ssh_config() -> Result<Vec<Host>, ConfigError> {
 }
 
 pub fn parse_ssh_config(content: &str) -> Vec<Host> {
-    let mut hosts = Vec::new();
-    let mut current = HostBlock::default();
+    let mut blocks = Vec::new();
+    let mut current = HostBlock {
+        patterns: vec!["*".to_string()],
+        ..HostBlock::default()
+    };
     let mut in_match_block = false;
 
     for raw_line in content.lines() {
@@ -60,7 +63,7 @@ pub fn parse_ssh_config(content: &str) -> Vec<Host> {
         let (key, args) = directive_parts(&tokens);
         if key == "match" {
             // Ignore Match blocks for imports.
-            flush_block(&mut current, &mut hosts);
+            flush_block(&mut current, &mut blocks);
             in_match_block = true;
             continue;
         }
@@ -69,7 +72,7 @@ pub fn parse_ssh_config(content: &str) -> Vec<Host> {
             if in_match_block {
                 in_match_block = false;
             }
-            flush_block(&mut current, &mut hosts);
+            flush_block(&mut current, &mut blocks);
             current = HostBlock::default();
             current.patterns = args;
             continue;
@@ -110,7 +113,7 @@ pub fn parse_ssh_config(content: &str) -> Vec<Host> {
                     if value.eq_ignore_ascii_case("none") {
                         current.identity_file = Some(None);
                     } else {
-                        current.identity_file = Some(Some(expand_identity_path(value)));
+                        current.identity_file = Some(Some(value.to_string()));
                     }
                 }
             }
@@ -118,8 +121,8 @@ pub fn parse_ssh_config(content: &str) -> Vec<Host> {
         }
     }
 
-    flush_block(&mut current, &mut hosts);
-    hosts
+    flush_block(&mut current, &mut blocks);
+    build_hosts_from_blocks(&blocks)
 }
 
 fn directive_parts(tokens: &[String]) -> (String, Vec<String>) {
@@ -149,56 +152,89 @@ fn directive_parts(tokens: &[String]) -> (String, Vec<String>) {
     (key.to_ascii_lowercase(), args)
 }
 
-fn flush_block(current: &mut HostBlock, hosts: &mut Vec<Host>) {
+fn flush_block(current: &mut HostBlock, blocks: &mut Vec<HostBlock>) {
     if current.patterns.is_empty() {
         return;
     }
 
-    for pattern in &current.patterns {
-        if should_skip_pattern(pattern) {
+    blocks.push(std::mem::take(current));
+}
+
+fn build_hosts_from_blocks(blocks: &[HostBlock]) -> Vec<Host> {
+    let mut hosts = Vec::new();
+
+    for block in blocks {
+        for pattern in &block.patterns {
+            if should_skip_pattern(pattern) {
+                continue;
+            }
+            if hosts.iter().any(|host: &Host| host.name == *pattern) {
+                continue;
+            }
+            hosts.push(resolve_host(pattern, blocks));
+        }
+    }
+
+    hosts
+}
+
+fn resolve_host(alias: &str, blocks: &[HostBlock]) -> Host {
+    let mut resolved = HostBlock::default();
+
+    for block in blocks {
+        if !host_block_matches(&block.patterns, alias) {
             continue;
         }
+        if resolved.hostname.is_none() {
+            resolved.hostname = block.hostname.clone();
+        }
+        if resolved.user.is_none() {
+            resolved.user = block.user.clone();
+        }
+        if resolved.port.is_none() {
+            resolved.port = block.port;
+        }
+        if resolved.identity_file.is_none() {
+            resolved.identity_file = block.identity_file.clone();
+        }
+    }
 
-        let hostname = current
-            .hostname
-            .as_ref()
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| pattern.to_string());
-        let username = current
-            .user
-            .as_ref()
-            .map(|s| s.to_string())
-            .unwrap_or_else(default_user);
-        let port = current.port.unwrap_or(22);
+    let port = resolved.port.unwrap_or(22);
+    let username = resolved.user.unwrap_or_else(default_user);
+    let hostname = resolved
+        .hostname
+        .map(|value| expand_ssh_tokens(&value, alias, &username, port))
+        .unwrap_or_else(|| alias.to_string());
 
-        let auth = match &current.identity_file {
-            Some(Some(path)) => AuthMethod::PublicKey {
-                key_path: Some(path.clone()),
-            },
-            Some(None) | None => AuthMethod::Agent,
-        };
+    let auth = match resolved.identity_file {
+        Some(Some(path)) => AuthMethod::PublicKey {
+            key_path: Some(expand_identity_path(&expand_ssh_tokens(
+                &path, alias, &username, port,
+            ))),
+        },
+        Some(None) | None => AuthMethod::Agent,
+    };
 
-        let now = Utc::now();
-        hosts.push(Host {
-            id: Uuid::new_v4(),
-            name: pattern.to_string(),
-            hostname,
-            port,
-            username,
-            protocol: Protocol::Ssh,
-            vnc_port: None,
-            auth,
-            agent_forwarding: false,
-            port_forwards: Vec::new(),
-            portal_proxy_enabled: false,
-            group_id: None,
-            notes: None,
-            tags: Vec::new(),
-            created_at: now,
-            updated_at: now,
-            detected_os: None,
-            last_connected: None,
-        });
+    let now = Utc::now();
+    Host {
+        id: Uuid::new_v4(),
+        name: alias.to_string(),
+        hostname,
+        port,
+        username,
+        protocol: Protocol::Ssh,
+        vnc_port: None,
+        auth,
+        agent_forwarding: false,
+        port_forwards: Vec::new(),
+        portal_proxy_enabled: false,
+        group_id: None,
+        notes: None,
+        tags: Vec::new(),
+        created_at: now,
+        updated_at: now,
+        detected_os: None,
+        last_connected: None,
     }
 }
 
@@ -213,6 +249,67 @@ fn should_skip_pattern(pattern: &str) -> bool {
         || trimmed.contains('?')
         || trimmed.contains('[')
         || trimmed.contains(']')
+}
+
+fn host_block_matches(patterns: &[String], alias: &str) -> bool {
+    let mut matched = false;
+    for pattern in patterns {
+        let pattern = pattern.trim();
+        if pattern.is_empty() {
+            continue;
+        }
+        if let Some(negated) = pattern.strip_prefix('!') {
+            if pattern_matches(negated, alias) {
+                return false;
+            }
+            continue;
+        }
+        if pattern_matches(pattern, alias) {
+            matched = true;
+        }
+    }
+    matched
+}
+
+fn pattern_matches(pattern: &str, value: &str) -> bool {
+    fn inner(pattern: &[u8], value: &[u8]) -> bool {
+        match pattern.split_first() {
+            None => value.is_empty(),
+            Some((&b'*', rest)) => {
+                inner(rest, value) || (!value.is_empty() && inner(pattern, &value[1..]))
+            }
+            Some((&b'?', rest)) => !value.is_empty() && inner(rest, &value[1..]),
+            Some((&expected, rest)) => value.split_first().is_some_and(|(&actual, value_rest)| {
+                expected.eq_ignore_ascii_case(&actual) && inner(rest, value_rest)
+            }),
+        }
+    }
+
+    inner(pattern.as_bytes(), value.as_bytes())
+}
+
+fn expand_ssh_tokens(raw: &str, alias: &str, username: &str, port: u16) -> String {
+    let mut expanded = String::with_capacity(raw.len());
+    let mut chars = raw.chars();
+    while let Some(ch) = chars.next() {
+        if ch != '%' {
+            expanded.push(ch);
+            continue;
+        }
+
+        match chars.next() {
+            Some('%') => expanded.push('%'),
+            Some('h' | 'n') => expanded.push_str(alias),
+            Some('r') => expanded.push_str(username),
+            Some('p') => expanded.push_str(&port.to_string()),
+            Some(other) => {
+                expanded.push('%');
+                expanded.push(other);
+            }
+            None => expanded.push('%'),
+        }
+    }
+    expanded
 }
 
 fn default_user() -> String {
@@ -427,5 +524,105 @@ mod tests {
 
         assert_eq!(hosts.len(), 1);
         assert!(matches!(hosts[0].auth, AuthMethod::Agent));
+    }
+
+    #[test]
+    fn parse_applies_host_star_defaults_after_specific_block() {
+        let content = r#"
+            Host api
+              HostName api.internal
+
+            Host *
+              User deploy
+              Port 2200
+        "#;
+        let hosts = parse_ssh_config(content);
+
+        assert_eq!(hosts.len(), 1);
+        assert_eq!(hosts[0].hostname, "api.internal");
+        assert_eq!(hosts[0].username, "deploy");
+        assert_eq!(hosts[0].port, 2200);
+    }
+
+    #[test]
+    fn parse_applies_global_defaults_before_first_host() {
+        let content = r#"
+            User admin
+            Port 2222
+
+            Host db
+              HostName db.internal
+        "#;
+        let hosts = parse_ssh_config(content);
+
+        assert_eq!(hosts.len(), 1);
+        assert_eq!(hosts[0].username, "admin");
+        assert_eq!(hosts[0].port, 2222);
+    }
+
+    #[test]
+    fn parse_honors_first_matching_value_order() {
+        let content = r#"
+            Host *
+              User default-user
+
+            Host app
+              User app-user
+        "#;
+        let hosts = parse_ssh_config(content);
+
+        assert_eq!(hosts.len(), 1);
+        assert_eq!(hosts[0].username, "default-user");
+    }
+
+    #[test]
+    fn parse_expands_hostname_tokens() {
+        let content = r#"
+            Host api
+              User deploy
+              Port 2200
+              HostName %h-%r-%p.example.com
+        "#;
+        let hosts = parse_ssh_config(content);
+
+        assert_eq!(hosts.len(), 1);
+        assert_eq!(hosts[0].hostname, "api-deploy-2200.example.com");
+    }
+
+    #[test]
+    fn parse_expands_identity_file_tokens() {
+        let content = r#"
+            Host api
+              User deploy
+              IdentityFile keys/%h-%r.pem
+        "#;
+        let hosts = parse_ssh_config(content);
+
+        assert_eq!(hosts.len(), 1);
+        if let AuthMethod::PublicKey { key_path } = &hosts[0].auth {
+            let key_path = key_path.as_ref().expect("missing key path");
+            if let Some(dir) = ssh_dir() {
+                assert_eq!(key_path, &dir.join("keys/api-deploy.pem"));
+            }
+        } else {
+            panic!("expected public key auth");
+        }
+    }
+
+    #[test]
+    fn parse_uses_wildcard_defaults_with_negated_exceptions() {
+        let content = r#"
+            Host api db
+
+            Host !db *
+              User deploy
+        "#;
+        let hosts = parse_ssh_config(content);
+
+        assert_eq!(hosts.len(), 2);
+        let api = hosts.iter().find(|host| host.name == "api").unwrap();
+        let db = hosts.iter().find(|host| host.name == "db").unwrap();
+        assert_eq!(api.username, "deploy");
+        assert_ne!(db.username, "deploy");
     }
 }

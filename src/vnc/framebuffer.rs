@@ -96,12 +96,15 @@ impl FrameBuffer {
 
     /// Apply a raw image update to the framebuffer
     pub fn apply_raw(&mut self, x: u32, y: u32, w: u32, h: u32, data: &[u8]) {
+        let source_stride = (w as usize).checked_mul(4);
         let Some((w, h, _stride, len)) = self.clipped_region(x, y, w, h, 4) else {
             return;
         };
+        let Some(source_stride) = source_stride else {
+            return;
+        };
         for row in 0..h as usize {
-            let Some(src_offset) = row.checked_mul(w as usize).and_then(|v| v.checked_mul(4))
-            else {
+            let Some(src_offset) = row.checked_mul(source_stride) else {
                 break;
             };
             let Some(dst_offset) = checked_pixel_offset(self.width, x, y + row as u32) else {
@@ -117,11 +120,15 @@ impl FrameBuffer {
 
     /// Apply a 16-bit RGB565 image update to the framebuffer (little-endian unless big_endian is true)
     pub fn apply_raw_565(&mut self, x: u32, y: u32, w: u32, h: u32, data: &[u8], big_endian: bool) {
+        let source_stride = (w as usize).checked_mul(2);
         let Some((w, h, _stride, row_bytes)) = self.clipped_region(x, y, w, h, 2) else {
             return;
         };
+        let Some(source_stride) = source_stride else {
+            return;
+        };
         for row in 0..h as usize {
-            let src_offset = row * row_bytes;
+            let src_offset = row * source_stride;
             let Some(dst_offset) = checked_pixel_offset(self.width, x, y + row as u32) else {
                 break;
             };
@@ -344,6 +351,34 @@ mod tests {
 
         assert_eq!(fb.dirty.unwrap().width, 1);
         assert_eq!(fb.dirty.unwrap().height, 1);
+    }
+
+    #[test]
+    fn clipped_raw_update_uses_original_source_stride() {
+        let mut fb = FrameBuffer::new(2, 2);
+        let data = vec![
+            1, 2, 3, 4, 5, 6, 7, 8, //
+            9, 10, 11, 12, 13, 14, 15, 16,
+        ];
+
+        fb.apply_raw(1, 0, 2, 2, &data);
+
+        assert_eq!(&fb.pixels[4..8], &[1, 2, 3, 4]);
+        assert_eq!(&fb.pixels[12..16], &[9, 10, 11, 12]);
+    }
+
+    #[test]
+    fn clipped_rgb565_update_uses_original_source_stride() {
+        let mut fb = FrameBuffer::new(2, 2);
+        let data = vec![
+            0x00, 0xf8, 0xe0, 0x07, //
+            0x1f, 0x00, 0xff, 0xff,
+        ];
+
+        fb.apply_raw_565(1, 0, 2, 2, &data, false);
+
+        assert_eq!(&fb.pixels[4..8], &[0, 0, 255, 255]);
+        assert_eq!(&fb.pixels[12..16], &[255, 0, 0, 255]);
     }
 
     #[test]
