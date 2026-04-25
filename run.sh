@@ -35,8 +35,8 @@ dev)
   ;;
 check)
   echo "Checking Portal..."
-  cargo check
-  cargo clippy
+  run_cargo check
+  run_cargo clippy
   ;;
 *)
   echo "Usage: $0 {build|run|dev|check}"
