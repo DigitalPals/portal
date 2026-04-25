@@ -2,11 +2,13 @@
 
 use iced::widget::{
     Column, Row, Space, button, column, container, mouse_area, row, scrollable, slider, text,
+    text_input,
 };
 use iced::{Alignment, Element, Fill, Length};
 
 use crate::config::settings::{
-    TERMINAL_SCROLL_SPEED_BASE, TERMINAL_SCROLL_SPEED_MAX, TERMINAL_SCROLL_SPEED_MIN,
+    PortalProxySettings, TERMINAL_SCROLL_SPEED_BASE, TERMINAL_SCROLL_SPEED_MAX,
+    TERMINAL_SCROLL_SPEED_MIN,
 };
 use crate::fonts::TerminalFont;
 use crate::message::{Message, UiMessage};
@@ -22,6 +24,7 @@ pub struct SettingsPageContext {
     pub snippet_store_output: bool,
     pub snippet_redact_output: bool,
     pub session_logging_enabled: bool,
+    pub portal_proxy: PortalProxySettings,
     /// Credential cache timeout in seconds (0 = disabled)
     pub credential_timeout: u64,
     pub security_audit_enabled: bool,
@@ -107,6 +110,67 @@ pub fn settings_page_view(
         ],
     );
 
+    let proxy_section = settings_section(
+        "Portal Proxy",
+        theme,
+        fonts,
+        vec![
+            toggle_setting(
+                "Use Portal Proxy",
+                "Master switch for hosts configured to use Portal Proxy",
+                context.portal_proxy.enabled,
+                |value| Message::Ui(UiMessage::PortalProxyEnabled(value)),
+                theme,
+                fonts,
+            ),
+            toggle_setting(
+                "Default for new SSH hosts",
+                "Enable Portal Proxy automatically when creating SSH hosts",
+                context.portal_proxy.default_for_new_ssh_hosts,
+                |value| Message::Ui(UiMessage::PortalProxyDefaultForNewHosts(value)),
+                theme,
+                fonts,
+            ),
+            text_setting(
+                "Host / IP",
+                "Tailscale name or IP address of the proxy",
+                context.portal_proxy.host.clone(),
+                |value| Message::Ui(UiMessage::PortalProxyHostChanged(value)),
+                theme,
+                fonts,
+            ),
+            text_setting(
+                "Port",
+                "SSH port for the proxy",
+                context.portal_proxy.port.to_string(),
+                |value| Message::Ui(UiMessage::PortalProxyPortChanged(value)),
+                theme,
+                fonts,
+            ),
+            text_setting(
+                "Username",
+                "SSH user on the proxy",
+                context.portal_proxy.username.clone(),
+                |value| Message::Ui(UiMessage::PortalProxyUsernameChanged(value)),
+                theme,
+                fonts,
+            ),
+            text_setting(
+                "Identity file",
+                "Optional key for authenticating to the proxy",
+                context
+                    .portal_proxy
+                    .identity_file
+                    .as_ref()
+                    .map(|path| path.to_string_lossy().to_string())
+                    .unwrap_or_default(),
+                |value| Message::Ui(UiMessage::PortalProxyIdentityFileChanged(value)),
+                theme,
+                fonts,
+            ),
+        ],
+    );
+
     // === Snippet History Section ===
     let snippet_history_section = settings_section(
         "Snippet History",
@@ -156,6 +220,8 @@ pub fn settings_page_view(
         terminal_section,
         Space::new().height(16),
         security_section,
+        Space::new().height(16),
+        proxy_section,
         Space::new().height(16),
         snippet_history_section,
     ]
@@ -669,6 +735,49 @@ fn read_only_setting(
             column![label_text, Space::new().height(4), description_text].spacing(0),
             Space::new().width(Length::Fill),
             value_text,
+        ]
+        .align_y(Alignment::Center),
+    ]
+    .spacing(0)
+    .into()
+}
+
+fn text_setting<F>(
+    label: &'static str,
+    description: &'static str,
+    value: String,
+    on_input: F,
+    theme: Theme,
+    fonts: ScaledFonts,
+) -> Element<'static, Message>
+where
+    F: Fn(String) -> Message + 'static,
+{
+    let label_text = text(label).size(fonts.body).color(theme.text_primary);
+    let description_text = text(description).size(fonts.label).color(theme.text_muted);
+
+    let input = text_input("", &value)
+        .on_input(on_input)
+        .padding(8)
+        .width(220)
+        .style(move |_theme, _status| iced::widget::text_input::Style {
+            background: theme.background.into(),
+            border: iced::Border {
+                radius: BORDER_RADIUS.into(),
+                width: 1.0,
+                color: theme.border,
+            },
+            icon: theme.text_secondary,
+            placeholder: theme.text_muted,
+            value: theme.text_primary,
+            selection: theme.accent,
+        });
+
+    column![
+        row![
+            column![label_text, Space::new().height(4), description_text].spacing(0),
+            Space::new().width(Length::Fill),
+            input,
         ]
         .align_y(Alignment::Center),
     ]

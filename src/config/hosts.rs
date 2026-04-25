@@ -256,6 +256,10 @@ fn default_port() -> u16 {
     22
 }
 
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 /// Single host configuration (SSH or VNC)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Host {
@@ -280,6 +284,9 @@ pub struct Host {
     /// SSH port forwards (-L and -R)
     #[serde(default)]
     pub port_forwards: Vec<PortForward>,
+    /// Route SSH terminal sessions for this host through Portal Proxy.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub portal_proxy_enabled: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub group_id: Option<Uuid>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -518,6 +525,31 @@ mod tests {
     fn from_uname_whitespace_only() {
         let os = DetectedOs::from_uname("   \n\t  ");
         assert!(matches!(os, DetectedOs::Unknown(s) if s.is_empty()));
+    }
+
+    #[test]
+    fn host_portal_proxy_enabled_defaults_false() {
+        let host: Host = toml::from_str(
+            r#"
+id = "11111111-2222-4333-8444-555555555555"
+name = "Test"
+hostname = "example.com"
+port = 22
+username = "john"
+protocol = "ssh"
+agent_forwarding = false
+port_forwards = []
+tags = []
+created_at = "2026-04-25T00:00:00Z"
+updated_at = "2026-04-25T00:00:00Z"
+
+[auth]
+type = "agent"
+"#,
+        )
+        .unwrap();
+
+        assert!(!host.portal_proxy_enabled);
     }
 
     // === DetectedOs::from_os_release tests ===

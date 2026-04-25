@@ -397,7 +397,10 @@ fn schedule_reconnect(portal: &mut Portal, session_id: SessionId) -> Task<Messag
         return Task::none();
     }
 
-    if !matches!(session.backend, SessionBackend::Ssh(_)) {
+    if !matches!(
+        session.backend,
+        SessionBackend::Ssh(_) | SessionBackend::Proxy(_)
+    ) {
         return Task::none();
     }
 
@@ -551,6 +554,61 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                 history_entry_id,
             )
         }
+        SessionMessage::ProxyConnected {
+            session_id,
+            proxy_session,
+            host_name,
+            host_id,
+        } => {
+            tracing::info!("Portal Proxy connected");
+            portal.finish_pending_connect();
+
+            if let Some(session) = portal.sessions.get_mut(session_id) {
+                session.backend = SessionBackend::Proxy(proxy_session);
+                session.session_start = Instant::now();
+                session.reconnect_attempts = 0;
+                session.reconnect_next_attempt = None;
+                session.status_message =
+                    Some(("Reattached via Portal Proxy".to_string(), Instant::now()));
+                start_session_logger(portal, session_id);
+                return Task::none();
+            }
+
+            if let Some(host) = portal.config.hosts.find_host_mut(host_id) {
+                host.last_connected = Some(chrono::Utc::now());
+                host.updated_at = chrono::Utc::now();
+                if let Err(e) = portal.config.hosts.save() {
+                    tracing::error!("Failed to save host connection time: {}", e);
+                }
+            }
+
+            let history_entry_id = if let Some(host) = portal.config.hosts.find_host(host_id) {
+                let entry = crate::config::HistoryEntry::new(
+                    host.id,
+                    host.name.clone(),
+                    host.hostname.clone(),
+                    host.effective_username(),
+                    crate::config::SessionType::Ssh,
+                );
+                let entry_id = entry.id;
+                portal.config.history.add_entry(entry);
+                if let Err(e) = portal.config.history.save() {
+                    tracing::error!("Failed to save history config: {}", e);
+                }
+                entry_id
+            } else {
+                Uuid::new_v4()
+            };
+
+            start_terminal_session(
+                portal,
+                session_id,
+                SessionBackend::Proxy(proxy_session),
+                host_name,
+                Some(host_id),
+                history_entry_id,
+            )
+        }
         SessionMessage::Data(session_id, data) => {
             if let Some(session) = portal.sessions.get_mut(session_id) {
                 if !data.is_empty() {
@@ -577,7 +635,10 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                 // Only auto-reconnect for unexpected disconnections, not clean exits
                 if !clean
                     && portal.prefs.auto_reconnect
-                    && matches!(session.backend, SessionBackend::Ssh(_))
+                    && matches!(
+                        session.backend,
+                        SessionBackend::Ssh(_) | SessionBackend::Proxy(_)
+                    )
                 {
                     let reconnect_task = schedule_reconnect(portal, session_id);
                     return Task::batch([close_task, reconnect_task]);
@@ -596,7 +657,11 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                 return Task::none();
             }
 
-            if !matches!(session.backend, SessionBackend::Ssh(_)) {
+            let is_proxy = matches!(session.backend, SessionBackend::Proxy(_));
+            if !matches!(
+                session.backend,
+                SessionBackend::Ssh(_) | SessionBackend::Proxy(_)
+            ) {
                 session.reconnect_next_attempt = None;
                 return Task::none();
             }
@@ -624,9 +689,21 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                 return Task::none();
             }
 
+            let use_proxy =
+                is_proxy && connection::should_use_portal_proxy(&portal.prefs.portal_proxy, &host);
+            let host = Arc::new(host);
+            if use_proxy {
+                return connection::proxy_connect_tasks(
+                    portal.prefs.portal_proxy.clone(),
+                    host,
+                    session_id,
+                    host_id,
+                );
+            }
+
             let should_detect_os = connection::should_detect_os(host.detected_os.as_ref());
             connection::ssh_connect_tasks(
-                Arc::new(host),
+                host,
                 session_id,
                 host_id,
                 should_detect_os,
@@ -712,6 +789,17 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                             |_| Message::Noop,
                         );
                     }
+                    SessionBackend::Proxy(proxy_session) => {
+                        let proxy_session = proxy_session.clone();
+                        return Task::perform(
+                            async move {
+                                if let Err(e) = proxy_session.send(&bytes).await {
+                                    tracing::error!("Failed to send to Portal Proxy: {}", e);
+                                }
+                            },
+                            |_| Message::Noop,
+                        );
+                    }
                 }
             }
             Task::none()
@@ -738,6 +826,17 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                             async move {
                                 if let Err(e) = local_session.resize(cols, rows).await {
                                     tracing::error!("Failed to resize local PTY: {}", e);
+                                }
+                            },
+                            |_| Message::Noop,
+                        );
+                    }
+                    SessionBackend::Proxy(proxy_session) => {
+                        let proxy_session = proxy_session.clone();
+                        return Task::perform(
+                            async move {
+                                if let Err(e) = proxy_session.resize(cols, rows).await {
+                                    tracing::error!("Failed to resize Portal Proxy PTY: {}", e);
                                 }
                             },
                             |_| Message::Noop,

@@ -125,6 +125,7 @@ pub struct PreferencesState {
     pub terminal_metric_adjustments: crate::config::settings::TerminalMetricAdjustments,
     pub sftp_column_widths: crate::views::sftp::ColumnWidths,
     pub vnc_settings: crate::config::settings::VncSettings,
+    pub portal_proxy: crate::config::settings::PortalProxySettings,
     pub auto_reconnect: bool,
     pub reconnect_max_attempts: u32,
     pub reconnect_base_delay_ms: u64,
@@ -354,6 +355,7 @@ impl Portal {
                 terminal_metric_adjustments: settings_config.terminal_metric_adjustments,
                 sftp_column_widths: settings_config.sftp_column_widths,
                 vnc_settings: settings_config.vnc.apply_env_overrides(),
+                portal_proxy: settings_config.portal_proxy,
                 auto_reconnect: settings_config.auto_reconnect,
                 reconnect_max_attempts: settings_config.reconnect_max_attempts,
                 reconnect_base_delay_ms: settings_config.reconnect_base_delay_ms,
@@ -463,6 +465,7 @@ impl Portal {
                     system_ui_scale: self.prefs.system_ui_scale,
                     has_ui_scale_override: self.has_ui_scale_override(),
                     session_logging_enabled: self.prefs.session_logging_enabled,
+                    portal_proxy: self.prefs.portal_proxy.clone(),
                     credential_timeout: self.prefs.credential_timeout,
                     security_audit_enabled: self.prefs.security_audit_enabled,
                     security_audit_log_location: self
@@ -874,6 +877,7 @@ impl Portal {
         settings.theme = self.prefs.theme_id;
         settings.ui_scale = self.prefs.ui_scale_override;
         settings.vnc = self.prefs.vnc_settings.clone();
+        settings.portal_proxy = self.prefs.portal_proxy.clone();
         settings.allow_agent_forwarding = self.prefs.allow_agent_forwarding;
         settings.credential_timeout = self.prefs.credential_timeout;
         settings.session_logging_enabled = self.prefs.session_logging_enabled;

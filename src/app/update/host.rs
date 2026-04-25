@@ -21,7 +21,11 @@ pub fn handle_host(portal: &mut Portal, msg: HostMessage) -> Task<Message> {
             Task::none()
         }
         HostMessage::Add => {
-            portal.dialogs.open_host(HostDialogState::new_host());
+            portal
+                .dialogs
+                .open_host(HostDialogState::new_host_with_proxy_default(
+                    portal.prefs.portal_proxy.default_for_new_ssh_hosts,
+                ));
             Task::none()
         }
         HostMessage::Edit(id) => {

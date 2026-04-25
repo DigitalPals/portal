@@ -24,6 +24,7 @@ pub(crate) mod local;
 pub(crate) mod local_fs;
 pub mod logging;
 pub(crate) mod message;
+pub(crate) mod proxy;
 pub(crate) mod security_log;
 pub mod sftp;
 pub(crate) mod terminal;

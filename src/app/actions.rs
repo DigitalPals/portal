@@ -129,6 +129,7 @@ impl Portal {
             let ssh_session_to_cleanup = match &session.backend {
                 SessionBackend::Ssh(ssh_session) => Some(ssh_session.clone()),
                 SessionBackend::Local(_) => None,
+                SessionBackend::Proxy(_) => None,
             };
 
             if let Some(logger) = session.logger {
@@ -361,6 +362,21 @@ impl Portal {
     }
 
     pub(super) fn connect_to_host(&mut self, host: &Host) -> Task<Message> {
+        if connection::should_use_portal_proxy(&self.prefs.portal_proxy, host) {
+            let dialog_host_name = host.name.clone();
+            let host = Arc::new(host.clone());
+            let session_id = Uuid::new_v4();
+            let host_id = host.id;
+            let task = connection::proxy_connect_tasks(
+                self.prefs.portal_proxy.clone(),
+                host,
+                session_id,
+                host_id,
+            );
+
+            return self.begin_connecting(dialog_host_name, "Portal Proxy", task);
+        }
+
         // Check if password authentication is configured
         if matches!(host.auth, AuthMethod::Password) {
             // Show password dialog

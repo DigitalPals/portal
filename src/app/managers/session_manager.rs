@@ -11,6 +11,7 @@ use uuid::Uuid;
 
 use crate::local::LocalSession;
 use crate::message::SessionId;
+use crate::proxy::ProxySession;
 use crate::ssh::SshSession;
 use crate::terminal::logger::SessionLogger;
 use crate::views::terminal_view::TerminalSession;
@@ -22,6 +23,8 @@ pub enum SessionBackend {
     Ssh(Arc<SshSession>),
     /// Local PTY session
     Local(Arc<LocalSession>),
+    /// Portal Proxy SSH session
+    Proxy(Arc<ProxySession>),
 }
 
 /// Active terminal session with its backend

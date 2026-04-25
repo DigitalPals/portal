@@ -7,11 +7,13 @@ use secrecy::SecretString;
 use tokio::sync::{Mutex, mpsc};
 use uuid::Uuid;
 
-use crate::config::{DetectedOs, Host, PortForwardKind};
+use crate::config::settings::PortalProxySettings;
+use crate::config::{AuthMethod, DetectedOs, Host, PortForwardKind, Protocol};
 use crate::message::{
     DialogMessage, Message, PassphraseRequest, PassphraseSftpContext, SessionId, SessionMessage,
     SftpMessage, VerificationRequestWrapper,
 };
+use crate::proxy::{ProxyEvent, ProxySession};
 use crate::sftp::SftpClient;
 use crate::ssh::known_hosts::KnownHostsManager;
 use crate::ssh::passphrase_cache::PassphraseCache;
@@ -90,6 +92,13 @@ pub fn should_detect_os(detected_os: Option<&DetectedOs>) -> bool {
     }
 }
 
+pub fn should_use_portal_proxy(settings: &PortalProxySettings, host: &Host) -> bool {
+    settings.is_configured()
+        && host.portal_proxy_enabled
+        && host.protocol == Protocol::Ssh
+        && matches!(host.auth, AuthMethod::Agent | AuthMethod::PublicKey { .. })
+}
+
 fn ssh_event_listener(session_id: SessionId, event_rx: mpsc::Receiver<SshEvent>) -> Task<Message> {
     Task::run(
         stream::unfold(SshEventStreamState::new(event_rx), |mut state| async move {
@@ -160,6 +169,57 @@ fn sftp_event_listener(event_rx: mpsc::Receiver<SshEvent>) -> Task<Message> {
             _ => Message::Noop,
         },
     )
+}
+
+fn proxy_event_listener(
+    session_id: SessionId,
+    event_rx: mpsc::Receiver<ProxyEvent>,
+) -> Task<Message> {
+    Task::run(
+        stream::unfold(event_rx, |mut rx| async move {
+            rx.recv().await.map(|event| (event, rx))
+        }),
+        move |event| match event {
+            ProxyEvent::Data(data) => Message::Session(SessionMessage::Data(session_id, data)),
+            ProxyEvent::Disconnected { clean } => {
+                Message::Session(SessionMessage::Disconnected { session_id, clean })
+            }
+        },
+    )
+}
+
+pub fn proxy_connect_tasks(
+    settings: PortalProxySettings,
+    host: Arc<Host>,
+    session_id: SessionId,
+    host_id: Uuid,
+) -> Task<Message> {
+    let (event_tx, event_rx) = mpsc::channel::<ProxyEvent>(SSH_EVENT_CHANNEL_CAPACITY);
+    let event_listener = proxy_event_listener(session_id, event_rx);
+    let host_for_task = Arc::clone(&host);
+
+    let connect_task = Task::perform(
+        async move {
+            let result = ProxySession::spawn(&settings, &host_for_task, host_id, 80, 24, event_tx)
+                .map(Arc::new)
+                .map_err(|error| error.to_string());
+            (session_id, host_id, host_for_task, result)
+        },
+        |(session_id, host_id, host, result)| match result {
+            Ok(proxy_session) => Message::Session(SessionMessage::ProxyConnected {
+                session_id,
+                proxy_session,
+                host_name: host.name.clone(),
+                host_id,
+            }),
+            Err(error) => Message::Session(SessionMessage::ConnectFailed {
+                session_id,
+                error: format!("Portal Proxy connection failed: {}", error),
+            }),
+        },
+    );
+
+    Task::batch([event_listener, connect_task])
 }
 
 fn ssh_connect_tasks_with_auth(
@@ -595,6 +655,7 @@ mod tests {
             vnc_port: None,
             agent_forwarding: false,
             port_forwards: Vec::new(),
+            portal_proxy_enabled: false,
             group_id: None,
             notes: None,
             tags: vec![],
@@ -633,6 +694,7 @@ mod tests {
             vnc_port: None,
             agent_forwarding: false,
             port_forwards: Vec::new(),
+            portal_proxy_enabled: false,
             group_id: None,
             notes: None,
             tags: vec![],
@@ -658,5 +720,76 @@ mod tests {
             }
             other => panic!("unexpected message: {:?}", other),
         }
+    }
+
+    fn proxy_test_host(auth: AuthMethod) -> Host {
+        let now = Utc::now();
+        Host {
+            id: Uuid::new_v4(),
+            name: "Proxy Test".to_string(),
+            hostname: "example.com".to_string(),
+            port: 22,
+            username: "john".to_string(),
+            auth,
+            protocol: crate::config::Protocol::Ssh,
+            vnc_port: None,
+            agent_forwarding: false,
+            port_forwards: Vec::new(),
+            portal_proxy_enabled: true,
+            group_id: None,
+            notes: None,
+            tags: vec![],
+            created_at: now,
+            updated_at: now,
+            detected_os: None,
+            last_connected: None,
+        }
+    }
+
+    fn configured_proxy_settings() -> PortalProxySettings {
+        PortalProxySettings {
+            enabled: true,
+            default_for_new_ssh_hosts: false,
+            host: "proxy.example.com".to_string(),
+            port: 22,
+            username: "portal-proxy".to_string(),
+            identity_file: None,
+        }
+    }
+
+    #[test]
+    fn portal_proxy_routing_requires_global_and_host_enablement() {
+        let settings = configured_proxy_settings();
+        let mut host = proxy_test_host(AuthMethod::Agent);
+
+        assert!(should_use_portal_proxy(&settings, &host));
+
+        host.portal_proxy_enabled = false;
+        assert!(!should_use_portal_proxy(&settings, &host));
+
+        host.portal_proxy_enabled = true;
+        let mut disabled = settings.clone();
+        disabled.enabled = false;
+        assert!(!should_use_portal_proxy(&disabled, &host));
+    }
+
+    #[test]
+    fn portal_proxy_routing_supports_agent_and_public_key_only() {
+        let settings = configured_proxy_settings();
+
+        assert!(should_use_portal_proxy(
+            &settings,
+            &proxy_test_host(AuthMethod::Agent)
+        ));
+        assert!(should_use_portal_proxy(
+            &settings,
+            &proxy_test_host(AuthMethod::PublicKey {
+                key_path: Some("/tmp/key".into())
+            })
+        ));
+        assert!(!should_use_portal_proxy(
+            &settings,
+            &proxy_test_host(AuthMethod::Password)
+        ));
     }
 }

@@ -7,6 +7,7 @@ use uuid::Uuid;
 
 use crate::config::DetectedOs;
 use crate::local::LocalSession;
+use crate::proxy::ProxySession;
 use crate::sftp::{FileEntry, SharedSftpSession};
 use crate::ssh::SshSession;
 use crate::ssh::host_key_verification::HostKeyVerificationRequest;
@@ -40,6 +41,7 @@ pub enum HostDialogField {
     AuthMethod,
     KeyPath,
     AgentForwarding,
+    PortalProxyEnabled,
     Tags,
     Notes,
     Protocol,
@@ -90,6 +92,13 @@ pub enum SessionMessage {
     LocalConnected {
         session_id: SessionId,
         local_session: Arc<LocalSession>,
+    },
+    /// Portal Proxy terminal session established
+    ProxyConnected {
+        session_id: SessionId,
+        proxy_session: Arc<ProxySession>,
+        host_name: String,
+        host_id: Uuid,
     },
     /// Data received from terminal (SSH or local)
     Data(SessionId, Vec<u8>),
@@ -512,6 +521,18 @@ pub enum UiMessage {
     CredentialTimeoutChange(u64),
     /// Security audit logging enabled/disabled (writes security events to an audit log file)
     SecurityAuditLoggingEnabled(bool),
+    /// Portal Proxy enabled/disabled
+    PortalProxyEnabled(bool),
+    /// Portal Proxy default for newly-created SSH hosts
+    PortalProxyDefaultForNewHosts(bool),
+    /// Portal Proxy host/IP changed
+    PortalProxyHostChanged(String),
+    /// Portal Proxy port changed
+    PortalProxyPortChanged(String),
+    /// Portal Proxy SSH username changed
+    PortalProxyUsernameChanged(String),
+    /// Portal Proxy identity file changed
+    PortalProxyIdentityFileChanged(String),
     /// Window resized
     WindowResized(iced::Size),
     /// Window lost focus

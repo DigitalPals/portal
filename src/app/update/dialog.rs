@@ -76,6 +76,10 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                         dialog_state.agent_forwarding =
                             matches!(value.trim().to_lowercase().as_str(), "true" | "1" | "yes");
                     }
+                    HostDialogField::PortalProxyEnabled => {
+                        dialog_state.portal_proxy_enabled =
+                            matches!(value.trim().to_lowercase().as_str(), "true" | "1" | "yes");
+                    }
                     HostDialogField::Tags => dialog_state.tags = value,
                     HostDialogField::Notes => dialog_state.notes = value,
                     HostDialogField::AuthMethod => {
@@ -85,6 +89,9 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                             "PublicKey" => AuthMethodChoice::PublicKey,
                             _ => dialog_state.auth_method,
                         };
+                        if dialog_state.auth_method == AuthMethodChoice::Password {
+                            dialog_state.portal_proxy_enabled = false;
+                        }
                     }
                     HostDialogField::Protocol => {
                         use crate::views::dialogs::host_dialog::ProtocolChoice;
@@ -96,6 +103,7 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                                     dialog_state.port = "5900".to_string();
                                 }
                                 dialog_state.agent_forwarding = false;
+                                dialog_state.portal_proxy_enabled = false;
                                 ProtocolChoice::Vnc
                             }
                             _ => dialog_state.protocol,
@@ -537,6 +545,7 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                     auth,
                     agent_forwarding: false,
                     port_forwards: Vec::new(),
+                    portal_proxy_enabled: false,
                     group_id: None,
                     notes: None,
                     tags: vec![],

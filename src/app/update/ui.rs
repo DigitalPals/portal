@@ -181,6 +181,45 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
 
             Task::none()
         }
+        UiMessage::PortalProxyEnabled(enabled) => {
+            portal.prefs.portal_proxy.enabled = enabled;
+            portal.save_settings();
+            Task::none()
+        }
+        UiMessage::PortalProxyDefaultForNewHosts(enabled) => {
+            portal.prefs.portal_proxy.default_for_new_ssh_hosts = enabled;
+            portal.save_settings();
+            Task::none()
+        }
+        UiMessage::PortalProxyHostChanged(host) => {
+            portal.prefs.portal_proxy.host = host;
+            portal.save_settings();
+            Task::none()
+        }
+        UiMessage::PortalProxyPortChanged(port) => {
+            if let Ok(parsed) = port.trim().parse::<u16>() {
+                if parsed > 0 {
+                    portal.prefs.portal_proxy.port = parsed;
+                    portal.save_settings();
+                }
+            }
+            Task::none()
+        }
+        UiMessage::PortalProxyUsernameChanged(username) => {
+            portal.prefs.portal_proxy.username = username;
+            portal.save_settings();
+            Task::none()
+        }
+        UiMessage::PortalProxyIdentityFileChanged(path) => {
+            let trimmed = path.trim();
+            portal.prefs.portal_proxy.identity_file = if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed.into())
+            };
+            portal.save_settings();
+            Task::none()
+        }
         UiMessage::WindowResized(size) => {
             portal.ui.window_size = size;
             if !portal.ui.sidebar_manually_set {
