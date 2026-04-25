@@ -106,6 +106,12 @@ impl SftpSession {
         let metadata = sftp.symlink_metadata(path_str.clone()).await.map_err(|e| {
             SftpError::FileOperation(format!("Failed to get metadata for {}: {}", path_str, e))
         })?;
+        if metadata.is_symlink() {
+            return Err(SftpError::FileOperation(format!(
+                "Cannot inspect symbolic link {}",
+                path_str
+            )));
+        }
         Ok(metadata.size.unwrap_or(0))
     }
 

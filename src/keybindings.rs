@@ -119,10 +119,12 @@ impl Keybinding {
 
             let lower = token.to_ascii_lowercase();
             match lower.as_str() {
-                "ctrl" | "control" => modifiers.ctrl = true,
-                "shift" => modifiers.shift = true,
-                "alt" => modifiers.alt = true,
-                "super" | "logo" | "cmd" | "command" | "meta" => modifiers.super_key = true,
+                "ctrl" | "control" => set_modifier(&mut modifiers.ctrl, "Ctrl")?,
+                "shift" => set_modifier(&mut modifiers.shift, "Shift")?,
+                "alt" => set_modifier(&mut modifiers.alt, "Alt")?,
+                "super" | "logo" | "cmd" | "command" | "meta" => {
+                    set_modifier(&mut modifiers.super_key, "Super")?
+                }
                 _ => {
                     if key.is_some() {
                         return Err(KeybindingParseError::MultipleKeys);
@@ -184,6 +186,7 @@ impl<'de> Deserialize<'de> for Keybinding {
 pub enum KeybindingParseError {
     MissingKey,
     MultipleKeys,
+    DuplicateModifier(String),
     EmptyToken,
     UnknownKey(String),
 }
@@ -193,6 +196,9 @@ impl fmt::Display for KeybindingParseError {
         match self {
             KeybindingParseError::MissingKey => write!(f, "missing key"),
             KeybindingParseError::MultipleKeys => write!(f, "multiple keys specified"),
+            KeybindingParseError::DuplicateModifier(modifier) => {
+                write!(f, "duplicate modifier: {}", modifier)
+            }
             KeybindingParseError::EmptyToken => write!(f, "empty keybinding token"),
             KeybindingParseError::UnknownKey(key) => write!(f, "unknown key: {}", key),
         }
@@ -200,6 +206,15 @@ impl fmt::Display for KeybindingParseError {
 }
 
 impl std::error::Error for KeybindingParseError {}
+
+fn set_modifier(value: &mut bool, label: &str) -> Result<(), KeybindingParseError> {
+    if *value {
+        Err(KeybindingParseError::DuplicateModifier(label.to_string()))
+    } else {
+        *value = true;
+        Ok(())
+    }
+}
 
 fn parse_key_token(token: &str) -> Result<KeybindingKey, KeybindingParseError> {
     let lower = token.to_ascii_lowercase();
@@ -372,6 +387,14 @@ mod tests {
         let modifiers = Modifiers::CTRL;
 
         assert!(!binding.matches(&key, &modifiers));
+    }
+
+    #[test]
+    fn parse_rejects_duplicate_modifiers() {
+        assert!(matches!(
+            Keybinding::parse("Ctrl+Control+N"),
+            Err(KeybindingParseError::DuplicateModifier(modifier)) if modifier == "Ctrl"
+        ));
     }
 
     #[test]

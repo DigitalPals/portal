@@ -584,7 +584,7 @@ impl SshSession {
                             let peer_ip = origin.ip().to_string();
                             let peer_port = origin.port() as u32;
 
-                            let (target_host, target_port) = match socks5_handshake(&mut socket).await {
+                            let (target_host, target_port) = match socks5_read_request(&mut socket).await {
                                 Ok(v) => v,
                                 Err(e) => {
                                     tracing::debug!("Dynamic forward {} SOCKS handshake failed: {}", forward_id, e);
@@ -608,6 +608,7 @@ impl SshSession {
                             let channel = match channel {
                                 Ok(channel) => channel,
                                 Err(e) => {
+                                    let _ = socks5_send_reply(&mut socket, SOCKS_REPLY_GENERAL_FAILURE).await;
                                     tracing::debug!(
                                         "Dynamic forward {} failed to open channel to {}:{}: {}",
                                         forward_id,
@@ -619,6 +620,11 @@ impl SshSession {
                                     return;
                                 }
                             };
+
+                            if socks5_send_reply(&mut socket, SOCKS_REPLY_SUCCEEDED).await.is_err() {
+                                let _ = socket.shutdown().await;
+                                return;
+                            }
 
                             let mut channel_stream = channel.into_stream();
                             let _ = tokio::io::copy_bidirectional(&mut channel_stream, &mut socket).await;
@@ -717,7 +723,12 @@ fn normalize_remote_forward_port(requested: u16, assigned: u32) -> u16 {
     }
 }
 
-async fn socks5_handshake<S>(stream: &mut S) -> Result<(String, u16), SshError>
+const SOCKS_REPLY_SUCCEEDED: u8 = 0x00;
+const SOCKS_REPLY_GENERAL_FAILURE: u8 = 0x01;
+const SOCKS_REPLY_COMMAND_NOT_SUPPORTED: u8 = 0x07;
+const SOCKS_REPLY_ADDRESS_TYPE_NOT_SUPPORTED: u8 = 0x08;
+
+async fn socks5_read_request<S>(stream: &mut S) -> Result<(String, u16), SshError>
 where
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
@@ -771,14 +782,20 @@ where
         )));
     }
     let cmd = req_hdr[1];
+    let reserved = req_hdr[2];
     let atyp = req_hdr[3];
+
+    if reserved != 0x00 {
+        let _ = socks5_send_reply(stream, SOCKS_REPLY_GENERAL_FAILURE).await;
+        return Err(SshError::Channel(format!(
+            "Invalid SOCKS reserved byte: {}",
+            reserved
+        )));
+    }
 
     if cmd != 0x01 {
         // Command not supported
-        let _ = stream
-            .write_all(&[0x05, 0x07, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
-            .await;
-        let _ = stream.flush().await;
+        let _ = socks5_send_reply(stream, SOCKS_REPLY_COMMAND_NOT_SUPPORTED).await;
         return Err(SshError::Channel(format!(
             "Unsupported SOCKS command: {}",
             cmd
@@ -806,8 +823,17 @@ where
                     .read_exact(&mut name)
                     .await
                     .map_err(|e| SshError::Channel(format!("SOCKS domain read failed: {}", e)))?;
-                String::from_utf8(name)
-                    .map_err(|_| SshError::Channel("SOCKS domain is not UTF-8".to_string()))?
+                if name.is_empty() {
+                    let _ = socks5_send_reply(stream, SOCKS_REPLY_GENERAL_FAILURE).await;
+                    return Err(SshError::Channel("SOCKS domain is empty".to_string()));
+                }
+                match String::from_utf8(name) {
+                    Ok(name) => name,
+                    Err(_) => {
+                        let _ = socks5_send_reply(stream, SOCKS_REPLY_GENERAL_FAILURE).await;
+                        return Err(SshError::Channel("SOCKS domain is not UTF-8".to_string()));
+                    }
+                }
             }
             0x04 => {
                 // IPv6
@@ -819,10 +845,7 @@ where
             }
             _ => {
                 // Address type not supported
-                let _ = stream
-                    .write_all(&[0x05, 0x08, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
-                    .await;
-                let _ = stream.flush().await;
+                let _ = socks5_send_reply(stream, SOCKS_REPLY_ADDRESS_TYPE_NOT_SUPPORTED).await;
                 return Err(SshError::Channel(format!(
                     "Unsupported SOCKS address type: {}",
                     atyp
@@ -836,10 +859,21 @@ where
         .await
         .map_err(|e| SshError::Channel(format!("SOCKS port read failed: {}", e)))?;
     let target_port = u16::from_be_bytes(port_bytes);
+    if target_port == 0 {
+        let _ = socks5_send_reply(stream, SOCKS_REPLY_GENERAL_FAILURE).await;
+        return Err(SshError::Channel("SOCKS target port is zero".to_string()));
+    }
 
-    // Success reply with BND.ADDR = 0.0.0.0 and BND.PORT = 0.
+    Ok((target_host, target_port))
+}
+
+async fn socks5_send_reply<S>(stream: &mut S, reply: u8) -> Result<(), SshError>
+where
+    S: tokio::io::AsyncWrite + Unpin,
+{
+    // BND.ADDR = 0.0.0.0 and BND.PORT = 0.
     stream
-        .write_all(&[0x05, 0x00, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
+        .write_all(&[0x05, reply, 0x00, 0x01, 0, 0, 0, 0, 0, 0])
         .await
         .map_err(|e| SshError::Channel(format!("SOCKS reply write failed: {}", e)))?;
     stream
@@ -847,7 +881,7 @@ where
         .await
         .map_err(|e| SshError::Channel(format!("SOCKS reply flush failed: {}", e)))?;
 
-    Ok((target_host, target_port))
+    Ok(())
 }
 
 pub async fn spawn_agent_forwarding(
@@ -1143,7 +1177,11 @@ mod tests {
     async fn socks5_handshake_domain_connect() {
         let (mut client, mut server) = tokio::io::duplex(1024);
 
-        let server_task = tokio::spawn(async move { socks5_handshake(&mut server).await });
+        let server_task = tokio::spawn(async move {
+            let request = socks5_read_request(&mut server).await?;
+            socks5_send_reply(&mut server, SOCKS_REPLY_SUCCEEDED).await?;
+            Ok::<_, SshError>(request)
+        });
 
         // Greeting: VER=5, NMETHODS=1, METHODS=[NOAUTH]
         client.write_all(&[0x05, 0x01, 0x00]).await.unwrap();
@@ -1169,5 +1207,78 @@ mod tests {
         let (dst_host, dst_port) = server_task.await.unwrap().unwrap();
         assert_eq!(dst_host, "example.com");
         assert_eq!(dst_port, 80);
+    }
+
+    #[tokio::test]
+    async fn socks5_rejects_invalid_reserved_byte() {
+        let (mut client, mut server) = tokio::io::duplex(1024);
+
+        let server_task = tokio::spawn(async move { socks5_read_request(&mut server).await });
+
+        client.write_all(&[0x05, 0x01, 0x00]).await.unwrap();
+        client.flush().await.unwrap();
+
+        let mut method_select = [0u8; 2];
+        client.read_exact(&mut method_select).await.unwrap();
+        assert_eq!(method_select, [0x05, 0x00]);
+
+        let host = b"example.com";
+        let mut req = Vec::new();
+        req.extend_from_slice(&[0x05, 0x01, 0xff, 0x03, host.len() as u8]);
+        req.extend_from_slice(host);
+        req.extend_from_slice(&80u16.to_be_bytes());
+        client.write_all(&req).await.unwrap();
+        client.flush().await.unwrap();
+
+        let mut reply = [0u8; 10];
+        client.read_exact(&mut reply).await.unwrap();
+        assert_eq!(reply[1], SOCKS_REPLY_GENERAL_FAILURE);
+        assert!(server_task.await.unwrap().is_err());
+    }
+
+    #[tokio::test]
+    async fn socks5_rejects_empty_domain_and_zero_port() {
+        let (mut client, mut server) = tokio::io::duplex(1024);
+
+        let server_task = tokio::spawn(async move { socks5_read_request(&mut server).await });
+
+        client.write_all(&[0x05, 0x01, 0x00]).await.unwrap();
+        client.flush().await.unwrap();
+
+        let mut method_select = [0u8; 2];
+        client.read_exact(&mut method_select).await.unwrap();
+        assert_eq!(method_select, [0x05, 0x00]);
+
+        client
+            .write_all(&[0x05, 0x01, 0x00, 0x03, 0x00, 0x00, 0x00])
+            .await
+            .unwrap();
+        client.flush().await.unwrap();
+
+        let mut reply = [0u8; 10];
+        client.read_exact(&mut reply).await.unwrap();
+        assert_eq!(reply[1], SOCKS_REPLY_GENERAL_FAILURE);
+        assert!(server_task.await.unwrap().is_err());
+
+        let (mut client, mut server) = tokio::io::duplex(1024);
+        let server_task = tokio::spawn(async move { socks5_read_request(&mut server).await });
+
+        client.write_all(&[0x05, 0x01, 0x00]).await.unwrap();
+        client.flush().await.unwrap();
+        let mut method_select = [0u8; 2];
+        client.read_exact(&mut method_select).await.unwrap();
+
+        let host = b"example.com";
+        let mut req = Vec::new();
+        req.extend_from_slice(&[0x05, 0x01, 0x00, 0x03, host.len() as u8]);
+        req.extend_from_slice(host);
+        req.extend_from_slice(&0u16.to_be_bytes());
+        client.write_all(&req).await.unwrap();
+        client.flush().await.unwrap();
+
+        let mut reply = [0u8; 10];
+        client.read_exact(&mut reply).await.unwrap();
+        assert_eq!(reply[1], SOCKS_REPLY_GENERAL_FAILURE);
+        assert!(server_task.await.unwrap().is_err());
     }
 }

@@ -118,9 +118,12 @@ fn inspect_pdf(path: &Path) -> Result<ViewerContent, String> {
 }
 
 async fn enforce_local_size(path: &Path, limit: u64, label: &str) -> Result<(), String> {
-    let metadata = tokio::fs::metadata(path)
+    let metadata = tokio::fs::symlink_metadata(path)
         .await
         .map_err(|e| format!("Failed to stat {} file: {}", label, e))?;
+    if metadata.file_type().is_symlink() {
+        return Err(format!("{} file is a symbolic link", label));
+    }
     let size = metadata.len();
     if size > limit {
         return Err(format!(
@@ -167,8 +170,10 @@ fn render_pdf_page_sync(path: &Path, page_index: usize) -> Result<Vec<u8>, Strin
         return Err("PDF page index out of range".to_string());
     }
 
+    let page_index_u16 =
+        u16::try_from(page_index).map_err(|_| "PDF page index out of range".to_string())?;
     let page = pages
-        .get(page_index as u16)
+        .get(page_index_u16)
         .map_err(|e| format!("Failed to load PDF page {}: {}", page_index + 1, e))?;
     let bitmap = page
         .render_with_config(&PdfRenderConfig::new().set_target_width(1200))
@@ -289,7 +294,7 @@ fn safe_temp_file_name(file_name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::safe_temp_file_name;
+    use super::{MAX_TEXT_BYTES, enforce_local_size, safe_temp_file_name};
 
     #[test]
     fn safe_temp_file_name_removes_path_components() {
@@ -299,5 +304,21 @@ mod tests {
     #[test]
     fn safe_temp_file_name_falls_back_for_empty_names() {
         assert_eq!(safe_temp_file_name(".."), "remote_file");
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn enforce_local_size_rejects_symlinks() {
+        let temp = tempfile::tempdir().unwrap();
+        let target = temp.path().join("target.txt");
+        let link = temp.path().join("link.txt");
+        std::fs::write(&target, "secret").unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        assert!(
+            enforce_local_size(&link, MAX_TEXT_BYTES, "Text")
+                .await
+                .is_err()
+        );
     }
 }
