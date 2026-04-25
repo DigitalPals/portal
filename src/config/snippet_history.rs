@@ -70,6 +70,13 @@ static REDACTION_RULES: LazyLock<Vec<RedactionRule>> = LazyLock::new(|| {
         },
         RedactionRule {
             regex: Regex::new(
+                r#"(?i)(--?(?:password|passphrase|token|secret|api[_-]?key))\s+(".*?"|'.*?'|[^\s"']+)"#,
+            )
+            .unwrap(),
+            replacement: "$1 [REDACTED]",
+        },
+        RedactionRule {
+            regex: Regex::new(
                 r#"(?i)\b(authorization)\b\s*[:=]\s*(bearer\s+[^\s"']+|".*?"|'.*?'|[^\s"']+)"#,
             )
             .unwrap(),
@@ -130,7 +137,7 @@ impl SnippetExecutionEntry {
     pub fn time_ago(&self) -> String {
         let now = chrono::Utc::now();
         let duration = now - self.executed_at;
-        let secs = duration.num_seconds();
+        let secs = duration.num_seconds().max(0);
 
         if secs < 60 {
             "just now".to_string()
@@ -350,7 +357,8 @@ impl SnippetHistoryConfig {
 
 #[cfg(test)]
 mod tests {
-    use super::{sanitize_field, truncate_string};
+    use super::{HistoricalHostResult, SnippetExecutionEntry, sanitize_field, truncate_string};
+    use uuid::Uuid;
 
     #[test]
     fn sanitize_redacts_common_secrets() {
@@ -375,8 +383,43 @@ mod tests {
     }
 
     #[test]
+    fn sanitize_redacts_space_separated_secret_flags() {
+        let input = r#"deploy --password hunter2 --api-key "abc123" --token token-value"#;
+        let output = sanitize_field(input, 200, true);
+
+        assert!(output.contains("--password [REDACTED]"));
+        assert!(output.contains("--api-key [REDACTED]"));
+        assert!(output.contains("--token [REDACTED]"));
+        assert!(!output.contains("hunter2"));
+        assert!(!output.contains("abc123"));
+        assert!(!output.contains("token-value"));
+    }
+
+    #[test]
     fn truncate_string_appends_ellipsis() {
         let output = truncate_string("abcdefghij", 5);
         assert_eq!(output, "abcde...");
+    }
+
+    #[test]
+    fn time_ago_treats_future_clock_skew_as_just_now() {
+        let mut entry = SnippetExecutionEntry::new(
+            Uuid::new_v4(),
+            "snippet".to_string(),
+            "uptime".to_string(),
+            vec![HistoricalHostResult {
+                host_id: Uuid::new_v4(),
+                host_name: "host".to_string(),
+                success: true,
+                stdout: String::new(),
+                stderr: String::new(),
+                exit_code: Some(0),
+                duration_ms: 1,
+                error: None,
+            }],
+        );
+        entry.executed_at = chrono::Utc::now() + chrono::Duration::hours(1);
+
+        assert_eq!(entry.time_ago(), "just now");
     }
 }

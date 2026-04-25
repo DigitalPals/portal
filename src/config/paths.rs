@@ -7,6 +7,13 @@ use std::path::PathBuf;
 pub fn config_dir() -> Option<PathBuf> {
     #[cfg(unix)]
     {
+        if let Some(config_home) = std::env::var_os("XDG_CONFIG_HOME")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+        {
+            return Some(config_home.join("portal"));
+        }
+
         dirs_home().map(|home| home.join(".config").join("portal"))
     }
     #[cfg(windows)]
@@ -75,6 +82,12 @@ pub fn ensure_config_dir() -> std::io::Result<PathBuf> {
 
 /// Expand tilde in path (e.g., ~/.ssh/id_rsa -> /home/user/.ssh/id_rsa)
 pub fn expand_tilde(path: &str) -> PathBuf {
+    if path == "~" {
+        if let Some(home) = dirs_home() {
+            return home;
+        }
+    }
+
     if let Some(stripped) = path.strip_prefix("~/") {
         if let Some(home) = dirs_home() {
             return home.join(stripped);
@@ -114,7 +127,7 @@ pub fn log_dir() -> Option<PathBuf> {
         if trimmed.is_empty() {
             return None;
         }
-        return Some(PathBuf::from(trimmed));
+        return Some(expand_tilde(trimmed));
     }
 
     config_dir().map(|d| d.join("logs"))

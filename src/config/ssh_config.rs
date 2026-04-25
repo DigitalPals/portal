@@ -13,7 +13,7 @@ struct HostBlock {
     hostname: Option<String>,
     user: Option<String>,
     port: Option<u16>,
-    identity_file: Option<PathBuf>,
+    identity_file: Option<Option<PathBuf>>,
 }
 
 pub fn load_hosts_from_ssh_config() -> Result<Vec<Host>, ConfigError> {
@@ -56,7 +56,7 @@ pub fn parse_ssh_config(content: &str) -> Vec<Host> {
             continue;
         }
 
-        let key = tokens[0].to_ascii_lowercase();
+        let (key, args) = directive_parts(&tokens);
         if key == "match" {
             // Ignore Match blocks for imports.
             flush_block(&mut current, &mut hosts);
@@ -70,7 +70,7 @@ pub fn parse_ssh_config(content: &str) -> Vec<Host> {
             }
             flush_block(&mut current, &mut hosts);
             current = HostBlock::default();
-            current.patterns = tokens[1..].iter().map(|s| s.to_string()).collect();
+            current.patterns = args;
             continue;
         }
 
@@ -80,28 +80,36 @@ pub fn parse_ssh_config(content: &str) -> Vec<Host> {
 
         match key.as_str() {
             "hostname" => {
-                if let Some(value) = tokens.get(1) {
+                if current.hostname.is_none()
+                    && let Some(value) = args.first()
+                {
                     current.hostname = Some(value.to_string());
                 }
             }
             "user" => {
-                if let Some(value) = tokens.get(1) {
+                if current.user.is_none()
+                    && let Some(value) = args.first()
+                {
                     current.user = Some(value.to_string());
                 }
             }
             "port" => {
-                if let Some(value) = tokens.get(1) {
+                if current.port.is_none()
+                    && let Some(value) = args.first()
+                {
                     if let Ok(port) = value.parse::<u16>() {
                         current.port = Some(port);
                     }
                 }
             }
             "identityfile" => {
-                if let Some(value) = tokens.get(1) {
+                if current.identity_file.is_none()
+                    && let Some(value) = args.first()
+                {
                     if value.eq_ignore_ascii_case("none") {
-                        current.identity_file = None;
+                        current.identity_file = Some(None);
                     } else {
-                        current.identity_file = Some(expand_identity_path(value));
+                        current.identity_file = Some(Some(expand_identity_path(value)));
                     }
                 }
             }
@@ -111,6 +119,33 @@ pub fn parse_ssh_config(content: &str) -> Vec<Host> {
 
     flush_block(&mut current, &mut hosts);
     hosts
+}
+
+fn directive_parts(tokens: &[String]) -> (String, Vec<String>) {
+    let mut key = tokens[0].as_str();
+    let mut args = Vec::new();
+
+    if let Some((left, right)) = key.split_once('=') {
+        key = left;
+        if !right.is_empty() {
+            args.push(right.to_string());
+        }
+        args.extend(tokens.iter().skip(1).cloned());
+    } else if let Some(stripped) = key.strip_suffix('=') {
+        key = stripped;
+        args.extend(tokens.iter().skip(1).cloned());
+    } else if tokens.get(1).is_some_and(|token| token == "=") {
+        args.extend(tokens.iter().skip(2).cloned());
+    } else if let Some(rest) = tokens.get(1).and_then(|token| token.strip_prefix('=')) {
+        if !rest.is_empty() {
+            args.push(rest.to_string());
+        }
+        args.extend(tokens.iter().skip(2).cloned());
+    } else {
+        args.extend(tokens.iter().skip(1).cloned());
+    }
+
+    (key.to_ascii_lowercase(), args)
 }
 
 fn flush_block(current: &mut HostBlock, hosts: &mut Vec<Host>) {
@@ -136,10 +171,10 @@ fn flush_block(current: &mut HostBlock, hosts: &mut Vec<Host>) {
         let port = current.port.unwrap_or(22);
 
         let auth = match &current.identity_file {
-            Some(path) => AuthMethod::PublicKey {
+            Some(Some(path)) => AuthMethod::PublicKey {
                 key_path: Some(path.clone()),
             },
-            None => AuthMethod::Agent,
+            Some(None) | None => AuthMethod::Agent,
         };
 
         let now = Utc::now();
@@ -338,6 +373,55 @@ mod tests {
     #[test]
     fn identity_file_none_uses_agent_auth() {
         let content = "Host test\n  IdentityFile none\n";
+        let hosts = parse_ssh_config(content);
+
+        assert_eq!(hosts.len(), 1);
+        assert!(matches!(hosts[0].auth, AuthMethod::Agent));
+    }
+
+    #[test]
+    fn parse_accepts_equals_separator() {
+        let content = r#"
+            Host=eq-host
+              HostName=10.0.0.6
+              User = alice
+              Port = 2200
+        "#;
+        let hosts = parse_ssh_config(content);
+
+        assert_eq!(hosts.len(), 1);
+        assert_eq!(hosts[0].name, "eq-host");
+        assert_eq!(hosts[0].hostname, "10.0.0.6");
+        assert_eq!(hosts[0].username, "alice");
+        assert_eq!(hosts[0].port, 2200);
+    }
+
+    #[test]
+    fn parse_keeps_first_value_like_openssh() {
+        let content = r#"
+            Host first-value
+              HostName 10.0.0.7
+              HostName 10.0.0.8
+              User alice
+              User bob
+              Port 2201
+              Port 2202
+        "#;
+        let hosts = parse_ssh_config(content);
+
+        assert_eq!(hosts.len(), 1);
+        assert_eq!(hosts[0].hostname, "10.0.0.7");
+        assert_eq!(hosts[0].username, "alice");
+        assert_eq!(hosts[0].port, 2201);
+    }
+
+    #[test]
+    fn parse_identity_file_none_is_a_first_value() {
+        let content = r#"
+            Host no-key
+              IdentityFile none
+              IdentityFile ~/.ssh/id_ed25519
+        "#;
         let hosts = parse_ssh_config(content);
 
         assert_eq!(hosts.len(), 1);

@@ -84,6 +84,11 @@ impl<'de> Deserialize<'de> for MetricAdjustment {
             where
                 E: serde::de::Error,
             {
+                if !value.is_finite() || value < i32::MIN as f64 || value > i32::MAX as f64 {
+                    return Err(E::custom(
+                        "metric adjustment must be a finite i32-sized value",
+                    ));
+                }
                 Ok(MetricAdjustment::Absolute(value.round() as i32))
             }
 
@@ -738,5 +743,11 @@ identity_file = "/tmp/proxy-key"
 
         let serialized = toml::to_string(&config).unwrap();
         assert!(serialized.contains("default_for_new_ssh_hosts = true"));
+    }
+
+    #[test]
+    fn metric_adjustment_rejects_non_finite_float() {
+        let result: Result<MetricAdjustment, _> = serde_json::from_str("1e999");
+        assert!(result.is_err());
     }
 }

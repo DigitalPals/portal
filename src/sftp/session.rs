@@ -115,7 +115,21 @@ impl SftpSession {
         let path_str = path.to_string_lossy().to_string();
 
         match sftp.try_exists(path_str.clone()).await {
-            Ok(true) => return Ok(()),
+            Ok(true) => {
+                let metadata = sftp.symlink_metadata(path_str.clone()).await.map_err(|e| {
+                    SftpError::FileOperation(format!(
+                        "Failed to get metadata for {}: {}",
+                        path_str, e
+                    ))
+                })?;
+                if metadata.is_dir() {
+                    return Ok(());
+                }
+                return Err(SftpError::FileOperation(format!(
+                    "Cannot create directory {}; a non-directory already exists",
+                    path_str
+                )));
+            }
             Ok(false) => {}
             Err(e) => {
                 return Err(SftpError::FileOperation(format!(

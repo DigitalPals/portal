@@ -116,6 +116,22 @@ impl FileType {
 
     /// Get file type from a file path
     pub fn from_path(path: &Path) -> Self {
+        if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
+            match name.to_ascii_lowercase().as_str() {
+                "dockerfile" => {
+                    return Self::Text {
+                        language: Some("dockerfile".to_string()),
+                    };
+                }
+                "makefile" | "gnumakefile" => {
+                    return Self::Text {
+                        language: Some("makefile".to_string()),
+                    };
+                }
+                _ => {}
+            }
+        }
+
         path.extension()
             .and_then(|ext| ext.to_str())
             .map(Self::from_extension)
@@ -172,5 +188,21 @@ mod tests {
     #[test]
     fn file_type_from_extension_falls_back_to_binary() {
         assert_eq!(FileType::from_extension("unknownext"), FileType::Binary);
+    }
+
+    #[test]
+    fn file_type_from_path_detects_extensionless_build_files() {
+        assert_eq!(
+            FileType::from_path(Path::new("Dockerfile")),
+            FileType::Text {
+                language: Some("dockerfile".to_string())
+            }
+        );
+        assert_eq!(
+            FileType::from_path(Path::new("Makefile")),
+            FileType::Text {
+                language: Some("makefile".to_string())
+            }
+        );
     }
 }

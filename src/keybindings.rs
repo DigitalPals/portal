@@ -45,11 +45,13 @@ impl KeybindingKey {
     fn matches(&self, key: &Key) -> bool {
         match self {
             KeybindingKey::Character(expected) => match key {
-                Key::Character(c) => c
-                    .chars()
-                    .next()
-                    .map(|ch| ch.eq_ignore_ascii_case(expected))
-                    .unwrap_or(false),
+                Key::Character(c) => {
+                    let mut chars = c.chars();
+                    matches!(
+                        (chars.next(), chars.next()),
+                        (Some(ch), None) if ch.eq_ignore_ascii_case(expected)
+                    )
+                }
                 _ => false,
             },
             KeybindingKey::Tab => matches!(key, Key::Named(keyboard::key::Named::Tab)),
@@ -354,6 +356,15 @@ mod tests {
         let binding = Keybinding::parse("Ctrl+Tab").unwrap();
         let key = Key::Named(keyboard::key::Named::Tab);
         let modifiers = Modifiers::CTRL | Modifiers::SHIFT;
+        assert!(!binding.matches(&key, &modifiers));
+    }
+
+    #[test]
+    fn character_match_requires_single_character_key_event() {
+        let binding = Keybinding::parse("Ctrl+A").unwrap();
+        let key = Key::Character("ab".into());
+        let modifiers = Modifiers::CTRL;
+
         assert!(!binding.matches(&key, &modifiers));
     }
 }

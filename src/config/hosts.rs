@@ -140,33 +140,48 @@ impl DetectedOs {
 
     /// Parse from /etc/os-release content to identify specific Linux distro
     pub fn from_os_release(content: &str) -> Option<Self> {
-        // Parse ID= field from os-release
+        let mut id_like = Vec::new();
+
         for line in content.lines() {
             let line = line.trim();
             if let Some(stripped) = line.strip_prefix("ID=") {
-                let id = stripped.trim_matches('"').trim_matches('\'').to_lowercase();
-                return Some(match id.as_str() {
-                    "ubuntu" => DetectedOs::Ubuntu,
-                    "debian" => DetectedOs::Debian,
-                    "fedora" => DetectedOs::Fedora,
-                    "arch" | "archlinux" => DetectedOs::Arch,
-                    "centos" => DetectedOs::CentOS,
-                    "rhel" | "redhat" => DetectedOs::RedHat,
-                    "opensuse" | "opensuse-leap" | "opensuse-tumbleweed" => DetectedOs::OpenSUSE,
-                    "nixos" => DetectedOs::NixOS,
-                    "manjaro" => DetectedOs::Manjaro,
-                    "linuxmint" => DetectedOs::Mint,
-                    "pop" => DetectedOs::PopOS,
-                    "gentoo" => DetectedOs::Gentoo,
-                    "alpine" => DetectedOs::Alpine,
-                    "kali" => DetectedOs::Kali,
-                    "rocky" => DetectedOs::Rocky,
-                    "almalinux" => DetectedOs::Alma,
-                    _ => DetectedOs::Linux, // Unknown distro, use generic Linux
-                });
+                return Some(Self::from_os_release_id(stripped));
+            }
+            if let Some(stripped) = line.strip_prefix("ID_LIKE=") {
+                id_like = parse_os_release_value(stripped)
+                    .split_whitespace()
+                    .map(str::to_string)
+                    .collect();
             }
         }
-        None
+
+        id_like
+            .into_iter()
+            .map(|id| Self::from_os_release_id(&id))
+            .find(|os| *os != DetectedOs::Linux)
+    }
+
+    fn from_os_release_id(raw: &str) -> Self {
+        let id = parse_os_release_value(raw).to_lowercase();
+        match id.as_str() {
+            "ubuntu" => DetectedOs::Ubuntu,
+            "debian" => DetectedOs::Debian,
+            "fedora" => DetectedOs::Fedora,
+            "arch" | "archlinux" => DetectedOs::Arch,
+            "centos" => DetectedOs::CentOS,
+            "rhel" | "redhat" => DetectedOs::RedHat,
+            "opensuse" | "opensuse-leap" | "opensuse-tumbleweed" => DetectedOs::OpenSUSE,
+            "nixos" => DetectedOs::NixOS,
+            "manjaro" => DetectedOs::Manjaro,
+            "linuxmint" => DetectedOs::Mint,
+            "pop" => DetectedOs::PopOS,
+            "gentoo" => DetectedOs::Gentoo,
+            "alpine" => DetectedOs::Alpine,
+            "kali" => DetectedOs::Kali,
+            "rocky" => DetectedOs::Rocky,
+            "almalinux" => DetectedOs::Alma,
+            _ => DetectedOs::Linux,
+        }
     }
 
     /// Check if this is a Linux variant
@@ -250,6 +265,19 @@ impl DetectedOs {
             DetectedOs::Unknown(_) => (0x70, 0x70, 0x70), // Muted gray
         }
     }
+}
+
+fn parse_os_release_value(raw: &str) -> String {
+    let trimmed = raw.trim();
+    let without_comment = match trimmed.find('#') {
+        Some(index) => trimmed[..index].trim_end(),
+        None => trimmed,
+    };
+    without_comment
+        .trim()
+        .trim_matches('"')
+        .trim_matches('\'')
+        .to_string()
 }
 
 fn default_port() -> u16 {
@@ -755,6 +783,24 @@ VERSION="24.05 (Uakari)"
         let content2 = "ID='debian'\n";
         assert_eq!(
             DetectedOs::from_os_release(content2),
+            Some(DetectedOs::Debian)
+        );
+    }
+
+    #[test]
+    fn from_os_release_strips_inline_comment() {
+        let content = "ID=ubuntu # comment\n";
+        assert_eq!(
+            DetectedOs::from_os_release(content),
+            Some(DetectedOs::Ubuntu)
+        );
+    }
+
+    #[test]
+    fn from_os_release_uses_id_like_when_id_missing() {
+        let content = "NAME=\"Raspberry Pi OS\"\nID_LIKE=\"debian\"\n";
+        assert_eq!(
+            DetectedOs::from_os_release(content),
             Some(DetectedOs::Debian)
         );
     }

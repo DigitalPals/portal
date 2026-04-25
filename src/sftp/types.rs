@@ -53,6 +53,16 @@ impl FileEntry {
         self.extension().map(str::to_ascii_lowercase)
     }
 
+    fn normalized_type_key(&self) -> Option<String> {
+        self.normalized_extension().or_else(|| {
+            let name = self.name.to_ascii_lowercase();
+            match name.as_str() {
+                "dockerfile" | "makefile" | "gnumakefile" => Some(name),
+                _ => None,
+            }
+        })
+    }
+
     /// Get icon type for this file
     pub fn icon_type(&self) -> FileIcon {
         if self.is_parent() {
@@ -62,12 +72,16 @@ impl FileEntry {
         } else if self.is_dir {
             FileIcon::Folder
         } else {
-            match self.normalized_extension().as_deref() {
+            match self.normalized_type_key().as_deref() {
                 Some(
-                    "rs" | "py" | "js" | "ts" | "c" | "cpp" | "h" | "go" | "java" | "rb" | "php"
-                    | "swift" | "kt",
+                    "rs" | "py" | "js" | "ts" | "jsx" | "tsx" | "c" | "cpp" | "cc" | "cxx" | "h"
+                    | "hpp" | "go" | "java" | "rb" | "php" | "swift" | "kt" | "html" | "htm"
+                    | "css" | "scss" | "sass" | "sql" | "lua" | "vim" | "dockerfile" | "makefile"
+                    | "gnumakefile",
                 ) => FileIcon::Code,
-                Some("txt" | "md" | "markdown" | "rst" | "doc" | "docx" | "rtf") => FileIcon::Text,
+                Some("txt" | "md" | "markdown" | "rst" | "doc" | "docx" | "rtf" | "log") => {
+                    FileIcon::Text
+                }
                 Some("json" | "toml" | "yaml" | "yml" | "xml" | "ini" | "conf" | "cfg") => {
                     FileIcon::Config
                 }
@@ -83,6 +97,7 @@ impl FileEntry {
                     FileIcon::Executable
                 }
                 Some("exe" | "bin" | "app" | "dmg" | "deb" | "rpm") => FileIcon::Executable,
+                Some("pdf") => FileIcon::Text,
                 _ => FileIcon::File,
             }
         }
@@ -97,11 +112,13 @@ impl FileEntry {
         } else if self.is_dir {
             "Folder"
         } else {
-            match self.normalized_extension().as_deref() {
+            match self.normalized_type_key().as_deref() {
                 Some("rs") => "Rust Source",
                 Some("py") => "Python Script",
                 Some("js") => "JavaScript",
                 Some("ts") => "TypeScript",
+                Some("jsx") => "JavaScript JSX",
+                Some("tsx") => "TypeScript JSX",
                 Some("c") => "C Source",
                 Some("cpp" | "cc" | "cxx") => "C++ Source",
                 Some("h" | "hpp") => "Header File",
@@ -165,6 +182,8 @@ impl FileEntry {
                 Some("css") => "Stylesheet",
                 Some("sql") => "SQL Script",
                 Some("log") => "Log File",
+                Some("dockerfile") => "Dockerfile",
+                Some("makefile" | "gnumakefile") => "Makefile",
                 _ => "File",
             }
         }
@@ -223,14 +242,18 @@ pub fn format_size(size: u64) -> String {
     const GB: u64 = MB * 1024;
 
     if size >= GB {
-        format!("{:.1} GB", size as f64 / GB as f64)
+        format!("{:.1} GB", floor_one_decimal(size as f64 / GB as f64))
     } else if size >= MB {
-        format!("{:.1} MB", size as f64 / MB as f64)
+        format!("{:.1} MB", floor_one_decimal(size as f64 / MB as f64))
     } else if size >= KB {
-        format!("{:.1} KB", size as f64 / KB as f64)
+        format!("{:.1} KB", floor_one_decimal(size as f64 / KB as f64))
     } else {
         format!("{} B", size)
     }
+}
+
+fn floor_one_decimal(value: f64) -> f64 {
+    (value * 10.0).floor() / 10.0
 }
 
 #[cfg(test)]
@@ -379,8 +402,13 @@ mod tests {
         assert_eq!(make_file("script.py").icon_type(), FileIcon::Code);
         assert_eq!(make_file("app.js").icon_type(), FileIcon::Code);
         assert_eq!(make_file("index.ts").icon_type(), FileIcon::Code);
+        assert_eq!(make_file("view.tsx").icon_type(), FileIcon::Code);
+        assert_eq!(make_file("styles.css").icon_type(), FileIcon::Code);
+        assert_eq!(make_file("query.sql").icon_type(), FileIcon::Code);
         assert_eq!(make_file("main.go").icon_type(), FileIcon::Code);
         assert_eq!(make_file("Main.java").icon_type(), FileIcon::Code);
+        assert_eq!(make_file("Dockerfile").icon_type(), FileIcon::Code);
+        assert_eq!(make_file("Makefile").icon_type(), FileIcon::Code);
     }
 
     #[test]
@@ -388,6 +416,8 @@ mod tests {
         assert_eq!(make_file("readme.txt").icon_type(), FileIcon::Text);
         assert_eq!(make_file("README.md").icon_type(), FileIcon::Text);
         assert_eq!(make_file("CHANGELOG.markdown").icon_type(), FileIcon::Text);
+        assert_eq!(make_file("report.pdf").icon_type(), FileIcon::Text);
+        assert_eq!(make_file("server.log").icon_type(), FileIcon::Text);
     }
 
     #[test]
@@ -486,6 +516,8 @@ mod tests {
         assert_eq!(make_file("app.py").kind_description(), "Python Script");
         assert_eq!(make_file("index.js").kind_description(), "JavaScript");
         assert_eq!(make_file("main.go").kind_description(), "Go Source");
+        assert_eq!(make_file("Dockerfile").kind_description(), "Dockerfile");
+        assert_eq!(make_file("Makefile").kind_description(), "Makefile");
     }
 
     #[test]
@@ -634,7 +666,7 @@ mod tests {
         assert_eq!(format_size(1024), "1.0 KB");
         assert_eq!(format_size(1536), "1.5 KB");
         assert_eq!(format_size(10240), "10.0 KB");
-        assert_eq!(format_size(1024 * 1024 - 1), "1024.0 KB");
+        assert_eq!(format_size(1024 * 1024 - 1), "1023.9 KB");
     }
 
     #[test]
@@ -661,11 +693,11 @@ mod tests {
         // Exactly KB
         assert_eq!(format_size(1024), "1.0 KB");
         // Just below MB threshold
-        assert_eq!(format_size(1024 * 1024 - 1), "1024.0 KB");
+        assert_eq!(format_size(1024 * 1024 - 1), "1023.9 KB");
         // Exactly MB
         assert_eq!(format_size(1024 * 1024), "1.0 MB");
         // Just below GB threshold
-        assert_eq!(format_size(1024 * 1024 * 1024 - 1), "1024.0 MB");
+        assert_eq!(format_size(1024 * 1024 * 1024 - 1), "1023.9 MB");
         // Exactly GB
         assert_eq!(format_size(1024 * 1024 * 1024), "1.0 GB");
     }
