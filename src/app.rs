@@ -15,7 +15,9 @@ use crate::config::{
     HistoryConfig, HostsConfig, SettingsConfig, SnippetHistoryConfig, SnippetsConfig,
 };
 use crate::keybindings::KeybindingsConfig;
-use crate::message::{Message, SessionId, SessionMessage, SidebarMenuItem, UiMessage, VncMessage};
+use crate::message::{
+    Message, SessionId, SessionMessage, SettingsTab, SidebarMenuItem, UiMessage, VncMessage,
+};
 use crate::theme::{ScaledFonts, ThemeId, get_theme};
 use crate::views::dialogs::about_dialog::about_dialog_view;
 use crate::views::dialogs::connecting_dialog::connecting_dialog_view;
@@ -105,6 +107,7 @@ pub struct UiState {
     pub sidebar_state: SidebarState,
     pub sidebar_state_before_session: Option<SidebarState>, // Saved state before hiding for terminal
     pub sidebar_selection: SidebarMenuItem,
+    pub settings_tab: SettingsTab,
     pub window_size: iced::Size,
     pub sidebar_manually_set: bool, // True if user manually changed sidebar state
     pub focus_section: FocusSection,
@@ -333,6 +336,7 @@ impl Portal {
                 sidebar_state: SidebarState::Expanded,
                 sidebar_state_before_session: None,
                 sidebar_selection: SidebarMenuItem::Hosts,
+                settings_tab: SettingsTab::default(),
                 window_size: iced::Size::new(1200.0, 800.0),
                 sidebar_manually_set: false,
                 // Focus navigation state
@@ -470,10 +474,17 @@ impl Portal {
                     terminal_font_size: self.prefs.terminal_font_size,
                     terminal_scroll_speed: self.prefs.terminal_scroll_speed,
                     terminal_font: self.prefs.terminal_font,
+                    active_tab: self.ui.settings_tab,
                     snippet_history_enabled: self.config.snippet_history.enabled,
                     snippet_store_command: self.config.snippet_history.store_command,
                     snippet_store_output: self.config.snippet_history.store_output,
                     snippet_redact_output: self.config.snippet_history.redact_output,
+                    vnc_settings: self.prefs.vnc_settings.clone(),
+                    auto_reconnect: self.prefs.auto_reconnect,
+                    reconnect_max_attempts: self.prefs.reconnect_max_attempts,
+                    reconnect_base_delay_ms: self.prefs.reconnect_base_delay_ms,
+                    reconnect_max_delay_ms: self.prefs.reconnect_max_delay_ms,
+                    allow_agent_forwarding: self.prefs.allow_agent_forwarding,
                     ui_scale: self.effective_ui_scale(),
                     system_ui_scale: self.prefs.system_ui_scale,
                     has_ui_scale_override: self.has_ui_scale_override(),
@@ -905,6 +916,10 @@ impl Portal {
         settings.ui_scale = self.prefs.ui_scale_override;
         settings.vnc = self.prefs.vnc_settings.clone();
         settings.portal_proxy = self.prefs.portal_proxy.clone();
+        settings.auto_reconnect = self.prefs.auto_reconnect;
+        settings.reconnect_max_attempts = self.prefs.reconnect_max_attempts;
+        settings.reconnect_base_delay_ms = self.prefs.reconnect_base_delay_ms;
+        settings.reconnect_max_delay_ms = self.prefs.reconnect_max_delay_ms;
         settings.allow_agent_forwarding = self.prefs.allow_agent_forwarding;
         settings.credential_timeout = self.prefs.credential_timeout;
         settings.session_logging_enabled = self.prefs.session_logging_enabled;

@@ -94,6 +94,10 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
             tracing::info!("Sidebar state updated (manual)");
             Task::none()
         }
+        UiMessage::SettingsTabSelected(tab) => {
+            portal.ui.settings_tab = tab;
+            Task::none()
+        }
         UiMessage::ThemeChange(theme_id) => {
             portal.prefs.theme_id = theme_id;
             portal.save_settings();
@@ -153,6 +157,36 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
             portal.save_settings();
             Task::none()
         }
+        UiMessage::AllowAgentForwarding(enabled) => {
+            portal.prefs.allow_agent_forwarding = enabled;
+            portal.save_settings();
+            Task::none()
+        }
+        UiMessage::AutoReconnectEnabled(enabled) => {
+            portal.prefs.auto_reconnect = enabled;
+            portal.save_settings();
+            Task::none()
+        }
+        UiMessage::ReconnectMaxAttemptsChanged(attempts) => {
+            portal.prefs.reconnect_max_attempts = attempts.clamp(1, 20);
+            portal.save_settings();
+            Task::none()
+        }
+        UiMessage::ReconnectBaseDelayChanged(delay_ms) => {
+            let base_delay = delay_ms.clamp(500, 10_000);
+            portal.prefs.reconnect_base_delay_ms = base_delay;
+            if portal.prefs.reconnect_max_delay_ms < base_delay {
+                portal.prefs.reconnect_max_delay_ms = base_delay;
+            }
+            portal.save_settings();
+            Task::none()
+        }
+        UiMessage::ReconnectMaxDelayChanged(delay_ms) => {
+            portal.prefs.reconnect_max_delay_ms =
+                delay_ms.clamp(portal.prefs.reconnect_base_delay_ms.max(500), 120_000);
+            portal.save_settings();
+            Task::none()
+        }
         UiMessage::CredentialTimeoutChange(timeout_seconds) => {
             let clamped = timeout_seconds.min(3600);
             portal.prefs.credential_timeout = clamped;
@@ -184,6 +218,63 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
                 tracing::info!("Security audit logging disabled");
             }
 
+            Task::none()
+        }
+        UiMessage::VncQualityPresetChanged(preset) => {
+            portal.prefs.vnc_settings.quality_preset = preset;
+            portal.save_settings();
+            Task::none()
+        }
+        UiMessage::VncScalingModeChanged(mode) => {
+            portal.prefs.vnc_settings.scaling_mode = mode;
+            portal.save_settings();
+            Task::none()
+        }
+        UiMessage::VncEncodingPreferenceChanged(encoding) => {
+            portal.prefs.vnc_settings.encoding = encoding;
+            portal.save_settings();
+            Task::none()
+        }
+        UiMessage::VncColorDepthChanged(depth) => {
+            if matches!(depth, 16 | 32) {
+                portal.prefs.vnc_settings.color_depth = depth;
+                portal.save_settings();
+            }
+            Task::none()
+        }
+        UiMessage::VncRefreshFpsChanged(fps) => {
+            portal.prefs.vnc_settings.refresh_fps = fps.clamp(1, 20);
+            portal.save_settings();
+            Task::none()
+        }
+        UiMessage::VncPointerIntervalChanged(interval_ms) => {
+            portal.prefs.vnc_settings.pointer_interval_ms = interval_ms.min(1000);
+            portal.save_settings();
+            Task::none()
+        }
+        UiMessage::VncRemoteResizeChanged(enabled) => {
+            portal.prefs.vnc_settings.remote_resize = enabled;
+            portal.save_settings();
+            Task::none()
+        }
+        UiMessage::VncClipboardSharingChanged(enabled) => {
+            portal.prefs.vnc_settings.clipboard_sharing = enabled;
+            portal.save_settings();
+            Task::none()
+        }
+        UiMessage::VncViewOnlyChanged(enabled) => {
+            portal.prefs.vnc_settings.view_only = enabled;
+            portal.save_settings();
+            Task::none()
+        }
+        UiMessage::VncShowCursorDotChanged(enabled) => {
+            portal.prefs.vnc_settings.show_cursor_dot = enabled;
+            portal.save_settings();
+            Task::none()
+        }
+        UiMessage::VncShowStatsOverlayChanged(enabled) => {
+            portal.prefs.vnc_settings.show_stats_overlay = enabled;
+            portal.save_settings();
             Task::none()
         }
         UiMessage::PortalProxyEnabled(enabled) => {

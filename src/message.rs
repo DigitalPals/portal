@@ -34,6 +34,17 @@ pub enum SidebarMenuItem {
     About,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SettingsTab {
+    #[default]
+    UiUx,
+    Terminal,
+    Connections,
+    PortalProxy,
+    SecurityLogs,
+    Snippets,
+}
+
 #[derive(Debug, Clone)]
 pub enum HostDialogField {
     Name,
@@ -509,6 +520,8 @@ pub enum UiMessage {
     SidebarItemSelect(SidebarMenuItem),
     /// Toggle sidebar collapsed state
     SidebarToggleCollapse,
+    /// Active settings tab changed
+    SettingsTabSelected(SettingsTab),
     /// Theme changed
     ThemeChange(ThemeId),
     /// Terminal font changed
@@ -531,10 +544,42 @@ pub enum UiMessage {
     SnippetHistoryRedactOutput(bool),
     /// Session logging enabled/disabled
     SessionLoggingEnabled(bool),
+    /// Global SSH agent forwarding enabled/disabled
+    AllowAgentForwarding(bool),
+    /// SSH auto-reconnect enabled/disabled
+    AutoReconnectEnabled(bool),
+    /// SSH auto-reconnect max attempts changed
+    ReconnectMaxAttemptsChanged(u32),
+    /// SSH auto-reconnect base delay changed
+    ReconnectBaseDelayChanged(u64),
+    /// SSH auto-reconnect max delay changed
+    ReconnectMaxDelayChanged(u64),
     /// Credential cache timeout changed (seconds, 0 = disabled)
     CredentialTimeoutChange(u64),
     /// Security audit logging enabled/disabled (writes security events to an audit log file)
     SecurityAuditLoggingEnabled(bool),
+    /// VNC quality preset changed
+    VncQualityPresetChanged(crate::config::settings::VncQualityPreset),
+    /// VNC scaling mode changed
+    VncScalingModeChanged(crate::config::settings::VncScalingMode),
+    /// VNC encoding preference changed
+    VncEncodingPreferenceChanged(crate::config::settings::VncEncodingPreference),
+    /// VNC color depth changed
+    VncColorDepthChanged(u8),
+    /// VNC refresh FPS changed
+    VncRefreshFpsChanged(u32),
+    /// VNC pointer interval changed
+    VncPointerIntervalChanged(u64),
+    /// VNC remote resize default changed
+    VncRemoteResizeChanged(bool),
+    /// VNC clipboard sharing changed
+    VncClipboardSharingChanged(bool),
+    /// VNC view-only default changed
+    VncViewOnlyChanged(bool),
+    /// VNC cursor dot default changed
+    VncShowCursorDotChanged(bool),
+    /// VNC stats overlay default changed
+    VncShowStatsOverlayChanged(bool),
     /// Portal Proxy enabled/disabled
     PortalProxyEnabled(bool),
     /// Portal Proxy default for newly-created SSH hosts
