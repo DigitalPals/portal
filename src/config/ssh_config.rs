@@ -98,7 +98,11 @@ pub fn parse_ssh_config(content: &str) -> Vec<Host> {
             }
             "identityfile" => {
                 if let Some(value) = tokens.get(1) {
-                    current.identity_file = Some(expand_identity_path(value));
+                    if value.eq_ignore_ascii_case("none") {
+                        current.identity_file = None;
+                    } else {
+                        current.identity_file = Some(expand_identity_path(value));
+                    }
                 }
             }
             _ => {}
@@ -329,5 +333,14 @@ mod tests {
         } else {
             panic!("expected public key auth");
         }
+    }
+
+    #[test]
+    fn identity_file_none_uses_agent_auth() {
+        let content = "Host test\n  IdentityFile none\n";
+        let hosts = parse_ssh_config(content);
+
+        assert_eq!(hosts.len(), 1);
+        assert!(matches!(hosts[0].auth, AuthMethod::Agent));
     }
 }

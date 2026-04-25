@@ -10,6 +10,8 @@ use std::path::Path;
 /// Creates the target directory and all parent directories if they don't exist.
 /// Only copies regular files and directories; symlinks are skipped for safety.
 pub fn copy_dir_recursive(source: &Path, target: &Path) -> Result<(), String> {
+    ensure_target_not_inside_source(source, target)?;
+
     std::fs::create_dir_all(target)
         .map_err(|e| format!("Failed to create directory {}: {}", target.display(), e))?;
 
@@ -31,6 +33,41 @@ pub fn copy_dir_recursive(source: &Path, target: &Path) -> Result<(), String> {
                 .map_err(|e| format!("Failed to copy {}: {}", source_path.display(), e))?;
         }
         // Skip symlinks for safety
+    }
+
+    Ok(())
+}
+
+fn ensure_target_not_inside_source(source: &Path, target: &Path) -> Result<(), String> {
+    let source = source
+        .canonicalize()
+        .map_err(|e| format!("Failed to resolve source {}: {}", source.display(), e))?;
+
+    if let Ok(target) = target.canonicalize() {
+        if target == source || target.starts_with(&source) {
+            return Err(format!(
+                "Cannot copy {} into itself at {}",
+                source.display(),
+                target.display()
+            ));
+        }
+        return Ok(());
+    }
+
+    for ancestor in target.ancestors().skip(1) {
+        if ancestor.as_os_str().is_empty() {
+            continue;
+        }
+        if let Ok(ancestor) = ancestor.canonicalize() {
+            if ancestor == source || ancestor.starts_with(&source) {
+                return Err(format!(
+                    "Cannot copy {} into itself at {}",
+                    source.display(),
+                    target.display()
+                ));
+            }
+            break;
+        }
     }
 
     Ok(())
@@ -63,9 +100,11 @@ pub fn count_items_in_dir(dir: &Path) -> Result<usize, String> {
 
 /// Remove a directory tree (async) for temp cleanup.
 pub async fn cleanup_temp_dir(path: &Path) -> Result<(), String> {
-    tokio::fs::remove_dir_all(path)
-        .await
-        .map_err(|e| format!("Failed to remove {}: {}", path.display(), e))
+    match tokio::fs::remove_dir_all(path).await {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(format!("Failed to remove {}: {}", path.display(), e)),
+    }
 }
 
 #[cfg(test)]
@@ -114,6 +153,18 @@ mod tests {
         );
     }
 
+    #[test]
+    fn copy_dir_recursive_rejects_target_inside_source() {
+        let source = tempdir().unwrap();
+        fs::write(source.path().join("file1.txt"), "content1").unwrap();
+
+        let target_path = source.path().join("copied");
+        let result = copy_dir_recursive(source.path(), &target_path);
+
+        assert!(result.is_err());
+        assert!(!target_path.exists());
+    }
+
     #[tokio::test]
     async fn cleanup_temp_dir_removes_tree() {
         let dir = tempdir().unwrap();
@@ -123,5 +174,13 @@ mod tests {
 
         cleanup_temp_dir(dir.path()).await.unwrap();
         assert!(!dir.path().exists());
+    }
+
+    #[tokio::test]
+    async fn cleanup_temp_dir_ignores_missing_dir() {
+        let dir = tempdir().unwrap();
+        let missing = dir.path().join("missing");
+
+        cleanup_temp_dir(&missing).await.unwrap();
     }
 }

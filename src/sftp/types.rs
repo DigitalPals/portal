@@ -49,16 +49,20 @@ impl FileEntry {
         }
     }
 
+    fn normalized_extension(&self) -> Option<String> {
+        self.extension().map(str::to_ascii_lowercase)
+    }
+
     /// Get icon type for this file
     pub fn icon_type(&self) -> FileIcon {
         if self.is_parent() {
             FileIcon::ParentDir
-        } else if self.is_dir {
-            FileIcon::Folder
         } else if self.is_symlink {
             FileIcon::Symlink
+        } else if self.is_dir {
+            FileIcon::Folder
         } else {
-            match self.extension() {
+            match self.normalized_extension().as_deref() {
                 Some(
                     "rs" | "py" | "js" | "ts" | "c" | "cpp" | "h" | "go" | "java" | "rb" | "php"
                     | "swift" | "kt",
@@ -88,12 +92,12 @@ impl FileEntry {
     pub fn kind_description(&self) -> &'static str {
         if self.is_parent() {
             "Parent Directory"
-        } else if self.is_dir {
-            "Folder"
         } else if self.is_symlink {
             "Symbolic Link"
+        } else if self.is_dir {
+            "Folder"
         } else {
-            match self.extension() {
+            match self.normalized_extension().as_deref() {
                 Some("rs") => "Rust Source",
                 Some("py") => "Python Script",
                 Some("js") => "JavaScript",
@@ -267,6 +271,17 @@ mod tests {
         }
     }
 
+    fn make_symlink_dir(name: &str) -> FileEntry {
+        FileEntry {
+            name: name.to_string(),
+            path: PathBuf::from(format!("/test/{}", name)),
+            is_dir: true,
+            is_symlink: true,
+            size: 0,
+            modified: None,
+        }
+    }
+
     // === FileEntry::is_parent tests ===
 
     #[test]
@@ -351,6 +366,14 @@ mod tests {
     }
 
     #[test]
+    fn icon_type_symlink_dir_remains_symlink() {
+        assert_eq!(
+            make_symlink_dir("linked-folder").icon_type(),
+            FileIcon::Symlink
+        );
+    }
+
+    #[test]
     fn icon_type_code_files() {
         assert_eq!(make_file("main.rs").icon_type(), FileIcon::Code);
         assert_eq!(make_file("script.py").icon_type(), FileIcon::Code);
@@ -382,6 +405,7 @@ mod tests {
     #[test]
     fn icon_type_image_files() {
         assert_eq!(make_file("photo.jpg").icon_type(), FileIcon::Image);
+        assert_eq!(make_file("PHOTO.JPG").icon_type(), FileIcon::Image);
         assert_eq!(make_file("logo.png").icon_type(), FileIcon::Image);
         assert_eq!(make_file("icon.svg").icon_type(), FileIcon::Image);
         assert_eq!(make_file("animation.gif").icon_type(), FileIcon::Image);
@@ -449,6 +473,14 @@ mod tests {
     }
 
     #[test]
+    fn kind_description_symlink_dir_remains_symlink() {
+        assert_eq!(
+            make_symlink_dir("linked-folder").kind_description(),
+            "Symbolic Link"
+        );
+    }
+
+    #[test]
     fn kind_description_code_files() {
         assert_eq!(make_file("main.rs").kind_description(), "Rust Source");
         assert_eq!(make_file("app.py").kind_description(), "Python Script");
@@ -460,6 +492,7 @@ mod tests {
     fn kind_description_document_files() {
         assert_eq!(make_file("readme.txt").kind_description(), "Plain Text");
         assert_eq!(make_file("README.md").kind_description(), "Markdown");
+        assert_eq!(make_file("README.MD").kind_description(), "Markdown");
         assert_eq!(make_file("data.json").kind_description(), "JSON");
         assert_eq!(make_file("report.pdf").kind_description(), "PDF Document");
     }
