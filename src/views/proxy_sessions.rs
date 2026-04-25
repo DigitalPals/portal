@@ -1,7 +1,7 @@
 use iced::widget::{Column, Row, Space, button, column, container, row, scrollable, text};
 use iced::{Alignment, Element, Fill, Length, Padding};
 
-use crate::app::managers::ProxySessionsState;
+use crate::app::managers::{ProxySessionsState, TerminalPreviewHandle};
 use crate::app::{SidebarState, managers::ProxySessionCard};
 use crate::config::settings::TerminalMetricAdjustments;
 use crate::fonts::TerminalFont;
@@ -16,7 +16,7 @@ use crate::theme::{
 
 const THUMBNAIL_HEIGHT: f32 = 150.0;
 const THUMBNAIL_FONT_SIZE: f32 = 5.0;
-const MIN_SESSION_CARD_WIDTH: f32 = 340.0;
+pub const SESSION_CARD_WIDTH: f32 = 340.0;
 
 pub fn calculate_columns(window_width: f32, sidebar_state: SidebarState) -> usize {
     let sidebar_width = match sidebar_state {
@@ -26,7 +26,7 @@ pub fn calculate_columns(window_width: f32, sidebar_state: SidebarState) -> usiz
     };
 
     let content_width = window_width - sidebar_width - GRID_PADDING;
-    let columns = grid_columns_for_width(content_width, MIN_SESSION_CARD_WIDTH);
+    let columns = grid_columns_for_width(content_width, SESSION_CARD_WIDTH);
 
     columns.clamp(1, 4)
 }
@@ -128,11 +128,7 @@ fn session_grid<'a>(
 
     if !current_row.is_empty() {
         while current_row.len() < column_count {
-            current_row.push(
-                Space::new()
-                    .width(Length::Fixed(MIN_SESSION_CARD_WIDTH))
-                    .into(),
-            );
+            current_row.push(Space::new().width(Length::Fixed(SESSION_CARD_WIDTH)).into());
         }
         rows.push(Row::with_children(current_row).spacing(GRID_SPACING).into());
     }
@@ -159,25 +155,7 @@ fn session_card<'a>(
         ""
     };
 
-    let terminal = TerminalWidget::new(session.terminal.term(), |_| Message::Noop)
-        .font_size(THUMBNAIL_FONT_SIZE)
-        .font(TerminalFont::default())
-        .metric_adjustments(TerminalMetricAdjustments::default())
-        .keybindings(KeybindingsConfig::default())
-        .terminal_colors(theme.terminal);
-
-    let preview = container(terminal)
-        .height(Length::Fixed(THUMBNAIL_HEIGHT))
-        .width(Fill)
-        .style(move |_theme| container::Style {
-            background: Some(theme.terminal.background.into()),
-            border: iced::Border {
-                color: theme.border,
-                width: 1.0,
-                radius: BORDER_RADIUS.into(),
-            },
-            ..Default::default()
-        });
+    let preview = terminal_thumbnail(session.terminal.term(), theme);
 
     let meta = row![
         column![
@@ -193,7 +171,7 @@ fn session_card<'a>(
     let card = column![preview, meta].spacing(10);
     button(container(card).padding(12).width(Fill))
         .padding(0)
-        .width(Length::Fixed(MIN_SESSION_CARD_WIDTH))
+        .width(Length::Fixed(SESSION_CARD_WIDTH))
         .style(move |_theme, status| {
             let background = match status {
                 iced::widget::button::Status::Hovered => Some(theme.hover.into()),
@@ -213,6 +191,29 @@ fn session_card<'a>(
         .on_press(Message::ProxySessions(ProxySessionsMessage::Resume(
             session.session_id,
         )))
+        .into()
+}
+
+pub fn terminal_thumbnail(term: TerminalPreviewHandle, theme: Theme) -> Element<'static, Message> {
+    let terminal = TerminalWidget::new(term, |_| Message::Noop)
+        .font_size(THUMBNAIL_FONT_SIZE)
+        .font(TerminalFont::default())
+        .metric_adjustments(TerminalMetricAdjustments::default())
+        .keybindings(KeybindingsConfig::default())
+        .terminal_colors(theme.terminal);
+
+    container(terminal)
+        .height(Length::Fixed(THUMBNAIL_HEIGHT))
+        .width(Fill)
+        .style(move |_theme| container::Style {
+            background: Some(theme.terminal.background.into()),
+            border: iced::Border {
+                color: theme.border,
+                width: 1.0,
+                radius: BORDER_RADIUS.into(),
+            },
+            ..Default::default()
+        })
         .into()
 }
 

@@ -200,9 +200,10 @@ pub fn proxy_connect_tasks(
 
     let connect_task = Task::perform(
         async move {
-            let result = ProxySession::spawn(&settings, &host_for_task, host_id, 80, 24, event_tx)
-                .map(Arc::new)
-                .map_err(|error| error.to_string());
+            let result =
+                ProxySession::spawn(&settings, &host_for_task, session_id, 80, 24, event_tx)
+                    .map(Arc::new)
+                    .map_err(|error| error.to_string());
             (session_id, host_id, host_for_task, result)
         },
         |(session_id, host_id, host, result)| match result {

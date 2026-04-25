@@ -25,6 +25,12 @@ use super::managers::SessionBackend;
 use super::services::{connection, file_viewer, history};
 use super::{FocusSection, Portal, View};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConnectionLaunchMode {
+    Default,
+    FreshSession,
+}
+
 impl Portal {
     pub(super) fn begin_connecting(
         &mut self,
@@ -381,6 +387,22 @@ impl Portal {
     }
 
     pub(super) fn connect_to_host(&mut self, host: &Host) -> Task<Message> {
+        self.connect_to_host_with_mode(host, ConnectionLaunchMode::Default)
+    }
+
+    pub(super) fn connect_to_host_new_session(&mut self, host: &Host) -> Task<Message> {
+        self.connect_to_host_with_mode(host, ConnectionLaunchMode::FreshSession)
+    }
+
+    fn connect_to_host_with_mode(
+        &mut self,
+        host: &Host,
+        mode: ConnectionLaunchMode,
+    ) -> Task<Message> {
+        if mode == ConnectionLaunchMode::FreshSession {
+            tracing::debug!("Starting explicit fresh session for host {}", host.name);
+        }
+
         if connection::should_use_portal_proxy(&self.prefs.portal_proxy, host) {
             let dialog_host_name = host.name.clone();
             let host = Arc::new(host.clone());

@@ -1,30 +1,67 @@
 //! Dialog for choosing between existing sessions and a new host session.
 
 use chrono::{DateTime, Utc};
-use iced::widget::{Space, button, column, container, row, scrollable, text};
-use iced::{Alignment, Element, Length};
+use iced::widget::{Column, Row, Space, button, column, container, row, scrollable, text};
+use iced::{Alignment, Element, Fill, Length};
 use uuid::Uuid;
 
+use crate::app::managers::TerminalPreviewHandle;
 use crate::icons::{self, icon_with_color};
 use crate::message::{DialogMessage, HostMessage, Message, SessionId};
 use crate::proxy::ListedProxySession;
-use crate::theme::{BORDER_RADIUS, Theme};
+use crate::theme::{BORDER_RADIUS, GRID_SPACING, Theme};
+use crate::views::proxy_sessions::{SESSION_CARD_WIDTH, terminal_thumbnail};
+use crate::views::terminal_view::TerminalSession;
 
 use super::common::{dialog_backdrop, primary_button_style, secondary_button_style};
 
-#[derive(Debug, Clone)]
+const SESSION_CHOICE_COLUMNS: usize = 2;
+const DIALOG_HORIZONTAL_PADDING: f32 = 24.0;
+const SESSION_CHOICE_DIALOG_WIDTH: f32 = SESSION_CARD_WIDTH * SESSION_CHOICE_COLUMNS as f32
+    + GRID_SPACING * (SESSION_CHOICE_COLUMNS as f32 - 1.0)
+    + DIALOG_HORIZONTAL_PADDING * 2.0;
+
+#[derive(Clone)]
+pub struct SessionThumbnail {
+    term: TerminalPreviewHandle,
+}
+
+impl SessionThumbnail {
+    pub fn from_terminal(term: TerminalPreviewHandle) -> Self {
+        Self { term }
+    }
+
+    pub fn from_preview(title: impl Into<String>, preview: &[u8]) -> Self {
+        let (terminal, _events) = TerminalSession::new(title);
+        if !preview.is_empty() {
+            terminal.process_output(preview);
+        }
+
+        Self {
+            term: terminal.term(),
+        }
+    }
+
+    fn term(&self) -> TerminalPreviewHandle {
+        self.term.clone()
+    }
+}
+
+#[derive(Clone)]
 pub struct LocalSessionChoice {
     pub session_id: SessionId,
     pub title: String,
+    pub thumbnail: SessionThumbnail,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct DetachedProxySessionChoice {
     pub session: ListedProxySession,
     pub display_name: String,
+    pub thumbnail: SessionThumbnail,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct SessionChoiceDialogState {
     pub host_id: Uuid,
     pub host_name: String,
@@ -98,30 +135,44 @@ pub fn session_choice_dialog_view(
 
     if !state.local_sessions.is_empty() {
         rows.push(section_label("Open Portal tabs", theme));
-        for session in &state.local_sessions {
-            rows.push(session_row(
-                icons::ui::TERMINAL,
-                session.title.clone(),
-                "Open tab".to_string(),
-                Message::Host(HostMessage::OpenExistingSession(session.session_id)),
-                theme,
-            ));
-        }
+        rows.push(session_grid(
+            state
+                .local_sessions
+                .iter()
+                .map(|session| {
+                    session_card(
+                        icons::ui::TERMINAL,
+                        session.title.clone(),
+                        "Open tab".to_string(),
+                        session.thumbnail.clone(),
+                        Message::Host(HostMessage::OpenExistingSession(session.session_id)),
+                        theme,
+                    )
+                })
+                .collect(),
+        ));
     }
 
     if !state.proxy_sessions.is_empty() {
         rows.push(section_label("Detached Portal Proxy sessions", theme));
-        for choice in &state.proxy_sessions {
-            rows.push(session_row(
-                icons::ui::SERVER,
-                choice.display_name.clone(),
-                proxy_detail(&choice.session),
-                Message::Host(HostMessage::OpenDetachedProxySession(
-                    choice.session.session_id,
-                )),
-                theme,
-            ));
-        }
+        rows.push(session_grid(
+            state
+                .proxy_sessions
+                .iter()
+                .map(|choice| {
+                    session_card(
+                        icons::ui::SERVER,
+                        choice.display_name.clone(),
+                        proxy_detail(&choice.session),
+                        choice.thumbnail.clone(),
+                        Message::Host(HostMessage::OpenDetachedProxySession(
+                            choice.session.session_id,
+                        )),
+                        theme,
+                    )
+                })
+                .collect(),
+        ));
     }
 
     if state.proxy_loading {
@@ -156,8 +207,8 @@ pub fn session_choice_dialog_view(
         row![Space::new().width(Length::Fill), cancel_button].spacing(8),
     ]
     .spacing(4)
-    .padding(24)
-    .width(Length::Fixed(460.0));
+    .padding(DIALOG_HORIZONTAL_PADDING)
+    .width(Length::Fixed(SESSION_CHOICE_DIALOG_WIDTH));
 
     dialog_backdrop(content, theme)
 }
@@ -199,14 +250,16 @@ fn error_row(error: String, _theme: Theme) -> Element<'static, Message> {
         .into()
 }
 
-fn session_row(
+fn session_card(
     icon: &'static [u8],
     title: String,
     detail: String,
+    thumbnail: SessionThumbnail,
     on_press: Message,
     theme: Theme,
 ) -> Element<'static, Message> {
-    button(
+    let preview = terminal_thumbnail(thumbnail.term(), theme);
+    let meta = row![
         row![
             icon_with_color(icon, 18, theme.accent),
             column![
@@ -214,16 +267,47 @@ fn session_row(
                 text(detail).size(12).color(theme.text_secondary),
             ]
             .spacing(2)
-            .width(Length::Fill),
+            .width(Fill),
         ]
         .spacing(10)
-        .align_y(Alignment::Center),
-    )
-    .padding([10, 12])
-    .width(Length::Fill)
-    .style(secondary_button_style(theme))
-    .on_press(on_press)
-    .into()
+        .align_y(Alignment::Center)
+        .width(Fill),
+    ]
+    .align_y(Alignment::Center);
+
+    let card = column![preview, meta].spacing(10);
+    button(container(card).padding(12).width(Fill))
+        .padding(0)
+        .width(Length::Fixed(SESSION_CARD_WIDTH))
+        .style(secondary_button_style(theme))
+        .on_press(on_press)
+        .into()
+}
+
+fn session_grid(cards: Vec<Element<'static, Message>>) -> Element<'static, Message> {
+    let mut rows: Vec<Element<'static, Message>> = Vec::new();
+    let mut current_row: Vec<Element<'static, Message>> = Vec::new();
+
+    for card in cards {
+        current_row.push(card);
+
+        if current_row.len() >= SESSION_CHOICE_COLUMNS {
+            rows.push(
+                Row::with_children(std::mem::take(&mut current_row))
+                    .spacing(GRID_SPACING)
+                    .into(),
+            );
+        }
+    }
+
+    if !current_row.is_empty() {
+        while current_row.len() < SESSION_CHOICE_COLUMNS {
+            current_row.push(Space::new().width(Length::Fixed(SESSION_CARD_WIDTH)).into());
+        }
+        rows.push(Row::with_children(current_row).spacing(GRID_SPACING).into());
+    }
+
+    Column::with_children(rows).spacing(GRID_SPACING).into()
 }
 
 fn proxy_detail(session: &ListedProxySession) -> String {

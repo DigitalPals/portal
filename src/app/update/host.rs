@@ -11,7 +11,7 @@ use crate::proxy;
 use crate::proxy::ListedProxySession;
 use crate::views::dialogs::host_dialog::HostDialogState;
 use crate::views::dialogs::session_choice_dialog::{
-    DetachedProxySessionChoice, LocalSessionChoice, SessionChoiceDialogState,
+    DetachedProxySessionChoice, LocalSessionChoice, SessionChoiceDialogState, SessionThumbnail,
 };
 use crate::views::toast::Toast;
 
@@ -33,7 +33,7 @@ pub fn handle_host(portal: &mut Portal, msg: HostMessage) -> Task<Message> {
             if let Some(host) = portal.config.hosts.find_host(id).cloned() {
                 return match host.protocol {
                     Protocol::Vnc => portal.connect_vnc_host(&host),
-                    Protocol::Ssh => portal.connect_to_host(&host),
+                    Protocol::Ssh => portal.connect_to_host_new_session(&host),
                 };
             }
             Task::none()
@@ -143,6 +143,7 @@ fn handle_detached_proxy_sessions_loaded(
             .filter(|session| !portal.sessions.contains(session.session_id))
             .filter(|session| proxy_session_matches_host(session, &host))
             .map(|session| DetachedProxySessionChoice {
+                thumbnail: SessionThumbnail::from_preview(host.name.clone(), &session.preview),
                 session,
                 display_name: host.name.clone(),
             })
@@ -175,7 +176,7 @@ fn handle_detached_proxy_sessions_loaded(
 
     if connect_new {
         portal.dialogs.close();
-        return portal.connect_to_host(&host);
+        return portal.connect_to_host_new_session(&host);
     }
 
     Task::none()
@@ -186,7 +187,11 @@ fn local_session_choices(portal: &Portal, host_id: Uuid) -> Vec<LocalSessionChoi
         .sessions
         .sessions_for_host(host_id)
         .into_iter()
-        .map(|(session_id, title)| LocalSessionChoice { session_id, title })
+        .map(|(session_id, title, term)| LocalSessionChoice {
+            session_id,
+            title,
+            thumbnail: SessionThumbnail::from_terminal(term),
+        })
         .collect()
 }
 

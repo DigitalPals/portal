@@ -13,9 +13,14 @@ use crate::local::LocalSession;
 use crate::message::SessionId;
 use crate::proxy::ProxySession;
 use crate::ssh::SshSession;
+use crate::terminal::backend::EventProxy;
 use crate::terminal::logger::SessionLogger;
 use crate::views::terminal_view::TerminalSession;
 use crate::vnc::VncSession;
+use alacritty_terminal::term::Term;
+use parking_lot::Mutex;
+
+pub type TerminalPreviewHandle = Arc<Mutex<Term<EventProxy>>>;
 
 /// Backend type for a terminal session
 pub enum SessionBackend {
@@ -143,11 +148,20 @@ impl SessionManager {
     }
 
     /// Return active terminal sessions associated with a host.
-    pub fn sessions_for_host(&self, host_id: Uuid) -> Vec<(SessionId, String)> {
+    pub fn sessions_for_host(
+        &self,
+        host_id: Uuid,
+    ) -> Vec<(SessionId, String, TerminalPreviewHandle)> {
         self.sessions
             .iter()
             .filter(|(_, session)| session.host_id == Some(host_id))
-            .map(|(session_id, session)| (*session_id, session.host_name.clone()))
+            .map(|(session_id, session)| {
+                (
+                    *session_id,
+                    session.host_name.clone(),
+                    session.terminal.term(),
+                )
+            })
             .collect()
     }
 
@@ -258,7 +272,9 @@ mod tests {
         manager.insert(other_id, other);
 
         let sessions = manager.sessions_for_host(host_id);
-        assert_eq!(sessions, vec![(matching_id, "Pulse".to_string())]);
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].0, matching_id);
+        assert_eq!(sessions[0].1, "Pulse");
     }
 
     #[test]
