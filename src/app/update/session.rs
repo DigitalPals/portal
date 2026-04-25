@@ -1,5 +1,6 @@
 //! Terminal session message handlers
 
+use chrono::{DateTime, Utc};
 use futures::stream;
 use iced::Task;
 use iced::clipboard;
@@ -216,6 +217,19 @@ fn start_session_logger(portal: &mut Portal, session_id: SessionId) {
     }
 }
 
+fn session_start_from_proxy_created_at(created_at: Option<DateTime<Utc>>) -> Instant {
+    let now = Instant::now();
+    let Some(created_at) = created_at else {
+        return now;
+    };
+
+    let Ok(age) = Utc::now().signed_duration_since(created_at).to_std() else {
+        return now;
+    };
+
+    now.checked_sub(age).unwrap_or(now)
+}
+
 fn close_session_logger(portal: &mut Portal, session_id: SessionId) -> Task<Message> {
     let Some(session) = portal.sessions.get_mut(session_id) else {
         return Task::none();
@@ -235,6 +249,7 @@ fn start_terminal_session(
     host_name: String,
     host_id: Option<Uuid>,
     history_entry_id: Uuid,
+    session_start: Instant,
 ) -> Task<Message> {
     // Create terminal session
     let (terminal, terminal_events) = TerminalSession::new(&host_name);
@@ -245,7 +260,7 @@ fn start_terminal_session(
         ActiveSession {
             backend,
             terminal,
-            session_start: Instant::now(),
+            session_start,
             host_name: host_name.clone(),
             host_id,
             history_entry_id,
@@ -433,6 +448,7 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                 host_name,
                 Some(host_id),
                 history_entry_id,
+                Instant::now(),
             )
         }
         SessionMessage::LocalConnected {
@@ -456,6 +472,7 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                 "Local Terminal".to_string(),
                 None,
                 history_entry_id,
+                Instant::now(),
             )
         }
         SessionMessage::ProxyConnected {
@@ -463,13 +480,18 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
             proxy_session,
             host_name,
             host_id,
+            session_started_at,
         } => {
             tracing::info!("Portal Proxy connected");
             portal.finish_pending_connect();
+            let has_proxy_started_at = session_started_at.is_some();
+            let proxy_session_start = session_start_from_proxy_created_at(session_started_at);
 
             if let Some(session) = portal.sessions.get_mut(session_id) {
                 session.backend = SessionBackend::Proxy(proxy_session);
-                session.session_start = Instant::now();
+                if has_proxy_started_at {
+                    session.session_start = proxy_session_start;
+                }
                 session.reconnect_attempts = 0;
                 session.reconnect_next_attempt = None;
                 session.status_message =
@@ -517,6 +539,7 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                 host_name,
                 host_id,
                 history_entry_id,
+                proxy_session_start,
             )
         }
         SessionMessage::Data(session_id, data) => {
@@ -853,6 +876,26 @@ mod tests {
             output_budget_for_pending(LARGE_BACKLOG_THRESHOLD),
             LARGE_OUTPUT_BYTES_PER_TICK
         );
+    }
+
+    #[test]
+    fn proxy_session_start_uses_created_at_age() {
+        let created_at = Utc::now() - chrono::Duration::seconds(120);
+
+        let session_start = session_start_from_proxy_created_at(Some(created_at));
+
+        let elapsed = session_start.elapsed();
+        assert!(elapsed >= Duration::from_secs(119));
+        assert!(elapsed <= Duration::from_secs(121));
+    }
+
+    #[test]
+    fn proxy_session_start_ignores_future_created_at() {
+        let created_at = Utc::now() + chrono::Duration::seconds(60);
+
+        let session_start = session_start_from_proxy_created_at(Some(created_at));
+
+        assert!(session_start.elapsed() < Duration::from_secs(1));
     }
 
     #[test]

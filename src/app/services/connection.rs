@@ -211,6 +211,7 @@ pub fn proxy_connect_tasks(
                 proxy_session,
                 host_name: host.name.clone(),
                 host_id: Some(host_id),
+                session_started_at: None,
             }),
             Err(error) => Message::Session(SessionMessage::ConnectFailed {
                 session_id,
@@ -229,6 +230,7 @@ pub fn proxy_resume_tasks(
     display_name: String,
 ) -> Task<Message> {
     let session_id = listed_session.session_id;
+    let session_started_at = listed_session.created_at;
     let target = ProxySessionTarget {
         session_id,
         target_host: listed_session.target_host,
@@ -245,12 +247,13 @@ pub fn proxy_resume_tasks(
                 .map_err(|error| error.to_string());
             (session_id, display_name, host_id, result)
         },
-        |(session_id, host_name, host_id, result)| match result {
+        move |(session_id, host_name, host_id, result)| match result {
             Ok(proxy_session) => Message::Session(SessionMessage::ProxyConnected {
                 session_id,
                 proxy_session,
                 host_name,
                 host_id,
+                session_started_at: Some(session_started_at),
             }),
             Err(error) => Message::Session(SessionMessage::ConnectFailed {
                 session_id,

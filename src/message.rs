@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use chrono::{DateTime, Utc};
 use iced::widget::text_editor;
 use secrecy::SecretString;
 use uuid::Uuid;
@@ -100,6 +101,7 @@ pub enum SessionMessage {
         proxy_session: Arc<ProxySession>,
         host_name: String,
         host_id: Option<Uuid>,
+        session_started_at: Option<DateTime<Utc>>,
     },
     /// Data received from terminal (SSH or local)
     Data(SessionId, Vec<u8>),
