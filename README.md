@@ -288,6 +288,10 @@ To use it:
 
 Typing `exit` in the remote shell closes the real session. Closing the Portal tab or losing connectivity only detaches Portal from the proxy session.
 
+For SSH hosts that use a local private key, Portal keeps the key on the laptop.
+When connecting through Portal Proxy it starts a managed local `ssh-agent` when
+needed, loads the selected or default key, and forwards that agent to the proxy.
+
 ## Keyboard Shortcuts
 
 | Shortcut | Action |

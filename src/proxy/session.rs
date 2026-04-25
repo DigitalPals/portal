@@ -10,15 +10,17 @@ use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 use serde::Deserialize;
 use std::ffi::OsString;
 use std::io::{Read, Write};
-use std::process::Stdio;
+use std::path::{Path, PathBuf};
+use std::process::Stdio as StdStdio;
+use std::process::{Command as StdCommand, Stdio};
 use tokio::process::Command;
 use tokio::sync::mpsc;
 use tokio::time::{Duration, timeout};
 use uuid::Uuid;
 
-use crate::config::Host;
 use crate::config::paths;
 use crate::config::settings::PortalProxySettings;
+use crate::config::{AuthMethod, Host};
 use crate::error::LocalError;
 
 const MIN_SUPPORTED_PROXY_API_VERSION: u16 = 1;
@@ -115,7 +117,8 @@ impl ProxySession {
             target_port: host.port,
             target_user: host.effective_username(),
         };
-        Self::spawn_target(settings, &target, cols, rows, event_tx)
+        let agent_socket = prepare_proxy_agent(&host.auth)?;
+        Self::spawn_target_with_agent(settings, &target, cols, rows, event_tx, agent_socket)
     }
 
     pub fn spawn_target(
@@ -124,6 +127,18 @@ impl ProxySession {
         cols: u16,
         rows: u16,
         event_tx: mpsc::Sender<ProxyEvent>,
+    ) -> Result<Self, LocalError> {
+        let agent_socket = discover_agent_socket();
+        Self::spawn_target_with_agent(settings, target, cols, rows, event_tx, agent_socket)
+    }
+
+    fn spawn_target_with_agent(
+        settings: &PortalProxySettings,
+        target: &ProxySessionTarget,
+        cols: u16,
+        rows: u16,
+        event_tx: mpsc::Sender<ProxyEvent>,
+        agent_socket: Option<PathBuf>,
     ) -> Result<Self, LocalError> {
         let pty_system = native_pty_system();
         let pair = pty_system
@@ -135,7 +150,7 @@ impl ProxySession {
             })
             .map_err(|e| LocalError::PtyCreation(e.to_string()))?;
 
-        let mut argv = proxy_ssh_argv(settings, true)?;
+        let mut argv = proxy_ssh_argv(settings, true, agent_socket.as_deref())?;
         argv.push(OsString::from("portal-proxy"));
         argv.push(OsString::from("attach"));
         argv.push(OsString::from("--session-id"));
@@ -155,6 +170,9 @@ impl ProxySession {
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
         cmd.env("TERM_PROGRAM", "Portal");
+        if let Some(socket) = agent_socket {
+            cmd.env("SSH_AUTH_SOCK", socket);
+        }
 
         let mut child = pair
             .slave
@@ -294,7 +312,7 @@ pub async fn list_active_sessions(
 }
 
 pub async fn check_proxy_status(settings: &PortalProxySettings) -> Result<ProxyStatus, String> {
-    let mut argv = proxy_ssh_argv(settings, false).map_err(|error| error.to_string())?;
+    let mut argv = proxy_ssh_argv(settings, false, None).map_err(|error| error.to_string())?;
     argv.push(OsString::from("portal-proxy"));
     argv.push(OsString::from("version"));
     argv.push(OsString::from("--json"));
@@ -339,7 +357,7 @@ fn proxy_list_argv(
     settings: &PortalProxySettings,
     versioned: bool,
 ) -> Result<Vec<OsString>, String> {
-    let mut argv = proxy_ssh_argv(settings, false).map_err(|error| error.to_string())?;
+    let mut argv = proxy_ssh_argv(settings, false, None).map_err(|error| error.to_string())?;
     argv.push(OsString::from("portal-proxy"));
     argv.push(OsString::from("list"));
     argv.push(OsString::from("--active"));
@@ -440,6 +458,7 @@ fn raw_sessions_to_listed(
 fn proxy_ssh_argv(
     settings: &PortalProxySettings,
     allocate_tty: bool,
+    agent_socket: Option<&Path>,
 ) -> Result<Vec<OsString>, LocalError> {
     let proxy_host = settings.host.trim();
     if proxy_host.is_empty() {
@@ -455,6 +474,15 @@ fn proxy_ssh_argv(
         argv.push(OsString::from("-tt"));
     }
     argv.push(OsString::from("-A"));
+    argv.push(OsString::from("-o"));
+    argv.push(OsString::from("BatchMode=yes"));
+    if let Some(socket) = agent_socket {
+        argv.push(OsString::from("-o"));
+        argv.push(OsString::from(format!(
+            "IdentityAgent={}",
+            socket.display()
+        )));
+    }
     argv.push(OsString::from("-o"));
     argv.push(OsString::from("StrictHostKeyChecking=accept-new"));
     if let Some(config_dir) = paths::config_dir() {
@@ -478,6 +506,225 @@ fn proxy_ssh_argv(
     }
     argv.push(OsString::from(proxy_host));
     Ok(argv)
+}
+
+fn prepare_proxy_agent(auth: &AuthMethod) -> Result<Option<PathBuf>, LocalError> {
+    match auth {
+        AuthMethod::Agent => discover_agent_socket()
+            .ok_or_else(|| {
+                LocalError::SpawnFailed(
+                    "Portal Proxy needs an SSH agent for target authentication, but no usable agent was found".to_string(),
+                )
+            })
+            .map(Some),
+        AuthMethod::PublicKey { key_path } => {
+            let key_path = resolve_proxy_key_path(key_path.as_ref())?;
+            let socket = managed_agent_socket()?;
+            ensure_agent_running(&socket)?;
+            ensure_key_loaded(&socket, &key_path)?;
+            Ok(Some(socket))
+        }
+        AuthMethod::Password => Ok(None),
+    }
+}
+
+fn discover_agent_socket() -> Option<PathBuf> {
+    std::env::var_os("SSH_AUTH_SOCK")
+        .map(PathBuf::from)
+        .filter(|socket| agent_accepts_connections(socket))
+        .or_else(|| {
+            managed_agent_socket()
+                .ok()
+                .filter(|socket| agent_accepts_connections(socket))
+        })
+}
+
+fn managed_agent_socket() -> Result<PathBuf, LocalError> {
+    if let Some(runtime_dir) = std::env::var_os("XDG_RUNTIME_DIR") {
+        return Ok(PathBuf::from(runtime_dir).join("portal-ssh-agent.sock"));
+    }
+
+    let config_dir = paths::ensure_config_dir().map_err(|error| {
+        LocalError::Io(format!(
+            "failed to create Portal config directory for SSH agent socket: {}",
+            error
+        ))
+    })?;
+    Ok(config_dir.join("portal-ssh-agent.sock"))
+}
+
+fn resolve_proxy_key_path(configured: Option<&PathBuf>) -> Result<PathBuf, LocalError> {
+    if let Some(path) = configured.filter(|path| !path.as_os_str().is_empty()) {
+        let expanded = paths::expand_tilde(&path.to_string_lossy());
+        if expanded.exists() {
+            return Ok(expanded);
+        }
+        return Err(LocalError::SpawnFailed(format!(
+            "Portal Proxy key file does not exist: {}",
+            expanded.display()
+        )));
+    }
+
+    paths::default_identity_files()
+        .into_iter()
+        .find(|path| path.exists())
+        .ok_or_else(|| {
+            LocalError::SpawnFailed(
+                "Portal Proxy public-key authentication needs a local SSH key, but no default key was found in ~/.ssh".to_string(),
+            )
+        })
+}
+
+fn agent_accepts_connections(socket: &Path) -> bool {
+    if !socket.exists() {
+        return false;
+    }
+
+    matches!(
+        ssh_add_status(socket, &["-l"]),
+        Ok(code) if code == 0 || code == 1
+    )
+}
+
+fn ensure_agent_running(socket: &Path) -> Result<(), LocalError> {
+    if agent_accepts_connections(socket) {
+        return Ok(());
+    }
+
+    if socket.exists() {
+        std::fs::remove_file(socket).map_err(|error| {
+            LocalError::Io(format!(
+                "failed to remove stale SSH agent socket {}: {}",
+                socket.display(),
+                error
+            ))
+        })?;
+    }
+
+    if let Some(parent) = socket.parent() {
+        std::fs::create_dir_all(parent).map_err(|error| {
+            LocalError::Io(format!(
+                "failed to create SSH agent socket directory {}: {}",
+                parent.display(),
+                error
+            ))
+        })?;
+    }
+
+    let output = StdCommand::new("ssh-agent")
+        .arg("-a")
+        .arg(socket)
+        .arg("-s")
+        .stdin(StdStdio::null())
+        .output()
+        .map_err(|error| {
+            LocalError::SpawnFailed(format!(
+                "failed to start ssh-agent for Portal Proxy: {}",
+                error
+            ))
+        })?;
+
+    if !output.status.success() {
+        return Err(LocalError::SpawnFailed(format!(
+            "failed to start ssh-agent for Portal Proxy: {}",
+            stderr_or_status(&output)
+        )));
+    }
+
+    if !agent_accepts_connections(socket) {
+        return Err(LocalError::SpawnFailed(
+            "ssh-agent started, but Portal could not connect to its socket".to_string(),
+        ));
+    }
+
+    Ok(())
+}
+
+fn ensure_key_loaded(socket: &Path, key_path: &Path) -> Result<(), LocalError> {
+    if key_is_loaded(socket, key_path) {
+        return Ok(());
+    }
+
+    let output = StdCommand::new("ssh-add")
+        .arg(key_path)
+        .env("SSH_AUTH_SOCK", socket)
+        .env("SSH_ASKPASS_REQUIRE", "never")
+        .stdin(StdStdio::null())
+        .output()
+        .map_err(|error| {
+            LocalError::SpawnFailed(format!(
+                "failed to run ssh-add for Portal Proxy key {}: {}",
+                key_path.display(),
+                error
+            ))
+        })?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    Err(LocalError::SpawnFailed(format!(
+        "failed to add local key {} to Portal Proxy SSH agent: {}. If this key has a passphrase, run `SSH_AUTH_SOCK={} ssh-add {}` before connecting through Portal Proxy",
+        key_path.display(),
+        stderr_or_status(&output),
+        socket.display(),
+        key_path.display()
+    )))
+}
+
+fn key_is_loaded(socket: &Path, key_path: &Path) -> bool {
+    let Some(blob) = public_key_blob(key_path) else {
+        return false;
+    };
+
+    let Ok(output) = StdCommand::new("ssh-add")
+        .arg("-L")
+        .env("SSH_AUTH_SOCK", socket)
+        .stdin(StdStdio::null())
+        .output()
+    else {
+        return false;
+    };
+
+    if !output.status.success() {
+        return false;
+    }
+
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .any(|line| line.split_whitespace().nth(1) == Some(blob.as_str()))
+}
+
+fn public_key_blob(key_path: &Path) -> Option<String> {
+    let public_path = PathBuf::from(format!("{}.pub", key_path.display()));
+    let content = std::fs::read_to_string(public_path).ok()?;
+    content
+        .lines()
+        .next()?
+        .split_whitespace()
+        .nth(1)
+        .map(ToOwned::to_owned)
+}
+
+fn ssh_add_status(socket: &Path, args: &[&str]) -> Result<i32, std::io::Error> {
+    let status = StdCommand::new("ssh-add")
+        .args(args)
+        .env("SSH_AUTH_SOCK", socket)
+        .stdin(StdStdio::null())
+        .stdout(StdStdio::null())
+        .stderr(StdStdio::null())
+        .status()?;
+
+    Ok(status.code().unwrap_or(255))
+}
+
+fn stderr_or_status(output: &std::process::Output) -> String {
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    if stderr.is_empty() {
+        format!("exit status {}", output.status)
+    } else {
+        stderr
+    }
 }
 
 trait EmptyFallback {
