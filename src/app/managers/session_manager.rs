@@ -146,9 +146,8 @@ impl SessionManager {
     pub fn sessions_for_host(&self, host_id: Uuid) -> Vec<(SessionId, String)> {
         self.sessions
             .iter()
-            .filter_map(|(session_id, session)| {
-                (session.host_id == Some(host_id)).then(|| (*session_id, session.host_name.clone()))
-            })
+            .filter(|(_, session)| session.host_id == Some(host_id))
+            .map(|(session_id, session)| (*session_id, session.host_name.clone()))
             .collect()
     }
 
