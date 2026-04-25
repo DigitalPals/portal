@@ -44,9 +44,22 @@ fn write_audit_entry(entry: &str) {
     if let Some(path) = path {
         if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&path) {
             let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
-            let _ = writeln!(file, "[{}] {}", timestamp, entry);
+            let _ = writeln!(file, "[{}] {}", timestamp, sanitize_audit_entry(entry));
         }
     }
+}
+
+fn sanitize_audit_entry(entry: &str) -> String {
+    entry
+        .chars()
+        .flat_map(|ch| match ch {
+            '\n' => "\\n".chars().collect::<Vec<_>>(),
+            '\r' => "\\r".chars().collect::<Vec<_>>(),
+            '\t' => "\\t".chars().collect::<Vec<_>>(),
+            ch if ch.is_control() => format!("\\u{{{:x}}}", ch as u32).chars().collect(),
+            ch => vec![ch],
+        })
+        .collect()
 }
 
 /// Log an SSH authentication attempt.
@@ -247,4 +260,19 @@ pub fn log_vnc_disconnect(host: &str, port: u16) {
         "VNC session disconnected"
     );
     write_audit_entry(&format!("VNC_DISCONNECT host={}:{}", host, port));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sanitize_audit_entry;
+
+    #[test]
+    fn audit_entry_sanitizes_control_characters() {
+        let sanitized = sanitize_audit_entry("host=good\nFORGED\ruser\tname\u{1f}");
+
+        assert_eq!(sanitized, r"host=good\nFORGED\ruser\tname\u{1f}");
+        assert!(!sanitized.contains('\n'));
+        assert!(!sanitized.contains('\r'));
+        assert!(!sanitized.contains('\t'));
+    }
 }

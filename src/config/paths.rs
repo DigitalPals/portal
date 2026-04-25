@@ -69,13 +69,8 @@ pub fn ensure_config_dir() -> std::io::Result<PathBuf> {
 
     if !dir.exists() {
         std::fs::create_dir_all(&dir)?;
-        // Set restrictive permissions on Unix (owner-only access)
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))?;
-        }
     }
+    ensure_owner_only_dir(&dir)?;
 
     Ok(dir)
 }
@@ -149,14 +144,23 @@ pub fn ensure_log_dir() -> std::io::Result<PathBuf> {
 
     if !dir.exists() {
         std::fs::create_dir_all(&dir)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))?;
-        }
     }
+    ensure_owner_only_dir(&dir)?;
 
     Ok(dir)
+}
+
+fn ensure_owner_only_dir(dir: &std::path::Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = dir;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -217,5 +221,19 @@ mod tests {
             assert!(!files.is_empty());
             assert!(files.iter().any(|f| f.ends_with("id_ed25519")));
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ensure_owner_only_dir_tightens_existing_directory() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        ensure_owner_only_dir(dir.path()).unwrap();
+
+        let mode = std::fs::metadata(dir.path()).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700);
     }
 }

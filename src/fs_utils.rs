@@ -5,6 +5,24 @@
 
 use std::path::Path;
 
+/// Reject copying a file over itself.
+///
+/// This protects the single-file copy path; directory copies use
+/// `copy_dir_recursive`, which has stricter descendant checks.
+pub fn ensure_not_same_path(source: &Path, target: &Path) -> Result<(), String> {
+    let source = source
+        .canonicalize()
+        .map_err(|e| format!("Failed to resolve source {}: {}", source.display(), e))?;
+
+    if let Ok(target) = target.canonicalize() {
+        if target == source {
+            return Err(format!("Cannot copy {} onto itself", source.display()));
+        }
+    }
+
+    Ok(())
+}
+
 /// Recursively copy a directory from source to target.
 ///
 /// Creates the target directory and all parent directories if they don't exist.
@@ -151,6 +169,27 @@ mod tests {
             fs::read_to_string(target_path.join("file1.txt")).unwrap(),
             "content1"
         );
+    }
+
+    #[test]
+    fn ensure_not_same_path_rejects_same_file() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("file.txt");
+        fs::write(&file, "content").unwrap();
+
+        assert!(ensure_not_same_path(&file, &file).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ensure_not_same_path_rejects_symlink_to_source() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("file.txt");
+        let link = dir.path().join("link.txt");
+        fs::write(&file, "content").unwrap();
+        std::os::unix::fs::symlink(&file, &link).unwrap();
+
+        assert!(ensure_not_same_path(&file, &link).is_err());
     }
 
     #[test]

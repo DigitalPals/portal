@@ -7,7 +7,9 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::config::{AuthMethod, Host};
-use crate::fs_utils::{cleanup_temp_dir, copy_dir_recursive, count_items_in_dir};
+use crate::fs_utils::{
+    cleanup_temp_dir, copy_dir_recursive, count_items_in_dir, ensure_not_same_path,
+};
 use crate::keybindings::AppAction;
 use crate::local::{LocalEvent, LocalSession};
 use crate::local_fs::list_local_dir;
@@ -229,7 +231,20 @@ impl Portal {
     pub(super) fn handle_keybinding_action(&mut self, action: AppAction) -> Task<Message> {
         match action {
             AppAction::NewWindow => {
-                let _ = std::process::Command::new(std::env::current_exe().unwrap()).spawn();
+                match std::env::current_exe()
+                    .map_err(|e| e.to_string())
+                    .and_then(|exe| {
+                        std::process::Command::new(exe)
+                            .spawn()
+                            .map(|_| ())
+                            .map_err(|e| e.to_string())
+                    }) {
+                    Ok(()) => {}
+                    Err(error) => self.toast_manager.push(Toast::error(format!(
+                        "Failed to open new window: {}",
+                        error
+                    ))),
+                }
                 Task::none()
             }
             AppAction::NewConnection => {
@@ -467,18 +482,30 @@ impl Portal {
             match &pane.source {
                 PaneSource::Local => {
                     // Load local directory
+                    let requested_source = pane.source.clone();
+                    let requested_path = path.clone();
                     Task::perform(async move { list_local_dir(&path).await }, move |result| {
-                        Message::Sftp(SftpMessage::PaneListResult(tab_id, pane_id, result))
+                        Message::Sftp(SftpMessage::PaneListResult(
+                            tab_id,
+                            pane_id,
+                            requested_source.clone(),
+                            requested_path.clone(),
+                            result,
+                        ))
                     })
                 }
                 PaneSource::Remote { session_id, .. } => {
                     // Load remote directory via SFTP
                     if let Some(sftp) = self.sftp.get_connection(*session_id) {
                         let sftp = sftp.clone();
+                        let requested_source = pane.source.clone();
+                        let requested_path = path.clone();
                         Task::perform(async move { sftp.list_dir(&path).await }, move |result| {
                             Message::Sftp(SftpMessage::PaneListResult(
                                 tab_id,
                                 pane_id,
+                                requested_source.clone(),
+                                requested_path.clone(),
                                 result.map_err(|e| e.to_string()),
                             ))
                         })
@@ -956,6 +983,7 @@ impl Portal {
                                     copy_dir_recursive(&source_path, &target_path)?;
                                     count += count_items_in_dir(&source_path)?;
                                 } else {
+                                    ensure_not_same_path(&source_path, &target_path)?;
                                     std::fs::copy(&source_path, &target_path).map_err(|e| {
                                         format!("Failed to copy {}: {}", source_path.display(), e)
                                     })?;

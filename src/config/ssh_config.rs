@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use chrono::Utc;
 use uuid::Uuid;
 
+use crate::config::hosts::default_username;
 use crate::config::paths::{expand_tilde, ssh_dir};
 use crate::config::{AuthMethod, Host, Protocol};
 use crate::error::ConfigError;
@@ -215,7 +216,7 @@ fn should_skip_pattern(pattern: &str) -> bool {
 }
 
 fn default_user() -> String {
-    std::env::var("USER").unwrap_or_else(|_| "root".to_string())
+    default_username()
 }
 
 fn expand_identity_path(raw: &str) -> PathBuf {

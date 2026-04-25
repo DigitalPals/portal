@@ -99,9 +99,20 @@ pub fn handle_sftp(portal: &mut Portal, msg: SftpMessage) -> Task<Message> {
             }
             Task::none()
         }
-        SftpMessage::PaneListResult(tab_id, pane_id, result) => {
+        SftpMessage::PaneListResult(tab_id, pane_id, requested_source, requested_path, result) => {
             if let Some(tab_state) = portal.sftp.get_tab_mut(tab_id) {
                 let pane = tab_state.pane_mut(pane_id);
+                if pane.source != requested_source || pane.current_path != requested_path {
+                    tracing::debug!(
+                        "Ignoring stale SFTP pane listing for {:?}: requested {:?} {:?}, current {:?} {:?}",
+                        pane_id,
+                        requested_source,
+                        requested_path,
+                        pane.source,
+                        pane.current_path
+                    );
+                    return Task::none();
+                }
                 match result {
                     Ok(entries) => pane.set_entries(entries),
                     Err(e) => pane.set_error(e),

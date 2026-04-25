@@ -72,6 +72,10 @@ impl SftpSession {
 
         for entry in read_dir {
             let name = entry.file_name();
+            if !is_safe_sftp_entry_name(&name) {
+                tracing::warn!("Skipping unsafe SFTP directory entry name: {:?}", name);
+                continue;
+            }
             let metadata = entry.metadata();
             let entry_path = path.join(&name);
 
@@ -397,6 +401,16 @@ fn unix_timestamp_to_utc(mtime: u32) -> Option<chrono::DateTime<Utc>> {
     Utc.timestamp_opt(i64::from(mtime), 0).single()
 }
 
+fn is_safe_sftp_entry_name(name: &str) -> bool {
+    !name.is_empty()
+        && name != "."
+        && name != ".."
+        && !name.contains('\0')
+        && !name.contains('/')
+        && !name.contains('\\')
+        && !Path::new(name).is_absolute()
+}
+
 impl Drop for SftpSession {
     fn drop(&mut self) {
         tracing::debug!("SFTP session cleanup: closing session");
@@ -702,6 +716,19 @@ mod tests {
 
         assert_eq!(filtered.len(), 3);
         assert!(!filtered.contains(&&".."));
+    }
+
+    #[test]
+    fn sftp_entry_name_rejects_path_traversal_names() {
+        for name in ["", ".", "..", "../x", "a/b", r"a\b", "/tmp/x", "nul\0byte"] {
+            assert!(
+                !is_safe_sftp_entry_name(name),
+                "{name:?} should be rejected"
+            );
+        }
+
+        assert!(is_safe_sftp_entry_name("notes.txt"));
+        assert!(is_safe_sftp_entry_name(".profile"));
     }
 
     // === Error message formatting patterns ===

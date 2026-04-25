@@ -352,8 +352,24 @@ impl Host {
             return trimmed.to_string();
         }
 
-        std::env::var("USER").unwrap_or_else(|_| "root".to_string())
+        default_username()
     }
+}
+
+pub(crate) fn default_username() -> String {
+    first_non_empty_value(["USER", "USERNAME"].into_iter().filter_map(|key| {
+        std::env::var(key)
+            .ok()
+            .map(|value| value.trim().to_string())
+    }))
+    .unwrap_or_else(|| "root".to_string())
+}
+
+fn first_non_empty_value<I>(values: I) -> Option<String>
+where
+    I: IntoIterator<Item = String>,
+{
+    values.into_iter().find(|value| !value.is_empty())
 }
 
 /// Group/folder for organizing hosts
@@ -596,6 +612,14 @@ type = "agent"
         .unwrap();
 
         assert!(!host.portal_proxy_enabled);
+    }
+
+    #[test]
+    fn default_username_helper_skips_empty_values() {
+        let username =
+            first_non_empty_value(["".to_string(), "  ".trim().to_string(), "alice".to_string()]);
+
+        assert_eq!(username.as_deref(), Some("alice"));
     }
 
     // === DetectedOs::from_os_release tests ===

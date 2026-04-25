@@ -162,7 +162,13 @@ pub enum SftpMessage {
     /// Select file by index
     PaneSelect(SessionId, PaneId, usize),
     /// Directory listing result
-    PaneListResult(SessionId, PaneId, Result<Vec<FileEntry>, String>),
+    PaneListResult(
+        SessionId,
+        PaneId,
+        PaneSource,
+        PathBuf,
+        Result<Vec<FileEntry>, String>,
+    ),
     /// Connect pane to remote host
     ConnectHost(SessionId, PaneId, Uuid),
     /// SFTP connection succeeded for pane

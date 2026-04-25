@@ -63,10 +63,11 @@ impl HistoryEntry {
     pub fn new_local() -> Self {
         let hostname = std::env::var("HOSTNAME")
             .or_else(|_| std::env::var("HOST"))
-            .unwrap_or_else(|_| "localhost".to_string());
-        let username = std::env::var("USER")
-            .or_else(|_| std::env::var("USERNAME"))
-            .unwrap_or_default();
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            .unwrap_or_else(|| "localhost".to_string());
+        let username = crate::config::hosts::default_username();
 
         Self {
             id: Uuid::new_v4(),
