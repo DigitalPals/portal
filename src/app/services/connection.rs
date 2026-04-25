@@ -13,7 +13,7 @@ use crate::message::{
     DialogMessage, Message, PassphraseRequest, PassphraseSftpContext, SessionId, SessionMessage,
     SftpMessage, VerificationRequestWrapper,
 };
-use crate::proxy::{ProxyEvent, ProxySession};
+use crate::proxy::{ListedProxySession, ProxyEvent, ProxySession, ProxySessionTarget};
 use crate::sftp::SftpClient;
 use crate::ssh::known_hosts::KnownHostsManager;
 use crate::ssh::passphrase_cache::PassphraseCache;
@@ -210,6 +210,46 @@ pub fn proxy_connect_tasks(
                 session_id,
                 proxy_session,
                 host_name: host.name.clone(),
+                host_id: Some(host_id),
+            }),
+            Err(error) => Message::Session(SessionMessage::ConnectFailed {
+                session_id,
+                error: format!("Portal Proxy connection failed: {}", error),
+            }),
+        },
+    );
+
+    Task::batch([event_listener, connect_task])
+}
+
+pub fn proxy_resume_tasks(
+    settings: PortalProxySettings,
+    listed_session: ListedProxySession,
+    host_id: Option<Uuid>,
+    display_name: String,
+) -> Task<Message> {
+    let session_id = listed_session.session_id;
+    let target = ProxySessionTarget {
+        session_id,
+        target_host: listed_session.target_host,
+        target_port: listed_session.target_port,
+        target_user: listed_session.target_user,
+    };
+    let (event_tx, event_rx) = mpsc::channel::<ProxyEvent>(SSH_EVENT_CHANNEL_CAPACITY);
+    let event_listener = proxy_event_listener(session_id, event_rx);
+
+    let connect_task = Task::perform(
+        async move {
+            let result = ProxySession::spawn_target(&settings, &target, 80, 24, event_tx)
+                .map(Arc::new)
+                .map_err(|error| error.to_string());
+            (session_id, display_name, host_id, result)
+        },
+        |(session_id, host_name, host_id, result)| match result {
+            Ok(proxy_session) => Message::Session(SessionMessage::ProxyConnected {
+                session_id,
+                proxy_session,
+                host_name,
                 host_id,
             }),
             Err(error) => Message::Session(SessionMessage::ConnectFailed {

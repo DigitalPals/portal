@@ -27,6 +27,7 @@ use crate::views::dialogs::quick_connect_dialog::quick_connect_dialog_view;
 use crate::views::file_viewer::file_viewer_view;
 use crate::views::history_view::history_view;
 use crate::views::host_grid::{calculate_columns, host_grid_view, search_input_id};
+use crate::views::proxy_sessions::proxy_sessions_view;
 use crate::views::settings_page::{SettingsPageContext, settings_page_view};
 use crate::views::sftp::{
     dual_pane_sftp_view, has_actions_menu_open, sftp_actions_menu_dismiss_overlay,
@@ -42,8 +43,8 @@ use crate::views::vnc_view::vnc_viewer_view;
 
 pub use self::managers::ActiveSession;
 use self::managers::{
-    ActiveDialog, DialogManager, FileViewerManager, SessionManager, SftpManager,
-    SnippetExecutionManager, VncActiveSession,
+    ActiveDialog, DialogManager, FileViewerManager, ProxySessionsState, SessionManager,
+    SftpManager, SnippetExecutionManager, VncActiveSession,
 };
 use self::view_model::{filter_group_cards, filter_host_cards, group_cards, host_cards};
 
@@ -61,6 +62,7 @@ pub enum View {
     VncViewer(SessionId),  // VNC remote desktop viewer
     Settings,              // Full-page settings view
     Snippets,              // Snippets page with execution
+    ProxySessions,         // Portal Proxy sessions dashboard
 }
 
 /// Major UI sections that can receive keyboard focus
@@ -111,6 +113,9 @@ pub struct UiState {
     pub history_focus_index: Option<usize>,
     pub terminal_captured: bool,
     pub tab_context_menu: TabContextMenuState,
+    pub portal_proxy_status: Option<crate::proxy::ProxyStatus>,
+    pub portal_proxy_status_error: Option<String>,
+    pub portal_proxy_status_loading: bool,
 }
 
 /// User preference state (theme, fonts, sizing).
@@ -223,6 +228,7 @@ pub struct Portal {
     sessions: SessionManager,
     sftp: SftpManager,
     file_viewers: FileViewerManager,
+    proxy_sessions: ProxySessionsState,
     dialogs: DialogManager,
     pending_connect: Option<iced::task::Handle>,
 
@@ -336,12 +342,16 @@ impl Portal {
                 history_focus_index: None,
                 terminal_captured: false,
                 tab_context_menu: TabContextMenuState::default(),
+                portal_proxy_status: None,
+                portal_proxy_status_error: None,
+                portal_proxy_status_loading: false,
             },
             tabs: Vec::new(),
             active_tab: None,
             sessions: SessionManager::new(),
             sftp: SftpManager::new(),
             file_viewers: FileViewerManager::new(),
+            proxy_sessions: ProxySessionsState::new(),
             dialogs: DialogManager::new(),
             pending_connect: None,
             vnc_sessions: std::collections::HashMap::new(),
@@ -422,6 +432,7 @@ impl Portal {
             Message::History(msg) => update::handle_history(self, msg),
             Message::Snippet(msg) => update::handle_snippet(self, msg),
             Message::Vnc(msg) => update::handle_vnc(self, msg),
+            Message::ProxySessions(msg) => update::handle_proxy_sessions(self, msg),
             Message::Ui(msg) => update::handle_ui(self, msg),
             Message::Noop => Task::none(),
         }
@@ -447,6 +458,7 @@ impl Portal {
             self.ui.sidebar_selection,
             self.ui.focus_section,
             self.ui.sidebar_focus_index,
+            self.prefs.portal_proxy.is_configured(),
         );
 
         // Main content - prioritize active sessions over sidebar selection
@@ -466,6 +478,9 @@ impl Portal {
                     has_ui_scale_override: self.has_ui_scale_override(),
                     session_logging_enabled: self.prefs.session_logging_enabled,
                     portal_proxy: self.prefs.portal_proxy.clone(),
+                    portal_proxy_status: self.ui.portal_proxy_status.clone(),
+                    portal_proxy_status_error: self.ui.portal_proxy_status_error.clone(),
+                    portal_proxy_status_loading: self.ui.portal_proxy_status_loading,
                     credential_timeout: self.prefs.credential_timeout,
                     security_audit_enabled: self.prefs.security_audit_enabled,
                     security_audit_log_location: self
@@ -617,6 +632,13 @@ impl Portal {
                     viewed_history_entry: self.snippets.viewed_history_entry,
                 })
             }
+            View::ProxySessions => {
+                let column_count = crate::views::proxy_sessions::calculate_columns(
+                    self.ui.window_size.width,
+                    self.ui.sidebar_state,
+                );
+                proxy_sessions_view(&self.proxy_sessions, column_count, theme, fonts)
+            }
             View::HostGrid => {
                 // Calculate responsive column count
                 let column_count =
@@ -624,7 +646,7 @@ impl Portal {
 
                 // Show content based on sidebar selection
                 match self.ui.sidebar_selection {
-                    SidebarMenuItem::Hosts | SidebarMenuItem::Sftp => {
+                    SidebarMenuItem::Hosts | SidebarMenuItem::Sftp | SidebarMenuItem::Sessions => {
                         // SFTP now opens directly into dual-pane view, so show hosts grid as fallback
                         host_grid_view(
                             &self.ui.search_query,

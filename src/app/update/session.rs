@@ -44,102 +44,6 @@ fn output_budget_for_pending(pending_bytes: usize) -> usize {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::local::LocalSession;
-
-    fn create_test_session() -> ActiveSession {
-        let (terminal, _rx) = TerminalSession::new("test-host");
-        ActiveSession {
-            backend: SessionBackend::Local(Arc::new(LocalSession::new_test_stub())),
-            terminal,
-            session_start: Instant::now(),
-            host_name: "test-host".to_string(),
-            host_id: None,
-            history_entry_id: Uuid::new_v4(),
-            status_message: None,
-            reconnect_attempts: 0,
-            reconnect_next_attempt: None,
-            pending_output: VecDeque::new(),
-            pending_output_bytes: 0,
-            last_data_received_at: None,
-            pending_output_started_at: None,
-            max_pending_output_bytes: 0,
-            dropped_output_bytes: 0,
-            last_output_process_duration: None,
-            last_backlog_warning_at: None,
-            logger: None,
-        }
-    }
-
-    #[test]
-    fn output_budget_scales_with_backlog() {
-        assert_eq!(
-            output_budget_for_pending(MEDIUM_BACKLOG_THRESHOLD - 1),
-            BASE_OUTPUT_BYTES_PER_TICK
-        );
-        assert_eq!(
-            output_budget_for_pending(MEDIUM_BACKLOG_THRESHOLD),
-            MEDIUM_OUTPUT_BYTES_PER_TICK
-        );
-        assert_eq!(
-            output_budget_for_pending(LARGE_BACKLOG_THRESHOLD),
-            LARGE_OUTPUT_BYTES_PER_TICK
-        );
-    }
-
-    #[test]
-    fn small_recent_output_defers_for_coalescing() {
-        let mut session = create_test_session();
-        let now = Instant::now();
-        queue_terminal_output(&mut session, b"prompt".to_vec(), now);
-
-        process_terminal_output_tick(&mut session, now);
-
-        assert_eq!(session.pending_output_bytes, b"prompt".len());
-        assert_eq!(session.pending_output.len(), 1);
-    }
-
-    #[test]
-    fn large_backlog_uses_catch_up_budget() {
-        let mut session = create_test_session();
-        let now = Instant::now();
-        queue_terminal_output(&mut session, vec![b'x'; 600 * 1024], now);
-
-        process_terminal_output_tick(&mut session, now + OUTPUT_COALESCE_DELAY);
-
-        assert_eq!(
-            session.pending_output_bytes,
-            600 * 1024 - MEDIUM_OUTPUT_BYTES_PER_TICK
-        );
-        assert_eq!(session.pending_output.len(), 1);
-        assert!(session.last_output_process_duration.is_some());
-    }
-
-    #[test]
-    fn overflow_drops_whole_chunks_and_records_status() {
-        let mut session = create_test_session();
-        let now = Instant::now();
-        let chunk_len = 8 * 1024 * 1024;
-
-        queue_terminal_output(&mut session, vec![b'a'; chunk_len], now);
-        queue_terminal_output(&mut session, vec![b'b'; chunk_len], now);
-        queue_terminal_output(&mut session, vec![b'c'; 1], now);
-
-        assert_eq!(session.pending_output_bytes, chunk_len + 1);
-        assert_eq!(session.dropped_output_bytes, chunk_len);
-        assert_eq!(session.pending_output.len(), 2);
-        assert_eq!(
-            session
-                .status_message
-                .as_ref()
-                .map(|(message, _)| message.as_str()),
-            Some("Terminal output skipped; catching up")
-        );
-    }
-}
-
 fn should_defer_for_output_coalesce(session: &ActiveSession, now: Instant) -> bool {
     session.pending_output_bytes < OUTPUT_COALESCE_BYPASS_BYTES
         && session
@@ -574,28 +478,34 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                 return Task::none();
             }
 
-            if let Some(host) = portal.config.hosts.find_host_mut(host_id) {
-                host.last_connected = Some(chrono::Utc::now());
-                host.updated_at = chrono::Utc::now();
-                if let Err(e) = portal.config.hosts.save() {
-                    tracing::error!("Failed to save host connection time: {}", e);
+            if let Some(host_id) = host_id {
+                if let Some(host) = portal.config.hosts.find_host_mut(host_id) {
+                    host.last_connected = Some(chrono::Utc::now());
+                    host.updated_at = chrono::Utc::now();
+                    if let Err(e) = portal.config.hosts.save() {
+                        tracing::error!("Failed to save host connection time: {}", e);
+                    }
                 }
             }
 
-            let history_entry_id = if let Some(host) = portal.config.hosts.find_host(host_id) {
-                let entry = crate::config::HistoryEntry::new(
-                    host.id,
-                    host.name.clone(),
-                    host.hostname.clone(),
-                    host.effective_username(),
-                    crate::config::SessionType::Ssh,
-                );
-                let entry_id = entry.id;
-                portal.config.history.add_entry(entry);
-                if let Err(e) = portal.config.history.save() {
-                    tracing::error!("Failed to save history config: {}", e);
+            let history_entry_id = if let Some(host_id) = host_id {
+                if let Some(host) = portal.config.hosts.find_host(host_id) {
+                    let entry = crate::config::HistoryEntry::new(
+                        host.id,
+                        host.name.clone(),
+                        host.hostname.clone(),
+                        host.effective_username(),
+                        crate::config::SessionType::Ssh,
+                    );
+                    let entry_id = entry.id;
+                    portal.config.history.add_entry(entry);
+                    if let Err(e) = portal.config.history.save() {
+                        tracing::error!("Failed to save history config: {}", e);
+                    }
+                    entry_id
+                } else {
+                    Uuid::new_v4()
                 }
-                entry_id
             } else {
                 Uuid::new_v4()
             };
@@ -605,7 +515,7 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                 session_id,
                 SessionBackend::Proxy(proxy_session),
                 host_name,
-                Some(host_id),
+                host_id,
                 history_entry_id,
             )
         }
@@ -897,5 +807,101 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
             }
             Task::none()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::local::LocalSession;
+
+    fn create_test_session() -> ActiveSession {
+        let (terminal, _rx) = TerminalSession::new("test-host");
+        ActiveSession {
+            backend: SessionBackend::Local(Arc::new(LocalSession::new_test_stub())),
+            terminal,
+            session_start: Instant::now(),
+            host_name: "test-host".to_string(),
+            host_id: None,
+            history_entry_id: Uuid::new_v4(),
+            status_message: None,
+            reconnect_attempts: 0,
+            reconnect_next_attempt: None,
+            pending_output: VecDeque::new(),
+            pending_output_bytes: 0,
+            last_data_received_at: None,
+            pending_output_started_at: None,
+            max_pending_output_bytes: 0,
+            dropped_output_bytes: 0,
+            last_output_process_duration: None,
+            last_backlog_warning_at: None,
+            logger: None,
+        }
+    }
+
+    #[test]
+    fn output_budget_scales_with_backlog() {
+        assert_eq!(
+            output_budget_for_pending(MEDIUM_BACKLOG_THRESHOLD - 1),
+            BASE_OUTPUT_BYTES_PER_TICK
+        );
+        assert_eq!(
+            output_budget_for_pending(MEDIUM_BACKLOG_THRESHOLD),
+            MEDIUM_OUTPUT_BYTES_PER_TICK
+        );
+        assert_eq!(
+            output_budget_for_pending(LARGE_BACKLOG_THRESHOLD),
+            LARGE_OUTPUT_BYTES_PER_TICK
+        );
+    }
+
+    #[test]
+    fn small_recent_output_defers_for_coalescing() {
+        let mut session = create_test_session();
+        let now = Instant::now();
+        queue_terminal_output(&mut session, b"prompt".to_vec(), now);
+
+        process_terminal_output_tick(&mut session, now);
+
+        assert_eq!(session.pending_output_bytes, b"prompt".len());
+        assert_eq!(session.pending_output.len(), 1);
+    }
+
+    #[test]
+    fn large_backlog_uses_catch_up_budget() {
+        let mut session = create_test_session();
+        let now = Instant::now();
+        queue_terminal_output(&mut session, vec![b'x'; 600 * 1024], now);
+
+        process_terminal_output_tick(&mut session, now + OUTPUT_COALESCE_DELAY);
+
+        assert_eq!(
+            session.pending_output_bytes,
+            600 * 1024 - MEDIUM_OUTPUT_BYTES_PER_TICK
+        );
+        assert_eq!(session.pending_output.len(), 1);
+        assert!(session.last_output_process_duration.is_some());
+    }
+
+    #[test]
+    fn overflow_drops_whole_chunks_and_records_status() {
+        let mut session = create_test_session();
+        let now = Instant::now();
+        let chunk_len = 8 * 1024 * 1024;
+
+        queue_terminal_output(&mut session, vec![b'a'; chunk_len], now);
+        queue_terminal_output(&mut session, vec![b'b'; chunk_len], now);
+        queue_terminal_output(&mut session, vec![b'c'; 1], now);
+
+        assert_eq!(session.pending_output_bytes, chunk_len + 1);
+        assert_eq!(session.dropped_output_bytes, chunk_len);
+        assert_eq!(session.pending_output.len(), 2);
+        assert_eq!(
+            session
+                .status_message
+                .as_ref()
+                .map(|(message, _)| message.as_str()),
+            Some("Terminal output skipped; catching up")
+        );
     }
 }

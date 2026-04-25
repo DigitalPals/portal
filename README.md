@@ -26,6 +26,8 @@ Portal is a native SSH and VNC client built for speed and simplicity. Manage you
 
 **`>_` Multi-Tab Terminal** — Manage multiple SSH sessions in tabs. Switch between servers instantly without juggling windows.
 
+**`<>` Portal Proxy Beta** — Keep SSH terminal sessions alive through a Tailscale-only proxy, then reopen them with the previous screen state intact.
+
 **`< >` Dual-Pane SFTP** — Browse local and remote files side by side. Drag, drop, copy, and manage files with ease.
 
 **`{ }` Smart OS Detection** — Automatically detects 20+ operating systems and displays branded icons for Ubuntu, Debian, Arch, Fedora, and more.
@@ -49,6 +51,7 @@ Portal is a native SSH and VNC client built for speed and simplicity. Manage you
 - **SSH key installation** — Install your public key on remote servers with `Ctrl+Shift+K`
 - **Status bar** — See hostname and connection duration at a glance
 - **Session history** — Quick reconnect to recent servers
+- **Portal Proxy beta** — Route selected SSH hosts through Portal Proxy for persistent remote terminal sessions, resumable thumbnails, and reconnect replay
 
 ### SFTP File Browser
 
@@ -272,6 +275,19 @@ nix build
 
 That's it. You're in.
 
+## Portal Proxy Beta
+
+Portal can route SSH terminal sessions through [Portal Proxy](https://github.com/DigitalPals/portal-proxy) so remote shells survive a Portal crash, laptop sleep, or network drop. The proxy is intended to run on a small Linux host or LXC reachable only over Tailscale.
+
+To use it:
+
+1. Deploy Portal Proxy and restrict access with Tailscale ACLs.
+2. In Portal settings, enable Portal Proxy and set the proxy host, SSH port, username, and optional identity file.
+3. Enable Portal Proxy on individual SSH hosts that use SSH Agent or Public Key authentication.
+4. Open the Sessions view to see active proxy sessions, terminal thumbnails, and resume an existing session.
+
+Typing `exit` in the remote shell closes the real session. Closing the Portal tab or losing connectivity only detaches Portal from the proxy session.
+
 ## Keyboard Shortcuts
 
 | Shortcut | Action |
@@ -304,7 +320,7 @@ Configuration files:
 - `hosts.toml` — Saved host definitions (SSH and VNC protocols)
 - `snippets.toml` — Command snippets
 - `snippet_history.toml` — Snippet execution history (`enabled`, `store_command`, `store_output`, `redact_output`)
-- `settings.toml` — Theme, terminal font and scroll preferences, and VNC settings (encoding, color depth, refresh rate, scaling mode)
+- `settings.toml` — Theme, terminal font and scroll preferences, VNC settings, and Portal Proxy settings
 - `history.toml` — Connection history
 - `known_hosts` — SSH host key storage
 

@@ -48,6 +48,7 @@
             pkgs.rustc
             pkgs.cargo
             pkgs.rustfmt
+            pkgs.clippy
             pkgs.pkg-config
           ];
           buildInputs = [

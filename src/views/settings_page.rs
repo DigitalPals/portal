@@ -12,7 +12,10 @@ use crate::config::settings::{
 };
 use crate::fonts::TerminalFont;
 use crate::message::{Message, UiMessage};
-use crate::theme::{BORDER_RADIUS, CARD_BORDER_RADIUS, ScaledFonts, Theme, ThemeId, get_theme};
+use crate::proxy::ProxyStatus;
+use crate::theme::{
+    BORDER_RADIUS, CARD_BORDER_RADIUS, STATUS_FAILURE, ScaledFonts, Theme, ThemeId, get_theme,
+};
 
 pub struct SettingsPageContext {
     pub current_theme: ThemeId,
@@ -25,6 +28,9 @@ pub struct SettingsPageContext {
     pub snippet_redact_output: bool,
     pub session_logging_enabled: bool,
     pub portal_proxy: PortalProxySettings,
+    pub portal_proxy_status: Option<ProxyStatus>,
+    pub portal_proxy_status_error: Option<String>,
+    pub portal_proxy_status_loading: bool,
     /// Credential cache timeout in seconds (0 = disabled)
     pub credential_timeout: u64,
     pub security_audit_enabled: bool,
@@ -165,6 +171,13 @@ pub fn settings_page_view(
                     .map(|path| path.to_string_lossy().to_string())
                     .unwrap_or_default(),
                 |value| Message::Ui(UiMessage::PortalProxyIdentityFileChanged(value)),
+                theme,
+                fonts,
+            ),
+            portal_proxy_status_setting(
+                context.portal_proxy_status,
+                context.portal_proxy_status_error,
+                context.portal_proxy_status_loading,
                 theme,
                 fonts,
             ),
@@ -735,6 +748,80 @@ fn read_only_setting(
             column![label_text, Space::new().height(4), description_text].spacing(0),
             Space::new().width(Length::Fill),
             value_text,
+        ]
+        .align_y(Alignment::Center),
+    ]
+    .spacing(0)
+    .into()
+}
+
+fn portal_proxy_status_setting(
+    status: Option<ProxyStatus>,
+    error: Option<String>,
+    loading: bool,
+    theme: Theme,
+    fonts: ScaledFonts,
+) -> Element<'static, Message> {
+    let label_text = text("Status").size(fonts.body).color(theme.text_primary);
+    let description_text = text("Check proxy version and API compatibility")
+        .size(fonts.label)
+        .color(theme.text_muted);
+
+    let status_text = if loading {
+        "Checking...".to_string()
+    } else if let Some(status) = status {
+        format!(
+            "v{} · API {} · schema {}",
+            status.version, status.api_version, status.metadata_schema_version
+        )
+    } else if let Some(error) = error.as_ref() {
+        error.clone()
+    } else {
+        "Not checked".to_string()
+    };
+
+    let status_color = if loading {
+        theme.text_muted
+    } else if error.is_some() {
+        STATUS_FAILURE
+    } else {
+        theme.text_secondary
+    };
+
+    let check_button = button(
+        container(text("Check").size(fonts.label).color(theme.text_primary))
+            .padding([6, 12])
+            .align_x(Alignment::Center)
+            .align_y(Alignment::Center),
+    )
+    .padding(0)
+    .style(move |_theme, status| {
+        let background = match status {
+            iced::widget::button::Status::Hovered => Some(theme.hover.into()),
+            _ => Some(theme.surface.into()),
+        };
+        iced::widget::button::Style {
+            background,
+            border: iced::Border {
+                radius: BORDER_RADIUS.into(),
+                width: 1.0,
+                color: theme.border,
+            },
+            ..Default::default()
+        }
+    })
+    .on_press_maybe((!loading).then_some(Message::Ui(UiMessage::PortalProxyCheckStatus)));
+
+    column![
+        row![
+            column![label_text, Space::new().height(4), description_text].spacing(0),
+            Space::new().width(Length::Fill),
+            text(status_text)
+                .size(fonts.label)
+                .color(status_color)
+                .width(Length::Fixed(240.0)),
+            Space::new().width(12),
+            check_button,
         ]
         .align_y(Alignment::Center),
     ]

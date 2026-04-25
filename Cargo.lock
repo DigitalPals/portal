@@ -4641,6 +4641,7 @@ dependencies = [
  "russh-sftp",
  "secrecy",
  "serde",
+ "serde_json",
  "sha1 0.10.6",
  "ssh-key",
  "tempfile",

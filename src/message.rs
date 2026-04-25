@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 use crate::config::DetectedOs;
 use crate::local::LocalSession;
-use crate::proxy::ProxySession;
+use crate::proxy::{ListedProxySession, ProxySession, ProxyStatus};
 use crate::sftp::{FileEntry, SharedSftpSession};
 use crate::ssh::SshSession;
 use crate::ssh::host_key_verification::HostKeyVerificationRequest;
@@ -26,6 +26,7 @@ pub enum SidebarMenuItem {
     #[default]
     Hosts,
     Sftp,
+    Sessions,
     Snippets,
     History,
     Settings,
@@ -98,7 +99,7 @@ pub enum SessionMessage {
         session_id: SessionId,
         proxy_session: Arc<ProxySession>,
         host_name: String,
-        host_id: Uuid,
+        host_id: Option<Uuid>,
     },
     /// Data received from terminal (SSH or local)
     Data(SessionId, Vec<u8>),
@@ -533,6 +534,10 @@ pub enum UiMessage {
     PortalProxyUsernameChanged(String),
     /// Portal Proxy identity file changed
     PortalProxyIdentityFileChanged(String),
+    /// Check Portal Proxy version and compatibility
+    PortalProxyCheckStatus,
+    /// Portal Proxy version and compatibility check result
+    PortalProxyStatusLoaded(Result<ProxyStatus, String>),
     /// Window resized
     WindowResized(iced::Size),
     /// Window lost focus
@@ -545,6 +550,14 @@ pub enum UiMessage {
     KeyboardEvent(iced::keyboard::Key, iced::keyboard::Modifiers),
     /// Key released event (used for VNC)
     KeyReleased(iced::keyboard::Key, iced::keyboard::Modifiers),
+}
+
+#[derive(Debug, Clone)]
+pub enum ProxySessionsMessage {
+    Refresh,
+    RefreshDue(u64),
+    Loaded(Result<Vec<ListedProxySession>, String>),
+    Resume(SessionId),
 }
 
 // ============================================================================
@@ -572,6 +585,8 @@ pub enum Message {
     Snippet(SnippetMessage),
     /// VNC session messages
     Vnc(VncMessage),
+    /// Portal Proxy sessions dashboard messages
+    ProxySessions(ProxySessionsMessage),
     /// UI state messages
     Ui(UiMessage),
     /// No-op placeholder
@@ -627,6 +642,12 @@ impl From<SnippetMessage> for Message {
 impl From<VncMessage> for Message {
     fn from(msg: VncMessage) -> Self {
         Message::Vnc(msg)
+    }
+}
+
+impl From<ProxySessionsMessage> for Message {
+    fn from(msg: ProxySessionsMessage) -> Self {
+        Message::ProxySessions(msg)
     }
 }
 

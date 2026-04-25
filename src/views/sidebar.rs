@@ -25,6 +25,11 @@ const MENU_ITEMS: &[MenuItem] = &[
         label: "SFTP",
     },
     MenuItem {
+        item: SidebarMenuItem::Sessions,
+        icon: icons::ui::TERMINAL,
+        label: "Sessions",
+    },
+    MenuItem {
         item: SidebarMenuItem::Snippets,
         icon: icons::ui::CODE,
         label: "Snippets",
@@ -54,6 +59,7 @@ pub fn sidebar_view(
     selected: SidebarMenuItem,
     focus_section: FocusSection,
     focus_index: usize,
+    show_sessions: bool,
 ) -> Element<'static, Message> {
     // Completely hide sidebar when hidden
     if state == SidebarState::Hidden {
@@ -73,7 +79,11 @@ pub fn sidebar_view(
     // Build menu items
     let mut menu_items = Column::new().spacing(4).padding([32, 8]);
 
-    for (idx, menu_item) in MENU_ITEMS.iter().enumerate() {
+    for (idx, menu_item) in MENU_ITEMS
+        .iter()
+        .filter(|item| show_sessions || item.item != SidebarMenuItem::Sessions)
+        .enumerate()
+    {
         let is_selected = selected == menu_item.item;
         let is_focused = focus_section == FocusSection::Sidebar && idx == focus_index;
         let item_element =

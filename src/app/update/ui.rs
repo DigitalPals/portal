@@ -9,8 +9,8 @@ use crate::app::{FocusSection, Portal, SIDEBAR_AUTO_COLLAPSE_THRESHOLD, View};
 use crate::config::settings::{TERMINAL_SCROLL_SPEED_MAX, TERMINAL_SCROLL_SPEED_MIN};
 use crate::keybindings::AppAction;
 use crate::message::{
-    DialogMessage, HistoryMessage, HostMessage, Message, SessionMessage, SftpMessage,
-    SidebarMenuItem, TabMessage, UiMessage, VncMessage,
+    DialogMessage, HistoryMessage, HostMessage, Message, ProxySessionsMessage, SessionMessage,
+    SftpMessage, SidebarMenuItem, TabMessage, UiMessage, VncMessage,
 };
 use crate::ssh::host_key_verification::HostKeyVerificationResponse;
 use crate::views::dialogs::host_dialog::host_dialog_field_id;
@@ -66,6 +66,11 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
                     } else {
                         return portal.update(Message::Sftp(SftpMessage::Open));
                     }
+                }
+                SidebarMenuItem::Sessions => {
+                    portal.restore_sidebar_after_session();
+                    portal.ui.active_view = View::ProxySessions;
+                    return portal.update(Message::ProxySessions(ProxySessionsMessage::Refresh));
                 }
                 SidebarMenuItem::Settings => {
                     // Open settings page view instead of dialog
@@ -183,6 +188,7 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
         }
         UiMessage::PortalProxyEnabled(enabled) => {
             portal.prefs.portal_proxy.enabled = enabled;
+            clear_portal_proxy_status(portal);
             portal.save_settings();
             Task::none()
         }
@@ -193,6 +199,7 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
         }
         UiMessage::PortalProxyHostChanged(host) => {
             portal.prefs.portal_proxy.host = host;
+            clear_portal_proxy_status(portal);
             portal.save_settings();
             Task::none()
         }
@@ -200,6 +207,7 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
             if let Ok(parsed) = port.trim().parse::<u16>() {
                 if parsed > 0 {
                     portal.prefs.portal_proxy.port = parsed;
+                    clear_portal_proxy_status(portal);
                     portal.save_settings();
                 }
             }
@@ -207,6 +215,7 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
         }
         UiMessage::PortalProxyUsernameChanged(username) => {
             portal.prefs.portal_proxy.username = username;
+            clear_portal_proxy_status(portal);
             portal.save_settings();
             Task::none()
         }
@@ -217,7 +226,40 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
             } else {
                 Some(trimmed.into())
             };
+            clear_portal_proxy_status(portal);
             portal.save_settings();
+            Task::none()
+        }
+        UiMessage::PortalProxyCheckStatus => {
+            if !portal.prefs.portal_proxy.is_configured() {
+                portal.ui.portal_proxy_status = None;
+                portal.ui.portal_proxy_status_error =
+                    Some("Portal Proxy is not fully configured".to_string());
+                portal.ui.portal_proxy_status_loading = false;
+                return Task::none();
+            }
+
+            portal.ui.portal_proxy_status = None;
+            portal.ui.portal_proxy_status_error = None;
+            portal.ui.portal_proxy_status_loading = true;
+            let settings = portal.prefs.portal_proxy.clone();
+            Task::perform(
+                async move { crate::proxy::check_proxy_status(&settings).await },
+                |result| Message::Ui(UiMessage::PortalProxyStatusLoaded(result)),
+            )
+        }
+        UiMessage::PortalProxyStatusLoaded(result) => {
+            portal.ui.portal_proxy_status_loading = false;
+            match result {
+                Ok(status) => {
+                    portal.ui.portal_proxy_status = Some(status);
+                    portal.ui.portal_proxy_status_error = None;
+                }
+                Err(error) => {
+                    portal.ui.portal_proxy_status = None;
+                    portal.ui.portal_proxy_status_error = Some(error);
+                }
+            }
             Task::none()
         }
         UiMessage::WindowResized(size) => {
@@ -337,6 +379,12 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
             Task::none()
         }
     }
+}
+
+fn clear_portal_proxy_status(portal: &mut Portal) {
+    portal.ui.portal_proxy_status = None;
+    portal.ui.portal_proxy_status_error = None;
+    portal.ui.portal_proxy_status_loading = false;
 }
 
 /// Handle keyboard shortcuts
@@ -711,8 +759,19 @@ fn handle_dialog_keyboard(
     }
 }
 
-/// Number of sidebar menu items
-const SIDEBAR_MENU_COUNT: usize = 6;
+fn visible_sidebar_items(show_sessions: bool) -> Vec<SidebarMenuItem> {
+    let mut items = vec![SidebarMenuItem::Hosts, SidebarMenuItem::Sftp];
+    if show_sessions {
+        items.push(SidebarMenuItem::Sessions);
+    }
+    items.extend([
+        SidebarMenuItem::Snippets,
+        SidebarMenuItem::History,
+        SidebarMenuItem::Settings,
+        SidebarMenuItem::About,
+    ]);
+    items
+}
 
 /// Handle keyboard navigation in sidebar
 fn handle_sidebar_keyboard(
@@ -720,32 +779,27 @@ fn handle_sidebar_keyboard(
     key: &Key,
     _modifiers: &keyboard::Modifiers,
 ) -> Task<Message> {
+    let items = visible_sidebar_items(portal.prefs.portal_proxy.is_configured());
+    let last_index = items.len().saturating_sub(1);
     match key {
         Key::Named(keyboard::key::Named::ArrowUp) => {
             portal.ui.sidebar_focus_index = portal.ui.sidebar_focus_index.saturating_sub(1);
         }
         Key::Named(keyboard::key::Named::ArrowDown) => {
-            portal.ui.sidebar_focus_index =
-                (portal.ui.sidebar_focus_index + 1).min(SIDEBAR_MENU_COUNT - 1);
+            portal.ui.sidebar_focus_index = (portal.ui.sidebar_focus_index + 1).min(last_index);
         }
         Key::Named(keyboard::key::Named::Home) => {
             portal.ui.sidebar_focus_index = 0;
         }
         Key::Named(keyboard::key::Named::End) => {
-            portal.ui.sidebar_focus_index = SIDEBAR_MENU_COUNT - 1;
+            portal.ui.sidebar_focus_index = last_index;
         }
         Key::Named(keyboard::key::Named::ArrowRight) => {
             portal.ui.focus_section = FocusSection::Content;
         }
         Key::Named(keyboard::key::Named::Enter | keyboard::key::Named::Space) => {
-            let item = match portal.ui.sidebar_focus_index {
-                0 => SidebarMenuItem::Hosts,
-                1 => SidebarMenuItem::Sftp,
-                2 => SidebarMenuItem::Snippets,
-                3 => SidebarMenuItem::History,
-                4 => SidebarMenuItem::Settings,
-                5 => SidebarMenuItem::About,
-                _ => return Task::none(),
+            let Some(item) = items.get(portal.ui.sidebar_focus_index).copied() else {
+                return Task::none();
             };
             return portal.update(Message::Ui(UiMessage::SidebarItemSelect(item)));
         }
@@ -818,11 +872,18 @@ fn handle_content_keyboard(
         View::HostGrid => match portal.ui.sidebar_selection {
             SidebarMenuItem::Hosts
             | SidebarMenuItem::Sftp
+            | SidebarMenuItem::Sessions
             | SidebarMenuItem::Snippets
             | SidebarMenuItem::Settings
             | SidebarMenuItem::About => handle_host_grid_keyboard(portal, key, modifiers),
             SidebarMenuItem::History => handle_history_keyboard(portal, key, modifiers),
         },
+        View::ProxySessions => {
+            if let Key::Named(keyboard::key::Named::ArrowLeft) = key {
+                portal.ui.focus_section = FocusSection::Sidebar;
+            }
+            Task::none()
+        }
         View::Terminal(_session_id) => {
             // When terminal_captured is false (after Ctrl+Escape), allow keyboard navigation
             match key {
