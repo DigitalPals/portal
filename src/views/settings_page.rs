@@ -233,8 +233,10 @@ fn active_tab_sections(
                         "Initial reconnect delay",
                         "First retry delay before exponential backoff",
                         context.reconnect_base_delay_ms,
-                        500,
-                        10_000,
+                        ReconnectDelayBounds {
+                            min_ms: 500,
+                            max_ms: 10_000,
+                        },
                         |value| Message::Ui(UiMessage::ReconnectBaseDelayChanged(value)),
                         theme,
                         fonts,
@@ -243,8 +245,10 @@ fn active_tab_sections(
                         "Maximum reconnect delay",
                         "Upper bound for exponential backoff",
                         context.reconnect_max_delay_ms,
-                        5_000,
-                        120_000,
+                        ReconnectDelayBounds {
+                            min_ms: 5_000,
+                            max_ms: 120_000,
+                        },
                         |value| Message::Ui(UiMessage::ReconnectMaxDelayChanged(value)),
                         theme,
                         fonts,
@@ -1144,12 +1148,17 @@ fn reconnect_attempts_setting(
     .into()
 }
 
+#[derive(Debug, Clone, Copy)]
+struct ReconnectDelayBounds {
+    min_ms: u64,
+    max_ms: u64,
+}
+
 fn reconnect_delay_setting<F>(
     label_text: &'static str,
     description_text: &'static str,
     current_ms: u64,
-    min_ms: u64,
-    max_ms: u64,
+    bounds: ReconnectDelayBounds,
     on_change: F,
     theme: Theme,
     fonts: ScaledFonts,
@@ -1161,17 +1170,24 @@ where
     let description = text(description_text)
         .size(fonts.label)
         .color(theme.text_muted);
-    let current = current_ms.clamp(min_ms, max_ms) as f32;
-    let slider_widget = slider(min_ms as f32..=max_ms as f32, current, move |value| {
-        let snapped = ((value / 500.0).round() * 500.0).clamp(min_ms as f32, max_ms as f32);
-        on_change(snapped as u64)
-    })
+    let current = current_ms.clamp(bounds.min_ms, bounds.max_ms) as f32;
+    let slider_widget = slider(
+        bounds.min_ms as f32..=bounds.max_ms as f32,
+        current,
+        move |value| {
+            let snapped =
+                ((value / 500.0).round() * 500.0).clamp(bounds.min_ms as f32, bounds.max_ms as f32);
+            on_change(snapped as u64)
+        },
+    )
     .step(500.0)
     .width(160);
-    let value_text = text(format_duration_ms(current_ms.clamp(min_ms, max_ms)))
-        .size(fonts.body)
-        .color(theme.text_secondary)
-        .width(Length::Fixed(56.0));
+    let value_text = text(format_duration_ms(
+        current_ms.clamp(bounds.min_ms, bounds.max_ms),
+    ))
+    .size(fonts.body)
+    .color(theme.text_secondary)
+    .width(Length::Fixed(56.0));
 
     column![
         row![
