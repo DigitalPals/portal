@@ -108,7 +108,7 @@ pub fn ensure_docker_started() {
                 );
             }
             Err(e) => {
-                eprintln!("Failed to start SSH test containers: {}", e);
+                eprintln!("Failed to start SSH test containers: {e}");
             }
         }
     });
@@ -133,7 +133,7 @@ fn ensure_test_keys(docker_dir: &std::path::Path) -> bool {
 
     let generator = test_keys_dir.join("generate_keys.sh");
     if !generator.exists() {
-        eprintln!("WARNING: Missing test key generator at {:?}", generator);
+        eprintln!("WARNING: Missing test key generator at {generator:?}");
         return false;
     }
 
@@ -152,7 +152,7 @@ fn ensure_test_keys(docker_dir: &std::path::Path) -> bool {
             false
         }
         Err(e) => {
-            eprintln!("WARNING: Failed to run test key generator: {}", e);
+            eprintln!("WARNING: Failed to run test key generator: {e}");
             false
         }
     }
@@ -166,7 +166,7 @@ pub fn is_docker_available() -> bool {
 
 /// Wait for SSH server to be ready
 pub async fn wait_for_ssh_ready(host: &str, port: u16) -> Result<(), String> {
-    let addr = format!("{}:{}", host, port);
+    let addr = format!("{host}:{port}");
     let max_attempts = 30;
 
     for attempt in 1..=max_attempts {
@@ -175,8 +175,7 @@ pub async fn wait_for_ssh_ready(host: &str, port: u16) -> Result<(), String> {
             _ => {
                 if attempt == max_attempts {
                     return Err(format!(
-                        "SSH server not ready after {} attempts",
-                        max_attempts
+                        "SSH server not ready after {max_attempts} attempts"
                     ));
                 }
                 sleep(Duration::from_millis(200)).await;
@@ -208,7 +207,7 @@ impl SshTestEnvironment {
         let server = TestSshServer::default();
         wait_for_ssh_ready(&server.host, server.port).await?;
 
-        let config_dir = TempDir::new().map_err(|e| format!("Failed to create temp dir: {}", e))?;
+        let config_dir = TempDir::new().map_err(|e| format!("Failed to create temp dir: {e}"))?;
         let known_hosts_path = config_dir.path().join("known_hosts");
 
         Ok(Self {

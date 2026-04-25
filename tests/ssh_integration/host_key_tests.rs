@@ -246,8 +246,7 @@ async fn test_host_key_rejection_aborts() {
         SshError::HostKeyVerification(_) => {}
         SshError::ConnectionFailed { reason, .. } if reason.contains("Host key") => {}
         _ => panic!(
-            "Expected HostKeyVerification or ConnectionFailed with host key reason, got: {:?}",
-            err
+            "Expected HostKeyVerification or ConnectionFailed with host key reason, got: {err:?}"
         ),
     }
 }
@@ -327,9 +326,7 @@ async fn test_changed_host_key_detection() {
     // Connection should fail because we rejected the changed key
     assert!(
         result.is_err(),
-        "Connection should fail when changed key is rejected (changed_detected={}), result: {:?}",
-        detected,
-        result
+        "Connection should fail when changed key is rejected (changed_detected={detected}), result: {result:?}"
     );
 
     assert!(

@@ -100,8 +100,7 @@ async fn test_local_forward_to_remote_sshd_banner() {
     let banner = String::from_utf8_lossy(&buf[..n]);
     assert!(
         banner.starts_with("SSH-"),
-        "expected SSH banner, got: {:?}",
-        banner
+        "expected SSH banner, got: {banner:?}"
     );
 
     session
@@ -193,8 +192,7 @@ async fn test_dynamic_forward_socks5_to_remote_sshd_banner() {
     let banner = String::from_utf8_lossy(&buf[..n]);
     assert!(
         banner.starts_with("SSH-"),
-        "expected SSH banner, got: {:?}",
-        banner
+        "expected SSH banner, got: {banner:?}"
     );
 
     session

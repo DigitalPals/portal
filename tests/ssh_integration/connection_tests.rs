@@ -233,7 +233,7 @@ async fn test_encrypted_key_without_passphrase() {
         SshError::KeyFilePassphraseRequired(path) => {
             assert_eq!(path, env.server.encrypted_key_path);
         }
-        err => panic!("Expected KeyFilePassphraseRequired, got: {:?}", err),
+        err => panic!("Expected KeyFilePassphraseRequired, got: {err:?}"),
     }
 }
 

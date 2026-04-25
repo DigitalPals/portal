@@ -196,8 +196,7 @@ async fn test_wrong_passphrase() {
             err,
             SshError::KeyFile(_) | SshError::KeyFilePassphraseInvalid(_)
         ),
-        "Expected KeyFile or KeyFilePassphraseInvalid, got: {:?}",
-        err
+        "Expected KeyFile or KeyFilePassphraseInvalid, got: {err:?}"
     );
 }
 
