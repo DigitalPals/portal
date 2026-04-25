@@ -238,7 +238,7 @@ impl PortalProxySettings {
 }
 
 fn default_portal_proxy_port() -> u16 {
-    22
+    2222
 }
 
 fn default_portal_proxy_username() -> String {

@@ -282,7 +282,7 @@ Portal can route SSH terminal sessions through [Portal Proxy](https://github.com
 To use it:
 
 1. Deploy Portal Proxy and restrict access with Tailscale ACLs.
-2. In Portal settings, enable Portal Proxy and set the proxy host, SSH port, username, and optional identity file.
+2. In Portal settings, enable Portal Proxy and set the proxy host, SSH port (`2222` by default), username, and optional identity file.
 3. Enable Portal Proxy on individual SSH hosts that use SSH Agent or Public Key authentication.
 4. Open the Sessions view to see active proxy sessions, terminal thumbnails, and resume an existing session.
 
