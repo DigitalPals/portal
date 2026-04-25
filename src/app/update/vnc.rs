@@ -242,6 +242,7 @@ pub fn handle_vnc(portal: &mut Portal, msg: VncMessage) -> Task<Message> {
 
                         // Save to user's pictures directory or home
                         let timestamp = chrono::Local::now().format("%Y%m%d_%H%M%S");
+                        let host_name = safe_filename_component(&host_name, "session");
                         let filename = format!("vnc_{}_{}.png", host_name, timestamp);
                         let dir = directories::UserDirs::new()
                             .and_then(|d| d.picture_dir().map(|p| p.to_path_buf()))
@@ -250,6 +251,9 @@ pub fn handle_vnc(portal: &mut Portal, msg: VncMessage) -> Task<Message> {
                                     .map(|d| d.home_dir().to_path_buf())
                                     .unwrap_or_else(|| std::path::PathBuf::from("."))
                             });
+                        tokio::fs::create_dir_all(&dir)
+                            .await
+                            .map_err(|e| format!("Failed to create screenshot directory: {}", e))?;
                         let path = dir.join(&filename);
 
                         image::save_buffer(&path, &rgba, width, height, image::ColorType::Rgba8)
@@ -358,5 +362,41 @@ pub fn handle_vnc(portal: &mut Portal, msg: VncMessage) -> Task<Message> {
             }
             Task::none()
         }
+    }
+}
+
+fn safe_filename_component(value: &str, fallback: &str) -> String {
+    let mut safe = String::with_capacity(value.len());
+    for ch in value.chars() {
+        if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
+            safe.push(ch);
+        } else if ch.is_whitespace() {
+            safe.push('_');
+        }
+    }
+
+    let safe = safe.trim_matches(['.', '_', '-']);
+    if safe.is_empty() || safe == ".." {
+        fallback.to_string()
+    } else {
+        safe.chars().take(80).collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::safe_filename_component;
+
+    #[test]
+    fn safe_filename_component_strips_path_separators() {
+        assert_eq!(
+            safe_filename_component("../prod/web:5900", "session"),
+            "prodweb5900"
+        );
+    }
+
+    #[test]
+    fn safe_filename_component_uses_fallback_for_empty_names() {
+        assert_eq!(safe_filename_component("../", "session"), "session");
     }
 }

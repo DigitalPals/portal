@@ -8,6 +8,7 @@ use crate::fonts::TerminalFont;
 
 /// Horizontal padding before the terminal grid starts.
 pub const TERMINAL_PADDING_LEFT: f32 = 12.0;
+const MAX_GRID_CELLS: f32 = u16::MAX as f32;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FaceMetrics {
@@ -106,11 +107,11 @@ impl TerminalMetrics {
     }
 
     pub fn columns_for_bounds(self, bounds: Rectangle) -> usize {
-        ((bounds.width - TERMINAL_PADDING_LEFT).max(0.0) / self.cell_width) as usize
+        grid_cells_for_extent(bounds.width - TERMINAL_PADDING_LEFT, self.cell_width)
     }
 
     pub fn rows_for_bounds(self, bounds: Rectangle) -> usize {
-        (bounds.height / self.cell_height) as usize
+        grid_cells_for_extent(bounds.height, self.cell_height)
     }
 
     fn from_face_metrics(face: FaceMetrics) -> Self {
@@ -261,6 +262,16 @@ impl TerminalMetrics {
         self.clamp();
         self
     }
+}
+
+fn grid_cells_for_extent(extent: f32, cell_size: f32) -> usize {
+    if !extent.is_finite() || !cell_size.is_finite() || cell_size <= 0.0 {
+        return 0;
+    }
+
+    (extent.max(0.0) / cell_size)
+        .floor()
+        .clamp(0.0, MAX_GRID_CELLS) as usize
 }
 
 fn apply_min_u32(value: f32, adjustment: MetricAdjustment, min: f32) -> f32 {
@@ -439,5 +450,47 @@ mod tests {
             assert!(metrics.box_thickness >= 1.0);
             assert!(metrics.icon_height_single >= 1.0);
         }
+    }
+
+    #[test]
+    fn terminal_bounds_reject_non_finite_values() {
+        let metrics = TerminalMetrics {
+            cell_width: f32::NAN,
+            cell_height: 18.0,
+            cell_baseline: 1.0,
+            underline_position: 1.0,
+            underline_thickness: 1.0,
+            strikethrough_position: 1.0,
+            strikethrough_thickness: 1.0,
+            overline_position: 1.0,
+            overline_thickness: 1.0,
+            box_thickness: 1.0,
+            cursor_thickness: 1.0,
+            cursor_height: 1.0,
+            icon_height: 1.0,
+            icon_height_single: 1.0,
+            face_width: 1.0,
+            face_height: 1.0,
+            face_y: 1.0,
+        };
+
+        assert_eq!(
+            metrics.columns_for_bounds(Rectangle {
+                x: 0.0,
+                y: 0.0,
+                width: 800.0,
+                height: 600.0,
+            }),
+            0
+        );
+        assert_eq!(
+            metrics.rows_for_bounds(Rectangle {
+                x: 0.0,
+                y: 0.0,
+                width: 800.0,
+                height: f32::NAN,
+            }),
+            0
+        );
     }
 }

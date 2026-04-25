@@ -357,6 +357,20 @@ impl SftpSession {
         local_path: &Path,
         remote_path: &Path,
     ) -> Result<usize, SftpError> {
+        let metadata = tokio::fs::symlink_metadata(local_path).await.map_err(|e| {
+            SftpError::LocalIo(format!(
+                "Failed to read metadata for {}: {}",
+                local_path.display(),
+                e
+            ))
+        })?;
+        if metadata.file_type().is_symlink() {
+            return Err(SftpError::LocalIo(format!(
+                "Cannot upload symbolic link {}",
+                local_path.display()
+            )));
+        }
+
         // Create remote directory
         self.create_dir(remote_path).await?;
 

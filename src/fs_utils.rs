@@ -23,11 +23,24 @@ pub fn ensure_not_same_path(source: &Path, target: &Path) -> Result<(), String> 
     Ok(())
 }
 
+/// Reject symlink paths before copy helpers recurse or copy target contents.
+pub fn ensure_not_symlink(path: &Path) -> Result<(), String> {
+    let metadata = std::fs::symlink_metadata(path)
+        .map_err(|e| format!("Failed to read metadata for {}: {}", path.display(), e))?;
+
+    if metadata.file_type().is_symlink() {
+        return Err(format!("Cannot copy symbolic link {}", path.display()));
+    }
+
+    Ok(())
+}
+
 /// Recursively copy a directory from source to target.
 ///
 /// Creates the target directory and all parent directories if they don't exist.
 /// Only copies regular files and directories; symlinks are skipped for safety.
 pub fn copy_dir_recursive(source: &Path, target: &Path) -> Result<(), String> {
+    ensure_not_symlink(source)?;
     ensure_target_not_inside_source(source, target)?;
 
     std::fs::create_dir_all(target)
@@ -96,6 +109,8 @@ fn ensure_target_not_inside_source(source: &Path, target: &Path) -> Result<(), S
 /// Counts all regular files in the directory tree. Directories themselves
 /// are not counted, but their contents are.
 pub fn count_items_in_dir(dir: &Path) -> Result<usize, String> {
+    ensure_not_symlink(dir)?;
+
     let mut count = 0;
 
     for entry in std::fs::read_dir(dir)
@@ -202,6 +217,20 @@ mod tests {
 
         assert!(result.is_err());
         assert!(!target_path.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn copy_helpers_reject_symlinked_directory_roots() {
+        let temp = tempdir().unwrap();
+        let target = temp.path().join("target");
+        let link = temp.path().join("link");
+        fs::create_dir(&target).unwrap();
+        fs::write(target.join("secret.txt"), "secret").unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        assert!(copy_dir_recursive(&link, &temp.path().join("copied")).is_err());
+        assert!(count_items_in_dir(&link).is_err());
     }
 
     #[tokio::test]

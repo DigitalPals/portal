@@ -97,6 +97,26 @@ impl SidebarState {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::scaled_vnc_dimension;
+
+    #[test]
+    fn scaled_vnc_dimension_rejects_non_finite_values() {
+        assert_eq!(scaled_vnc_dimension(f32::NAN, 1.0, 320.0, 8192.0), 320);
+        assert_eq!(
+            scaled_vnc_dimension(800.0, f32::INFINITY, 320.0, 8192.0),
+            800
+        );
+    }
+
+    #[test]
+    fn scaled_vnc_dimension_clamps_output() {
+        assert_eq!(scaled_vnc_dimension(1.0, 1.0, 320.0, 8192.0), 320);
+        assert_eq!(scaled_vnc_dimension(20_000.0, 2.0, 320.0, 8192.0), 8192);
+    }
+}
+
 /// Aggregated UI/navigation state for the app.
 #[derive(Debug)]
 pub struct UiState {
@@ -248,6 +268,21 @@ pub struct Portal {
 
     // Snippets page state
     snippets: SnippetUiState,
+}
+
+fn scaled_vnc_dimension(logical_size: f32, scale: f32, min: f32, max: f32) -> u16 {
+    let logical_size = if logical_size.is_finite() {
+        logical_size.max(1.0)
+    } else {
+        min
+    };
+    let scale = if scale.is_finite() && scale > 0.0 {
+        scale
+    } else {
+        1.0
+    };
+
+    (logical_size * scale).round().clamp(min, max) as u16
 }
 
 impl Portal {
@@ -896,11 +931,8 @@ impl Portal {
     /// Compute a best-effort target size for VNC remote resize.
     pub fn vnc_target_size(&self) -> Option<(u16, u16)> {
         let scale = self.effective_ui_scale();
-        let width = (self.ui.window_size.width * scale).round();
-        let height = ((self.ui.window_size.height - 32.0).max(1.0) * scale).round();
-
-        let width = width.clamp(320.0, 8192.0) as u16;
-        let height = height.clamp(240.0, 8192.0) as u16;
+        let width = scaled_vnc_dimension(self.ui.window_size.width, scale, 320.0, 8192.0);
+        let height = scaled_vnc_dimension(self.ui.window_size.height - 32.0, scale, 240.0, 8192.0);
 
         Some((width, height))
     }

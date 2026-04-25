@@ -9,6 +9,7 @@ use uuid::Uuid;
 use crate::config::{AuthMethod, Host};
 use crate::fs_utils::{
     cleanup_temp_dir, copy_dir_recursive, count_items_in_dir, ensure_not_same_path,
+    ensure_not_symlink,
 };
 use crate::keybindings::AppAction;
 use crate::local::{LocalEvent, LocalSession};
@@ -147,6 +148,9 @@ impl Portal {
             }
         }
         if let Some(vnc) = self.vnc_sessions.remove(&tab_id) {
+            if history::mark_entry_disconnected(&mut self.config.history, vnc.history_entry_id) {
+                history_changed = true;
+            }
             vnc.session.disconnect();
         }
         if let Some(viewer_state) = self.file_viewers.remove(tab_id) {
@@ -962,7 +966,7 @@ impl Portal {
             .selected_entries()
             .into_iter()
             .filter(|e| !e.is_parent())
-            .map(|e| (e.name.clone(), e.path.clone(), e.is_dir))
+            .map(|e| (e.name.clone(), e.path.clone(), e.is_dir, e.is_symlink))
             .collect();
 
         if entries_to_copy.is_empty() {
@@ -977,12 +981,14 @@ impl Portal {
                     async move {
                         tokio::task::spawn_blocking(move || {
                             let mut count = 0;
-                            for (name, source_path, is_dir) in entries_to_copy {
+                            for (name, source_path, is_dir, is_symlink) in entries_to_copy {
+                                reject_symlink_copy(&name, is_symlink)?;
                                 let target_path = target_dir.join(&name);
                                 if is_dir {
                                     copy_dir_recursive(&source_path, &target_path)?;
                                     count += count_items_in_dir(&source_path)?;
                                 } else {
+                                    ensure_not_symlink(&source_path)?;
                                     ensure_not_same_path(&source_path, &target_path)?;
                                     std::fs::copy(&source_path, &target_path).map_err(|e| {
                                         format!("Failed to copy {}: {}", source_path.display(), e)
@@ -1009,7 +1015,8 @@ impl Portal {
                         async move {
                             let start = Instant::now();
                             let mut count = 0;
-                            for (name, source_path, is_dir) in entries_to_copy {
+                            for (name, source_path, is_dir, is_symlink) in entries_to_copy {
+                                reject_symlink_copy(&name, is_symlink)?;
                                 let target_path = target_dir.join(&name);
                                 if is_dir {
                                     count += sftp
@@ -1047,7 +1054,8 @@ impl Portal {
                         async move {
                             let start = Instant::now();
                             let mut count = 0;
-                            for (name, source_path, is_dir) in entries_to_copy {
+                            for (name, source_path, is_dir, is_symlink) in entries_to_copy {
+                                reject_symlink_copy(&name, is_symlink)?;
                                 let target_path = target_dir.join(&name);
                                 if is_dir {
                                     count += sftp
@@ -1105,7 +1113,8 @@ impl Portal {
                                 .map_err(|e| format!("Failed to create temp directory: {}", e))?;
 
                             let result = async {
-                                for (name, source_path, is_dir) in entries_to_copy {
+                                for (name, source_path, is_dir, is_symlink) in entries_to_copy {
+                                    reject_symlink_copy(&name, is_symlink)?;
                                     let temp_path = temp_dir.join(&name);
                                     let target_path = target_dir.join(&name);
 
@@ -1161,6 +1170,14 @@ impl Portal {
                 }
             }
         }
+    }
+}
+
+fn reject_symlink_copy(name: &str, is_symlink: bool) -> Result<(), String> {
+    if is_symlink {
+        Err(format!("Cannot copy symbolic link {}", name))
+    } else {
+        Ok(())
     }
 }
 

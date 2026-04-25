@@ -222,7 +222,8 @@ pub fn build_remote_viewer(
     let temp_dir = std::env::temp_dir()
         .join("portal_viewer")
         .join(format!("{}", viewer_id));
-    let temp_path = temp_dir.join(&file_name);
+    let temp_file_name = safe_temp_file_name(&file_name);
+    let temp_path = temp_dir.join(temp_file_name);
 
     let source = FileSource::Remote {
         temp_path: temp_path.clone(),
@@ -266,4 +267,37 @@ pub fn build_remote_viewer(
     let viewer_state = FileViewerState::new(viewer_id, file_name, source, file_type);
 
     (viewer_state, task)
+}
+
+fn safe_temp_file_name(file_name: &str) -> String {
+    let mut safe = String::with_capacity(file_name.len());
+    for ch in file_name.chars() {
+        if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
+            safe.push(ch);
+        } else if ch.is_whitespace() {
+            safe.push('_');
+        }
+    }
+
+    let safe = safe.trim_matches(['.', '_', '-']);
+    if safe.is_empty() || safe == ".." {
+        "remote_file".to_string()
+    } else {
+        safe.chars().take(120).collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::safe_temp_file_name;
+
+    #[test]
+    fn safe_temp_file_name_removes_path_components() {
+        assert_eq!(safe_temp_file_name("../../report.md"), "report.md");
+    }
+
+    #[test]
+    fn safe_temp_file_name_falls_back_for_empty_names() {
+        assert_eq!(safe_temp_file_name(".."), "remote_file");
+    }
 }
