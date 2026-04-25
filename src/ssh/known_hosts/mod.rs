@@ -302,6 +302,22 @@ mod tests {
     }
 
     #[test]
+    fn revoked_marker_accepts_tab_separator() {
+        let dir = tempdir().expect("temp dir");
+        let path = dir.path().join("known_hosts");
+        fs::write(&path, format!("@revoked\texample.com ssh-ed25519 {KEY2}\n"))
+            .expect("write known_hosts");
+
+        let manager = KnownHostsManager::with_paths(Some(path), None);
+        let key = keys::parse_public_key_base64(KEY2).expect("parse key");
+
+        assert!(matches!(
+            manager.check_host_key("example.com", 22, &key),
+            HostKeyStatus::Revoked { .. }
+        ));
+    }
+
+    #[test]
     fn wildcard_and_negation_patterns() {
         let dir = tempdir().expect("temp dir");
         let path = dir.path().join("known_hosts");
@@ -736,6 +752,11 @@ mod tests {
     }
 
     #[test]
+    fn glob_match_is_case_insensitive_for_hosts() {
+        assert!(glob_match("*.EXAMPLE.com", "Web.example.COM"));
+    }
+
+    #[test]
     fn glob_match_star_wildcard() {
         assert!(glob_match("*.example.com", "www.example.com"));
         assert!(glob_match("*.example.com", "mail.example.com"));
@@ -803,6 +824,15 @@ mod tests {
         assert!(!matchers::host_matches(
             "other.com",
             "other.com",
+            "example.com"
+        ));
+    }
+
+    #[test]
+    fn host_matches_literal_case_insensitive() {
+        assert!(matchers::host_matches(
+            "Example.COM",
+            "Example.COM",
             "example.com"
         ));
     }

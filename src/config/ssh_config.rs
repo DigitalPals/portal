@@ -100,10 +100,10 @@ pub fn parse_ssh_config(content: &str) -> Vec<Host> {
             "port" => {
                 if current.port.is_none()
                     && let Some(value) = args.first()
+                    && let Ok(port) = value.parse::<u16>()
+                    && port > 0
                 {
-                    if let Ok(port) = value.parse::<u16>() {
-                        current.port = Some(port);
-                    }
+                    current.port = Some(port);
                 }
             }
             "identityfile" => {
@@ -203,13 +203,13 @@ fn resolve_host(alias: &str, blocks: &[HostBlock]) -> Host {
     let username = resolved.user.unwrap_or_else(default_user);
     let hostname = resolved
         .hostname
-        .map(|value| expand_ssh_tokens(&value, alias, &username, port))
+        .map(|value| expand_ssh_tokens(&value, alias, alias, &username, port))
         .unwrap_or_else(|| alias.to_string());
 
     let auth = match resolved.identity_file {
         Some(Some(path)) => AuthMethod::PublicKey {
             key_path: Some(expand_identity_path(&expand_ssh_tokens(
-                &path, alias, &username, port,
+                &path, alias, &hostname, &username, port,
             ))),
         },
         Some(None) | None => AuthMethod::Agent,
@@ -288,7 +288,7 @@ fn pattern_matches(pattern: &str, value: &str) -> bool {
     inner(pattern.as_bytes(), value.as_bytes())
 }
 
-fn expand_ssh_tokens(raw: &str, alias: &str, username: &str, port: u16) -> String {
+fn expand_ssh_tokens(raw: &str, alias: &str, hostname: &str, username: &str, port: u16) -> String {
     let mut expanded = String::with_capacity(raw.len());
     let mut chars = raw.chars();
     while let Some(ch) = chars.next() {
@@ -299,7 +299,8 @@ fn expand_ssh_tokens(raw: &str, alias: &str, username: &str, port: u16) -> Strin
 
         match chars.next() {
             Some('%') => expanded.push('%'),
-            Some('h' | 'n') => expanded.push_str(alias),
+            Some('h') => expanded.push_str(hostname),
+            Some('n') => expanded.push_str(alias),
             Some('r') => expanded.push_str(username),
             Some('p') => expanded.push_str(&port.to_string()),
             Some(other) => {
@@ -607,6 +608,38 @@ mod tests {
         } else {
             panic!("expected public key auth");
         }
+    }
+
+    #[test]
+    fn parse_expands_identity_hostname_token_to_resolved_hostname() {
+        let content = r#"
+            Host api
+              HostName api.internal
+              IdentityFile keys/%h-%n.pem
+        "#;
+        let hosts = parse_ssh_config(content);
+
+        assert_eq!(hosts.len(), 1);
+        if let AuthMethod::PublicKey { key_path } = &hosts[0].auth {
+            let key_path = key_path.as_ref().expect("missing key path");
+            if let Some(dir) = ssh_dir() {
+                assert_eq!(key_path, &dir.join("keys/api.internal-api.pem"));
+            }
+        } else {
+            panic!("expected public key auth");
+        }
+    }
+
+    #[test]
+    fn parse_ignores_invalid_zero_port() {
+        let content = r#"
+            Host zero-port
+              Port 0
+        "#;
+        let hosts = parse_ssh_config(content);
+
+        assert_eq!(hosts.len(), 1);
+        assert_eq!(hosts[0].port, 22);
     }
 
     #[test]

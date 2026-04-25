@@ -46,10 +46,14 @@ pub(crate) fn scan_known_hosts_path(
         }
 
         let (marker, rest) = if let Some(stripped) = trimmed.strip_prefix('@') {
-            match stripped.split_once(' ') {
-                Some((marker, rest)) => (Some(marker), rest.trim_start()),
-                None => continue,
-            }
+            let mut marker_parts = stripped.splitn(2, char::is_whitespace);
+            let Some(marker) = marker_parts.next() else {
+                continue;
+            };
+            let Some(rest) = marker_parts.next() else {
+                continue;
+            };
+            (Some(marker), rest.trim_start())
         } else {
             (None, trimmed)
         };

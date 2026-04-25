@@ -219,10 +219,11 @@ fn set_modifier(value: &mut bool, label: &str) -> Result<(), KeybindingParseErro
 fn parse_key_token(token: &str) -> Result<KeybindingKey, KeybindingParseError> {
     let lower = token.to_ascii_lowercase();
     if let Some(rest) = lower.strip_prefix('f') {
-        if let Ok(num) = rest.parse::<u8>() {
-            if (1..=12).contains(&num) {
-                return Ok(KeybindingKey::F(num));
-            }
+        if !rest.starts_with('0')
+            && let Ok(num) = rest.parse::<u8>()
+            && (1..=12).contains(&num)
+        {
+            return Ok(KeybindingKey::F(num));
         }
     }
 
@@ -232,7 +233,11 @@ fn parse_key_token(token: &str) -> Result<KeybindingKey, KeybindingParseError> {
         _ => {
             let mut chars = token.chars();
             if let (Some(first), None) = (chars.next(), chars.next()) {
-                Ok(KeybindingKey::Character(first.to_ascii_lowercase()))
+                if first.is_ascii_graphic() {
+                    Ok(KeybindingKey::Character(first.to_ascii_lowercase()))
+                } else {
+                    Err(KeybindingParseError::UnknownKey(token.to_string()))
+                }
             } else {
                 Err(KeybindingParseError::UnknownKey(token.to_string()))
             }
@@ -414,6 +419,22 @@ mod tests {
         assert_eq!(
             Keybinding::parse("Ctrl+A+").unwrap_err(),
             KeybindingParseError::EmptyToken
+        );
+    }
+
+    #[test]
+    fn parse_rejects_ambiguous_function_keys() {
+        assert_eq!(
+            Keybinding::parse("F01").unwrap_err(),
+            KeybindingParseError::UnknownKey("F01".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_rejects_non_ascii_character_keys() {
+        assert_eq!(
+            Keybinding::parse("Ctrl+é").unwrap_err(),
+            KeybindingParseError::UnknownKey("é".to_string())
         );
     }
 }

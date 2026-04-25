@@ -3,7 +3,7 @@
 //! Provides validation functions for hostnames, ports, usernames, and other
 //! user inputs to ensure they conform to expected formats before use.
 
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv6Addr};
 
 use regex::Regex;
 use std::sync::LazyLock;
@@ -58,22 +58,31 @@ pub fn validate_hostname(hostname: &str) -> Result<(), ValidationError> {
         });
     }
 
-    let ip_candidate = hostname
+    let bracketed = hostname
         .strip_prefix('[')
-        .and_then(|value| value.strip_suffix(']'))
-        .unwrap_or(hostname);
-    let ip_without_scope = ip_candidate
-        .split_once('%')
-        .map_or(ip_candidate, |(ip, _)| ip);
+        .and_then(|value| value.strip_suffix(']'));
+    let ip_candidate = bracketed.unwrap_or(hostname);
 
     // Try parsing as IP address first. Bracketed IPv6 literals and scoped
     // link-local IPv6 addresses are common in SSH/VNC connection UIs.
-    if ip_without_scope.parse::<IpAddr>().is_ok() {
+    if parse_valid_ip_literal(ip_candidate, bracketed.is_some()) {
         return Ok(());
     }
 
     // Validate as DNS hostname (RFC 1123)
     validate_dns_hostname(hostname)
+}
+
+fn parse_valid_ip_literal(candidate: &str, bracketed: bool) -> bool {
+    if let Some((ip, scope)) = candidate.split_once('%') {
+        return !ip.is_empty() && !scope.is_empty() && ip.parse::<Ipv6Addr>().is_ok();
+    }
+
+    match candidate.parse::<IpAddr>() {
+        Ok(IpAddr::V4(_)) => !bracketed,
+        Ok(IpAddr::V6(_)) => true,
+        Err(_) => false,
+    }
 }
 
 /// Validate a DNS hostname according to RFC 1123.
@@ -209,6 +218,13 @@ mod tests {
         assert!(validate_hostname("::ffff:192.168.1.1").is_ok());
         assert!(validate_hostname("[2001:db8::1]").is_ok());
         assert!(validate_hostname("fe80::1%eth0").is_ok());
+    }
+
+    #[test]
+    fn hostname_invalid_ip_literal_syntax() {
+        assert!(validate_hostname("[127.0.0.1]").is_err());
+        assert!(validate_hostname("127.0.0.1%eth0").is_err());
+        assert!(validate_hostname("fe80::1%").is_err());
     }
 
     #[test]

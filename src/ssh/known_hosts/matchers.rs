@@ -41,7 +41,7 @@ fn match_host_pattern(host_port: &str, host: &str, pattern: &str) -> bool {
         return glob_match(pattern, host) || glob_match(pattern, host_port);
     }
 
-    pattern == host || pattern == host_port
+    pattern.eq_ignore_ascii_case(host) || pattern.eq_ignore_ascii_case(host_port)
 }
 
 pub(crate) fn match_hashed_host(host_port: &str, pattern: &str) -> bool {
@@ -75,7 +75,9 @@ pub(crate) fn glob_match(pattern: &str, text: &str) -> bool {
     let t_bytes = text.as_bytes();
 
     while t_idx < t_bytes.len() {
-        if p_idx < p_bytes.len() && (p_bytes[p_idx] == b'?' || p_bytes[p_idx] == t_bytes[t_idx]) {
+        if p_idx < p_bytes.len()
+            && (p_bytes[p_idx] == b'?' || p_bytes[p_idx].eq_ignore_ascii_case(&t_bytes[t_idx]))
+        {
             p_idx += 1;
             t_idx += 1;
             continue;
