@@ -74,11 +74,18 @@ pub fn calculate_columns(window_width: f32, sidebar_state: SidebarState) -> usiz
     // Calculate how many cards fit
     // Formula: content_width >= n * MIN_CARD_WIDTH + (n-1) * GRID_SPACING
     // Solving: n <= (content_width + GRID_SPACING) / (MIN_CARD_WIDTH + GRID_SPACING)
-    let columns =
-        ((content_width + GRID_SPACING) / (MIN_CARD_WIDTH + GRID_SPACING)).floor() as usize;
+    let columns = grid_columns_for_width(content_width, MIN_CARD_WIDTH);
 
     // Clamp between 1 and 4 columns
     columns.clamp(1, 4)
+}
+
+fn grid_columns_for_width(content_width: f32, min_card_width: f32) -> usize {
+    if !content_width.is_finite() || !min_card_width.is_finite() || min_card_width <= 0.0 {
+        return 1;
+    }
+
+    ((content_width.max(0.0) + GRID_SPACING) / (min_card_width + GRID_SPACING)).floor() as usize
 }
 
 /// Build the action bar with search, connect, new host, and terminal buttons
@@ -751,4 +758,16 @@ fn empty_state(theme: Theme, fonts: ScaledFonts) -> Element<'static, Message> {
         .align_x(Alignment::Center)
         .align_y(Alignment::Center)
         .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::calculate_columns;
+    use crate::app::SidebarState;
+
+    #[test]
+    fn calculate_columns_handles_non_finite_width() {
+        assert_eq!(calculate_columns(f32::NAN, SidebarState::Hidden), 1);
+        assert_eq!(calculate_columns(f32::INFINITY, SidebarState::Hidden), 1);
+    }
 }

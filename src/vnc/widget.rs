@@ -125,7 +125,14 @@ impl<'a> VncMouseWrapper<'a> {
 
     /// Map widget-relative coordinates to framebuffer coordinates.
     fn map_coordinates(&self, bounds: &Rectangle, x: f32, y: f32) -> Option<(u16, u16)> {
-        if self.fb_width == 0 || self.fb_height == 0 || bounds.width <= 0.0 || bounds.height <= 0.0
+        if self.fb_width == 0
+            || self.fb_height == 0
+            || bounds.width <= 0.0
+            || bounds.height <= 0.0
+            || !bounds.width.is_finite()
+            || !bounds.height.is_finite()
+            || !x.is_finite()
+            || !y.is_finite()
         {
             return None;
         }
@@ -177,8 +184,14 @@ impl<'a> VncMouseWrapper<'a> {
             }
         };
 
-        let clamped_x = fb_x.clamp(0.0, (self.fb_width - 1) as f32) as u16;
-        let clamped_y = fb_y.clamp(0.0, (self.fb_height - 1) as f32) as u16;
+        if !fb_x.is_finite() || !fb_y.is_finite() {
+            return None;
+        }
+
+        let max_x = self.fb_width.saturating_sub(1).min(u16::MAX as u32) as f32;
+        let max_y = self.fb_height.saturating_sub(1).min(u16::MAX as u32) as f32;
+        let clamped_x = fb_x.clamp(0.0, max_x) as u16;
+        let clamped_y = fb_y.clamp(0.0, max_y) as u16;
         Some((clamped_x, clamped_y))
     }
 }
@@ -408,6 +421,39 @@ struct VncPrimitive {
     show_cursor_dot: bool,
 }
 
+fn build_dirty_snapshot(
+    fb: &FrameBuffer,
+    dirty: DirtyRect,
+    staging_buf: &mut Vec<u8>,
+) -> Option<(u32, u32, u32, u32, u32)> {
+    let stride = (fb.width as usize).checked_mul(4)?;
+    let x = dirty.x.min(fb.width);
+    let y = dirty.y.min(fb.height);
+    let w = dirty.width.min(fb.width.saturating_sub(x));
+    let h = dirty.height.min(fb.height.saturating_sub(y));
+    if w == 0 || h == 0 {
+        return None;
+    }
+
+    let offset = (y as usize)
+        .checked_mul(stride)?
+        .checked_add((x as usize).checked_mul(4)?)?;
+    let len = ((h - 1) as usize)
+        .checked_mul(stride)?
+        .checked_add((w as usize).checked_mul(4)?)?;
+    let end = offset.checked_add(len)?;
+    if end > fb.pixels.len() {
+        return None;
+    }
+
+    let data_len = end - offset;
+    staging_buf.clear();
+    staging_buf.reserve(data_len);
+    staging_buf.extend_from_slice(&fb.pixels[offset..end]);
+    let stride = u32::try_from(stride).ok()?;
+    Some((stride, x, y, w, h))
+}
+
 /// The wgpu pipeline that owns the texture and renders it.
 struct VncPipeline {
     pipeline: wgpu::RenderPipeline,
@@ -590,7 +636,9 @@ impl shader::Primitive for VncPrimitive {
                 return;
             }
 
-            let expected = (fb.width * fb.height * 4) as usize;
+            let Some(expected) = fb.expected_pixel_len() else {
+                return;
+            };
             if fb.pixels.len() != expected {
                 return;
             }
@@ -639,34 +687,7 @@ impl shader::Primitive for VncPrimitive {
             };
 
             let snapshot = if let Some(dirty) = dirty {
-                let stride = fb.width as usize * 4;
-                let x = dirty.x.min(fb.width);
-                let y = dirty.y.min(fb.height);
-                let w = dirty.width.min(fb.width.saturating_sub(x));
-                let h = dirty.height.min(fb.height.saturating_sub(y));
-                if w == 0 || h == 0 {
-                    None
-                } else {
-                    let offset = (y as usize * stride) + (x as usize * 4);
-                    let len = ((h - 1) as usize * stride) + (w as usize * 4);
-                    let end = offset.saturating_add(len);
-                    if end > fb.pixels.len() {
-                        None
-                    } else {
-                        // Copy the dirty region into the reusable staging buffer so
-                        // GPU upload never holds the framebuffer lock. We keep the
-                        // full framebuffer stride because Queue::write_texture can
-                        // then address each row at its original x offset without
-                        // repacking row padding.
-                        let data_len = end - offset;
-                        pipeline.staging_buf.clear();
-                        pipeline.staging_buf.reserve(data_len);
-                        pipeline
-                            .staging_buf
-                            .extend_from_slice(&fb.pixels[offset..end]);
-                        Some((stride as u32, x, y, w, h))
-                    }
-                }
+                build_dirty_snapshot(&fb, dirty, &mut pipeline.staging_buf)
             } else {
                 None
             };
@@ -932,5 +953,52 @@ impl shader::Program<Message> for VncProgram {
             scaling_mode: self.scaling_mode,
             show_cursor_dot: self.show_cursor_dot,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dirty_snapshot_rejects_overflowed_dimensions() {
+        let fb = FrameBuffer::new(u32::MAX, u32::MAX);
+        let mut staging = Vec::new();
+
+        assert!(
+            build_dirty_snapshot(
+                &fb,
+                DirtyRect {
+                    x: 0,
+                    y: 0,
+                    width: u32::MAX,
+                    height: u32::MAX,
+                },
+                &mut staging,
+            )
+            .is_none()
+        );
+    }
+
+    #[test]
+    fn dirty_snapshot_clips_dirty_rects() {
+        let mut fb = FrameBuffer::new(2, 2);
+        fb.apply_raw(0, 0, 2, 2, &[1; 16]);
+        let mut staging = Vec::new();
+
+        let snapshot = build_dirty_snapshot(
+            &fb,
+            DirtyRect {
+                x: 1,
+                y: 1,
+                width: 4,
+                height: 4,
+            },
+            &mut staging,
+        )
+        .unwrap();
+
+        assert_eq!(snapshot, (8, 1, 1, 1, 1));
+        assert_eq!(staging.len(), 4);
     }
 }

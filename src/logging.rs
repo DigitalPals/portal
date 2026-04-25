@@ -68,12 +68,15 @@ fn cleanup_old_logs(dir: &Path, prefix: &str, keep: usize) {
         let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
             continue;
         };
-        if !name.starts_with(prefix) {
+        if !is_rotated_log_name(name, prefix) {
             continue;
         }
-        let Ok(metadata) = entry.metadata() else {
+        let Ok(metadata) = std::fs::symlink_metadata(&path) else {
             continue;
         };
+        if !metadata.is_file() {
+            continue;
+        }
         let Ok(modified) = metadata.modified() else {
             continue;
         };
@@ -88,5 +91,36 @@ fn cleanup_old_logs(dir: &Path, prefix: &str, keep: usize) {
     let to_remove = files.len() - keep;
     for (_, path) in files.into_iter().take(to_remove) {
         let _ = std::fs::remove_file(path);
+    }
+}
+
+fn is_rotated_log_name(name: &str, prefix: &str) -> bool {
+    name == prefix
+        || name
+            .strip_prefix(prefix)
+            .is_some_and(|rest| rest.starts_with('.'))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{cleanup_old_logs, is_rotated_log_name};
+
+    #[test]
+    fn rotated_log_name_rejects_similar_prefixes() {
+        assert!(is_rotated_log_name("portal.log", "portal.log"));
+        assert!(is_rotated_log_name("portal.log.2026-01-01", "portal.log"));
+        assert!(!is_rotated_log_name("portal.login", "portal.log"));
+    }
+
+    #[test]
+    fn cleanup_old_logs_ignores_similar_prefixes() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("portal.log.1"), "old").unwrap();
+        std::fs::write(dir.path().join("portal.log.2"), "old").unwrap();
+        std::fs::write(dir.path().join("portal.login"), "keep").unwrap();
+
+        cleanup_old_logs(dir.path(), "portal.log", 1);
+
+        assert!(dir.path().join("portal.login").exists());
     }
 }

@@ -19,6 +19,8 @@ pub struct DirtyRect {
     pub height: u32,
 }
 
+const MAX_FRAMEBUFFER_BYTES: usize = 256 * 1024 * 1024;
+
 pub(crate) fn rgba_to_bgra(mut data: Vec<u8>) -> Vec<u8> {
     for chunk in data.chunks_exact_mut(4) {
         chunk.swap(0, 2);
@@ -28,10 +30,11 @@ pub(crate) fn rgba_to_bgra(mut data: Vec<u8>) -> Vec<u8> {
 
 impl FrameBuffer {
     pub fn new(width: u32, height: u32) -> Self {
+        let (width, height, pixels) = allocate_pixels(width, height);
         Self {
             width,
             height,
-            pixels: vec![0; (width * height * 4) as usize],
+            pixels,
             dirty: None,
             cursor_x: 0,
             cursor_y: 0,
@@ -55,9 +58,11 @@ impl FrameBuffer {
     }
 
     fn mark_dirty(&mut self, x: u32, y: u32, w: u32, h: u32) {
-        if w == 0 || h == 0 {
+        if w == 0 || h == 0 || x >= self.width || y >= self.height {
             return;
         }
+        let w = w.min(self.width.saturating_sub(x));
+        let h = h.min(self.height.saturating_sub(y));
 
         let new_rect = DirtyRect {
             x,
@@ -71,8 +76,14 @@ impl FrameBuffer {
             Some(existing) => {
                 let x1 = existing.x.min(new_rect.x);
                 let y1 = existing.y.min(new_rect.y);
-                let x2 = (existing.x + existing.width).max(new_rect.x + new_rect.width);
-                let y2 = (existing.y + existing.height).max(new_rect.y + new_rect.height);
+                let x2 = existing
+                    .x
+                    .saturating_add(existing.width)
+                    .max(new_rect.x.saturating_add(new_rect.width));
+                let y2 = existing
+                    .y
+                    .saturating_add(existing.height)
+                    .max(new_rect.y.saturating_add(new_rect.height));
                 DirtyRect {
                     x: x1,
                     y: y1,
@@ -85,11 +96,17 @@ impl FrameBuffer {
 
     /// Apply a raw image update to the framebuffer
     pub fn apply_raw(&mut self, x: u32, y: u32, w: u32, h: u32, data: &[u8]) {
-        let stride = self.width as usize * 4;
+        let Some((w, h, _stride, len)) = self.clipped_region(x, y, w, h, 4) else {
+            return;
+        };
         for row in 0..h as usize {
-            let src_offset = row * w as usize * 4;
-            let dst_offset = (y as usize + row) * stride + x as usize * 4;
-            let len = w as usize * 4;
+            let Some(src_offset) = row.checked_mul(w as usize).and_then(|v| v.checked_mul(4))
+            else {
+                break;
+            };
+            let Some(dst_offset) = checked_pixel_offset(self.width, x, y + row as u32) else {
+                break;
+            };
             if src_offset + len <= data.len() && dst_offset + len <= self.pixels.len() {
                 self.pixels[dst_offset..dst_offset + len]
                     .copy_from_slice(&data[src_offset..src_offset + len]);
@@ -100,11 +117,14 @@ impl FrameBuffer {
 
     /// Apply a 16-bit RGB565 image update to the framebuffer (little-endian unless big_endian is true)
     pub fn apply_raw_565(&mut self, x: u32, y: u32, w: u32, h: u32, data: &[u8], big_endian: bool) {
-        let stride = self.width as usize * 4;
-        let row_bytes = w as usize * 2;
+        let Some((w, h, _stride, row_bytes)) = self.clipped_region(x, y, w, h, 2) else {
+            return;
+        };
         for row in 0..h as usize {
             let src_offset = row * row_bytes;
-            let dst_offset = (y as usize + row) * stride + x as usize * 4;
+            let Some(dst_offset) = checked_pixel_offset(self.width, x, y + row as u32) else {
+                break;
+            };
             if src_offset + row_bytes > data.len() || dst_offset >= self.pixels.len() {
                 break;
             }
@@ -137,8 +157,11 @@ impl FrameBuffer {
 
     /// Apply a copy rect operation
     pub fn apply_copy(&mut self, dst_x: u32, dst_y: u32, src_x: u32, src_y: u32, w: u32, h: u32) {
-        let stride = self.width as usize * 4;
-        let mut temp = vec![0u8; w as usize * 4];
+        let Some((w, h, _stride, len)) = self.clipped_copy_region(dst_x, dst_y, src_x, src_y, w, h)
+        else {
+            return;
+        };
+        let mut temp = vec![0u8; len];
         // Iterate in reverse row order when dst overlaps src below,
         // to avoid overwriting source data before it's copied.
         let rows: Box<dyn Iterator<Item = usize>> = if dst_y > src_y {
@@ -147,9 +170,14 @@ impl FrameBuffer {
             Box::new(0..h as usize)
         };
         for row in rows {
-            let src_offset = (src_y as usize + row) * stride + src_x as usize * 4;
-            let dst_offset = (dst_y as usize + row) * stride + dst_x as usize * 4;
-            let len = w as usize * 4;
+            let Some(src_offset) = checked_pixel_offset(self.width, src_x, src_y + row as u32)
+            else {
+                break;
+            };
+            let Some(dst_offset) = checked_pixel_offset(self.width, dst_x, dst_y + row as u32)
+            else {
+                break;
+            };
             if src_offset + len <= self.pixels.len() && dst_offset + len <= self.pixels.len() {
                 temp[..len].copy_from_slice(&self.pixels[src_offset..src_offset + len]);
                 self.pixels[dst_offset..dst_offset + len].copy_from_slice(&temp[..len]);
@@ -160,9 +188,10 @@ impl FrameBuffer {
 
     /// Resize the framebuffer
     pub fn resize(&mut self, width: u32, height: u32) {
+        let (width, height, pixels) = allocate_pixels(width, height);
         self.width = width;
         self.height = height;
-        self.pixels = vec![0; (width * height * 4) as usize];
+        self.pixels = pixels;
         if width > 0 && height > 0 {
             self.cursor_x = self.cursor_x.min(width - 1);
             self.cursor_y = self.cursor_y.min(height - 1);
@@ -176,6 +205,74 @@ impl FrameBuffer {
         // server will set the dirty flag when it arrives.
         self.dirty = None;
     }
+
+    pub fn expected_pixel_len(&self) -> Option<usize> {
+        pixel_buffer_len(self.width, self.height)
+    }
+
+    fn clipped_region(
+        &self,
+        x: u32,
+        y: u32,
+        w: u32,
+        h: u32,
+        bytes_per_source_pixel: usize,
+    ) -> Option<(u32, u32, usize, usize)> {
+        if x >= self.width || y >= self.height || w == 0 || h == 0 {
+            return None;
+        }
+        let w = w.min(self.width.saturating_sub(x));
+        let h = h.min(self.height.saturating_sub(y));
+        let stride = (self.width as usize).checked_mul(4)?;
+        let row_bytes = (w as usize).checked_mul(bytes_per_source_pixel)?;
+        Some((w, h, stride, row_bytes))
+    }
+
+    fn clipped_copy_region(
+        &self,
+        dst_x: u32,
+        dst_y: u32,
+        src_x: u32,
+        src_y: u32,
+        w: u32,
+        h: u32,
+    ) -> Option<(u32, u32, usize, usize)> {
+        if dst_x >= self.width
+            || dst_y >= self.height
+            || src_x >= self.width
+            || src_y >= self.height
+        {
+            return None;
+        }
+        let w = w
+            .min(self.width.saturating_sub(dst_x))
+            .min(self.width.saturating_sub(src_x));
+        let h = h
+            .min(self.height.saturating_sub(dst_y))
+            .min(self.height.saturating_sub(src_y));
+        self.clipped_region(dst_x, dst_y, w, h, 4)
+    }
+}
+
+fn pixel_buffer_len(width: u32, height: u32) -> Option<usize> {
+    let len = (width as usize)
+        .checked_mul(height as usize)?
+        .checked_mul(4)?;
+    (len <= MAX_FRAMEBUFFER_BYTES).then_some(len)
+}
+
+fn allocate_pixels(width: u32, height: u32) -> (u32, u32, Vec<u8>) {
+    match pixel_buffer_len(width, height) {
+        Some(len) => (width, height, vec![0; len]),
+        None => (0, 0, Vec::new()),
+    }
+}
+
+fn checked_pixel_offset(width: u32, x: u32, y: u32) -> Option<usize> {
+    (y as usize)
+        .checked_mul(width as usize)?
+        .checked_add(x as usize)?
+        .checked_mul(4)
 }
 
 #[cfg(test)]
@@ -219,5 +316,42 @@ mod tests {
         assert_eq!(fb.pixels.len(), 8 * 4 * 4);
         assert_eq!(fb.cursor_x, 4);
         assert_eq!(fb.cursor_y, 3);
+    }
+
+    #[test]
+    fn oversized_framebuffer_dimensions_are_rejected() {
+        let fb = FrameBuffer::new(u32::MAX, u32::MAX);
+
+        assert_eq!(fb.width, 0);
+        assert_eq!(fb.height, 0);
+        assert!(fb.pixels.is_empty());
+    }
+
+    #[test]
+    fn raw_updates_outside_framebuffer_do_not_mark_dirty() {
+        let mut fb = FrameBuffer::new(4, 4);
+
+        fb.apply_raw(10, 10, 1, 1, &[1, 2, 3, 4]);
+
+        assert!(fb.dirty.is_none());
+    }
+
+    #[test]
+    fn raw_updates_are_clipped_to_framebuffer() {
+        let mut fb = FrameBuffer::new(2, 2);
+
+        fb.apply_raw(1, 1, 4, 4, &[1, 2, 3, 4]);
+
+        assert_eq!(fb.dirty.unwrap().width, 1);
+        assert_eq!(fb.dirty.unwrap().height, 1);
+    }
+
+    #[test]
+    fn copy_rect_outside_framebuffer_does_not_mark_dirty() {
+        let mut fb = FrameBuffer::new(4, 4);
+
+        fb.apply_copy(0, 0, 10, 10, 1, 1);
+
+        assert!(fb.dirty.is_none());
     }
 }

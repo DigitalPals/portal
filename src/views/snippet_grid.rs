@@ -48,9 +48,16 @@ pub fn calculate_columns(
     };
 
     let content_width = window_width - sidebar_width - GRID_PADDING - panel_width;
-    let columns =
-        ((content_width + GRID_SPACING) / (MIN_SNIPPET_CARD_WIDTH + GRID_SPACING)).floor() as usize;
+    let columns = grid_columns_for_width(content_width, MIN_SNIPPET_CARD_WIDTH);
     columns.clamp(1, 4)
+}
+
+fn grid_columns_for_width(content_width: f32, min_card_width: f32) -> usize {
+    if !content_width.is_finite() || !min_card_width.is_finite() || min_card_width <= 0.0 {
+        return 1;
+    }
+
+    ((content_width.max(0.0) + GRID_SPACING) / (min_card_width + GRID_SPACING)).floor() as usize
 }
 
 /// Build the action bar with search and new snippet button
@@ -622,7 +629,8 @@ fn no_results_state(theme: Theme, fonts: ScaledFonts) -> Element<'static, Messag
 
 #[cfg(test)]
 mod tests {
-    use super::filter_snippets;
+    use super::{calculate_columns, filter_snippets};
+    use crate::app::SidebarState;
     use crate::config::Snippet;
 
     #[test]
@@ -647,5 +655,14 @@ mod tests {
         let filtered = filter_snippets(&snippets, "SYSTEMCTL");
 
         assert_eq!(filtered.len(), 1);
+    }
+
+    #[test]
+    fn calculate_columns_handles_non_finite_width() {
+        assert_eq!(calculate_columns(f32::NAN, SidebarState::Hidden, false), 1);
+        assert_eq!(
+            calculate_columns(f32::INFINITY, SidebarState::Hidden, true),
+            1
+        );
     }
 }

@@ -392,13 +392,20 @@ impl<'a, Message> TerminalWidget<'a, Message> {
 
     /// Convert pixel coordinates to terminal cell coordinates (screen-relative)
     fn pixel_to_cell(&self, bounds: &Rectangle, position: iced::Point) -> Option<(usize, usize)> {
-        if !bounds.contains(position) {
+        if !bounds.contains(position)
+            || !bounds.width.is_finite()
+            || !bounds.height.is_finite()
+            || !position.x.is_finite()
+            || !position.y.is_finite()
+        {
             return None;
         }
         // Account for left padding when converting to cell coordinates
-        let col =
-            ((position.x - bounds.x - TERMINAL_PADDING_LEFT).max(0.0) / self.cell_width()) as usize;
-        let row = ((position.y - bounds.y) / self.cell_height()) as usize;
+        let col = terminal_cell_index(
+            position.x - bounds.x - TERMINAL_PADDING_LEFT,
+            self.cell_width(),
+        )?;
+        let row = terminal_cell_index(position.y - bounds.y, self.cell_height())?;
         Some((col, row))
     }
 
@@ -574,6 +581,18 @@ impl<'a, Message> TerminalWidget<'a, Message> {
 
         result
     }
+}
+
+fn terminal_cell_index(offset: f32, cell_size: f32) -> Option<usize> {
+    if !offset.is_finite() || !cell_size.is_finite() || cell_size <= 0.0 {
+        return None;
+    }
+
+    Some(
+        (offset.max(0.0) / cell_size)
+            .floor()
+            .clamp(0.0, u16::MAX as f32) as usize,
+    )
 }
 
 /// Widget state stored in the tree
@@ -1723,6 +1742,18 @@ mod tests {
 
         assert_eq!(metrics.cell_width.fract(), 0.0);
         assert_eq!(metrics.cell_height.fract(), 0.0);
+    }
+
+    #[test]
+    fn terminal_cell_index_rejects_non_finite_values() {
+        assert_eq!(terminal_cell_index(f32::NAN, 12.0), None);
+        assert_eq!(terminal_cell_index(24.0, f32::INFINITY), None);
+        assert_eq!(terminal_cell_index(24.0, 0.0), None);
+    }
+
+    #[test]
+    fn terminal_cell_index_clamps_large_values() {
+        assert_eq!(terminal_cell_index(f32::MAX, 1.0), Some(u16::MAX as usize));
     }
 
     #[test]
