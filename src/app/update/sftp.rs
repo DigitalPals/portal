@@ -74,7 +74,7 @@ pub fn handle_sftp(portal: &mut Portal, msg: SftpMessage) -> Task<Message> {
                 tab_state.close_actions_menus();
                 tab_state.active_pane = pane_id;
                 let pane = tab_state.pane_mut(pane_id);
-                if let Some(parent) = pane.current_path.parent() {
+                if let Some(parent) = navigable_parent(&pane.current_path) {
                     pane.current_path = parent.to_path_buf();
                     pane.loading = true;
                     return portal.load_dual_pane_directory(tab_id, pane_id);
@@ -437,5 +437,30 @@ pub fn handle_sftp(portal: &mut Portal, msg: SftpMessage) -> Task<Message> {
             }
             Task::none()
         }
+    }
+}
+
+fn navigable_parent(path: &std::path::Path) -> Option<&std::path::Path> {
+    let parent = path.parent()?;
+    if parent.as_os_str().is_empty() {
+        return None;
+    }
+    Some(parent)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::navigable_parent;
+    use std::path::Path;
+
+    #[test]
+    fn navigable_parent_skips_relative_empty_parent() {
+        assert!(navigable_parent(Path::new(".")).is_none());
+        assert!(navigable_parent(Path::new("relative")).is_none());
+    }
+
+    #[test]
+    fn navigable_parent_keeps_absolute_parent() {
+        assert_eq!(navigable_parent(Path::new("/home")), Some(Path::new("/")));
     }
 }

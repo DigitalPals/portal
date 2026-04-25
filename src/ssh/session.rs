@@ -47,6 +47,7 @@ pub struct SshSession {
 }
 
 const DEFAULT_COMMAND_OUTPUT_LIMIT: usize = 4 * 1024 * 1024;
+const MAX_COMMAND_OUTPUT_LIMIT: usize = 64 * 1024 * 1024;
 
 fn command_output_limit() -> usize {
     static LIMIT: OnceLock<usize> = OnceLock::new();
@@ -55,8 +56,31 @@ fn command_output_limit() -> usize {
             .ok()
             .and_then(|raw| raw.trim().parse::<usize>().ok())
             .filter(|value| *value > 0)
+            .map(|value| value.min(MAX_COMMAND_OUTPUT_LIMIT))
             .unwrap_or(DEFAULT_COMMAND_OUTPUT_LIMIT)
     })
+}
+
+fn append_command_output(
+    output: &mut String,
+    total_bytes: &mut usize,
+    data: &[u8],
+    output_limit: usize,
+) -> Result<(), SshError> {
+    *total_bytes = total_bytes.saturating_add(data.len());
+    if *total_bytes > output_limit {
+        tracing::warn!("Command output exceeded limit ({} bytes)", output_limit);
+        return Err(SshError::Channel(format!(
+            "Command output exceeded {} bytes",
+            output_limit
+        )));
+    }
+    output.push_str(&String::from_utf8_lossy(data));
+    Ok(())
+}
+
+fn ssh_exit_status_to_i32(exit_status: u32) -> i32 {
+    i32::try_from(exit_status).unwrap_or(i32::MAX)
 }
 
 impl std::fmt::Debug for SshSession {
@@ -245,20 +269,7 @@ impl SshSession {
             loop {
                 match channel.wait().await {
                     Some(ChannelMsg::Data { data }) => {
-                        total_bytes = total_bytes.saturating_add(data.len());
-                        if total_bytes > output_limit {
-                            tracing::warn!(
-                                "Command output exceeded limit ({} bytes)",
-                                output_limit
-                            );
-                            return Err(SshError::Channel(format!(
-                                "Command output exceeded {} bytes",
-                                output_limit
-                            )));
-                        }
-                        if let Ok(s) = std::str::from_utf8(&data) {
-                            output.push_str(s);
-                        }
+                        append_command_output(&mut output, &mut total_bytes, &data, output_limit)?;
                     }
                     Some(ChannelMsg::ExtendedData { data, .. }) => {
                         total_bytes = total_bytes.saturating_add(data.len());
@@ -329,39 +340,13 @@ impl SshSession {
             loop {
                 match channel.wait().await {
                     Some(ChannelMsg::Data { data }) => {
-                        total_bytes = total_bytes.saturating_add(data.len());
-                        if total_bytes > output_limit {
-                            tracing::warn!(
-                                "Command output exceeded limit ({} bytes)",
-                                output_limit
-                            );
-                            return Err(SshError::Channel(format!(
-                                "Command output exceeded {} bytes",
-                                output_limit
-                            )));
-                        }
-                        if let Ok(s) = std::str::from_utf8(&data) {
-                            stdout.push_str(s);
-                        }
+                        append_command_output(&mut stdout, &mut total_bytes, &data, output_limit)?;
                     }
                     Some(ChannelMsg::ExtendedData { data, .. }) => {
-                        total_bytes = total_bytes.saturating_add(data.len());
-                        if total_bytes > output_limit {
-                            tracing::warn!(
-                                "Command output exceeded limit ({} bytes)",
-                                output_limit
-                            );
-                            return Err(SshError::Channel(format!(
-                                "Command output exceeded {} bytes",
-                                output_limit
-                            )));
-                        }
-                        if let Ok(s) = std::str::from_utf8(&data) {
-                            stderr.push_str(s);
-                        }
+                        append_command_output(&mut stderr, &mut total_bytes, &data, output_limit)?;
                     }
                     Some(ChannelMsg::ExitStatus { exit_status }) => {
-                        exit_code = exit_status as i32;
+                        exit_code = ssh_exit_status_to_i32(exit_status);
                     }
                     Some(ChannelMsg::Eof) | Some(ChannelMsg::Close) | None => {
                         break;
@@ -1135,6 +1120,34 @@ mod tests {
         };
 
         assert!(result.stdout.starts_with("ELF"));
+    }
+
+    #[test]
+    fn append_command_output_preserves_invalid_utf8_lossily() {
+        let mut output = String::new();
+        let mut total = 0;
+
+        append_command_output(&mut output, &mut total, b"ok\xffdone", 32).unwrap();
+
+        assert_eq!(total, 7);
+        assert_eq!(output, "ok\u{fffd}done");
+    }
+
+    #[test]
+    fn append_command_output_enforces_byte_limit() {
+        let mut output = String::new();
+        let mut total = 0;
+
+        let result = append_command_output(&mut output, &mut total, b"abcdef", 5);
+
+        assert!(result.is_err());
+        assert!(output.is_empty());
+    }
+
+    #[test]
+    fn ssh_exit_status_clamps_to_i32_max() {
+        assert_eq!(ssh_exit_status_to_i32(255), 255);
+        assert_eq!(ssh_exit_status_to_i32(u32::MAX), i32::MAX);
     }
 
     #[test]

@@ -169,6 +169,15 @@ mod ard {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpStream;
 
+    const MAX_ARD_KEY_LEN: usize = 8192;
+
+    pub(super) fn validate_key_len(key_len: usize) -> Result<(), String> {
+        if key_len == 0 || key_len > MAX_ARD_KEY_LEN {
+            return Err(format!("ARD: invalid key length {}", key_len));
+        }
+        Ok(())
+    }
+
     pub async fn authenticate(
         tcp: &mut TcpStream,
         username: &str,
@@ -186,6 +195,7 @@ mod ard {
             .await
             .map_err(|e| format!("ARD: failed to read key length: {}", e))?;
         let key_len = u16::from_be_bytes(len_buf) as usize;
+        validate_key_len(key_len)?;
 
         tracing::info!("ARD: generator={}, key_len={}", generator, key_len);
 
@@ -290,6 +300,8 @@ struct NegotiatedStream {
 }
 
 impl NegotiatedStream {
+    const MAX_SECURITY_FAILURE_REASON_LEN: usize = 16 * 1024;
+
     /// Perform version + auth negotiation, then wrap the stream for vnc-rs.
     /// Returns the negotiated stream and an optional detected OS based on RFB handshake signals.
     async fn negotiate(
@@ -347,6 +359,12 @@ impl NegotiatedStream {
                 .await
                 .map_err(|e| format!("Failed to read error length: {}", e))?;
             let reason_len = u32::from_be_bytes(len_buf) as usize;
+            if reason_len > Self::MAX_SECURITY_FAILURE_REASON_LEN {
+                return Err(format!(
+                    "VNC server rejected connection with oversized reason ({} bytes)",
+                    reason_len
+                ));
+            }
             let mut reason_buf = vec![0u8; reason_len];
             tcp.read_exact(&mut reason_buf)
                 .await
@@ -1115,6 +1133,40 @@ mod tests {
         assert_eq!(recv_pointer(&mut rx), (4, 5, 8));
         assert_eq!(recv_pointer(&mut rx), (4, 5, 0));
         assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn ard_key_length_rejects_zero_and_oversized_values() {
+        assert!(ard::validate_key_len(0).is_err());
+        assert!(ard::validate_key_len(8193).is_err());
+        assert!(ard::validate_key_len(128).is_ok());
+    }
+
+    #[tokio::test]
+    async fn negotiation_rejects_oversized_security_failure_reason() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            socket.write_all(b"RFB 003.889\n").await.unwrap();
+
+            let mut version_echo = [0u8; 12];
+            socket.read_exact(&mut version_echo).await.unwrap();
+
+            socket.write_all(&[0]).await.unwrap();
+            socket.write_all(&(16_385u32).to_be_bytes()).await.unwrap();
+            socket.flush().await.unwrap();
+        });
+
+        let tcp = TcpStream::connect(addr).await.unwrap();
+        let result = NegotiatedStream::negotiate(tcp, "user", "pass").await;
+
+        match result {
+            Err(error) => assert!(error.contains("oversized reason")),
+            Ok(_) => panic!("expected oversized reason error"),
+        }
+        server.await.unwrap();
     }
 
     #[tokio::test]

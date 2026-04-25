@@ -277,15 +277,35 @@ impl DetectedOs {
 
 fn parse_os_release_value(raw: &str) -> String {
     let trimmed = raw.trim();
-    let without_comment = match trimmed.find('#') {
-        Some(index) => trimmed[..index].trim_end(),
-        None => trimmed,
-    };
-    without_comment
-        .trim()
-        .trim_matches('"')
-        .trim_matches('\'')
-        .to_string()
+    let mut without_comment = String::with_capacity(trimmed.len());
+    let mut quote = None;
+    let mut escaped = false;
+
+    for ch in trimmed.chars() {
+        if escaped {
+            without_comment.push(ch);
+            escaped = false;
+            continue;
+        }
+
+        match (ch, quote) {
+            ('\\', Some(_)) => {
+                escaped = true;
+            }
+            ('"' | '\'', None) => {
+                quote = Some(ch);
+                without_comment.push(ch);
+            }
+            (current, Some(active)) if current == active => {
+                quote = None;
+                without_comment.push(ch);
+            }
+            ('#', None) => break,
+            _ => without_comment.push(ch),
+        }
+    }
+
+    without_comment.trim().trim_matches(['"', '\'']).to_string()
 }
 
 fn default_port() -> u16 {
@@ -835,6 +855,18 @@ VERSION="24.05 (Uakari)"
         assert_eq!(
             DetectedOs::from_os_release(content),
             Some(DetectedOs::Ubuntu)
+        );
+    }
+
+    #[test]
+    fn os_release_value_keeps_hash_inside_quotes() {
+        assert_eq!(
+            parse_os_release_value(r#""ubuntu#daily" # comment"#),
+            "ubuntu#daily"
+        );
+        assert_eq!(
+            parse_os_release_value(r#"'debian#stable'"#),
+            "debian#stable"
         );
     }
 

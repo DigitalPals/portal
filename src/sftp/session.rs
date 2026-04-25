@@ -59,10 +59,10 @@ impl SftpSession {
         let mut result = Vec::new();
 
         // Add parent directory entry
-        if path.parent().is_some() && path_str != "/" {
+        if let Some(parent) = parent_entry_path(path) {
             result.push(FileEntry {
                 name: "..".to_string(),
-                path: path.parent().unwrap_or(Path::new("/")).to_path_buf(),
+                path: parent.to_path_buf(),
                 is_dir: true,
                 is_symlink: false,
                 size: 0,
@@ -421,6 +421,14 @@ fn unix_timestamp_to_utc(mtime: u32) -> Option<chrono::DateTime<Utc>> {
     Utc.timestamp_opt(i64::from(mtime), 0).single()
 }
 
+fn parent_entry_path(path: &Path) -> Option<&Path> {
+    let parent = path.parent()?;
+    if parent.as_os_str().is_empty() {
+        return None;
+    }
+    Some(parent)
+}
+
 fn is_safe_sftp_entry_name(name: &str) -> bool {
     !name.is_empty()
         && name != "."
@@ -675,10 +683,14 @@ mod tests {
     #[test]
     fn should_add_parent_entry_for_single_level() {
         let path = Path::new("/home");
-        let path_str = path.to_string_lossy().to_string();
 
-        let should_add = path.parent().is_some() && path_str != "/";
-        assert!(should_add);
+        assert_eq!(parent_entry_path(path), Some(Path::new("/")));
+    }
+
+    #[test]
+    fn parent_entry_path_skips_relative_empty_parent() {
+        assert!(parent_entry_path(Path::new(".")).is_none());
+        assert!(parent_entry_path(Path::new("relative")).is_none());
     }
 
     // === Size handling tests ===

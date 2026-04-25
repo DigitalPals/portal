@@ -35,8 +35,6 @@ pub fn write_atomic(path: &Path, content: &str) -> std::io::Result<()> {
         .write(true)
         .create_new(true)
         .open(&temp_path)?;
-    file.write_all(content.as_bytes())?;
-    file.sync_all()?;
 
     if let Some(permissions) = original_permissions {
         let _ = std::fs::set_permissions(&temp_path, permissions);
@@ -47,6 +45,9 @@ pub fn write_atomic(path: &Path, content: &str) -> std::io::Result<()> {
             let _ = std::fs::set_permissions(&temp_path, std::fs::Permissions::from_mode(0o600));
         }
     }
+
+    file.write_all(content.as_bytes())?;
+    file.sync_all()?;
 
     let mut backup_created = false;
     if path.exists() {
@@ -123,5 +124,19 @@ mod tests {
             .count();
 
         assert_eq!(tmp_count, 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_atomic_creates_new_files_private() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempdir().expect("temp dir");
+        let path = dir.path().join("secrets.toml");
+
+        write_atomic(&path, "token=\"secret\"\n").expect("write");
+
+        let mode = fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
     }
 }
