@@ -353,7 +353,11 @@ impl VncSettings {
 
         if let Ok(raw) = std::env::var("PORTAL_VNC_REMOTE_RESIZE") {
             let value = raw.trim().to_lowercase();
-            self.remote_resize = matches!(value.as_str(), "1" | "true" | "yes" | "on");
+            self.remote_resize = match value.as_str() {
+                "1" | "true" | "yes" | "on" => true,
+                "0" | "false" | "no" | "off" => false,
+                _ => self.remote_resize,
+            };
         }
 
         if let Ok(raw) = std::env::var("PORTAL_VNC_QUALITY") {
@@ -609,6 +613,92 @@ impl Default for SettingsConfig {
 }
 
 impl SettingsConfig {
+    fn normalize_loaded_values(&mut self) -> bool {
+        let mut changed = false;
+
+        let terminal_font_size = if self.terminal_font_size.is_finite() {
+            self.terminal_font_size.clamp(6.0, 48.0)
+        } else {
+            default_terminal_font_size()
+        };
+        if (self.terminal_font_size - terminal_font_size).abs() > f32::EPSILON
+            || self.terminal_font_size.is_nan()
+        {
+            self.terminal_font_size = terminal_font_size;
+            changed = true;
+        }
+
+        let terminal_scroll_speed = if self.terminal_scroll_speed.is_finite() {
+            self.terminal_scroll_speed
+                .clamp(TERMINAL_SCROLL_SPEED_MIN, TERMINAL_SCROLL_SPEED_MAX)
+        } else {
+            default_terminal_scroll_speed()
+        };
+        if (self.terminal_scroll_speed - terminal_scroll_speed).abs() > f32::EPSILON
+            || self.terminal_scroll_speed.is_nan()
+        {
+            self.terminal_scroll_speed = terminal_scroll_speed;
+            changed = true;
+        }
+
+        let ui_scale = self.ui_scale.and_then(|scale| {
+            if scale.is_finite() {
+                Some(scale.clamp(0.8, 1.5))
+            } else {
+                None
+            }
+        });
+        if self.ui_scale != ui_scale {
+            self.ui_scale = ui_scale;
+            changed = true;
+        }
+
+        let reconnect_max_attempts = self.reconnect_max_attempts.clamp(1, 20);
+        if self.reconnect_max_attempts != reconnect_max_attempts {
+            self.reconnect_max_attempts = reconnect_max_attempts;
+            changed = true;
+        }
+
+        let reconnect_base_delay_ms = self.reconnect_base_delay_ms.clamp(500, 10_000);
+        if self.reconnect_base_delay_ms != reconnect_base_delay_ms {
+            self.reconnect_base_delay_ms = reconnect_base_delay_ms;
+            changed = true;
+        }
+
+        let reconnect_max_delay_ms = self
+            .reconnect_max_delay_ms
+            .clamp(self.reconnect_base_delay_ms.max(500), 120_000);
+        if self.reconnect_max_delay_ms != reconnect_max_delay_ms {
+            self.reconnect_max_delay_ms = reconnect_max_delay_ms;
+            changed = true;
+        }
+
+        let credential_timeout = self.credential_timeout.min(3600);
+        if self.credential_timeout != credential_timeout {
+            self.credential_timeout = credential_timeout;
+            changed = true;
+        }
+
+        if !matches!(self.vnc.color_depth, 16 | 32) {
+            self.vnc.color_depth = default_vnc_color_depth();
+            changed = true;
+        }
+
+        let refresh_fps = self.vnc.refresh_fps.clamp(1, 20);
+        if self.vnc.refresh_fps != refresh_fps {
+            self.vnc.refresh_fps = refresh_fps;
+            changed = true;
+        }
+
+        let pointer_interval_ms = self.vnc.pointer_interval_ms.min(1000);
+        if self.vnc.pointer_interval_ms != pointer_interval_ms {
+            self.vnc.pointer_interval_ms = pointer_interval_ms;
+            changed = true;
+        }
+
+        changed
+    }
+
     /// Load from file, creating default if not exists
     pub fn load() -> Result<Self, ConfigError> {
         let path = super::paths::settings_file().ok_or_else(|| ConfigError::ReadFile {
@@ -652,13 +742,7 @@ impl SettingsConfig {
             needs_save = true;
         }
 
-        let clamped_scroll_speed = config
-            .terminal_scroll_speed
-            .clamp(TERMINAL_SCROLL_SPEED_MIN, TERMINAL_SCROLL_SPEED_MAX);
-        if (config.terminal_scroll_speed - clamped_scroll_speed).abs() > f32::EPSILON {
-            config.terminal_scroll_speed = clamped_scroll_speed;
-            needs_save = true;
-        }
+        needs_save |= config.normalize_loaded_values();
 
         // Save migrated config to persist the changes
         if needs_save {
@@ -746,6 +830,77 @@ identity_file = "/tmp/proxy-key"
 
         let serialized = toml::to_string(&config).unwrap();
         assert!(serialized.contains("default_for_new_ssh_hosts = true"));
+    }
+
+    #[test]
+    fn loaded_settings_normalize_out_of_range_values() {
+        let mut config: SettingsConfig = toml::from_str(
+            r#"
+terminal_font_size = 0.0
+terminal_scroll_speed = 100.0
+ui_scale = 9.0
+reconnect_max_attempts = 0
+reconnect_base_delay_ms = 1
+reconnect_max_delay_ms = 10
+credential_timeout = 999999
+
+[vnc]
+color_depth = 8
+refresh_fps = 0
+pointer_interval_ms = 999999
+"#,
+        )
+        .unwrap();
+
+        assert!(config.normalize_loaded_values());
+        assert_eq!(config.terminal_font_size, 6.0);
+        assert_eq!(config.terminal_scroll_speed, TERMINAL_SCROLL_SPEED_MAX);
+        assert_eq!(config.ui_scale, Some(1.5));
+        assert_eq!(config.reconnect_max_attempts, 1);
+        assert_eq!(config.reconnect_base_delay_ms, 500);
+        assert_eq!(config.reconnect_max_delay_ms, 500);
+        assert_eq!(config.credential_timeout, 3600);
+        assert_eq!(config.vnc.color_depth, 32);
+        assert_eq!(config.vnc.refresh_fps, 1);
+        assert_eq!(config.vnc.pointer_interval_ms, 1000);
+    }
+
+    #[test]
+    fn loaded_settings_drop_non_finite_scale_values() {
+        let mut config: SettingsConfig = toml::from_str(
+            r#"
+terminal_font_size = nan
+terminal_scroll_speed = inf
+ui_scale = nan
+"#,
+        )
+        .unwrap();
+
+        assert!(config.normalize_loaded_values());
+        assert_eq!(config.terminal_font_size, default_terminal_font_size());
+        assert_eq!(
+            config.terminal_scroll_speed,
+            default_terminal_scroll_speed()
+        );
+        assert_eq!(config.ui_scale, None);
+    }
+
+    #[test]
+    fn vnc_remote_resize_env_ignores_invalid_boolean() {
+        let config = VncSettings {
+            remote_resize: true,
+            ..Default::default()
+        };
+
+        unsafe {
+            std::env::set_var("PORTAL_VNC_REMOTE_RESIZE", "maybe");
+        }
+        let overridden = config.apply_env_overrides();
+        unsafe {
+            std::env::remove_var("PORTAL_VNC_REMOTE_RESIZE");
+        }
+
+        assert!(overridden.remote_resize);
     }
 
     #[test]

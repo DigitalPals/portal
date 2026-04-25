@@ -44,6 +44,7 @@ pub struct SnippetExecutionEntry {
 const MAX_COMMAND_LEN: usize = 2048;
 const MAX_OUTPUT_LEN: usize = 16 * 1024;
 const MAX_ERROR_LEN: usize = 1024;
+const MAX_SNIPPET_NAME_LEN: usize = 256;
 const MAX_HOST_NAME_LEN: usize = 256;
 const REDACTED_PLACEHOLDER: &str = "[REDACTED]";
 
@@ -97,6 +98,7 @@ impl SnippetExecutionEntry {
         command: String,
         host_results: Vec<HistoricalHostResult>,
     ) -> Self {
+        let snippet_name = sanitize_field(&snippet_name, MAX_SNIPPET_NAME_LEN, true);
         let command = sanitize_field(&command, MAX_COMMAND_LEN, true);
         let host_results = host_results
             .into_iter()
@@ -169,7 +171,15 @@ fn truncate_string(value: &str, max_len: usize) -> String {
         return value.to_string();
     }
 
-    let mut truncated = value.chars().take(max_len).collect::<String>();
+    if max_len == 0 {
+        return String::new();
+    }
+
+    if max_len <= 3 {
+        return ".".repeat(max_len);
+    }
+
+    let mut truncated = value.chars().take(max_len - 3).collect::<String>();
     truncated.push_str("...");
     truncated
 }
@@ -236,6 +246,8 @@ impl SnippetHistoryConfig {
         if !self.enabled {
             return None;
         }
+
+        let snippet_name = sanitize_field(&snippet_name, MAX_SNIPPET_NAME_LEN, self.redact_output);
 
         let command = if self.store_command {
             sanitize_field(&command, MAX_COMMAND_LEN, self.redact_output)
@@ -405,7 +417,42 @@ mod tests {
     #[test]
     fn truncate_string_appends_ellipsis() {
         let output = truncate_string("abcdefghij", 5);
-        assert_eq!(output, "abcde...");
+        assert_eq!(output, "ab...");
+        assert_eq!(output.chars().count(), 5);
+        assert_eq!(truncate_string("abcdefghij", 3), "...");
+        assert_eq!(truncate_string("abcdefghij", 0), "");
+    }
+
+    #[test]
+    fn snippet_name_is_sanitized_for_history_entry() {
+        let entry = SnippetExecutionEntry::new(
+            Uuid::new_v4(),
+            format!("token=secret {}", "a".repeat(300)),
+            "uptime".to_string(),
+            vec![],
+        );
+
+        assert!(entry.snippet_name.contains("token=[REDACTED]"));
+        assert!(!entry.snippet_name.contains("secret"));
+        assert!(entry.snippet_name.chars().count() <= 256);
+    }
+
+    #[test]
+    fn build_entry_sanitizes_snippet_name_with_config_policy() {
+        let config = SnippetHistoryConfig {
+            redact_output: true,
+            ..Default::default()
+        };
+        let entry = config
+            .build_entry(
+                Uuid::new_v4(),
+                "password=hunter2".to_string(),
+                "uptime".to_string(),
+                vec![],
+            )
+            .unwrap();
+
+        assert_eq!(entry.snippet_name, "password=[REDACTED]");
     }
 
     #[test]
