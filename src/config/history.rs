@@ -83,7 +83,12 @@ impl HistoryEntry {
     /// Get duration of session (if disconnected) or time since connection
     pub fn duration(&self) -> chrono::Duration {
         let end = self.disconnected_at.unwrap_or_else(chrono::Utc::now);
-        end - self.connected_at
+        let duration = end - self.connected_at;
+        if duration < chrono::Duration::zero() {
+            chrono::Duration::zero()
+        } else {
+            duration
+        }
     }
 
     /// Format duration as human-readable string
@@ -127,8 +132,10 @@ impl HistoryConfig {
     /// Add a new history entry, trimming old entries if over limit
     pub fn add_entry(&mut self, entry: HistoryEntry) {
         self.entries.insert(0, entry);
+        self.trim_to_max_entries();
+    }
 
-        // Trim to max_entries
+    fn trim_to_max_entries(&mut self) {
         if self.entries.len() > self.max_entries {
             self.entries.truncate(self.max_entries);
         }
@@ -178,7 +185,9 @@ impl HistoryConfig {
             source: e,
         })?;
 
-        toml::from_str(&content).map_err(ConfigError::Parse)
+        let mut config: Self = toml::from_str(&content).map_err(ConfigError::Parse)?;
+        config.trim_to_max_entries();
+        Ok(config)
     }
 
     /// Save to file
@@ -490,6 +499,21 @@ mod tests {
         entry.disconnected_at = Some(entry.connected_at + chrono::Duration::hours(1));
 
         assert_eq!(entry.duration().num_hours(), 1);
+    }
+
+    #[test]
+    fn history_entry_duration_clamps_future_connected_at() {
+        let mut entry = HistoryEntry::new(
+            Uuid::new_v4(),
+            "Server".to_string(),
+            "example.com".to_string(),
+            "user".to_string(),
+            SessionType::Ssh,
+        );
+        entry.connected_at = chrono::Utc::now() + chrono::Duration::hours(1);
+
+        assert_eq!(entry.duration().num_seconds(), 0);
+        assert_eq!(entry.duration_string(), "0s");
     }
 
     // === HistoryEntry::duration_string tests ===
@@ -807,6 +831,30 @@ mod tests {
         assert_eq!(config.entries[0].host_name, "Server4");
         assert_eq!(config.entries[1].host_name, "Server3");
         assert_eq!(config.entries[2].host_name, "Server2");
+    }
+
+    #[test]
+    fn trim_to_max_entries_trims_loaded_config() {
+        let mut config = HistoryConfig {
+            max_entries: 2,
+            ..Default::default()
+        };
+
+        for i in 0..4 {
+            config.entries.push(HistoryEntry::new(
+                Uuid::new_v4(),
+                format!("Server{}", i),
+                "example.com".to_string(),
+                "user".to_string(),
+                SessionType::Ssh,
+            ));
+        }
+
+        config.trim_to_max_entries();
+
+        assert_eq!(config.entries.len(), 2);
+        assert_eq!(config.entries[0].host_name, "Server0");
+        assert_eq!(config.entries[1].host_name, "Server1");
     }
 
     #[test]

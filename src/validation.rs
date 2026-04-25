@@ -69,6 +69,14 @@ pub fn validate_hostname(hostname: &str) -> Result<(), ValidationError> {
 
 /// Validate a DNS hostname according to RFC 1123.
 fn validate_dns_hostname(hostname: &str) -> Result<(), ValidationError> {
+    let hostname = hostname.strip_suffix('.').unwrap_or(hostname);
+    if hostname.is_empty() {
+        return Err(ValidationError {
+            field: "hostname".to_string(),
+            message: "Invalid hostname format".to_string(),
+        });
+    }
+
     // Split into labels and validate each
     let labels: Vec<&str> = hostname.split('.').collect();
 
@@ -200,6 +208,7 @@ mod tests {
         assert!(validate_hostname("a").is_ok());
         assert!(validate_hostname("a1").is_ok());
         assert!(validate_hostname("test-server-01.internal.example.com").is_ok());
+        assert!(validate_hostname("example.com.").is_ok());
     }
 
     #[test]
@@ -214,7 +223,7 @@ mod tests {
         assert!(validate_hostname("invalid-").is_err());
         assert!(validate_hostname("invalid..host").is_err());
         assert!(validate_hostname(".invalid").is_err());
-        assert!(validate_hostname("invalid.").is_err());
+        assert!(validate_hostname(".").is_err());
     }
 
     #[test]

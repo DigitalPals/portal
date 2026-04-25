@@ -64,7 +64,8 @@ fn list_local_dir_sync(path: &Path) -> Result<Vec<FileEntry>, String> {
             .or_else(|| metadata.modified().ok())
             .and_then(|mtime| {
                 let duration = mtime.duration_since(std::time::UNIX_EPOCH).ok()?;
-                Utc.timestamp_opt(duration.as_secs() as i64, 0).single()
+                let seconds = i64::try_from(duration.as_secs()).ok()?;
+                Utc.timestamp_opt(seconds, 0).single()
             });
 
         result.push(FileEntry {

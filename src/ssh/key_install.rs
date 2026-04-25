@@ -28,23 +28,28 @@ pub async fn install_ssh_key(session: &SshSession) -> Result<bool, SshError> {
 
     let ssh_dir = home_dir.join(".ssh");
 
-    // Try ed25519 first, then rsa
-    let pub_key_path = if ssh_dir.join("id_ed25519.pub").exists() {
-        ssh_dir.join("id_ed25519.pub")
-    } else if ssh_dir.join("id_rsa.pub").exists() {
-        ssh_dir.join("id_rsa.pub")
-    } else {
-        return Err(SshError::KeyInstall(
-            "No SSH public key found (~/.ssh/id_ed25519.pub or ~/.ssh/id_rsa.pub)".into(),
-        ));
-    };
+    let pub_key_path = [
+        "id_ed25519.pub",
+        "id_ecdsa.pub",
+        "id_rsa.pub",
+        "id_ed25519_sk.pub",
+        "id_ecdsa_sk.pub",
+    ]
+    .into_iter()
+    .map(|name| ssh_dir.join(name))
+    .find(|path| path.exists())
+    .ok_or_else(|| {
+        SshError::KeyInstall(
+            "No SSH public key found (~/.ssh/id_ed25519.pub, id_ecdsa.pub, id_rsa.pub, or security-key variants)".into(),
+        )
+    })?;
 
     let pub_key = std::fs::read_to_string(&pub_key_path)
         .map_err(|e| SshError::KeyInstall(format!("Failed to read public key: {}", e)))?;
     let pub_key = pub_key.trim();
 
     // 2. Validate key format
-    if !pub_key.starts_with("ssh-") {
+    if !is_supported_public_key_line(pub_key) {
         return Err(SshError::KeyInstall("Invalid public key format".into()));
     }
 
@@ -73,4 +78,46 @@ pub async fn install_ssh_key(session: &SshSession) -> Result<bool, SshError> {
 
     tracing::info!("SSH key installed on remote server");
     Ok(true)
+}
+
+fn is_supported_public_key_line(line: &str) -> bool {
+    let algorithm = line.split_whitespace().next().unwrap_or_default();
+    matches!(
+        algorithm,
+        "ssh-ed25519"
+            | "ssh-rsa"
+            | "ecdsa-sha2-nistp256"
+            | "ecdsa-sha2-nistp384"
+            | "ecdsa-sha2-nistp521"
+            | "sk-ssh-ed25519@openssh.com"
+            | "sk-ecdsa-sha2-nistp256@openssh.com"
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_supported_public_key_line;
+
+    #[test]
+    fn recognizes_common_public_key_algorithms() {
+        assert!(is_supported_public_key_line("ssh-ed25519 AAAA comment"));
+        assert!(is_supported_public_key_line("ssh-rsa AAAA comment"));
+        assert!(is_supported_public_key_line(
+            "ecdsa-sha2-nistp256 AAAA comment"
+        ));
+        assert!(is_supported_public_key_line(
+            "sk-ssh-ed25519@openssh.com AAAA comment"
+        ));
+        assert!(is_supported_public_key_line(
+            "sk-ecdsa-sha2-nistp256@openssh.com AAAA comment"
+        ));
+    }
+
+    #[test]
+    fn rejects_non_public_key_lines() {
+        assert!(!is_supported_public_key_line(
+            "-----BEGIN OPENSSH PRIVATE KEY-----"
+        ));
+        assert!(!is_supported_public_key_line(""));
+    }
 }

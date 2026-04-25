@@ -92,11 +92,7 @@ pub fn vnc_viewer_view<'a>(
 
     let stats = vnc.session.stats_snapshot();
 
-    let fps_text = if stats.first_frame_received {
-        format!("{:>2} fps", vnc.current_fps.round().min(20.0) as u32)
-    } else {
-        "-- fps".to_string()
-    };
+    let fps_text = format_fps(vnc.current_fps, stats.first_frame_received);
     let update_age_text = format_update_age(&stats);
     let encoding_text = stats
         .last_update_kind
@@ -494,6 +490,19 @@ fn format_update_age(stats: &VncStatsSnapshot) -> String {
     }
 }
 
+fn format_fps(current_fps: f32, first_frame_received: bool) -> String {
+    if !first_frame_received {
+        return "-- fps".to_string();
+    }
+
+    let fps = if current_fps.is_finite() {
+        current_fps.round().clamp(0.0, 20.0) as u32
+    } else {
+        0
+    };
+    format!("{:>2} fps", fps)
+}
+
 /// Pick list style for VNC toolbar Send Keys dropdown
 fn vnc_pick_list_style(
     theme: Theme,
@@ -530,5 +539,18 @@ fn vnc_pick_list_menu_style(theme: Theme) -> impl Fn(&iced::Theme) -> iced::over
             color: theme.border,
         },
         shadow: iced::Shadow::default(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::format_fps;
+
+    #[test]
+    fn format_fps_handles_pending_and_bad_values() {
+        assert_eq!(format_fps(12.4, false), "-- fps");
+        assert_eq!(format_fps(-5.0, true), " 0 fps");
+        assert_eq!(format_fps(f32::NAN, true), " 0 fps");
+        assert_eq!(format_fps(99.0, true), "20 fps");
     }
 }

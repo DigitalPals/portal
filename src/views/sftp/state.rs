@@ -87,14 +87,21 @@ impl FilePaneState {
 
     pub fn set_error(&mut self, error: String) {
         self.error = Some(error);
+        self.entries.clear();
+        self.selected_indices.clear();
+        self.last_selected_index = None;
         self.loading = false;
     }
 
     /// Select a single item (clear other selections)
     pub fn select(&mut self, index: usize) {
         self.selected_indices.clear();
-        self.selected_indices.insert(index);
-        self.last_selected_index = Some(index);
+        if index < self.entries.len() {
+            self.selected_indices.insert(index);
+            self.last_selected_index = Some(index);
+        } else {
+            self.last_selected_index = None;
+        }
     }
 
     /// Check if an index is selected
@@ -113,6 +120,7 @@ impl FilePaneState {
     /// Get filtered entries with their original indices
     /// Respects show_hidden and filter_text settings
     pub fn visible_entries(&self) -> Vec<(usize, &FileEntry)> {
+        let filter_text = self.filter_text.trim().to_lowercase();
         self.entries
             .iter()
             .enumerate()
@@ -126,11 +134,8 @@ impl FilePaneState {
                     return false;
                 }
                 // Filter by search text (case-insensitive)
-                if !self.filter_text.is_empty() {
-                    return entry
-                        .name
-                        .to_lowercase()
-                        .contains(&self.filter_text.to_lowercase());
+                if !filter_text.is_empty() {
+                    return entry.name.to_lowercase().contains(&filter_text);
                 }
                 true
             })
@@ -204,6 +209,7 @@ impl SftpDialogState {
                 !name.is_empty()
                     && !name.contains('/')
                     && !name.contains('\\')
+                    && !name.contains('\0')
                     && name != "."
                     && name != ".."
             }
@@ -397,7 +403,7 @@ mod tests {
     fn visible_entries_filters_by_text_case_insensitive() {
         let mut state = FilePaneState::new_local();
         state.entries = vec![entry("alpha.txt"), entry("Beta.md"), entry("gamma.log")];
-        state.filter_text = "be".to_string();
+        state.filter_text = " BE ".to_string();
 
         let visible: Vec<_> = state
             .visible_entries()
@@ -406,6 +412,20 @@ mod tests {
             .collect();
 
         assert_eq!(visible, vec!["Beta.md"]);
+    }
+
+    #[test]
+    fn set_error_clears_stale_entries_and_selection() {
+        let mut state = FilePaneState::new_local();
+        state.entries = vec![entry("one"), entry("two")];
+        state.select(1);
+
+        state.set_error("failed".to_string());
+
+        assert!(state.entries.is_empty());
+        assert!(state.selected_indices.is_empty());
+        assert_eq!(state.last_selected_index, None);
+        assert!(!state.loading);
     }
 
     #[test]
@@ -418,6 +438,17 @@ mod tests {
         assert!(state.is_selected(2));
         assert!(!state.is_selected(0));
         assert_eq!(state.last_selected_index, Some(2));
+    }
+
+    #[test]
+    fn select_ignores_out_of_range_index() {
+        let mut state = FilePaneState::new_local();
+        state.entries = vec![entry("one")];
+
+        state.select(9);
+
+        assert!(state.selected_indices.is_empty());
+        assert_eq!(state.last_selected_index, None);
     }
 
     #[test]
@@ -435,6 +466,9 @@ mod tests {
         assert!(!dialog.is_valid());
 
         dialog.input_value = "..".to_string();
+        assert!(!dialog.is_valid());
+
+        dialog.input_value = "bad\0name".to_string();
         assert!(!dialog.is_valid());
     }
 

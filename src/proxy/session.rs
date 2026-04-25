@@ -421,6 +421,7 @@ fn parse_list_response(bytes: &[u8]) -> Result<Vec<RawListedProxySession>, Strin
 }
 
 fn should_fallback_to_legacy_list(stderr: &str) -> bool {
+    let stderr = stderr.to_ascii_lowercase();
     stderr.contains("--format")
         && (stderr.contains("unexpected")
             || stderr.contains("wasn't expected")
@@ -540,7 +541,8 @@ fn discover_agent_socket() -> Option<PathBuf> {
 }
 
 fn managed_agent_socket() -> Result<PathBuf, LocalError> {
-    if let Some(runtime_dir) = std::env::var_os("XDG_RUNTIME_DIR") {
+    if let Some(runtime_dir) = std::env::var_os("XDG_RUNTIME_DIR").filter(|value| !value.is_empty())
+    {
         return Ok(PathBuf::from(runtime_dir).join("portal-ssh-agent.sock"));
     }
 
@@ -833,6 +835,9 @@ mod tests {
     fn legacy_list_fallback_only_handles_format_rejection() {
         assert!(should_fallback_to_legacy_list(
             "error: unexpected argument '--format' found"
+        ));
+        assert!(should_fallback_to_legacy_list(
+            "ERROR: Unrecognized option '--format'"
         ));
         assert!(!should_fallback_to_legacy_list(
             "ssh: connect to host failed"

@@ -73,10 +73,10 @@ pub fn handle_file_viewer(app: &mut Portal, msg: FileViewerMessage) -> Task<Mess
                 if viewer.is_saving {
                     return Task::none();
                 }
-                viewer.is_saving = true;
 
                 // Get text content to save
                 if let Some(text) = viewer.get_text() {
+                    viewer.is_saving = true;
                     let source = viewer.file_source.clone();
 
                     // Get SFTP session if this is a remote file

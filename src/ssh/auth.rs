@@ -74,7 +74,7 @@ async fn load_key_file(path: &Path, passphrase: Option<&str>) -> Result<Resolved
 
     // Check if this is actually a public key (common mistake)
     let first_line = content.lines().next().unwrap_or("");
-    if first_line.starts_with("ssh-") || first_line.starts_with("ecdsa-") {
+    if is_public_key_line(first_line) {
         return Err(SshError::KeyFile(format!(
             "File {} contains a PUBLIC key, not a private key. \
              Private keys start with '-----BEGIN' and are usually named without .pub extension",
@@ -134,6 +134,14 @@ async fn load_key_file(path: &Path, passphrase: Option<&str>) -> Result<Resolved
     Ok(ResolvedAuth::PublicKey(key_with_hash))
 }
 
+fn is_public_key_line(line: &str) -> bool {
+    let algorithm = line.split_whitespace().next().unwrap_or_default();
+    algorithm.starts_with("ssh-")
+        || algorithm.starts_with("ecdsa-")
+        || algorithm.starts_with("sk-ssh-")
+        || algorithm.starts_with("sk-ecdsa-")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -175,6 +183,19 @@ mod tests {
 
         assert!(result.is_ok());
         assert!(matches!(result.unwrap(), ResolvedAuth::Agent));
+    }
+
+    #[test]
+    fn detects_public_key_files_by_algorithm_prefix() {
+        assert!(is_public_key_line("ssh-ed25519 AAAA comment"));
+        assert!(is_public_key_line("ecdsa-sha2-nistp256 AAAA comment"));
+        assert!(is_public_key_line(
+            "sk-ssh-ed25519@openssh.com AAAA comment"
+        ));
+        assert!(is_public_key_line(
+            "sk-ecdsa-sha2-nistp256@openssh.com AAAA comment"
+        ));
+        assert!(!is_public_key_line("-----BEGIN OPENSSH PRIVATE KEY-----"));
     }
 
     /// Test public key authentication with valid unencrypted key

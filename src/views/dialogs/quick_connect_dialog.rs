@@ -82,7 +82,7 @@ impl QuickConnectDialogState {
 
     /// Get the port as u16, defaulting to 22 if invalid
     pub fn port_u16(&self) -> u16 {
-        self.port.parse().unwrap_or(22)
+        validate_port(&self.port).unwrap_or(22)
     }
 
     /// Get the username, defaulting to current user if empty
@@ -241,4 +241,17 @@ pub fn quick_connect_dialog_view(
     .width(Length::Fixed(400.0));
 
     dialog_backdrop(form, theme)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::QuickConnectDialogState;
+
+    #[test]
+    fn port_u16_accepts_trimmed_valid_port() {
+        let mut state = QuickConnectDialogState::new();
+        state.port = "  2200  ".to_string();
+
+        assert_eq!(state.port_u16(), 2200);
+    }
 }

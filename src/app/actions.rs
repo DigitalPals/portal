@@ -793,11 +793,7 @@ impl Portal {
                                 tokio::task::spawn_blocking(move || {
                                     let mut deleted_count = 0;
                                     for (_, path, is_dir) in entries {
-                                        let result = if is_dir {
-                                            std::fs::remove_dir_all(&path)
-                                        } else {
-                                            std::fs::remove_file(&path)
-                                        };
+                                        let result = delete_local_path(&path, is_dir);
                                         match result {
                                             Ok(()) => deleted_count += 1,
                                             Err(e) => {
@@ -1137,5 +1133,36 @@ impl Portal {
                 }
             }
         }
+    }
+}
+
+fn delete_local_path(path: &std::path::Path, listed_is_dir: bool) -> std::io::Result<()> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() => std::fs::remove_file(path),
+        Ok(metadata) if metadata.is_dir() => std::fs::remove_dir_all(path),
+        Ok(_) => std::fs::remove_file(path),
+        Err(_) if listed_is_dir => std::fs::remove_dir_all(path),
+        Err(_) => std::fs::remove_file(path),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::delete_local_path;
+
+    #[cfg(unix)]
+    #[test]
+    fn delete_local_path_removes_directory_symlink_without_deleting_target() {
+        let temp = tempfile::tempdir().unwrap();
+        let target = temp.path().join("target");
+        let symlink = temp.path().join("link");
+        std::fs::create_dir(&target).unwrap();
+        std::fs::write(target.join("file.txt"), "content").unwrap();
+        std::os::unix::fs::symlink(&target, &symlink).unwrap();
+
+        delete_local_path(&symlink, true).unwrap();
+
+        assert!(!symlink.exists());
+        assert!(target.join("file.txt").exists());
     }
 }

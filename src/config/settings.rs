@@ -99,6 +99,9 @@ impl<'de> Deserialize<'de> for MetricAdjustment {
                 let trimmed = value.trim();
                 if let Some(percent) = trimmed.strip_suffix('%') {
                     let percent = percent.parse::<f32>().map_err(E::custom)? / 100.0;
+                    if !percent.is_finite() {
+                        return Err(E::custom("metric percentage must be finite"));
+                    }
                     return Ok(MetricAdjustment::Percent((1.0 + percent).max(0.0)));
                 }
 
@@ -748,6 +751,18 @@ identity_file = "/tmp/proxy-key"
     #[test]
     fn metric_adjustment_rejects_non_finite_float() {
         let result: Result<MetricAdjustment, _> = serde_json::from_str("1e999");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn metric_adjustment_rejects_non_finite_percentage() {
+        #[derive(serde::Deserialize)]
+        struct Wrapper {
+            #[allow(dead_code)]
+            value: MetricAdjustment,
+        }
+
+        let result: Result<Wrapper, _> = toml::from_str(r#"value = "inf%""#);
         assert!(result.is_err());
     }
 }

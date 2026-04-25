@@ -140,12 +140,14 @@ impl DetectedOs {
 
     /// Parse from /etc/os-release content to identify specific Linux distro
     pub fn from_os_release(content: &str) -> Option<Self> {
+        let mut id = None;
         let mut id_like = Vec::new();
 
         for line in content.lines() {
             let line = line.trim();
             if let Some(stripped) = line.strip_prefix("ID=") {
-                return Some(Self::from_os_release_id(stripped));
+                id = Some(Self::from_os_release_id(stripped));
+                continue;
             }
             if let Some(stripped) = line.strip_prefix("ID_LIKE=") {
                 id_like = parse_os_release_value(stripped)
@@ -155,10 +157,16 @@ impl DetectedOs {
             }
         }
 
-        id_like
+        let id_like_os = id_like
             .into_iter()
             .map(|id| Self::from_os_release_id(&id))
-            .find(|os| *os != DetectedOs::Linux)
+            .find(|os| *os != DetectedOs::Linux);
+
+        match id {
+            Some(DetectedOs::Linux) => id_like_os.or(Some(DetectedOs::Linux)),
+            Some(os) => Some(os),
+            None => id_like_os,
+        }
     }
 
     fn from_os_release_id(raw: &str) -> Self {
@@ -446,16 +454,26 @@ impl HostsConfig {
     /// Returns the number of new hosts imported.
     pub fn import_from_ssh_config(&mut self) -> Result<usize, ConfigError> {
         let mut imported = 0usize;
-        let existing_keys: std::collections::HashSet<(String, u16)> = self
+        let existing_keys: std::collections::HashSet<(String, u16, String)> = self
             .hosts
             .iter()
-            .map(|host| (host.hostname.to_ascii_lowercase(), host.port))
+            .map(|host| {
+                (
+                    host.hostname.to_ascii_lowercase(),
+                    host.port,
+                    host.effective_username().to_ascii_lowercase(),
+                )
+            })
             .collect();
         let mut seen = existing_keys;
 
         let ssh_hosts = super::ssh_config::load_hosts_from_ssh_config()?;
         for host in ssh_hosts {
-            let key = (host.hostname.to_ascii_lowercase(), host.port);
+            let key = (
+                host.hostname.to_ascii_lowercase(),
+                host.port,
+                host.effective_username().to_ascii_lowercase(),
+            );
             if seen.contains(&key) {
                 continue;
             }
@@ -799,6 +817,15 @@ VERSION="24.05 (Uakari)"
     #[test]
     fn from_os_release_uses_id_like_when_id_missing() {
         let content = "NAME=\"Raspberry Pi OS\"\nID_LIKE=\"debian\"\n";
+        assert_eq!(
+            DetectedOs::from_os_release(content),
+            Some(DetectedOs::Debian)
+        );
+    }
+
+    #[test]
+    fn from_os_release_uses_id_like_when_id_is_unknown_linux() {
+        let content = "ID=raspbian\nID_LIKE=\"debian\"\n";
         assert_eq!(
             DetectedOs::from_os_release(content),
             Some(DetectedOs::Debian)

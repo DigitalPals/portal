@@ -104,13 +104,17 @@ pub struct Keybinding(KeyCombo);
 
 impl Keybinding {
     pub fn parse(input: &str) -> Result<Self, KeybindingParseError> {
+        if input.trim().is_empty() {
+            return Err(KeybindingParseError::MissingKey);
+        }
+
         let mut modifiers = ModifierState::default();
         let mut key: Option<KeybindingKey> = None;
 
         for raw in input.split('+') {
             let token = raw.trim();
             if token.is_empty() {
-                continue;
+                return Err(KeybindingParseError::EmptyToken);
             }
 
             let lower = token.to_ascii_lowercase();
@@ -180,6 +184,7 @@ impl<'de> Deserialize<'de> for Keybinding {
 pub enum KeybindingParseError {
     MissingKey,
     MultipleKeys,
+    EmptyToken,
     UnknownKey(String),
 }
 
@@ -188,6 +193,7 @@ impl fmt::Display for KeybindingParseError {
         match self {
             KeybindingParseError::MissingKey => write!(f, "missing key"),
             KeybindingParseError::MultipleKeys => write!(f, "multiple keys specified"),
+            KeybindingParseError::EmptyToken => write!(f, "empty keybinding token"),
             KeybindingParseError::UnknownKey(key) => write!(f, "unknown key: {}", key),
         }
     }
@@ -366,5 +372,25 @@ mod tests {
         let modifiers = Modifiers::CTRL;
 
         assert!(!binding.matches(&key, &modifiers));
+    }
+
+    #[test]
+    fn parse_rejects_empty_tokens() {
+        assert_eq!(
+            Keybinding::parse("  ").unwrap_err(),
+            KeybindingParseError::MissingKey
+        );
+        assert_eq!(
+            Keybinding::parse("Ctrl++A").unwrap_err(),
+            KeybindingParseError::EmptyToken
+        );
+        assert_eq!(
+            Keybinding::parse("+Ctrl+A").unwrap_err(),
+            KeybindingParseError::EmptyToken
+        );
+        assert_eq!(
+            Keybinding::parse("Ctrl+A+").unwrap_err(),
+            KeybindingParseError::EmptyToken
+        );
     }
 }

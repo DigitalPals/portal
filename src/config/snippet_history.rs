@@ -293,8 +293,10 @@ impl SnippetHistoryConfig {
             return;
         }
         self.entries.insert(0, entry);
+        self.trim_to_max_entries();
+    }
 
-        // Trim to max_entries
+    fn trim_to_max_entries(&mut self) {
         if self.entries.len() > self.max_entries {
             self.entries.truncate(self.max_entries);
         }
@@ -335,7 +337,9 @@ impl SnippetHistoryConfig {
             source: e,
         })?;
 
-        toml::from_str(&content).map_err(ConfigError::Parse)
+        let mut config: Self = toml::from_str(&content).map_err(ConfigError::Parse)?;
+        config.trim_to_max_entries();
+        Ok(config)
     }
 
     /// Save to file
@@ -357,7 +361,10 @@ impl SnippetHistoryConfig {
 
 #[cfg(test)]
 mod tests {
-    use super::{HistoricalHostResult, SnippetExecutionEntry, sanitize_field, truncate_string};
+    use super::{
+        HistoricalHostResult, SnippetExecutionEntry, SnippetHistoryConfig, sanitize_field,
+        truncate_string,
+    };
     use uuid::Uuid;
 
     #[test]
@@ -421,5 +428,28 @@ mod tests {
         entry.executed_at = chrono::Utc::now() + chrono::Duration::hours(1);
 
         assert_eq!(entry.time_ago(), "just now");
+    }
+
+    #[test]
+    fn trim_to_max_entries_trims_loaded_config() {
+        let mut config = SnippetHistoryConfig {
+            max_entries: 2,
+            ..Default::default()
+        };
+
+        for i in 0..4 {
+            config.entries.push(SnippetExecutionEntry::new(
+                Uuid::new_v4(),
+                format!("snippet{}", i),
+                "uptime".to_string(),
+                vec![],
+            ));
+        }
+
+        config.trim_to_max_entries();
+
+        assert_eq!(config.entries.len(), 2);
+        assert_eq!(config.entries[0].snippet_name, "snippet0");
+        assert_eq!(config.entries[1].snippet_name, "snippet1");
     }
 }

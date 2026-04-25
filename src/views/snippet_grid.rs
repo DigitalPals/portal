@@ -168,17 +168,7 @@ pub fn snippet_page_view(ctx: SnippetPageContext<'_>) -> Element<'static, Messag
         return super::snippet_edit::snippet_edit_view(edit_state, hosts, theme, fonts);
     }
 
-    // Filter snippets by search query
-    let filtered_snippets: Vec<&Snippet> = snippets
-        .iter()
-        .filter(|s| {
-            search_query.is_empty()
-                || s.name.to_lowercase().contains(&search_query.to_lowercase())
-                || s.command
-                    .to_lowercase()
-                    .contains(&search_query.to_lowercase())
-        })
-        .collect();
+    let filtered_snippets = filter_snippets(snippets, search_query);
 
     // Action bar
     let action_bar = build_action_bar(search_query, theme, fonts);
@@ -257,6 +247,20 @@ pub fn snippet_page_view(ctx: SnippetPageContext<'_>) -> Element<'static, Messag
             ..Default::default()
         })
         .into()
+}
+
+fn filter_snippets<'a>(snippets: &'a [Snippet], search_query: &str) -> Vec<&'a Snippet> {
+    let query = search_query.trim().to_lowercase();
+    if query.is_empty() {
+        return snippets.iter().collect();
+    }
+
+    snippets
+        .iter()
+        .filter(|s| {
+            s.name.to_lowercase().contains(&query) || s.command.to_lowercase().contains(&query)
+        })
+        .collect()
 }
 
 /// Build the snippet grid
@@ -614,4 +618,34 @@ fn no_results_state(theme: Theme, fonts: ScaledFonts) -> Element<'static, Messag
         .align_y(Alignment::Center)
         .padding(Padding::new(24.0).top(16.0).bottom(24.0))
         .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::filter_snippets;
+    use crate::config::Snippet;
+
+    #[test]
+    fn filter_snippets_trims_query() {
+        let snippets = vec![Snippet::new(
+            "Deploy".to_string(),
+            "systemctl restart".to_string(),
+        )];
+
+        let filtered = filter_snippets(&snippets, " deploy ");
+
+        assert_eq!(filtered.len(), 1);
+    }
+
+    #[test]
+    fn filter_snippets_matches_command() {
+        let snippets = vec![Snippet::new(
+            "Restart".to_string(),
+            "systemctl restart".to_string(),
+        )];
+
+        let filtered = filter_snippets(&snippets, "SYSTEMCTL");
+
+        assert_eq!(filtered.len(), 1);
+    }
 }

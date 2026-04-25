@@ -77,6 +77,10 @@ impl SnippetExecution {
 
     /// Check if all hosts have completed execution
     pub fn all_complete(&self) -> bool {
+        if self.host_results.is_empty() {
+            return false;
+        }
+
         self.host_results.iter().all(|r| {
             matches!(
                 r.status,
@@ -183,5 +187,38 @@ impl SnippetExecutionManager {
 impl Default for SnippetExecutionManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_execution_is_not_complete() {
+        let execution = SnippetExecution::new(
+            Uuid::new_v4(),
+            "empty".to_string(),
+            "uptime".to_string(),
+            Vec::new(),
+        );
+
+        assert!(!execution.all_complete());
+    }
+
+    #[test]
+    fn all_complete_requires_terminal_status_for_each_host() {
+        let host_id = Uuid::new_v4();
+        let mut execution = SnippetExecution::new(
+            Uuid::new_v4(),
+            "one".to_string(),
+            "uptime".to_string(),
+            vec![(host_id, "host".to_string())],
+        );
+
+        assert!(!execution.all_complete());
+
+        execution.get_host_result_mut(host_id).unwrap().status = ExecutionStatus::Success;
+        assert!(execution.all_complete());
     }
 }

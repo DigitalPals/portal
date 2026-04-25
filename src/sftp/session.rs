@@ -80,11 +80,7 @@ impl SftpSession {
             let size = metadata.size.unwrap_or(0);
 
             // Convert mtime to DateTime if available
-            let modified = metadata.mtime.map(|mtime| {
-                Utc.timestamp_opt(mtime as i64, 0)
-                    .single()
-                    .unwrap_or_else(Utc::now)
-            });
+            let modified = metadata.mtime.and_then(unix_timestamp_to_utc);
 
             result.push(FileEntry {
                 name,
@@ -397,6 +393,10 @@ impl SftpSession {
     }
 }
 
+fn unix_timestamp_to_utc(mtime: u32) -> Option<chrono::DateTime<Utc>> {
+    Utc.timestamp_opt(i64::from(mtime), 0).single()
+}
+
 impl Drop for SftpSession {
     fn drop(&mut self) {
         tracing::debug!("SFTP session cleanup: closing session");
@@ -583,11 +583,8 @@ mod tests {
 
     #[test]
     fn timestamp_conversion_valid() {
-        let mtime: u64 = 1704067200; // 2024-01-01 00:00:00 UTC
-        let datetime = Utc
-            .timestamp_opt(mtime as i64, 0)
-            .single()
-            .unwrap_or_else(Utc::now);
+        let mtime: u32 = 1704067200; // 2024-01-01 00:00:00 UTC
+        let datetime = unix_timestamp_to_utc(mtime).unwrap();
 
         assert_eq!(datetime.year(), 2024);
         assert_eq!(datetime.month(), 1);
@@ -596,11 +593,8 @@ mod tests {
 
     #[test]
     fn timestamp_conversion_zero() {
-        let mtime: u64 = 0; // Unix epoch
-        let datetime = Utc
-            .timestamp_opt(mtime as i64, 0)
-            .single()
-            .unwrap_or_else(Utc::now);
+        let mtime: u32 = 0; // Unix epoch
+        let datetime = unix_timestamp_to_utc(mtime).unwrap();
 
         assert_eq!(datetime.year(), 1970);
         assert_eq!(datetime.month(), 1);
@@ -609,14 +603,18 @@ mod tests {
 
     #[test]
     fn timestamp_conversion_recent() {
-        let mtime: u64 = 1700000000; // Nov 2023
-        let datetime = Utc
-            .timestamp_opt(mtime as i64, 0)
-            .single()
-            .unwrap_or_else(Utc::now);
+        let mtime: u32 = 1700000000; // Nov 2023
+        let datetime = unix_timestamp_to_utc(mtime).unwrap();
 
         assert_eq!(datetime.year(), 2023);
         assert_eq!(datetime.month(), 11);
+    }
+
+    #[test]
+    fn timestamp_conversion_max_u32_is_valid() {
+        let datetime = unix_timestamp_to_utc(u32::MAX).unwrap();
+
+        assert_eq!(datetime.year(), 2106);
     }
 
     // === Root path detection tests ===
