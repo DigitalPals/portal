@@ -29,13 +29,10 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                 // Validation errors are stored in dialog_state.validation_errors
                 let editing_id = dialog_state.editing_id;
                 if let Some(host) = dialog_state.to_host() {
-                    // Preserve created_at for edits
+                    // Preserve metadata that is not edited in the host dialog.
                     let host = if let Some(existing_id) = editing_id {
                         if let Some(existing) = portal.config.hosts.find_host(existing_id) {
-                            Host {
-                                created_at: existing.created_at,
-                                ..host
-                            }
+                            preserve_existing_host_metadata(host, existing)
                         } else {
                             host
                         }
@@ -561,5 +558,69 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
             }
             Task::none()
         }
+    }
+}
+
+fn preserve_existing_host_metadata(mut host: Host, existing: &Host) -> Host {
+    host.created_at = existing.created_at;
+    host.group_id = existing.group_id;
+    host.detected_os = existing.detected_os.clone();
+    host.last_connected = existing.last_connected;
+    host
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::{Duration, Utc};
+    use uuid::Uuid;
+
+    use super::*;
+    use crate::config::{AuthMethod, DetectedOs, Protocol};
+
+    fn host_with_metadata() -> Host {
+        let now = Utc::now();
+        Host {
+            id: Uuid::new_v4(),
+            name: "Pulse".to_string(),
+            hostname: "10.10.0.6".to_string(),
+            port: 22,
+            username: "root".to_string(),
+            protocol: Protocol::Ssh,
+            vnc_port: None,
+            auth: AuthMethod::Agent,
+            agent_forwarding: false,
+            port_forwards: Vec::new(),
+            portal_proxy_enabled: false,
+            group_id: Some(Uuid::new_v4()),
+            notes: None,
+            tags: Vec::new(),
+            created_at: now - Duration::days(2),
+            updated_at: now - Duration::days(1),
+            detected_os: Some(DetectedOs::Ubuntu),
+            last_connected: Some(now - Duration::hours(1)),
+        }
+    }
+
+    #[test]
+    fn preserving_existing_host_metadata_keeps_detected_os_after_edit() {
+        let existing = host_with_metadata();
+        let edited = Host {
+            name: "Pulse Updated".to_string(),
+            updated_at: Utc::now(),
+            created_at: Utc::now(),
+            group_id: None,
+            detected_os: None,
+            last_connected: None,
+            ..existing.clone()
+        };
+
+        let preserved = preserve_existing_host_metadata(edited, &existing);
+
+        assert_eq!(preserved.name, "Pulse Updated");
+        assert_eq!(preserved.created_at, existing.created_at);
+        assert_eq!(preserved.group_id, existing.group_id);
+        assert_eq!(preserved.detected_os, existing.detected_os);
+        assert_eq!(preserved.last_connected, existing.last_connected);
+        assert!(preserved.updated_at > existing.updated_at);
     }
 }
