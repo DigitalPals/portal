@@ -6,6 +6,7 @@
 //! - Catppuccin Frappé (dark, muted)
 //! - Catppuccin Macchiato (dark, medium)
 //! - Catppuccin Mocha (dark, rich)
+//! - Noctalia (Ghostty-compatible dark palette)
 
 use iced::Color;
 use serde::{Deserialize, Serialize};
@@ -21,6 +22,7 @@ pub enum ThemeId {
     CatppuccinFrappe,
     CatppuccinMacchiato,
     CatppuccinMocha,
+    Noctalia,
 }
 
 impl ThemeId {
@@ -32,6 +34,7 @@ impl ThemeId {
             ThemeId::CatppuccinFrappe,
             ThemeId::CatppuccinMacchiato,
             ThemeId::CatppuccinMocha,
+            ThemeId::Noctalia,
         ]
     }
 
@@ -43,6 +46,7 @@ impl ThemeId {
             ThemeId::CatppuccinFrappe => "Catppuccin Frappé",
             ThemeId::CatppuccinMacchiato => "Catppuccin Macchiato",
             ThemeId::CatppuccinMocha => "Catppuccin Mocha",
+            ThemeId::Noctalia => "Noctalia",
         }
     }
 
@@ -303,6 +307,47 @@ impl Theme {
             },
         }
     }
+
+    /// Noctalia - Ghostty-compatible dark palette
+    pub fn noctalia() -> Self {
+        Self {
+            background: Color::from_rgb8(0x1e, 0x1e, 0x2e),
+            surface: Color::from_rgb8(0x18, 0x18, 0x25),
+            sidebar: Color::from_rgb8(0x11, 0x11, 0x1b),
+            tab_bar: Color::from_rgb8(0x11, 0x11, 0x1b),
+            accent: Color::from_rgb8(0xf5, 0xc2, 0xe7),
+            text_primary: Color::from_rgb8(0xcd, 0xd6, 0xf4),
+            text_secondary: Color::from_rgb8(0xba, 0xc2, 0xde),
+            text_muted: Color::from_rgb8(0xa6, 0xad, 0xc8),
+            border: Color::from_rgb8(0x31, 0x32, 0x44),
+            hover: Color::from_rgb8(0x45, 0x47, 0x5a),
+            selected: Color::from_rgb8(0x58, 0x5b, 0x70),
+            focus_ring: Color::from_rgb8(0x89, 0xb4, 0xfa),
+            terminal: TerminalColors {
+                foreground: Color::from_rgb8(0xcd, 0xd6, 0xf4),
+                background: Color::from_rgb8(0x1e, 0x1e, 0x2e),
+                cursor: Color::from_rgb8(0xf5, 0xe0, 0xdc),
+                ansi: [
+                    Color::from_rgb8(0x45, 0x47, 0x5a),
+                    Color::from_rgb8(0xf3, 0x8b, 0xa8),
+                    Color::from_rgb8(0xa6, 0xe3, 0xa1),
+                    Color::from_rgb8(0xf9, 0xe2, 0xaf),
+                    Color::from_rgb8(0x89, 0xb4, 0xfa),
+                    Color::from_rgb8(0xf5, 0xc2, 0xe7),
+                    Color::from_rgb8(0x94, 0xe2, 0xd5),
+                    Color::from_rgb8(0xa6, 0xad, 0xc8),
+                    Color::from_rgb8(0x58, 0x5b, 0x70),
+                    Color::from_rgb8(0xf3, 0x77, 0x99),
+                    Color::from_rgb8(0x89, 0xd8, 0x8b),
+                    Color::from_rgb8(0xeb, 0xd3, 0x91),
+                    Color::from_rgb8(0x74, 0xa8, 0xfc),
+                    Color::from_rgb8(0xf2, 0xae, 0xde),
+                    Color::from_rgb8(0x6b, 0xd7, 0xca),
+                    Color::from_rgb8(0xba, 0xc2, 0xde),
+                ],
+            },
+        }
+    }
 }
 
 /// Get theme by ID
@@ -313,6 +358,7 @@ pub fn get_theme(id: ThemeId) -> Theme {
         ThemeId::CatppuccinFrappe => Theme::catppuccin_frappe(),
         ThemeId::CatppuccinMacchiato => Theme::catppuccin_macchiato(),
         ThemeId::CatppuccinMocha => Theme::catppuccin_mocha(),
+        ThemeId::Noctalia => Theme::noctalia(),
     }
 }
 

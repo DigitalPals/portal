@@ -476,6 +476,7 @@ fn theme_tile(
         ThemeId::CatppuccinFrappe => "Frappé",
         ThemeId::CatppuccinMacchiato => "Macchiato",
         ThemeId::CatppuccinMocha => "Mocha",
+        ThemeId::Noctalia => "Noctalia",
     };
 
     let name = text(short_name).size(fonts.small).color(if is_selected {

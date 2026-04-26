@@ -416,6 +416,44 @@ mod tests {
     }
 
     #[test]
+    fn osc_color_request_can_match_noctalia_ghostty_palette() {
+        let colors = Theme::noctalia().terminal;
+
+        assert_eq!(
+            osc_color_for_index(NamedColor::Foreground as usize, &colors),
+            Rgb {
+                r: 0xcd,
+                g: 0xd6,
+                b: 0xf4,
+            }
+        );
+        assert_eq!(
+            osc_color_for_index(NamedColor::Background as usize, &colors),
+            Rgb {
+                r: 0x1e,
+                g: 0x1e,
+                b: 0x2e,
+            }
+        );
+        assert_eq!(
+            osc_color_for_index(5, &colors),
+            Rgb {
+                r: 0xf5,
+                g: 0xc2,
+                b: 0xe7,
+            }
+        );
+        assert_eq!(
+            osc_color_for_index(12, &colors),
+            Rgb {
+                r: 0x74,
+                g: 0xa8,
+                b: 0xfc,
+            }
+        );
+    }
+
+    #[test]
     fn process_input_answers_osc_color_query() {
         let (backend, mut event_rx) = TerminalBackend::new(TerminalSize::new(10, 3));
         backend.set_colors(Theme::portal_default().terminal);
