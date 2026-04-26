@@ -50,9 +50,14 @@ tracing-appender = "0.2"
 data-encoding = "2.6"
 hmac = "0.12"
 sha1 = "0.10"
+sha2 = "0.10"
 secrecy = { version = "0.10", features = ["serde"] }
 regex = "1"
 ttf-parser = "0.25"
+argon2 = "0.5"
+chacha20poly1305 = "0.10"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+urlencoding = "2.1"
 
 # Additional
 parking_lot = "0.12"
@@ -70,6 +75,10 @@ image = "0.25"            # Image format support
 
 [target.'cfg(target_os = "linux")'.dependencies]
 gio = "0.20"              # For GNOME GSettings access (UI scale detection)
+keyring = { version = "3", features = ["linux-native-sync-persistent", "crypto-rust"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3", features = ["apple-native"] }
 
 # Dev profile: optimize dependencies (flate2, image, vnc-rs) but keep
 # the main crate debuggable. Without this, ZRLE decompression and pixel

@@ -50,6 +50,8 @@ pub enum AuthMethod {
     PublicKey {
         #[serde(default)]
         key_path: Option<PathBuf>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        vault_key_id: Option<Uuid>,
     },
     /// SSH Agent authentication
     #[default]
@@ -340,9 +342,9 @@ pub struct Host {
     /// SSH port forwards (-L and -R)
     #[serde(default)]
     pub port_forwards: Vec<PortForward>,
-    /// Route SSH terminal sessions for this host through Portal Proxy.
+    /// Route SSH terminal sessions for this host through Portal Hub.
     #[serde(default, skip_serializing_if = "is_false")]
-    pub portal_proxy_enabled: bool,
+    pub portal_hub_enabled: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub group_id: Option<Uuid>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -610,7 +612,7 @@ mod tests {
     }
 
     #[test]
-    fn host_portal_proxy_enabled_defaults_false() {
+    fn host_portal_hub_enabled_defaults_false() {
         let host: Host = toml::from_str(
             r#"
 id = "11111111-2222-4333-8444-555555555555"
@@ -631,7 +633,7 @@ type = "agent"
         )
         .unwrap();
 
-        assert!(!host.portal_proxy_enabled);
+        assert!(!host.portal_hub_enabled);
     }
 
     #[test]
@@ -1096,8 +1098,9 @@ VERSION="24.05 (Uakari)"
     fn auth_method_public_key_with_path() {
         let auth = AuthMethod::PublicKey {
             key_path: Some(PathBuf::from("/home/user/.ssh/id_ed25519")),
+            vault_key_id: None,
         };
-        if let AuthMethod::PublicKey { key_path } = auth {
+        if let AuthMethod::PublicKey { key_path, .. } = auth {
             assert_eq!(key_path, Some(PathBuf::from("/home/user/.ssh/id_ed25519")));
         } else {
             panic!("Expected PublicKey variant");
@@ -1106,9 +1109,26 @@ VERSION="24.05 (Uakari)"
 
     #[test]
     fn auth_method_public_key_without_path() {
-        let auth = AuthMethod::PublicKey { key_path: None };
-        if let AuthMethod::PublicKey { key_path } = auth {
+        let auth = AuthMethod::PublicKey {
+            key_path: None,
+            vault_key_id: None,
+        };
+        if let AuthMethod::PublicKey { key_path, .. } = auth {
             assert_eq!(key_path, None);
+        } else {
+            panic!("Expected PublicKey variant");
+        }
+    }
+
+    #[test]
+    fn auth_method_public_key_with_vault_key() {
+        let id = Uuid::new_v4();
+        let auth = AuthMethod::PublicKey {
+            key_path: None,
+            vault_key_id: Some(id),
+        };
+        if let AuthMethod::PublicKey { vault_key_id, .. } = auth {
+            assert_eq!(vault_key_id, Some(id));
         } else {
             panic!("Expected PublicKey variant");
         }
@@ -1122,12 +1142,15 @@ VERSION="24.05 (Uakari)"
 
         let pk1 = AuthMethod::PublicKey {
             key_path: Some(PathBuf::from("/a")),
+            vault_key_id: None,
         };
         let pk2 = AuthMethod::PublicKey {
             key_path: Some(PathBuf::from("/a")),
+            vault_key_id: None,
         };
         let pk3 = AuthMethod::PublicKey {
             key_path: Some(PathBuf::from("/b")),
+            vault_key_id: None,
         };
         assert_eq!(pk1, pk2);
         assert_ne!(pk1, pk3);

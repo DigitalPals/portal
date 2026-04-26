@@ -7,7 +7,7 @@ use secrecy::SecretString;
 use tokio::sync::{Mutex, mpsc};
 use uuid::Uuid;
 
-use crate::config::settings::PortalProxySettings;
+use crate::config::settings::PortalHubSettings;
 use crate::config::{AuthMethod, DetectedOs, Host, PortForwardKind, Protocol};
 use crate::message::{
     DialogMessage, Message, PassphraseRequest, PassphraseSftpContext, SessionId, SessionMessage,
@@ -92,9 +92,9 @@ pub fn should_detect_os(detected_os: Option<&DetectedOs>) -> bool {
     }
 }
 
-pub fn should_use_portal_proxy(settings: &PortalProxySettings, host: &Host) -> bool {
+pub fn should_use_portal_hub(settings: &PortalHubSettings, host: &Host) -> bool {
     settings.is_configured()
-        && host.portal_proxy_enabled
+        && host.portal_hub_enabled
         && host.protocol == Protocol::Ssh
         && matches!(host.auth, AuthMethod::Agent | AuthMethod::PublicKey { .. })
 }
@@ -189,7 +189,7 @@ fn proxy_event_listener(
 }
 
 pub fn proxy_connect_tasks(
-    settings: PortalProxySettings,
+    settings: PortalHubSettings,
     host: Arc<Host>,
     session_id: SessionId,
     host_id: Uuid,
@@ -223,7 +223,7 @@ pub fn proxy_connect_tasks(
             }),
             Err(error) => Message::Session(SessionMessage::ConnectFailed {
                 session_id,
-                error: format!("Portal Proxy connection failed: {}", error),
+                error: format!("Portal Hub connection failed: {}", error),
             }),
         },
     );
@@ -232,7 +232,7 @@ pub fn proxy_connect_tasks(
 }
 
 pub fn proxy_resume_tasks(
-    settings: PortalProxySettings,
+    settings: PortalHubSettings,
     listed_session: ListedProxySession,
     host_id: Option<Uuid>,
     display_name: String,
@@ -272,7 +272,7 @@ pub fn proxy_resume_tasks(
             }),
             Err(error) => Message::Session(SessionMessage::ConnectFailed {
                 session_id,
-                error: format!("Portal Proxy connection failed: {}", error),
+                error: format!("Portal Hub connection failed: {}", error),
             }),
         },
     );
@@ -715,12 +715,15 @@ mod tests {
             hostname: "example.com".to_string(),
             port: 22,
             username: "user".to_string(),
-            auth: AuthMethod::PublicKey { key_path: None },
+            auth: AuthMethod::PublicKey {
+                key_path: None,
+                vault_key_id: None,
+            },
             protocol: crate::config::Protocol::Ssh,
             vnc_port: None,
             agent_forwarding: false,
             port_forwards: Vec::new(),
-            portal_proxy_enabled: false,
+            portal_hub_enabled: false,
             group_id: None,
             notes: None,
             tags: vec![],
@@ -754,12 +757,15 @@ mod tests {
             hostname: "example.com".to_string(),
             port: 22,
             username: "user".to_string(),
-            auth: AuthMethod::PublicKey { key_path: None },
+            auth: AuthMethod::PublicKey {
+                key_path: None,
+                vault_key_id: None,
+            },
             protocol: crate::config::Protocol::Ssh,
             vnc_port: None,
             agent_forwarding: false,
             port_forwards: Vec::new(),
-            portal_proxy_enabled: false,
+            portal_hub_enabled: false,
             group_id: None,
             notes: None,
             tags: vec![],
@@ -800,7 +806,7 @@ mod tests {
             vnc_port: None,
             agent_forwarding: false,
             port_forwards: Vec::new(),
-            portal_proxy_enabled: true,
+            portal_hub_enabled: true,
             group_id: None,
             notes: None,
             tags: vec![],
@@ -811,48 +817,49 @@ mod tests {
         }
     }
 
-    fn configured_proxy_settings() -> PortalProxySettings {
-        PortalProxySettings {
+    fn configured_proxy_settings() -> PortalHubSettings {
+        PortalHubSettings {
             enabled: true,
             default_for_new_ssh_hosts: false,
             host: "proxy.example.com".to_string(),
             port: 22,
-            username: "portal-proxy".to_string(),
+            username: "portal-hub".to_string(),
             identity_file: None,
         }
     }
 
     #[test]
-    fn portal_proxy_routing_requires_global_and_host_enablement() {
+    fn portal_hub_routing_requires_global_and_host_enablement() {
         let settings = configured_proxy_settings();
         let mut host = proxy_test_host(AuthMethod::Agent);
 
-        assert!(should_use_portal_proxy(&settings, &host));
+        assert!(should_use_portal_hub(&settings, &host));
 
-        host.portal_proxy_enabled = false;
-        assert!(!should_use_portal_proxy(&settings, &host));
+        host.portal_hub_enabled = false;
+        assert!(!should_use_portal_hub(&settings, &host));
 
-        host.portal_proxy_enabled = true;
+        host.portal_hub_enabled = true;
         let mut disabled = settings.clone();
         disabled.enabled = false;
-        assert!(!should_use_portal_proxy(&disabled, &host));
+        assert!(!should_use_portal_hub(&disabled, &host));
     }
 
     #[test]
-    fn portal_proxy_routing_supports_agent_and_public_key_only() {
+    fn portal_hub_routing_supports_agent_and_public_key_only() {
         let settings = configured_proxy_settings();
 
-        assert!(should_use_portal_proxy(
+        assert!(should_use_portal_hub(
             &settings,
             &proxy_test_host(AuthMethod::Agent)
         ));
-        assert!(should_use_portal_proxy(
+        assert!(should_use_portal_hub(
             &settings,
             &proxy_test_host(AuthMethod::PublicKey {
-                key_path: Some("/tmp/key".into())
+                key_path: Some("/tmp/key".into()),
+                vault_key_id: None,
             })
         ));
-        assert!(!should_use_portal_proxy(
+        assert!(!should_use_portal_hub(
             &settings,
             &proxy_test_host(AuthMethod::Password)
         ));

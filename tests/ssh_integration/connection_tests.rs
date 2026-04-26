@@ -113,6 +113,7 @@ async fn test_pubkey_auth_success() {
 
     let host = env.create_test_host(AuthMethod::PublicKey {
         key_path: Some(env.server.private_key_path.clone()),
+        vault_key_id: None,
     });
     let (event_tx, event_rx) = mpsc::channel::<SshEvent>(32);
 
@@ -159,6 +160,7 @@ async fn test_encrypted_key_with_passphrase() {
 
     let host = env.create_test_host(AuthMethod::PublicKey {
         key_path: Some(env.server.encrypted_key_path.clone()),
+        vault_key_id: None,
     });
     let (event_tx, event_rx) = mpsc::channel::<SshEvent>(32);
 
@@ -206,6 +208,7 @@ async fn test_encrypted_key_without_passphrase() {
 
     let host = env.create_test_host(AuthMethod::PublicKey {
         key_path: Some(env.server.encrypted_key_path.clone()),
+        vault_key_id: None,
     });
     let (event_tx, event_rx) = mpsc::channel::<SshEvent>(32);
 

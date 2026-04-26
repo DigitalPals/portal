@@ -421,21 +421,21 @@ impl Portal {
             tracing::debug!("Starting explicit fresh session for host {}", host.name);
         }
 
-        if connection::should_use_portal_proxy(&self.prefs.portal_proxy, host) {
+        if connection::should_use_portal_hub(&self.prefs.portal_hub, host) {
             let dialog_host_name = host.name.clone();
             let host = Arc::new(host.clone());
             let session_id = Uuid::new_v4();
             let host_id = host.id;
             let terminal_size = self.terminal_initial_size();
             let task = connection::proxy_connect_tasks(
-                self.prefs.portal_proxy.clone(),
+                self.prefs.portal_hub.clone(),
                 host,
                 session_id,
                 host_id,
                 terminal_size,
             );
 
-            return self.begin_connecting(dialog_host_name, "Portal Proxy", task);
+            return self.begin_connecting(dialog_host_name, "Portal Hub", task);
         }
 
         // Check if password authentication is configured

@@ -19,6 +19,7 @@ pub mod platform;
 
 // Internal modules
 pub(crate) mod fs_utils;
+pub(crate) mod hub;
 pub(crate) mod icons;
 pub(crate) mod local;
 pub(crate) mod local_fs;

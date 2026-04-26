@@ -43,7 +43,17 @@ impl ResolvedAuth {
                     "Password required".to_string(),
                 )),
             },
-            AuthMethod::PublicKey { key_path } => {
+            AuthMethod::PublicKey {
+                key_path,
+                vault_key_id,
+            } => {
+                if let Some(vault_key_id) = vault_key_id {
+                    let private_key = crate::hub::vault::load_decrypted_private_key(*vault_key_id)
+                        .map_err(SshError::KeyFile)?;
+                    let passphrase = passphrase.as_ref().map(|p| p.expose_secret());
+                    return load_key_text(private_key.expose_secret(), passphrase).await;
+                }
+
                 let path = key_path
                     .clone()
                     .or_else(find_default_key)
@@ -122,16 +132,36 @@ async fn load_key_file(path: &Path, passphrase: Option<&str>) -> Result<Resolved
         }
     })?;
 
-    // Only use SHA-512 hash algorithm for RSA keys
-    // ED25519 and other keys use their native signing algorithms
+    Ok(public_key_auth(key))
+}
+
+async fn load_key_text(content: &str, passphrase: Option<&str>) -> Result<ResolvedAuth, SshError> {
+    let first_line = content.lines().next().unwrap_or("");
+    if is_public_key_line(first_line) {
+        return Err(SshError::KeyFile(
+            "Vault item contains a public key, not a private key".to_string(),
+        ));
+    }
+    if !first_line.starts_with("-----BEGIN") {
+        return Err(SshError::KeyFile(
+            "Vault item does not appear to contain a valid SSH private key".to_string(),
+        ));
+    }
+
+    let key = russh::keys::decode_secret_key(content, passphrase)
+        .map_err(|error| SshError::KeyFile(format!("Failed to load vault key: {}", error)))?;
+    Ok(public_key_auth(key))
+}
+
+fn public_key_auth(key: russh::keys::PrivateKey) -> ResolvedAuth {
+    // Only use SHA-512 hash algorithm for RSA keys.
+    // ED25519 and other keys use their native signing algorithms.
     let hash_alg = if key.algorithm().is_rsa() {
         Some(HashAlg::Sha512)
     } else {
         None
     };
-    let key_with_hash = PrivateKeyWithHashAlg::new(Arc::new(key), hash_alg);
-
-    Ok(ResolvedAuth::PublicKey(key_with_hash))
+    ResolvedAuth::PublicKey(PrivateKeyWithHashAlg::new(Arc::new(key), hash_alg))
 }
 
 fn is_public_key_line(line: &str) -> bool {
@@ -213,6 +243,7 @@ mod tests {
 
         let method = AuthMethod::PublicKey {
             key_path: Some(key_path),
+            vault_key_id: None,
         };
 
         let result = ResolvedAuth::resolve(&method, None, None).await;
@@ -235,6 +266,7 @@ mod tests {
 
         let method = AuthMethod::PublicKey {
             key_path: Some(key_path),
+            vault_key_id: None,
         };
         let passphrase = Some(SecretString::from("testpassphrase"));
 
@@ -258,6 +290,7 @@ mod tests {
 
         let method = AuthMethod::PublicKey {
             key_path: Some(key_path.clone()),
+            vault_key_id: None,
         };
 
         let result = ResolvedAuth::resolve(&method, None, None).await;
@@ -285,6 +318,7 @@ mod tests {
 
         let method = AuthMethod::PublicKey {
             key_path: Some(key_path.clone()),
+            vault_key_id: None,
         };
         let passphrase = Some(SecretString::from("wrongpassphrase"));
 
@@ -307,6 +341,7 @@ mod tests {
 
         let method = AuthMethod::PublicKey {
             key_path: Some(key_path),
+            vault_key_id: None,
         };
 
         let result = ResolvedAuth::resolve(&method, None, None).await;
@@ -332,6 +367,7 @@ mod tests {
 
         let method = AuthMethod::PublicKey {
             key_path: Some(key_path),
+            vault_key_id: None,
         };
 
         let result = ResolvedAuth::resolve(&method, None, None).await;
@@ -357,6 +393,7 @@ mod tests {
 
         let method = AuthMethod::PublicKey {
             key_path: Some(key_path),
+            vault_key_id: None,
         };
 
         let result = ResolvedAuth::resolve(&method, None, None).await;
@@ -380,6 +417,7 @@ mod tests {
 
         let method = AuthMethod::PublicKey {
             key_path: Some(key_path),
+            vault_key_id: None,
         };
 
         let result = ResolvedAuth::resolve(&method, None, None).await;
@@ -401,7 +439,10 @@ mod tests {
         // Since we can't control the test environment's home directory easily,
         // we test the error path indirectly
 
-        let method = AuthMethod::PublicKey { key_path: None };
+        let method = AuthMethod::PublicKey {
+            key_path: None,
+            vault_key_id: None,
+        };
 
         let result = ResolvedAuth::resolve(&method, None, None).await;
 

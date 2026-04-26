@@ -40,7 +40,7 @@ pub enum SettingsTab {
     UiUx,
     Terminal,
     Connections,
-    PortalProxy,
+    PortalHub,
     SecurityLogs,
     Snippets,
 }
@@ -54,7 +54,7 @@ pub enum HostDialogField {
     AuthMethod,
     KeyPath,
     AgentForwarding,
-    PortalProxyEnabled,
+    PortalHubEnabled,
     Tags,
     Notes,
     Protocol,
@@ -106,7 +106,7 @@ pub enum SessionMessage {
         session_id: SessionId,
         local_session: Arc<LocalSession>,
     },
-    /// Portal Proxy terminal session established
+    /// Portal Hub terminal session established
     ProxyConnected {
         session_id: SessionId,
         proxy_session: Arc<ProxySession>,
@@ -338,9 +338,9 @@ pub enum HostMessage {
     CreateNewSession(Uuid),
     /// Open an existing local Portal session tab
     OpenExistingSession(SessionId),
-    /// Resume an existing detached Portal Proxy session
+    /// Resume an existing detached Portal Hub session
     OpenDetachedProxySession(SessionId),
-    /// Detached Portal Proxy sessions loaded for duplicate-session picker
+    /// Detached Portal Hub sessions loaded for duplicate-session picker
     DetachedProxySessionsLoaded {
         host_id: Uuid,
         result: Result<Vec<ListedProxySession>, String>,
@@ -586,22 +586,36 @@ pub enum UiMessage {
     VncShowCursorDotChanged(bool),
     /// VNC stats overlay default changed
     VncShowStatsOverlayChanged(bool),
-    /// Portal Proxy enabled/disabled
-    PortalProxyEnabled(bool),
-    /// Portal Proxy default for newly-created SSH hosts
-    PortalProxyDefaultForNewHosts(bool),
-    /// Portal Proxy host/IP changed
-    PortalProxyHostChanged(String),
-    /// Portal Proxy port changed
-    PortalProxyPortChanged(String),
-    /// Portal Proxy SSH username changed
-    PortalProxyUsernameChanged(String),
-    /// Portal Proxy identity file changed
-    PortalProxyIdentityFileChanged(String),
-    /// Check Portal Proxy version and compatibility
-    PortalProxyCheckStatus,
-    /// Portal Proxy version and compatibility check result
-    PortalProxyStatusLoaded(Result<ProxyStatus, String>),
+    /// Portal Hub enabled/disabled
+    PortalHubEnabled(bool),
+    /// Portal Hub default for newly-created SSH hosts
+    PortalHubDefaultForNewHosts(bool),
+    /// Portal Hub host/IP changed
+    PortalHubHostChanged(String),
+    /// Portal Hub port changed
+    PortalHubPortChanged(String),
+    /// Portal Hub SSH username changed
+    PortalHubUsernameChanged(String),
+    /// Portal Hub identity file changed
+    PortalHubIdentityFileChanged(String),
+    /// Portal Hub web URL changed
+    PortalHubWebUrlChanged(String),
+    /// Check Portal Hub version and compatibility
+    PortalHubCheckStatus,
+    /// Portal Hub version and compatibility check result
+    PortalHubStatusLoaded(Result<ProxyStatus, String>),
+    /// Authenticate Portal with Portal Hub through browser OAuth.
+    PortalHubAuthenticate,
+    /// Portal Hub browser OAuth result.
+    PortalHubAuthenticated(Result<crate::hub::auth::HubAuthSummary, String>),
+    /// Upload this device's local profile to Portal Hub.
+    PortalHubUploadLocalProfile,
+    /// Local profile upload result.
+    PortalHubUploadLocalProfileDone(Result<String, String>),
+    /// Pull Portal Hub profile to this device.
+    PortalHubPullProfile,
+    /// Portal Hub profile pull result.
+    PortalHubPullProfileDone(Result<String, String>),
     /// Window resized
     WindowResized(iced::Size),
     /// Window lost focus
@@ -651,7 +665,7 @@ pub enum Message {
     Snippet(SnippetMessage),
     /// VNC session messages
     Vnc(VncMessage),
-    /// Portal Proxy sessions dashboard messages
+    /// Portal Hub sessions dashboard messages
     ProxySessions(ProxySessionsMessage),
     /// UI state messages
     Ui(UiMessage),

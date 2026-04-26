@@ -124,6 +124,7 @@ async fn test_invalid_key_path() {
 
     let host = env.create_test_host(AuthMethod::PublicKey {
         key_path: Some(PathBuf::from("/nonexistent/path/to/key")),
+        vault_key_id: None,
     });
 
     let (event_tx, event_rx) = mpsc::channel::<SshEvent>(32);
@@ -165,6 +166,7 @@ async fn test_wrong_passphrase() {
 
     let host = env.create_test_host(AuthMethod::PublicKey {
         key_path: Some(env.server.encrypted_key_path.clone()),
+        vault_key_id: None,
     });
 
     let (event_tx, event_rx) = mpsc::channel::<SshEvent>(32);
@@ -255,7 +257,7 @@ async fn test_connection_timeout() {
         protocol: portal::config::Protocol::Ssh,
         vnc_port: None,
         port_forwards: Vec::new(),
-        portal_proxy_enabled: false,
+        portal_hub_enabled: false,
         group_id: None,
         notes: None,
         tags: vec![],

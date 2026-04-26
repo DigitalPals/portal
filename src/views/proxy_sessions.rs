@@ -95,7 +95,7 @@ pub fn proxy_sessions_view<'a>(
             .width(Fill),
         );
     } else if state.sessions.is_empty() {
-        content = content.push(text("No active Portal Proxy sessions").color(theme.text_muted));
+        content = content.push(text("No active Portal Hub sessions").color(theme.text_muted));
     } else {
         content = content.push(session_grid(&state.sessions, column_count, theme, fonts));
     }

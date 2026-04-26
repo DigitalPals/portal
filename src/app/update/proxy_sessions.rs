@@ -19,14 +19,14 @@ pub fn handle_proxy_sessions(portal: &mut Portal, msg: ProxySessionsMessage) -> 
         }
         ProxySessionsMessage::Refresh => {
             if !matches!(portal.ui.active_view, View::ProxySessions)
-                || !portal.prefs.portal_proxy.is_configured()
+                || !portal.prefs.portal_hub.is_configured()
                 || portal.proxy_sessions.loading
             {
                 return Task::none();
             }
 
             portal.proxy_sessions.start_loading();
-            let settings = portal.prefs.portal_proxy.clone();
+            let settings = portal.prefs.portal_hub.clone();
             Task::perform(
                 async move { proxy::list_active_sessions(&settings).await },
                 |result| Message::ProxySessions(ProxySessionsMessage::Loaded(result)),
@@ -50,7 +50,7 @@ pub fn handle_proxy_sessions(portal: &mut Portal, msg: ProxySessionsMessage) -> 
             let Some(session) = portal.proxy_sessions.get(session_id) else {
                 portal
                     .toast_manager
-                    .push(Toast::error("Portal Proxy session is no longer available"));
+                    .push(Toast::error("Portal Hub session is no longer available"));
                 return Task::none();
             };
 
@@ -67,7 +67,7 @@ pub fn handle_proxy_sessions(portal: &mut Portal, msg: ProxySessionsMessage) -> 
             };
 
             connection::proxy_resume_tasks(
-                portal.prefs.portal_proxy.clone(),
+                portal.prefs.portal_hub.clone(),
                 listed_session,
                 session.host_id,
                 session.display_name.clone(),
@@ -79,7 +79,7 @@ pub fn handle_proxy_sessions(portal: &mut Portal, msg: ProxySessionsMessage) -> 
 
 fn schedule_next_refresh(portal: &Portal) -> Task<Message> {
     if !matches!(portal.ui.active_view, View::ProxySessions)
-        || !portal.prefs.portal_proxy.is_configured()
+        || !portal.prefs.portal_hub.is_configured()
     {
         return Task::none();
     }

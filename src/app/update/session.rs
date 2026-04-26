@@ -530,7 +530,7 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
             host_id,
             session_started_at,
         } => {
-            tracing::info!("Portal Proxy connected");
+            tracing::info!("Portal Hub connected");
             portal.finish_pending_connect();
             let has_proxy_started_at = session_started_at.is_some();
             let proxy_session_start = session_start_from_proxy_created_at(session_started_at);
@@ -543,7 +543,7 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                 session.reconnect_attempts = 0;
                 session.reconnect_next_attempt = None;
                 session.status_message =
-                    Some(("Reattached via Portal Proxy".to_string(), Instant::now()));
+                    Some(("Reattached via Portal Hub".to_string(), Instant::now()));
                 start_session_logger(portal, session_id);
                 return Task::none();
             }
@@ -712,12 +712,12 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
             }
 
             let use_proxy =
-                is_proxy && connection::should_use_portal_proxy(&portal.prefs.portal_proxy, &host);
+                is_proxy && connection::should_use_portal_hub(&portal.prefs.portal_hub, &host);
             let host = Arc::new(host);
             let terminal_size = portal.terminal_initial_size();
             if use_proxy {
                 return connection::proxy_connect_tasks(
-                    portal.prefs.portal_proxy.clone(),
+                    portal.prefs.portal_hub.clone(),
                     host,
                     session_id,
                     host_id,
@@ -822,7 +822,7 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                         return Task::perform(
                             async move {
                                 if let Err(e) = proxy_session.send(&bytes).await {
-                                    tracing::error!("Failed to send to Portal Proxy: {}", e);
+                                    tracing::error!("Failed to send to Portal Hub: {}", e);
                                 }
                             },
                             |_| Message::Noop,
@@ -864,7 +864,7 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                         return Task::perform(
                             async move {
                                 if let Err(e) = proxy_session.resize(cols, rows).await {
-                                    tracing::error!("Failed to resize Portal Proxy PTY: {}", e);
+                                    tracing::error!("Failed to resize Portal Hub PTY: {}", e);
                                 }
                             },
                             |_| Message::Noop,

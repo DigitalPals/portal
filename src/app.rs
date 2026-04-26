@@ -66,7 +66,7 @@ pub enum View {
     VncViewer(SessionId),  // VNC remote desktop viewer
     Settings,              // Full-page settings view
     Snippets,              // Snippets page with execution
-    ProxySessions,         // Portal Proxy sessions dashboard
+    ProxySessions,         // Portal Hub sessions dashboard
 }
 
 /// Major UI sections that can receive keyboard focus
@@ -140,9 +140,12 @@ pub struct UiState {
     pub terminal_focus_token: u64,
     pub window_focused: bool,
     pub tab_context_menu: TabContextMenuState,
-    pub portal_proxy_status: Option<crate::proxy::ProxyStatus>,
-    pub portal_proxy_status_error: Option<String>,
-    pub portal_proxy_status_loading: bool,
+    pub portal_hub_status: Option<crate::proxy::ProxyStatus>,
+    pub portal_hub_status_error: Option<String>,
+    pub portal_hub_status_loading: bool,
+    pub portal_hub_auth_user: Option<String>,
+    pub portal_hub_auth_error: Option<String>,
+    pub portal_hub_auth_loading: bool,
 }
 
 /// User preference state (theme, fonts, sizing).
@@ -157,7 +160,7 @@ pub struct PreferencesState {
     pub terminal_metric_adjustments: crate::config::settings::TerminalMetricAdjustments,
     pub sftp_column_widths: crate::views::sftp::ColumnWidths,
     pub vnc_settings: crate::config::settings::VncSettings,
-    pub portal_proxy: crate::config::settings::PortalProxySettings,
+    pub portal_hub: crate::config::settings::PortalHubSettings,
     pub auto_reconnect: bool,
     pub reconnect_max_attempts: u32,
     pub reconnect_base_delay_ms: u64,
@@ -387,9 +390,12 @@ impl Portal {
                 terminal_focus_token: 0,
                 window_focused: true,
                 tab_context_menu: TabContextMenuState::default(),
-                portal_proxy_status: None,
-                portal_proxy_status_error: None,
-                portal_proxy_status_loading: false,
+                portal_hub_status: None,
+                portal_hub_status_error: None,
+                portal_hub_status_loading: false,
+                portal_hub_auth_user: None,
+                portal_hub_auth_error: None,
+                portal_hub_auth_loading: false,
             },
             tabs: Vec::new(),
             active_tab: None,
@@ -410,7 +416,7 @@ impl Portal {
                 terminal_metric_adjustments: settings_config.terminal_metric_adjustments,
                 sftp_column_widths: settings_config.sftp_column_widths,
                 vnc_settings: settings_config.vnc.apply_env_overrides(),
-                portal_proxy: settings_config.portal_proxy,
+                portal_hub: settings_config.portal_hub,
                 auto_reconnect: settings_config.auto_reconnect,
                 reconnect_max_attempts: settings_config.reconnect_max_attempts,
                 reconnect_base_delay_ms: settings_config.reconnect_base_delay_ms,
@@ -503,7 +509,7 @@ impl Portal {
             self.ui.sidebar_selection,
             self.ui.focus_section,
             self.ui.sidebar_focus_index,
-            self.prefs.portal_proxy.is_configured(),
+            self.prefs.portal_hub.is_configured(),
         );
 
         // Main content - prioritize active sessions over sidebar selection
@@ -529,10 +535,13 @@ impl Portal {
                     system_ui_scale: self.prefs.system_ui_scale,
                     has_ui_scale_override: self.has_ui_scale_override(),
                     session_logging_enabled: self.prefs.session_logging_enabled,
-                    portal_proxy: self.prefs.portal_proxy.clone(),
-                    portal_proxy_status: self.ui.portal_proxy_status.clone(),
-                    portal_proxy_status_error: self.ui.portal_proxy_status_error.clone(),
-                    portal_proxy_status_loading: self.ui.portal_proxy_status_loading,
+                    portal_hub: self.prefs.portal_hub.clone(),
+                    portal_hub_status: self.ui.portal_hub_status.clone(),
+                    portal_hub_status_error: self.ui.portal_hub_status_error.clone(),
+                    portal_hub_status_loading: self.ui.portal_hub_status_loading,
+                    portal_hub_auth_user: self.ui.portal_hub_auth_user.clone(),
+                    portal_hub_auth_error: self.ui.portal_hub_auth_error.clone(),
+                    portal_hub_auth_loading: self.ui.portal_hub_auth_loading,
                     credential_timeout: self.prefs.credential_timeout,
                     security_audit_enabled: self.prefs.security_audit_enabled,
                     security_audit_log_location: self
@@ -986,7 +995,7 @@ impl Portal {
         settings.theme = self.prefs.theme_id;
         settings.ui_scale = self.prefs.ui_scale_override;
         settings.vnc = self.prefs.vnc_settings.clone();
-        settings.portal_proxy = self.prefs.portal_proxy.clone();
+        settings.portal_hub = self.prefs.portal_hub.clone();
         settings.auto_reconnect = self.prefs.auto_reconnect;
         settings.reconnect_max_attempts = self.prefs.reconnect_max_attempts;
         settings.reconnect_base_delay_ms = self.prefs.reconnect_base_delay_ms;

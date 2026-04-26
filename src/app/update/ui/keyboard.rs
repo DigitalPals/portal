@@ -448,7 +448,7 @@ fn handle_sidebar_keyboard(
     key: &Key,
     _modifiers: &keyboard::Modifiers,
 ) -> Task<Message> {
-    let items = visible_sidebar_items(portal.prefs.portal_proxy.is_configured());
+    let items = visible_sidebar_items(portal.prefs.portal_hub.is_configured());
     let last_index = items.len().saturating_sub(1);
     match key {
         Key::Named(keyboard::key::Named::ArrowUp) => {

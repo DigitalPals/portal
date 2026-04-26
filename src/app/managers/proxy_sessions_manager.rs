@@ -160,7 +160,7 @@ mod tests {
             auth: AuthMethod::Agent,
             agent_forwarding: false,
             port_forwards: Vec::new(),
-            portal_proxy_enabled: true,
+            portal_hub_enabled: true,
             group_id: None,
             notes: None,
             tags: Vec::new(),

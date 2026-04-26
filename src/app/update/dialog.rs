@@ -73,8 +73,8 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                         dialog_state.agent_forwarding =
                             matches!(value.trim().to_lowercase().as_str(), "true" | "1" | "yes");
                     }
-                    HostDialogField::PortalProxyEnabled => {
-                        dialog_state.portal_proxy_enabled =
+                    HostDialogField::PortalHubEnabled => {
+                        dialog_state.portal_hub_enabled =
                             matches!(value.trim().to_lowercase().as_str(), "true" | "1" | "yes");
                     }
                     HostDialogField::Tags => dialog_state.tags = value,
@@ -87,7 +87,7 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                             _ => dialog_state.auth_method,
                         };
                         if dialog_state.auth_method == AuthMethodChoice::Password {
-                            dialog_state.portal_proxy_enabled = false;
+                            dialog_state.portal_hub_enabled = false;
                         }
                     }
                     HostDialogField::Protocol => {
@@ -100,7 +100,7 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                                     dialog_state.port = "5900".to_string();
                                 }
                                 dialog_state.agent_forwarding = false;
-                                dialog_state.portal_proxy_enabled = false;
+                                dialog_state.portal_hub_enabled = false;
                                 ProtocolChoice::Vnc
                             }
                             _ => dialog_state.protocol,
@@ -530,7 +530,10 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                 let auth = match auth_method {
                     AuthMethodChoice::Agent => AuthMethod::Agent,
                     AuthMethodChoice::Password => AuthMethod::Password,
-                    AuthMethodChoice::PublicKey => AuthMethod::PublicKey { key_path: None },
+                    AuthMethodChoice::PublicKey => AuthMethod::PublicKey {
+                        key_path: None,
+                        vault_key_id: None,
+                    },
                 };
 
                 let now = chrono::Utc::now();
@@ -545,7 +548,7 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                     auth,
                     agent_forwarding: false,
                     port_forwards: Vec::new(),
-                    portal_proxy_enabled: false,
+                    portal_hub_enabled: false,
                     group_id: None,
                     notes: None,
                     tags: vec![],
@@ -593,7 +596,7 @@ mod tests {
             auth: AuthMethod::Agent,
             agent_forwarding: false,
             port_forwards: Vec::new(),
-            portal_proxy_enabled: false,
+            portal_hub_enabled: false,
             group_id: Some(Uuid::new_v4()),
             notes: None,
             tags: Vec::new(),

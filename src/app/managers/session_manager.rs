@@ -29,7 +29,7 @@ pub enum SessionBackend {
     Ssh(Arc<SshSession>),
     /// Local PTY session
     Local(Arc<LocalSession>),
-    /// Portal Proxy SSH session
+    /// Portal Hub SSH session
     Proxy(Arc<ProxySession>),
 }
 

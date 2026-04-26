@@ -211,6 +211,7 @@ fn resolve_host(alias: &str, blocks: &[HostBlock]) -> Host {
             key_path: Some(expand_identity_path(&expand_ssh_tokens(
                 &path, alias, &hostname, &username, port,
             ))),
+            vault_key_id: None,
         },
         Some(None) | None => AuthMethod::Agent,
     };
@@ -227,7 +228,7 @@ fn resolve_host(alias: &str, blocks: &[HostBlock]) -> Host {
         auth,
         agent_forwarding: false,
         port_forwards: Vec::new(),
-        portal_proxy_enabled: false,
+        portal_hub_enabled: false,
         group_id: None,
         notes: None,
         tags: Vec::new(),
@@ -402,7 +403,7 @@ mod tests {
         assert_eq!(host.username, "alice");
         assert_eq!(host.port, 2222);
         match &host.auth {
-            AuthMethod::PublicKey { key_path } => {
+            AuthMethod::PublicKey { key_path, .. } => {
                 assert!(key_path.is_some());
             }
             _ => panic!("expected public key auth"),
@@ -459,7 +460,7 @@ mod tests {
         let content = "Host test\n  IdentityFile keys/id_rsa\n";
         let hosts = parse_ssh_config(content);
         assert_eq!(hosts.len(), 1);
-        if let AuthMethod::PublicKey { key_path } = &hosts[0].auth {
+        if let AuthMethod::PublicKey { key_path, .. } = &hosts[0].auth {
             let key_path = key_path.as_ref().expect("missing key path");
             if let Some(dir) = ssh_dir() {
                 assert_eq!(key_path, &dir.join("keys/id_rsa"));
@@ -600,7 +601,7 @@ mod tests {
         let hosts = parse_ssh_config(content);
 
         assert_eq!(hosts.len(), 1);
-        if let AuthMethod::PublicKey { key_path } = &hosts[0].auth {
+        if let AuthMethod::PublicKey { key_path, .. } = &hosts[0].auth {
             let key_path = key_path.as_ref().expect("missing key path");
             if let Some(dir) = ssh_dir() {
                 assert_eq!(key_path, &dir.join("keys/api-deploy.pem"));
@@ -620,7 +621,7 @@ mod tests {
         let hosts = parse_ssh_config(content);
 
         assert_eq!(hosts.len(), 1);
-        if let AuthMethod::PublicKey { key_path } = &hosts[0].auth {
+        if let AuthMethod::PublicKey { key_path, .. } = &hosts[0].auth {
             let key_path = key_path.as_ref().expect("missing key path");
             if let Some(dir) = ssh_dir() {
                 assert_eq!(key_path, &dir.join("keys/api.internal-api.pem"));

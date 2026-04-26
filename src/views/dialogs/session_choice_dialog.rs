@@ -154,7 +154,7 @@ pub fn session_choice_dialog_view(
     }
 
     if !state.proxy_sessions.is_empty() {
-        rows.push(section_label("Detached Portal Proxy sessions", theme));
+        rows.push(section_label("Detached Portal Hub sessions", theme));
         rows.push(session_grid(
             state
                 .proxy_sessions
@@ -176,7 +176,7 @@ pub fn session_choice_dialog_view(
     }
 
     if state.proxy_loading {
-        rows.push(status_row("Loading Portal Proxy sessions...", theme));
+        rows.push(status_row("Loading Portal Hub sessions...", theme));
     }
 
     if let Some(error) = &state.proxy_error {

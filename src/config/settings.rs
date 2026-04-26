@@ -197,46 +197,51 @@ pub enum SessionLogFormat {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PortalProxySettings {
-    /// Master switch for Portal Proxy.
+pub struct PortalHubSettings {
+    /// Master switch for Portal Hub.
     #[serde(default)]
     pub enabled: bool,
 
-    /// Enable Portal Proxy automatically when creating new SSH hosts.
+    /// Enable Portal Hub automatically when creating new SSH hosts.
     #[serde(default)]
     pub default_for_new_ssh_hosts: bool,
 
-    /// Tailscale DNS name or IP of the Portal Proxy LXC.
+    /// Tailscale DNS name or IP of the Portal Hub LXC.
     #[serde(default)]
     pub host: String,
 
-    /// SSH port for the Portal Proxy OpenSSH server.
-    #[serde(default = "default_portal_proxy_port")]
+    /// SSH port for the Portal Hub OpenSSH server.
+    #[serde(default = "default_portal_hub_port")]
     pub port: u16,
 
     /// SSH user on the proxy host.
-    #[serde(default = "default_portal_proxy_username")]
+    #[serde(default = "default_portal_hub_username")]
     pub username: String,
 
     /// Optional identity file for authenticating to the proxy.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub identity_file: Option<PathBuf>,
+
+    /// HTTPS/Web base URL for Portal Hub account authentication and sync.
+    #[serde(default)]
+    pub web_url: String,
 }
 
-impl Default for PortalProxySettings {
+impl Default for PortalHubSettings {
     fn default() -> Self {
         Self {
             enabled: false,
             default_for_new_ssh_hosts: false,
             host: String::new(),
-            port: default_portal_proxy_port(),
-            username: default_portal_proxy_username(),
+            port: default_portal_hub_port(),
+            username: default_portal_hub_username(),
             identity_file: None,
+            web_url: String::new(),
         }
     }
 }
 
-impl PortalProxySettings {
+impl PortalHubSettings {
     pub fn is_configured(&self) -> bool {
         self.enabled
             && self.port > 0
@@ -245,12 +250,12 @@ impl PortalProxySettings {
     }
 }
 
-fn default_portal_proxy_port() -> u16 {
+fn default_portal_hub_port() -> u16 {
     2222
 }
 
-fn default_portal_proxy_username() -> String {
-    "portal-proxy".to_string()
+fn default_portal_hub_username() -> String {
+    "portal-hub".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -469,9 +474,9 @@ pub struct SettingsConfig {
     #[serde(default)]
     pub keybindings: KeybindingsConfig,
 
-    /// Portal Proxy settings for persistent SSH terminal sessions.
+    /// Portal Hub settings for persistent SSH terminal sessions.
     #[serde(default)]
-    pub portal_proxy: PortalProxySettings,
+    pub portal_hub: PortalHubSettings,
 
     /// Auto-reconnect for SSH sessions
     #[serde(default = "default_auto_reconnect")]
@@ -595,7 +600,7 @@ impl Default for SettingsConfig {
             sftp_column_widths: ColumnWidths::default(),
             vnc: VncSettings::default(),
             keybindings: KeybindingsConfig::default(),
-            portal_proxy: PortalProxySettings::default(),
+            portal_hub: PortalHubSettings::default(),
             auto_reconnect: default_auto_reconnect(),
             reconnect_max_attempts: default_reconnect_max_attempts(),
             reconnect_base_delay_ms: default_reconnect_base_delay_ms(),
@@ -804,29 +809,31 @@ adjust-icon-height = "10%"
     }
 
     #[test]
-    fn portal_proxy_settings_roundtrip() {
+    fn portal_hub_settings_roundtrip() {
         let config: SettingsConfig = toml::from_str(
             r#"
-[portal_proxy]
+[portal_hub]
 enabled = true
 default_for_new_ssh_hosts = true
 host = "127.0.0.1"
 port = 2222
 username = "john"
 identity_file = "/tmp/proxy-key"
+web_url = "https://hub.example.test"
 "#,
         )
         .unwrap();
 
-        assert!(config.portal_proxy.enabled);
-        assert!(config.portal_proxy.default_for_new_ssh_hosts);
-        assert_eq!(config.portal_proxy.host, "127.0.0.1");
-        assert_eq!(config.portal_proxy.port, 2222);
-        assert_eq!(config.portal_proxy.username, "john");
+        assert!(config.portal_hub.enabled);
+        assert!(config.portal_hub.default_for_new_ssh_hosts);
+        assert_eq!(config.portal_hub.host, "127.0.0.1");
+        assert_eq!(config.portal_hub.port, 2222);
+        assert_eq!(config.portal_hub.username, "john");
         assert_eq!(
-            config.portal_proxy.identity_file.as_deref(),
+            config.portal_hub.identity_file.as_deref(),
             Some(std::path::Path::new("/tmp/proxy-key"))
         );
+        assert_eq!(config.portal_hub.web_url, "https://hub.example.test");
 
         let serialized = toml::to_string(&config).unwrap();
         assert!(serialized.contains("default_for_new_ssh_hosts = true"));

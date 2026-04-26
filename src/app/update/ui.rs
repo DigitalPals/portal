@@ -64,14 +64,21 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
         | UiMessage::VncViewOnlyChanged(_)
         | UiMessage::VncShowCursorDotChanged(_)
         | UiMessage::VncShowStatsOverlayChanged(_)
-        | UiMessage::PortalProxyEnabled(_)
-        | UiMessage::PortalProxyDefaultForNewHosts(_)
-        | UiMessage::PortalProxyHostChanged(_)
-        | UiMessage::PortalProxyPortChanged(_)
-        | UiMessage::PortalProxyUsernameChanged(_)
-        | UiMessage::PortalProxyIdentityFileChanged(_)
-        | UiMessage::PortalProxyCheckStatus
-        | UiMessage::PortalProxyStatusLoaded(_)) => settings::handle_settings_message(portal, msg),
+        | UiMessage::PortalHubEnabled(_)
+        | UiMessage::PortalHubDefaultForNewHosts(_)
+        | UiMessage::PortalHubHostChanged(_)
+        | UiMessage::PortalHubPortChanged(_)
+        | UiMessage::PortalHubUsernameChanged(_)
+        | UiMessage::PortalHubIdentityFileChanged(_)
+        | UiMessage::PortalHubWebUrlChanged(_)
+        | UiMessage::PortalHubCheckStatus
+        | UiMessage::PortalHubStatusLoaded(_)
+        | UiMessage::PortalHubAuthenticate
+        | UiMessage::PortalHubAuthenticated(_)
+        | UiMessage::PortalHubUploadLocalProfile
+        | UiMessage::PortalHubUploadLocalProfileDone(_)
+        | UiMessage::PortalHubPullProfile
+        | UiMessage::PortalHubPullProfileDone(_)) => settings::handle_settings_message(portal, msg),
         UiMessage::WindowResized(size) => {
             portal.ui.window_size = size;
             if !portal.ui.sidebar_manually_set {

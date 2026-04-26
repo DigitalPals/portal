@@ -52,7 +52,7 @@ pub fn handle_host(portal: &mut Portal, msg: HostMessage) -> Task<Message> {
             else {
                 portal
                     .toast_manager
-                    .push(Toast::error("Portal Proxy session is no longer available"));
+                    .push(Toast::error("Portal Hub session is no longer available"));
                 portal.dialogs.close();
                 return Task::none();
             };
@@ -61,7 +61,7 @@ pub fn handle_host(portal: &mut Portal, msg: HostMessage) -> Task<Message> {
             let terminal_size = portal.terminal_initial_size();
             portal.dialogs.close();
             connection::proxy_resume_tasks(
-                portal.prefs.portal_proxy.clone(),
+                portal.prefs.portal_hub.clone(),
                 choice.session,
                 host_id,
                 choice.display_name,
@@ -75,7 +75,7 @@ pub fn handle_host(portal: &mut Portal, msg: HostMessage) -> Task<Message> {
             portal
                 .dialogs
                 .open_host(HostDialogState::new_host_with_proxy_default(
-                    portal.prefs.portal_proxy.default_for_new_ssh_hosts,
+                    portal.prefs.portal_hub.default_for_new_ssh_hosts,
                 ));
             Task::none()
         }
@@ -102,7 +102,7 @@ pub fn handle_host(portal: &mut Portal, msg: HostMessage) -> Task<Message> {
 
 fn choose_or_connect_ssh_host(portal: &mut Portal, host: &Host) -> Task<Message> {
     let local_sessions = local_session_choices(portal, host.id);
-    let should_load_proxy = connection::should_use_portal_proxy(&portal.prefs.portal_proxy, host);
+    let should_load_proxy = connection::should_use_portal_hub(&portal.prefs.portal_hub, host);
 
     if local_sessions.is_empty() && !should_load_proxy {
         return portal.connect_to_host(host);
@@ -118,7 +118,7 @@ fn choose_or_connect_ssh_host(portal: &mut Portal, host: &Host) -> Task<Message>
         ));
 
     if should_load_proxy {
-        let settings = portal.prefs.portal_proxy.clone();
+        let settings = portal.prefs.portal_hub.clone();
         let host_id = host.id;
         return Task::perform(
             async move { proxy::list_active_sessions(&settings).await },
@@ -170,8 +170,7 @@ fn handle_detached_proxy_sessions_loaded(
                 connect_new = !state.has_choices();
             }
             Err(error) => {
-                state.proxy_error =
-                    Some(format!("Could not load Portal Proxy sessions: {}", error));
+                state.proxy_error = Some(format!("Could not load Portal Hub sessions: {}", error));
             }
         }
     }
@@ -224,7 +223,7 @@ mod tests {
             vnc_port: None,
             agent_forwarding: false,
             port_forwards: Vec::new(),
-            portal_proxy_enabled: true,
+            portal_hub_enabled: true,
             group_id: None,
             notes: None,
             tags: Vec::new(),

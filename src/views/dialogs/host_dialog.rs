@@ -43,7 +43,7 @@ pub struct HostDialogState {
     pub auth_method: AuthMethodChoice,
     pub key_path: String,
     pub agent_forwarding: bool,
-    pub portal_proxy_enabled: bool,
+    pub portal_hub_enabled: bool,
     pub tags: String,
     pub notes: String,
     /// Connection protocol
@@ -216,8 +216,8 @@ impl HostDialogState {
         Self::new_host_with_proxy_default(false)
     }
 
-    /// Create a new host dialog with the caller's Portal Proxy default.
-    pub fn new_host_with_proxy_default(portal_proxy_enabled: bool) -> Self {
+    /// Create a new host dialog with the caller's Portal Hub default.
+    pub fn new_host_with_proxy_default(portal_hub_enabled: bool) -> Self {
         Self {
             editing_id: None,
             name: String::new(),
@@ -227,7 +227,7 @@ impl HostDialogState {
             auth_method: AuthMethodChoice::Agent,
             key_path: String::new(),
             agent_forwarding: false,
-            portal_proxy_enabled,
+            portal_hub_enabled,
             tags: String::new(),
             notes: String::new(),
             protocol: ProtocolChoice::Ssh,
@@ -252,14 +252,14 @@ impl HostDialogState {
                 AuthMethod::PublicKey { .. } => AuthMethodChoice::PublicKey,
             },
             key_path: match &host.auth {
-                AuthMethod::PublicKey { key_path } => key_path
+                AuthMethod::PublicKey { key_path, .. } => key_path
                     .as_ref()
                     .map(|p| p.to_string_lossy().to_string())
                     .unwrap_or_default(),
                 _ => String::new(),
             },
             agent_forwarding: host.agent_forwarding,
-            portal_proxy_enabled: host.portal_proxy_enabled,
+            portal_hub_enabled: host.portal_hub_enabled,
             tags: host.tags.join(", "),
             notes: host.notes.clone().unwrap_or_default(),
             protocol: match host.protocol {
@@ -334,6 +334,7 @@ impl HostDialogState {
                 } else {
                     Some(self.key_path.trim().into())
                 },
+                vault_key_id: None,
             },
         };
 
@@ -368,9 +369,9 @@ impl HostDialogState {
             false
         };
 
-        let portal_proxy_enabled = protocol == Protocol::Ssh
+        let portal_hub_enabled = protocol == Protocol::Ssh
             && !matches!(auth, AuthMethod::Password)
-            && self.portal_proxy_enabled;
+            && self.portal_hub_enabled;
 
         let vnc_port = if protocol == Protocol::Vnc && port != 5900 {
             Some(port)
@@ -395,7 +396,7 @@ impl HostDialogState {
             auth,
             agent_forwarding,
             port_forwards,
-            portal_proxy_enabled,
+            portal_hub_enabled,
             group_id: None,
             notes,
             tags,
@@ -438,7 +439,7 @@ pub fn host_dialog_view(state: &HostDialogState, theme: Theme) -> Element<'stati
     let username_value = state.username.clone();
     let key_path_value = state.key_path.clone();
     let agent_forwarding = state.agent_forwarding;
-    let portal_proxy_enabled = state.portal_proxy_enabled;
+    let portal_hub_enabled = state.portal_hub_enabled;
     let tags_value = state.tags.clone();
     let notes_value = state.notes.clone();
     let auth_method = state.auth_method;
@@ -614,22 +615,22 @@ pub fn host_dialog_view(state: &HostDialogState, theme: Theme) -> Element<'stati
         column![].into()
     };
 
-    let portal_proxy_section: Element<'static, Message> = if !is_vnc {
+    let portal_hub_section: Element<'static, Message> = if !is_vnc {
         if auth_method == AuthMethodChoice::Password {
             column![
-                text("Portal Proxy").size(12).color(theme.text_secondary),
-                text("Portal Proxy requires SSH Agent or Public Key authentication")
+                text("Portal Hub").size(12).color(theme.text_secondary),
+                text("Portal Hub requires SSH Agent or Public Key authentication")
                     .size(11)
                     .color(theme.text_secondary)
             ]
             .spacing(4)
             .into()
         } else {
-            checkbox(portal_proxy_enabled)
-                .label("Use Portal Proxy")
+            checkbox(portal_hub_enabled)
+                .label("Use Portal Hub")
                 .on_toggle(|value| {
                     Message::Dialog(DialogMessage::FieldChanged(
-                        HostDialogField::PortalProxyEnabled,
+                        HostDialogField::PortalHubEnabled,
                         value.to_string(),
                     ))
                 })
@@ -969,7 +970,7 @@ pub fn host_dialog_view(state: &HostDialogState, theme: Theme) -> Element<'stati
         form = form.push(auth_picker);
         form = form.push(key_path_section);
         form = form.push(agent_forwarding_section);
-        form = form.push(portal_proxy_section);
+        form = form.push(portal_hub_section);
         form = form.push(port_forwards_section);
     }
 

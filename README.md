@@ -26,7 +26,7 @@ Portal is a native SSH and VNC client built for speed and simplicity. Manage you
 
 **`>_` Multi-Tab Terminal** — Manage multiple SSH sessions in tabs. Switch between servers instantly without juggling windows.
 
-**`<>` Portal Proxy Beta** — Keep SSH terminal sessions alive through a Tailscale-only proxy, then reopen them with the previous screen state intact.
+**`<>` Portal Hub Beta** — Keep SSH terminal sessions alive through a Tailscale-only hub, sync hosts/settings/snippets, and store encrypted private-key vault items.
 
 **`< >` Dual-Pane SFTP** — Browse local and remote files side by side. Drag, drop, copy, and manage files with ease.
 
@@ -51,7 +51,7 @@ Portal is a native SSH and VNC client built for speed and simplicity. Manage you
 - **SSH key installation** — Install your public key on remote servers with `Ctrl+Shift+K`
 - **Status bar** — See hostname and connection duration at a glance
 - **Session history** — Quick reconnect to recent servers
-- **Portal Proxy beta** — Route selected SSH hosts through Portal Proxy for persistent remote terminal sessions, resumable thumbnails, and reconnect replay
+- **Portal Hub beta** — Route selected SSH hosts through Portal Hub for persistent remote terminal sessions, resumable thumbnails, reconnect replay, profile sync, and encrypted key vault storage
 
 ### SFTP File Browser
 
@@ -275,22 +275,29 @@ nix build
 
 That's it. You're in.
 
-## Portal Proxy Beta
+## Portal Hub Beta
 
-Portal can route SSH terminal sessions through [Portal Proxy](https://github.com/DigitalPals/portal-proxy) so remote shells survive a Portal crash, laptop sleep, or network drop. The proxy is intended to run on a small Linux host or LXC reachable only over Tailscale.
+Portal can route SSH terminal sessions through [Portal Hub](https://github.com/DigitalPals/portal-hub) so remote shells survive a Portal crash, laptop sleep, or network drop. Portal Hub can also store synced hosts, settings, snippets, and encrypted private-key vault items. The hub is intended to run on a small Linux host or LXC reachable only over Tailscale.
 
 To use it:
 
-1. Deploy Portal Proxy and restrict access with Tailscale ACLs.
-2. In Portal settings, enable Portal Proxy and set the proxy host, SSH port (`2222` by default), username, and optional identity file.
-3. Enable Portal Proxy on individual SSH hosts that use SSH Agent or Public Key authentication.
-4. Open the Sessions view to see active proxy sessions, terminal thumbnails, and resume an existing session.
+1. Deploy Portal Hub and restrict access with Tailscale ACLs.
+2. Start the Portal Hub web server and create the first owner account with MFA.
+3. In Portal settings, enable Portal Hub and set the proxy host, SSH port (`2222` by default), username, optional identity file, and Web URL.
+4. Use **Sign in** on the Portal Hub settings tab to authenticate through the browser.
+5. Choose whether to upload this device's hosts/settings/snippets to Hub or pull Hub's profile to this device.
+6. Enable Portal Hub on individual SSH hosts that use SSH Agent or Public Key authentication.
+7. Open the Sessions view to see active proxy sessions, terminal thumbnails, and resume an existing session.
 
 Typing `exit` in the remote shell closes the real session. Closing the Portal tab or losing connectivity only detaches Portal from the proxy session.
 
 For SSH hosts that use a local private key, Portal keeps the key on the laptop.
-When connecting through Portal Proxy it starts a managed local `ssh-agent` when
+When connecting through Portal Hub it starts a managed local `ssh-agent` when
 needed, loads the selected or default key, and forwards that agent to the proxy.
+
+Vault private keys are encrypted locally before sync. Portal Hub stores the
+encrypted blobs but does not receive the vault passphrase or decrypted key
+material.
 
 ## Keyboard Shortcuts
 
@@ -324,7 +331,7 @@ Configuration files:
 - `hosts.toml` — Saved host definitions (SSH and VNC protocols)
 - `snippets.toml` — Command snippets
 - `snippet_history.toml` — Snippet execution history (`enabled`, `store_command`, `store_output`, `redact_output`)
-- `settings.toml` — Theme, terminal font and scroll preferences, VNC settings, and Portal Proxy settings
+- `settings.toml` — Theme, terminal font and scroll preferences, VNC settings, and Portal Hub settings
 - `history.toml` — Connection history
 - `known_hosts` — SSH host key storage
 

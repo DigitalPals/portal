@@ -7,7 +7,7 @@ use iced::widget::{
 use iced::{Alignment, Element, Fill, Length};
 
 use crate::config::settings::{
-    PortalProxySettings, TERMINAL_SCROLL_SPEED_BASE, TERMINAL_SCROLL_SPEED_MAX,
+    PortalHubSettings, TERMINAL_SCROLL_SPEED_BASE, TERMINAL_SCROLL_SPEED_MAX,
     TERMINAL_SCROLL_SPEED_MIN, VncEncodingPreference, VncQualityPreset, VncScalingMode,
     VncSettings,
 };
@@ -35,10 +35,13 @@ pub struct SettingsPageContext {
     pub snippet_store_output: bool,
     pub snippet_redact_output: bool,
     pub session_logging_enabled: bool,
-    pub portal_proxy: PortalProxySettings,
-    pub portal_proxy_status: Option<ProxyStatus>,
-    pub portal_proxy_status_error: Option<String>,
-    pub portal_proxy_status_loading: bool,
+    pub portal_hub: PortalHubSettings,
+    pub portal_hub_status: Option<ProxyStatus>,
+    pub portal_hub_status_error: Option<String>,
+    pub portal_hub_status_loading: bool,
+    pub portal_hub_auth_user: Option<String>,
+    pub portal_hub_auth_error: Option<String>,
+    pub portal_hub_auth_loading: bool,
     /// Credential cache timeout in seconds (0 = disabled)
     pub credential_timeout: u64,
     pub security_audit_enabled: bool,
@@ -105,7 +108,7 @@ fn settings_tabs(
         (SettingsTab::UiUx, "UI & UX"),
         (SettingsTab::Terminal, "Terminal"),
         (SettingsTab::Connections, "Connections"),
-        (SettingsTab::PortalProxy, "Portal Proxy"),
+        (SettingsTab::PortalHub, "Portal Hub"),
         (SettingsTab::SecurityLogs, "Security & Logs"),
         (SettingsTab::Snippets, "Snippets"),
     ];
@@ -169,7 +172,7 @@ fn active_tab_description(tab: SettingsTab) -> &'static str {
         SettingsTab::UiUx => "Theme, scale, and interface presentation.",
         SettingsTab::Terminal => "Terminal font and scroll behavior.",
         SettingsTab::Connections => "SSH reconnect behavior and VNC defaults.",
-        SettingsTab::PortalProxy => "Persistent SSH sessions through Portal Proxy.",
+        SettingsTab::PortalHub => "Persistent SSH sessions through Portal Hub.",
         SettingsTab::SecurityLogs => "Credential caching, session logs, and audit logs.",
         SettingsTab::Snippets => "Snippet execution history and stored output.",
     }
@@ -222,7 +225,7 @@ fn active_tab_sections(
                     ),
                     toggle_setting(
                         "Auto reconnect",
-                        "Reconnect SSH and Portal Proxy sessions after unexpected disconnects",
+                        "Reconnect SSH and Portal Hub sessions after unexpected disconnects",
                         context.auto_reconnect,
                         |value| Message::Ui(UiMessage::AutoReconnectEnabled(value)),
                         theme,
@@ -262,48 +265,48 @@ fn active_tab_sections(
                 vnc_settings_items(&context.vnc_settings, theme, fonts),
             ),
         ],
-        SettingsTab::PortalProxy => vec![settings_section(
-            "Portal Proxy",
+        SettingsTab::PortalHub => vec![settings_section(
+            "Portal Hub",
             theme,
             fonts,
             vec![
                 toggle_setting(
-                    "Use Portal Proxy",
-                    "Master switch for hosts configured to use Portal Proxy",
-                    context.portal_proxy.enabled,
-                    |value| Message::Ui(UiMessage::PortalProxyEnabled(value)),
+                    "Use Portal Hub",
+                    "Master switch for hosts configured to use Portal Hub",
+                    context.portal_hub.enabled,
+                    |value| Message::Ui(UiMessage::PortalHubEnabled(value)),
                     theme,
                     fonts,
                 ),
                 toggle_setting(
                     "Default for new SSH hosts",
-                    "Enable Portal Proxy automatically when creating SSH hosts",
-                    context.portal_proxy.default_for_new_ssh_hosts,
-                    |value| Message::Ui(UiMessage::PortalProxyDefaultForNewHosts(value)),
+                    "Enable Portal Hub automatically when creating SSH hosts",
+                    context.portal_hub.default_for_new_ssh_hosts,
+                    |value| Message::Ui(UiMessage::PortalHubDefaultForNewHosts(value)),
                     theme,
                     fonts,
                 ),
                 text_setting(
                     "Host / IP",
                     "Tailscale name or IP address of the proxy",
-                    context.portal_proxy.host.clone(),
-                    |value| Message::Ui(UiMessage::PortalProxyHostChanged(value)),
+                    context.portal_hub.host.clone(),
+                    |value| Message::Ui(UiMessage::PortalHubHostChanged(value)),
                     theme,
                     fonts,
                 ),
                 text_setting(
                     "Port",
                     "SSH port for the proxy",
-                    context.portal_proxy.port.to_string(),
-                    |value| Message::Ui(UiMessage::PortalProxyPortChanged(value)),
+                    context.portal_hub.port.to_string(),
+                    |value| Message::Ui(UiMessage::PortalHubPortChanged(value)),
                     theme,
                     fonts,
                 ),
                 text_setting(
                     "Username",
                     "SSH user on the proxy",
-                    context.portal_proxy.username.clone(),
-                    |value| Message::Ui(UiMessage::PortalProxyUsernameChanged(value)),
+                    context.portal_hub.username.clone(),
+                    |value| Message::Ui(UiMessage::PortalHubUsernameChanged(value)),
                     theme,
                     fonts,
                 ),
@@ -311,19 +314,39 @@ fn active_tab_sections(
                     "Identity file",
                     "Optional key for authenticating to the proxy",
                     context
-                        .portal_proxy
+                        .portal_hub
                         .identity_file
                         .as_ref()
                         .map(|path| path.to_string_lossy().to_string())
                         .unwrap_or_default(),
-                    |value| Message::Ui(UiMessage::PortalProxyIdentityFileChanged(value)),
+                    |value| Message::Ui(UiMessage::PortalHubIdentityFileChanged(value)),
                     theme,
                     fonts,
                 ),
-                portal_proxy_status_setting(
-                    context.portal_proxy_status.clone(),
-                    context.portal_proxy_status_error.clone(),
-                    context.portal_proxy_status_loading,
+                text_setting(
+                    "Web URL",
+                    "HTTPS URL for Portal Hub account sign-in and sync",
+                    context.portal_hub.web_url.clone(),
+                    |value| Message::Ui(UiMessage::PortalHubWebUrlChanged(value)),
+                    theme,
+                    fonts,
+                ),
+                portal_hub_auth_setting(
+                    context.portal_hub_auth_user.clone(),
+                    context.portal_hub_auth_error.clone(),
+                    context.portal_hub_auth_loading,
+                    theme,
+                    fonts,
+                ),
+                portal_hub_sync_adoption_setting(
+                    context.portal_hub_auth_user.is_some(),
+                    theme,
+                    fonts,
+                ),
+                portal_hub_status_setting(
+                    context.portal_hub_status.clone(),
+                    context.portal_hub_status_error.clone(),
+                    context.portal_hub_status_loading,
                     theme,
                     fonts,
                 ),
@@ -914,7 +937,7 @@ fn read_only_setting(
     .into()
 }
 
-fn portal_proxy_status_setting(
+fn portal_hub_status_setting(
     status: Option<ProxyStatus>,
     error: Option<String>,
     loading: bool,
@@ -969,7 +992,7 @@ fn portal_proxy_status_setting(
             ..Default::default()
         }
     })
-    .on_press_maybe((!loading).then_some(Message::Ui(UiMessage::PortalProxyCheckStatus)));
+    .on_press_maybe((!loading).then_some(Message::Ui(UiMessage::PortalHubCheckStatus)));
 
     column![
         row![
@@ -986,6 +1009,139 @@ fn portal_proxy_status_setting(
     ]
     .spacing(0)
     .into()
+}
+
+fn portal_hub_auth_setting(
+    user: Option<String>,
+    error: Option<String>,
+    loading: bool,
+    theme: Theme,
+    fonts: ScaledFonts,
+) -> Element<'static, Message> {
+    let label_text = text("Account").size(fonts.body).color(theme.text_primary);
+    let description_text = text("Sign in through the Portal Hub web interface")
+        .size(fonts.label)
+        .color(theme.text_muted);
+
+    let status_text = if loading {
+        "Opening browser...".to_string()
+    } else if let Some(user) = user {
+        format!("Signed in as {}", user)
+    } else if let Some(error) = error.as_ref() {
+        error.clone()
+    } else {
+        "Not signed in".to_string()
+    };
+    let status_color = if error.is_some() {
+        STATUS_FAILURE
+    } else {
+        theme.text_secondary
+    };
+
+    let sign_in_button = button(
+        container(
+            text(if loading { "Waiting" } else { "Sign in" })
+                .size(fonts.label)
+                .color(theme.text_primary),
+        )
+        .padding([6, 12])
+        .align_x(Alignment::Center)
+        .align_y(Alignment::Center),
+    )
+    .padding(0)
+    .style(move |_theme, status| {
+        let background = match status {
+            iced::widget::button::Status::Hovered => Some(theme.hover.into()),
+            _ => Some(theme.surface.into()),
+        };
+        iced::widget::button::Style {
+            background,
+            border: iced::Border {
+                radius: BORDER_RADIUS.into(),
+                width: 1.0,
+                color: theme.border,
+            },
+            ..Default::default()
+        }
+    })
+    .on_press_maybe((!loading).then_some(Message::Ui(UiMessage::PortalHubAuthenticate)));
+
+    column![
+        row![
+            column![label_text, Space::new().height(4), description_text].spacing(0),
+            Space::new().width(Length::Fill),
+            text(status_text)
+                .size(fonts.label)
+                .color(status_color)
+                .width(Length::Fixed(240.0)),
+            Space::new().width(12),
+            sign_in_button,
+        ]
+        .align_y(Alignment::Center),
+    ]
+    .spacing(0)
+    .into()
+}
+
+fn portal_hub_sync_adoption_setting(
+    authenticated: bool,
+    theme: Theme,
+    fonts: ScaledFonts,
+) -> Element<'static, Message> {
+    let label_text = text("Sync Source")
+        .size(fonts.body)
+        .color(theme.text_primary);
+    let description_text = text("Choose how this device should adopt Portal Hub sync")
+        .size(fonts.label)
+        .color(theme.text_muted);
+
+    let upload_button = small_settings_button("Upload local", theme, fonts).on_press_maybe(
+        authenticated.then_some(Message::Ui(UiMessage::PortalHubUploadLocalProfile)),
+    );
+    let pull_button = small_settings_button("Pull from Hub", theme, fonts)
+        .on_press_maybe(authenticated.then_some(Message::Ui(UiMessage::PortalHubPullProfile)));
+
+    column![
+        row![
+            column![label_text, Space::new().height(4), description_text].spacing(0),
+            Space::new().width(Length::Fill),
+            upload_button,
+            Space::new().width(8),
+            pull_button,
+        ]
+        .align_y(Alignment::Center),
+    ]
+    .spacing(0)
+    .into()
+}
+
+fn small_settings_button<'a>(
+    label: &'static str,
+    theme: Theme,
+    fonts: ScaledFonts,
+) -> iced::widget::Button<'a, Message> {
+    button(
+        container(text(label).size(fonts.label).color(theme.text_primary))
+            .padding([6, 12])
+            .align_x(Alignment::Center)
+            .align_y(Alignment::Center),
+    )
+    .padding(0)
+    .style(move |_theme, status| {
+        let background = match status {
+            iced::widget::button::Status::Hovered => Some(theme.hover.into()),
+            _ => Some(theme.surface.into()),
+        };
+        iced::widget::button::Style {
+            background,
+            border: iced::Border {
+                radius: BORDER_RADIUS.into(),
+                width: 1.0,
+                color: theme.border,
+            },
+            ..Default::default()
+        }
+    })
 }
 
 fn text_setting<F>(

@@ -1,4 +1,4 @@
-//! Portal Proxy PTY session management.
+//! Portal Hub PTY session management.
 //!
 //! The proxy transport is intentionally backed by the local OpenSSH client for
 //! the prototype. OpenSSH handles proxy authentication, Tailscale-only routing,
@@ -7,19 +7,22 @@
 use chrono::{DateTime, Utc};
 use data_encoding::BASE64;
 use portable_pty::{CommandBuilder, PtySize, native_pty_system};
-use serde::Deserialize;
+use secrecy::ExposeSecret;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::ffi::OsString;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Stdio as StdStdio;
 use std::process::{Command as StdCommand, Stdio};
+use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tokio::sync::mpsc;
 use tokio::time::{Duration, timeout};
 use uuid::Uuid;
 
 use crate::config::paths;
-use crate::config::settings::PortalProxySettings;
+use crate::config::settings::PortalHubSettings;
 use crate::config::{AuthMethod, Host};
 use crate::error::LocalError;
 
@@ -81,6 +84,20 @@ struct RawListedProxySession {
     preview_truncated: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HubSyncPutRequest {
+    pub profile: Value,
+    pub vault: Value,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct HubSyncResponse {
+    pub api_version: u16,
+    pub revision: String,
+    pub profile: Value,
+    pub vault: Value,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
 enum RawListResponse {
@@ -104,7 +121,7 @@ pub struct ProxySession {
 
 impl ProxySession {
     pub fn spawn(
-        settings: &PortalProxySettings,
+        settings: &PortalHubSettings,
         host: &Host,
         session_id: Uuid,
         cols: u16,
@@ -122,7 +139,7 @@ impl ProxySession {
     }
 
     pub fn spawn_target(
-        settings: &PortalProxySettings,
+        settings: &PortalHubSettings,
         target: &ProxySessionTarget,
         cols: u16,
         rows: u16,
@@ -133,7 +150,7 @@ impl ProxySession {
     }
 
     fn spawn_target_with_agent(
-        settings: &PortalProxySettings,
+        settings: &PortalHubSettings,
         target: &ProxySessionTarget,
         cols: u16,
         rows: u16,
@@ -151,7 +168,7 @@ impl ProxySession {
             .map_err(|e| LocalError::PtyCreation(e.to_string()))?;
 
         let mut argv = proxy_ssh_argv(settings, true, agent_socket.as_deref())?;
-        argv.push(OsString::from("portal-proxy"));
+        argv.push(OsString::from("portal-hub"));
         argv.push(OsString::from("attach"));
         argv.push(OsString::from("--session-id"));
         argv.push(OsString::from(target.session_id.to_string()));
@@ -200,7 +217,7 @@ impl ProxySession {
                 });
             }
             Err(error) => {
-                tracing::error!("Portal Proxy ssh wait error: {}", error);
+                tracing::error!("Portal Hub ssh wait error: {}", error);
                 let _ = event_tx.blocking_send(ProxyEvent::Disconnected { clean: false });
             }
         });
@@ -230,7 +247,7 @@ impl ProxySession {
                         let _ = event_tx_reader.blocking_send(ProxyEvent::Data(buf[..n].to_vec()));
                     }
                     Err(error) => {
-                        tracing::error!("Portal Proxy PTY read error: {}", error);
+                        tracing::error!("Portal Hub PTY read error: {}", error);
                         let _ = event_tx_reader
                             .blocking_send(ProxyEvent::Disconnected { clean: false });
                         break;
@@ -245,7 +262,7 @@ impl ProxySession {
                 match cmd {
                     ProxyCommand::Data(data) => {
                         if let Err(error) = writer.write_all(&data) {
-                            tracing::error!("Portal Proxy PTY write error: {}", error);
+                            tracing::error!("Portal Hub PTY write error: {}", error);
                             break;
                         }
                         let _ = writer.flush();
@@ -257,7 +274,7 @@ impl ProxySession {
                             pixel_width: 0,
                             pixel_height: 0,
                         }) {
-                            tracing::error!("Portal Proxy PTY resize error: {}", error);
+                            tracing::error!("Portal Hub PTY resize error: {}", error);
                         }
                     }
                 }
@@ -283,7 +300,7 @@ impl ProxySession {
 }
 
 pub async fn list_active_sessions(
-    settings: &PortalProxySettings,
+    settings: &PortalHubSettings,
 ) -> Result<Vec<ListedProxySession>, String> {
     let mut argv = proxy_list_argv(settings, true)?;
     let output = run_proxy_list_command(&argv).await?;
@@ -295,7 +312,7 @@ pub async fn list_active_sessions(
                 ProxyListOutput::Success(stdout) => parse_list_response(&stdout)?,
                 ProxyListOutput::Failure(stderr) => {
                     return Err(format!(
-                        "Portal Proxy list failed: {}",
+                        "Portal Hub list failed: {}",
                         stderr.trim().if_empty("unknown error")
                     ));
                 }
@@ -303,7 +320,7 @@ pub async fn list_active_sessions(
         }
         ProxyListOutput::Failure(stderr) => {
             return Err(format!(
-                "Portal Proxy list failed: {}",
+                "Portal Hub list failed: {}",
                 stderr.trim().if_empty("unknown error")
             ));
         }
@@ -312,9 +329,9 @@ pub async fn list_active_sessions(
     raw_sessions_to_listed(raw)
 }
 
-pub async fn check_proxy_status(settings: &PortalProxySettings) -> Result<ProxyStatus, String> {
+pub async fn check_proxy_status(settings: &PortalHubSettings) -> Result<ProxyStatus, String> {
     let mut argv = proxy_ssh_argv(settings, false, None).map_err(|error| error.to_string())?;
-    argv.push(OsString::from("portal-proxy"));
+    argv.push(OsString::from("portal-hub"));
     argv.push(OsString::from("version"));
     argv.push(OsString::from("--json"));
 
@@ -327,22 +344,22 @@ pub async fn check_proxy_status(settings: &PortalProxySettings) -> Result<ProxyS
 
     let output = timeout(Duration::from_secs(10), command.output())
         .await
-        .map_err(|_| "Portal Proxy version check timed out".to_string())?
-        .map_err(|error| format!("failed to run Portal Proxy version check: {}", error))?;
+        .map_err(|_| "Portal Hub version check timed out".to_string())?
+        .map_err(|error| format!("failed to run Portal Hub version check: {}", error))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(format!(
-            "Portal Proxy version check failed: {}",
+            "Portal Hub version check failed: {}",
             stderr.trim().if_empty("unknown error")
         ));
     }
 
     let raw: RawProxyVersion = serde_json::from_slice(&output.stdout)
-        .map_err(|error| format!("failed to parse Portal Proxy version: {}", error))?;
+        .map_err(|error| format!("failed to parse Portal Hub version: {}", error))?;
     if raw.api_version < MIN_SUPPORTED_PROXY_API_VERSION {
         return Err(format!(
-            "Portal Proxy API version {} is too old; Portal requires {}",
+            "Portal Hub API version {} is too old; Portal requires {}",
             raw.api_version, MIN_SUPPORTED_PROXY_API_VERSION
         ));
     }
@@ -354,12 +371,93 @@ pub async fn check_proxy_status(settings: &PortalProxySettings) -> Result<ProxyS
     })
 }
 
-fn proxy_list_argv(
-    settings: &PortalProxySettings,
-    versioned: bool,
-) -> Result<Vec<OsString>, String> {
+pub async fn hub_sync_get(settings: &PortalHubSettings) -> Result<HubSyncResponse, String> {
     let mut argv = proxy_ssh_argv(settings, false, None).map_err(|error| error.to_string())?;
-    argv.push(OsString::from("portal-proxy"));
+    argv.push(OsString::from("portal-hub"));
+    argv.push(OsString::from("sync"));
+    argv.push(OsString::from("get"));
+    argv.push(OsString::from("--format"));
+    argv.push(OsString::from("v1"));
+
+    run_hub_sync_command(argv, None).await
+}
+
+pub async fn hub_sync_put(
+    settings: &PortalHubSettings,
+    expected_revision: &str,
+    request: &HubSyncPutRequest,
+) -> Result<HubSyncResponse, String> {
+    let mut argv = proxy_ssh_argv(settings, false, None).map_err(|error| error.to_string())?;
+    argv.push(OsString::from("portal-hub"));
+    argv.push(OsString::from("sync"));
+    argv.push(OsString::from("put"));
+    argv.push(OsString::from("--expected-revision"));
+    argv.push(OsString::from(expected_revision));
+    argv.push(OsString::from("--format"));
+    argv.push(OsString::from("v1"));
+
+    let body = serde_json::to_vec(request)
+        .map_err(|error| format!("failed to serialize Portal Hub sync request: {}", error))?;
+    run_hub_sync_command(argv, Some(body)).await
+}
+
+async fn run_hub_sync_command(
+    argv: Vec<OsString>,
+    stdin_body: Option<Vec<u8>>,
+) -> Result<HubSyncResponse, String> {
+    let mut command = Command::new(&argv[0]);
+    command.args(&argv[1..]);
+    command
+        .stdin(if stdin_body.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("failed to run Portal Hub sync command: {}", error))?;
+
+    if let Some(body) = stdin_body {
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| "failed to open Portal Hub sync stdin".to_string())?;
+        stdin
+            .write_all(&body)
+            .await
+            .map_err(|error| format!("failed to write Portal Hub sync request: {}", error))?;
+    }
+
+    let output = timeout(Duration::from_secs(15), child.wait_with_output())
+        .await
+        .map_err(|_| "Portal Hub sync timed out".to_string())?
+        .map_err(|error| format!("failed to wait for Portal Hub sync command: {}", error))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(format!(
+            "Portal Hub sync failed: {}",
+            stderr.trim().if_empty("unknown error")
+        ));
+    }
+
+    let response: HubSyncResponse = serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("failed to parse Portal Hub sync response: {}", error))?;
+    if response.api_version < MIN_SUPPORTED_PROXY_API_VERSION {
+        return Err(format!(
+            "Portal Hub sync API version {} is too old; Portal requires {}",
+            response.api_version, MIN_SUPPORTED_PROXY_API_VERSION
+        ));
+    }
+    Ok(response)
+}
+
+fn proxy_list_argv(settings: &PortalHubSettings, versioned: bool) -> Result<Vec<OsString>, String> {
+    let mut argv = proxy_ssh_argv(settings, false, None).map_err(|error| error.to_string())?;
+    argv.push(OsString::from("portal-hub"));
     argv.push(OsString::from("list"));
     argv.push(OsString::from("--active"));
     argv.push(OsString::from("--include-preview"));
@@ -387,8 +485,8 @@ async fn run_proxy_list_command(argv: &[OsString]) -> Result<ProxyListOutput, St
 
     let output = timeout(Duration::from_secs(10), command.output())
         .await
-        .map_err(|_| "Portal Proxy list timed out".to_string())?
-        .map_err(|error| format!("failed to run Portal Proxy list: {}", error))?;
+        .map_err(|_| "Portal Hub list timed out".to_string())?
+        .map_err(|error| format!("failed to run Portal Hub list: {}", error))?;
 
     if !output.status.success() {
         return Ok(ProxyListOutput::Failure(
@@ -401,7 +499,7 @@ async fn run_proxy_list_command(argv: &[OsString]) -> Result<ProxyListOutput, St
 
 fn parse_list_response(bytes: &[u8]) -> Result<Vec<RawListedProxySession>, String> {
     let raw: RawListResponse = serde_json::from_slice(bytes)
-        .map_err(|error| format!("failed to parse Portal Proxy sessions: {}", error))?;
+        .map_err(|error| format!("failed to parse Portal Hub sessions: {}", error))?;
     let raw = match raw {
         RawListResponse::Legacy(sessions) => sessions,
         RawListResponse::V1 {
@@ -410,7 +508,7 @@ fn parse_list_response(bytes: &[u8]) -> Result<Vec<RawListedProxySession>, Strin
         } => {
             if api_version != 1 {
                 return Err(format!(
-                    "unsupported Portal Proxy list API version: {}",
+                    "unsupported Portal Hub list API version: {}",
                     api_version
                 ));
             }
@@ -458,14 +556,14 @@ fn raw_sessions_to_listed(
 }
 
 fn proxy_ssh_argv(
-    settings: &PortalProxySettings,
+    settings: &PortalHubSettings,
     allocate_tty: bool,
     agent_socket: Option<&Path>,
 ) -> Result<Vec<OsString>, LocalError> {
     let proxy_host = settings.host.trim();
     if proxy_host.is_empty() {
         return Err(LocalError::SpawnFailed(
-            "Portal Proxy host is not configured".to_string(),
+            "Portal Hub host is not configured".to_string(),
         ));
     }
 
@@ -491,7 +589,7 @@ fn proxy_ssh_argv(
         argv.push(OsString::from("-o"));
         argv.push(OsString::from(format!(
             "UserKnownHostsFile={}",
-            config_dir.join("portal_proxy_known_hosts").display()
+            config_dir.join("portal_hub_known_hosts").display()
         )));
     }
     argv.push(OsString::from("-p"));
@@ -515,15 +613,24 @@ fn prepare_proxy_agent(auth: &AuthMethod) -> Result<Option<PathBuf>, LocalError>
         AuthMethod::Agent => discover_agent_socket()
             .ok_or_else(|| {
                 LocalError::SpawnFailed(
-                    "Portal Proxy needs an SSH agent for target authentication, but no usable agent was found".to_string(),
+                    "Portal Hub needs an SSH agent for target authentication, but no usable agent was found".to_string(),
                 )
             })
             .map(Some),
-        AuthMethod::PublicKey { key_path } => {
-            let key_path = resolve_proxy_key_path(key_path.as_ref())?;
+        AuthMethod::PublicKey {
+            key_path,
+            vault_key_id,
+        } => {
             let socket = managed_agent_socket()?;
             ensure_agent_running(&socket)?;
-            ensure_key_loaded(&socket, &key_path)?;
+            if let Some(vault_key_id) = vault_key_id {
+                let private_key = crate::hub::vault::load_decrypted_private_key(*vault_key_id)
+                    .map_err(LocalError::SpawnFailed)?;
+                ensure_key_loaded_from_stdin(&socket, private_key.expose_secret())?;
+            } else {
+                let key_path = resolve_proxy_key_path(key_path.as_ref())?;
+                ensure_key_loaded(&socket, &key_path)?;
+            }
             Ok(Some(socket))
         }
         AuthMethod::Password => Ok(None),
@@ -563,7 +670,7 @@ fn resolve_proxy_key_path(configured: Option<&PathBuf>) -> Result<PathBuf, Local
             return Ok(expanded);
         }
         return Err(LocalError::SpawnFailed(format!(
-            "Portal Proxy key file does not exist: {}",
+            "Portal Hub key file does not exist: {}",
             expanded.display()
         )));
     }
@@ -573,7 +680,7 @@ fn resolve_proxy_key_path(configured: Option<&PathBuf>) -> Result<PathBuf, Local
         .find(|path| path.exists())
         .ok_or_else(|| {
             LocalError::SpawnFailed(
-                "Portal Proxy public-key authentication needs a local SSH key, but no default key was found in ~/.ssh".to_string(),
+                "Portal Hub public-key authentication needs a local SSH key, but no default key was found in ~/.ssh".to_string(),
             )
         })
 }
@@ -622,14 +729,14 @@ fn ensure_agent_running(socket: &Path) -> Result<(), LocalError> {
         .output()
         .map_err(|error| {
             LocalError::SpawnFailed(format!(
-                "failed to start ssh-agent for Portal Proxy: {}",
+                "failed to start ssh-agent for Portal Hub: {}",
                 error
             ))
         })?;
 
     if !output.status.success() {
         return Err(LocalError::SpawnFailed(format!(
-            "failed to start ssh-agent for Portal Proxy: {}",
+            "failed to start ssh-agent for Portal Hub: {}",
             stderr_or_status(&output)
         )));
     }
@@ -656,7 +763,7 @@ fn ensure_key_loaded(socket: &Path, key_path: &Path) -> Result<(), LocalError> {
         .output()
         .map_err(|error| {
             LocalError::SpawnFailed(format!(
-                "failed to run ssh-add for Portal Proxy key {}: {}",
+                "failed to run ssh-add for Portal Hub key {}: {}",
                 key_path.display(),
                 error
             ))
@@ -667,11 +774,50 @@ fn ensure_key_loaded(socket: &Path, key_path: &Path) -> Result<(), LocalError> {
     }
 
     Err(LocalError::SpawnFailed(format!(
-        "failed to add local key {} to Portal Proxy SSH agent: {}. If this key has a passphrase, run `SSH_AUTH_SOCK={} ssh-add {}` before connecting through Portal Proxy",
+        "failed to add local key {} to Portal Hub SSH agent: {}. If this key has a passphrase, run `SSH_AUTH_SOCK={} ssh-add {}` before connecting through Portal Hub",
         key_path.display(),
         stderr_or_status(&output),
         socket.display(),
         key_path.display()
+    )))
+}
+
+fn ensure_key_loaded_from_stdin(socket: &Path, private_key: &str) -> Result<(), LocalError> {
+    let mut child = StdCommand::new("ssh-add")
+        .arg("-")
+        .env("SSH_AUTH_SOCK", socket)
+        .env("SSH_ASKPASS_REQUIRE", "never")
+        .stdin(StdStdio::piped())
+        .stdout(StdStdio::null())
+        .stderr(StdStdio::piped())
+        .spawn()
+        .map_err(|error| {
+            LocalError::SpawnFailed(format!(
+                "failed to run ssh-add for Portal Hub vault key: {}",
+                error
+            ))
+        })?;
+
+    if let Some(stdin) = child.stdin.as_mut() {
+        stdin.write_all(private_key.as_bytes()).map_err(|error| {
+            LocalError::Io(format!("failed to write vault key to ssh-add: {}", error))
+        })?;
+    }
+
+    let output = child.wait_with_output().map_err(|error| {
+        LocalError::SpawnFailed(format!(
+            "failed to wait for ssh-add for Portal Hub vault key: {}",
+            error
+        ))
+    })?;
+
+    if output.status.success() {
+        return Ok(());
+    }
+
+    Err(LocalError::SpawnFailed(format!(
+        "failed to add Portal Hub vault key to SSH agent: {}",
+        stderr_or_status(&output)
     )))
 }
 
@@ -742,12 +888,12 @@ impl EmptyFallback for str {
 
 impl Drop for ProxySession {
     fn drop(&mut self) {
-        tracing::debug!("Portal Proxy session cleanup: detaching local ssh process");
+        tracing::debug!("Portal Hub session cleanup: detaching local ssh process");
         let (replacement_tx, _replacement_rx) = mpsc::channel(1);
         let _ = std::mem::replace(&mut self.command_tx, replacement_tx);
         if let Some(mut killer) = self.child_killer.take() {
             if let Err(error) = killer.kill() {
-                tracing::debug!("Failed to kill Portal Proxy ssh process: {}", error);
+                tracing::debug!("Failed to kill Portal Hub ssh process: {}", error);
             }
         }
     }
@@ -829,7 +975,7 @@ mod tests {
 
         let error = parse_list_response(body).unwrap_err();
 
-        assert!(error.contains("unsupported Portal Proxy list API version"));
+        assert!(error.contains("unsupported Portal Hub list API version"));
     }
 
     #[test]
