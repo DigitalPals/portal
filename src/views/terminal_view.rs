@@ -97,6 +97,7 @@ pub fn terminal_view_with_status<'a>(
     terminal_font: TerminalFont,
     terminal_metric_adjustments: TerminalMetricAdjustments,
     keybindings: KeybindingsConfig,
+    focus_token: u64,
     on_input: impl Fn(SessionId, Vec<u8>) -> Message + 'a,
     on_resize: impl Fn(SessionId, u16, u16) -> Message + 'a,
 ) -> Element<'a, Message> {
@@ -117,6 +118,7 @@ pub fn terminal_view_with_status<'a>(
         .font(terminal_font)
         .metric_adjustments(terminal_metric_adjustments)
         .keybindings(keybindings)
+        .focus_token(focus_token)
         .terminal_colors(theme.terminal);
 
     let terminal_container =

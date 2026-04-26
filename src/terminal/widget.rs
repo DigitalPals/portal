@@ -199,6 +199,7 @@ pub struct TerminalWidget<'a, Message> {
     render_epoch: Option<Arc<AtomicU64>>,
     keybindings: KeybindingsConfig,
     scroll_speed: f32,
+    focus_token: u64,
 }
 
 impl<'a, Message> TerminalWidget<'a, Message> {
@@ -219,6 +220,7 @@ impl<'a, Message> TerminalWidget<'a, Message> {
             render_epoch: None,
             keybindings: KeybindingsConfig::default(),
             scroll_speed: TERMINAL_SCROLL_SPEED_BASE,
+            focus_token: 0,
         }
     }
 
@@ -262,6 +264,12 @@ impl<'a, Message> TerminalWidget<'a, Message> {
     /// Set keybindings for terminal actions
     pub fn keybindings(mut self, keybindings: KeybindingsConfig) -> Self {
         self.keybindings = keybindings;
+        self
+    }
+
+    /// Request keyboard focus when this token changes.
+    pub fn focus_token(mut self, token: u64) -> Self {
+        self.focus_token = token;
         self
     }
 
@@ -618,6 +626,7 @@ struct TerminalState {
     selection_mode: SelectionMode,
     // Auto-scroll during selection
     last_auto_scroll: Option<std::time::Instant>,
+    last_focus_token: u64,
 }
 
 /// Selection granularity mode
@@ -659,6 +668,7 @@ impl Default for TerminalState {
             click_count: 0,
             selection_mode: SelectionMode::Character,
             last_auto_scroll: None,
+            last_focus_token: 0,
         }
     }
 }
@@ -711,6 +721,7 @@ where
             click_count: 0,
             selection_mode: SelectionMode::Character,
             last_auto_scroll: None,
+            last_focus_token: 0,
         })
     }
 
@@ -727,7 +738,7 @@ where
         let bounds = layout.bounds();
         let state = tree.state.downcast_ref::<TerminalState>();
         let selection = (state.selection_start, state.selection_end);
-        let is_focused = state.is_focused;
+        let is_focused = state.is_focused || state.last_focus_token != self.focus_token;
         let cursor_visible = state.cursor_visible;
 
         // Get terminal colors (from theme or defaults)
@@ -1140,6 +1151,12 @@ where
         let state = tree.state.downcast_mut::<TerminalState>();
         let bounds = layout.bounds();
         let metrics = self.cell_metrics();
+
+        if state.last_focus_token != self.focus_token {
+            state.last_focus_token = self.focus_token;
+            state.is_focused = true;
+            shell.request_redraw();
+        }
 
         // Detect size changes and emit resize message
         if let Some(ref on_resize) = self.on_resize {

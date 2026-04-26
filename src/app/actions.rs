@@ -88,6 +88,8 @@ impl Portal {
         self.active_tab = Some(tab_id);
         self.ui.active_view = View::Terminal(tab_id);
         self.ui.terminal_captured = true;
+        self.ui.terminal_focus_token = self.ui.terminal_focus_token.wrapping_add(1);
+        self.ui.focus_section = crate::app::FocusSection::Content;
         if auto_hide_sidebar {
             self.hide_sidebar_for_session();
         }

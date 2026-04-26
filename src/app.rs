@@ -137,6 +137,7 @@ pub struct UiState {
     pub host_grid_focus_index: Option<usize>,
     pub history_focus_index: Option<usize>,
     pub terminal_captured: bool,
+    pub terminal_focus_token: u64,
     pub tab_context_menu: TabContextMenuState,
     pub portal_proxy_status: Option<crate::proxy::ProxyStatus>,
     pub portal_proxy_status_error: Option<String>,
@@ -382,6 +383,7 @@ impl Portal {
                 host_grid_focus_index: None,
                 history_focus_index: None,
                 terminal_captured: false,
+                terminal_focus_token: 0,
                 tab_context_menu: TabContextMenuState::default(),
                 portal_proxy_status: None,
                 portal_proxy_status_error: None,
@@ -591,6 +593,7 @@ impl Portal {
                         self.prefs.terminal_font,
                         self.prefs.terminal_metric_adjustments,
                         self.prefs.keybindings.clone(),
+                        self.ui.terminal_focus_token,
                         move |_sid, bytes| {
                             Message::Session(SessionMessage::Input(session_id, bytes))
                         },
