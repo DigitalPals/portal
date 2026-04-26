@@ -16,6 +16,7 @@ use crate::keybindings::KeybindingsConfig;
 use crate::message::{Message, SessionId};
 use crate::terminal::TerminalBackend;
 use crate::terminal::backend::{EventProxy, TerminalEvent, TerminalSize};
+use crate::terminal::metrics::TerminalMetrics;
 use crate::terminal::widget::TerminalWidget;
 use crate::theme::{ScaledFonts, Theme};
 use std::sync::atomic::AtomicU64;
@@ -33,7 +34,16 @@ pub struct TerminalSession {
 impl TerminalSession {
     /// Create a new terminal session
     pub fn new(_title: impl Into<String>) -> (Self, mpsc::Receiver<TerminalEvent>) {
-        let size = TerminalSize::new(80, 24);
+        Self::new_with_size(_title, 80, 24)
+    }
+
+    /// Create a new terminal session with an initial grid size.
+    pub fn new_with_size(
+        _title: impl Into<String>,
+        columns: u16,
+        rows: u16,
+    ) -> (Self, mpsc::Receiver<TerminalEvent>) {
+        let size = TerminalSize::new(columns, rows);
         let (backend, event_rx) = TerminalBackend::new(size);
         (
             Self {
@@ -51,6 +61,14 @@ impl TerminalSession {
 
     pub fn render_epoch(&self) -> Arc<AtomicU64> {
         self.backend.render_epoch()
+    }
+
+    pub fn set_terminal_colors(&self, colors: crate::theme::TerminalColors) {
+        self.backend.set_colors(colors);
+    }
+
+    pub fn set_cell_size(&self, cell_width: f32, cell_height: f32) {
+        self.backend.set_cell_size(cell_width, cell_height);
     }
 
     /// Process input bytes (from SSH or PTY)
@@ -83,6 +101,13 @@ pub fn terminal_view_with_status<'a>(
     on_resize: impl Fn(SessionId, u16, u16) -> Message + 'a,
 ) -> Element<'a, Message> {
     let session_id = session.id;
+    session.set_terminal_colors(theme.terminal);
+    let metrics = TerminalMetrics::for_font_with_adjustments(
+        terminal_font,
+        font_size,
+        terminal_metric_adjustments,
+    );
+    session.set_cell_size(metrics.cell_width, metrics.cell_height);
     let term = session.term();
     let terminal_widget = TerminalWidget::new(term, move |bytes| on_input(session_id, bytes))
         .render_epoch(session.render_epoch())

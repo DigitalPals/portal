@@ -408,11 +408,13 @@ impl Portal {
             let host = Arc::new(host.clone());
             let session_id = Uuid::new_v4();
             let host_id = host.id;
+            let terminal_size = self.terminal_initial_size();
             let task = connection::proxy_connect_tasks(
                 self.prefs.portal_proxy.clone(),
                 host,
                 session_id,
                 host_id,
+                terminal_size,
             );
 
             return self.begin_connecting(dialog_host_name, "Portal Proxy", task);
@@ -439,11 +441,13 @@ impl Portal {
         let host_id = host.id;
 
         let should_detect_os = connection::should_detect_os(host.detected_os.as_ref());
+        let terminal_size = self.terminal_initial_size();
 
         let task = connection::ssh_connect_tasks(
             host,
             session_id,
             host_id,
+            terminal_size,
             should_detect_os,
             self.prefs.allow_agent_forwarding,
         );
@@ -472,9 +476,10 @@ impl Portal {
             },
         );
 
-        // Spawn the local terminal
-        // Use default terminal size (80x24), will be resized on first render
-        match LocalSession::spawn(80, 24, event_tx) {
+        // Spawn the local terminal with a best-effort size. The first render
+        // still sends the exact grid size.
+        let (cols, rows) = self.terminal_initial_size();
+        match LocalSession::spawn(cols, rows, event_tx) {
             Ok(local_session) => {
                 let local_session = Arc::new(local_session);
                 let spawn_task = Task::done(Message::Session(SessionMessage::LocalConnected {

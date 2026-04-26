@@ -170,6 +170,7 @@ impl ProxySession {
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
         cmd.env("TERM_PROGRAM", "Portal");
+        cmd.env("PORTAL_TERMINAL", "1");
         if let Some(socket) = agent_socket {
             cmd.env("SSH_AUTH_SOCK", socket);
         }

@@ -71,6 +71,7 @@ pub fn handle_proxy_sessions(portal: &mut Portal, msg: ProxySessionsMessage) -> 
                 listed_session,
                 session.host_id,
                 session.display_name.clone(),
+                portal.terminal_initial_size(),
             )
         }
     }

@@ -76,6 +76,7 @@ impl LocalSession {
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
         cmd.env("TERM_PROGRAM", "Portal");
+        cmd.env("PORTAL_TERMINAL", "1");
 
         // Spawn shell process
         let child = pair

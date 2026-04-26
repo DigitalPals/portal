@@ -252,7 +252,8 @@ fn start_terminal_session(
     session_start: Instant,
 ) -> Task<Message> {
     // Create terminal session
-    let (terminal, terminal_events) = TerminalSession::new(&host_name);
+    let (cols, rows) = portal.terminal_initial_size();
+    let (terminal, terminal_events) = TerminalSession::new_with_size(&host_name, cols, rows);
 
     // Store the active session
     portal.sessions.insert(
@@ -625,12 +626,14 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
             let use_proxy =
                 is_proxy && connection::should_use_portal_proxy(&portal.prefs.portal_proxy, &host);
             let host = Arc::new(host);
+            let terminal_size = portal.terminal_initial_size();
             if use_proxy {
                 return connection::proxy_connect_tasks(
                     portal.prefs.portal_proxy.clone(),
                     host,
                     session_id,
                     host_id,
+                    terminal_size,
                 );
             }
 
@@ -639,6 +642,7 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                 host,
                 session_id,
                 host_id,
+                terminal_size,
                 should_detect_os,
                 portal.prefs.allow_agent_forwarding,
             )

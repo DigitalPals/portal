@@ -193,6 +193,7 @@ pub fn proxy_connect_tasks(
     host: Arc<Host>,
     session_id: SessionId,
     host_id: Uuid,
+    terminal_size: (u16, u16),
 ) -> Task<Message> {
     let (event_tx, event_rx) = mpsc::channel::<ProxyEvent>(SSH_EVENT_CHANNEL_CAPACITY);
     let event_listener = proxy_event_listener(session_id, event_rx);
@@ -200,10 +201,16 @@ pub fn proxy_connect_tasks(
 
     let connect_task = Task::perform(
         async move {
-            let result =
-                ProxySession::spawn(&settings, &host_for_task, session_id, 80, 24, event_tx)
-                    .map(Arc::new)
-                    .map_err(|error| error.to_string());
+            let result = ProxySession::spawn(
+                &settings,
+                &host_for_task,
+                session_id,
+                terminal_size.0,
+                terminal_size.1,
+                event_tx,
+            )
+            .map(Arc::new)
+            .map_err(|error| error.to_string());
             (session_id, host_id, host_for_task, result)
         },
         |(session_id, host_id, host, result)| match result {
@@ -229,6 +236,7 @@ pub fn proxy_resume_tasks(
     listed_session: ListedProxySession,
     host_id: Option<Uuid>,
     display_name: String,
+    terminal_size: (u16, u16),
 ) -> Task<Message> {
     let session_id = listed_session.session_id;
     let session_started_at = listed_session.created_at;
@@ -243,9 +251,15 @@ pub fn proxy_resume_tasks(
 
     let connect_task = Task::perform(
         async move {
-            let result = ProxySession::spawn_target(&settings, &target, 80, 24, event_tx)
-                .map(Arc::new)
-                .map_err(|error| error.to_string());
+            let result = ProxySession::spawn_target(
+                &settings,
+                &target,
+                terminal_size.0,
+                terminal_size.1,
+                event_tx,
+            )
+            .map(Arc::new)
+            .map_err(|error| error.to_string());
             (session_id, display_name, host_id, result)
         },
         move |(session_id, host_name, host_id, result)| match result {
@@ -270,6 +284,7 @@ fn ssh_connect_tasks_with_auth(
     host: Arc<Host>,
     session_id: SessionId,
     host_id: Uuid,
+    terminal_size: (u16, u16),
     should_detect_os: bool,
     allow_agent_forwarding: bool,
     auth: SshAuth,
@@ -286,7 +301,7 @@ fn ssh_connect_tasks_with_auth(
             let result = ssh_client
                 .connect(
                     &host_for_task,
-                    (80, 24),
+                    terminal_size,
                     event_tx,
                     Duration::from_secs(30),
                     password,
@@ -349,6 +364,7 @@ pub fn ssh_connect_tasks(
     host: Arc<Host>,
     session_id: SessionId,
     host_id: Uuid,
+    terminal_size: (u16, u16),
     should_detect_os: bool,
     allow_agent_forwarding: bool,
 ) -> Task<Message> {
@@ -356,6 +372,7 @@ pub fn ssh_connect_tasks(
         host,
         session_id,
         host_id,
+        terminal_size,
         should_detect_os,
         allow_agent_forwarding,
         SshAuth::None,
@@ -367,6 +384,7 @@ pub fn ssh_connect_tasks_with_password(
     host: Arc<Host>,
     session_id: SessionId,
     host_id: Uuid,
+    terminal_size: (u16, u16),
     should_detect_os: bool,
     allow_agent_forwarding: bool,
     password: SecretString,
@@ -375,6 +393,7 @@ pub fn ssh_connect_tasks_with_password(
         host,
         session_id,
         host_id,
+        terminal_size,
         should_detect_os,
         allow_agent_forwarding,
         SshAuth::Password(password),
@@ -386,6 +405,7 @@ pub fn ssh_connect_tasks_with_passphrase(
     host: Arc<Host>,
     session_id: SessionId,
     host_id: Uuid,
+    terminal_size: (u16, u16),
     should_detect_os: bool,
     allow_agent_forwarding: bool,
     passphrase: SecretString,
@@ -394,6 +414,7 @@ pub fn ssh_connect_tasks_with_passphrase(
         host,
         session_id,
         host_id,
+        terminal_size,
         should_detect_os,
         allow_agent_forwarding,
         SshAuth::Passphrase(passphrase),

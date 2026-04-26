@@ -296,8 +296,14 @@ impl SshClient {
 
             // Signal truecolor and terminal identity to the remote shell.
             // Servers only honour these if AcceptEnv includes them (sshd_config).
+            // The OSC color-query response path is the reliable terminal-color
+            // signal for applications when these SSH env requests are rejected.
             // Failures are non-fatal — we warn and continue.
-            for (name, value) in [("COLORTERM", "truecolor"), ("TERM_PROGRAM", "portal")] {
+            for (name, value) in [
+                ("COLORTERM", "truecolor"),
+                ("TERM_PROGRAM", "Portal"),
+                ("PORTAL_TERMINAL", "1"),
+            ] {
                 if let Err(e) = channel.set_env(false, name, value).await {
                     tracing::warn!("Failed to set {name}: {e}");
                 }

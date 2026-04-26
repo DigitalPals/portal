@@ -5,14 +5,18 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use alacritty_terminal::event::{Event, EventListener};
+use alacritty_terminal::event::{Event, EventListener, WindowSize};
 use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::term::Config as TermConfig;
 use alacritty_terminal::term::Term;
 use alacritty_terminal::term::cell::Flags as CellFlags;
-use alacritty_terminal::vte::ansi::{Color as AnsiColor, CursorShape, Processor};
+use alacritty_terminal::vte::ansi::{Color as AnsiColor, CursorShape, NamedColor, Processor, Rgb};
+use iced::Color;
 use parking_lot::Mutex;
 use tokio::sync::mpsc;
+
+use super::colors::{ANSI_COLORS, DEFAULT_BG, DEFAULT_FG};
+use crate::theme::TerminalColors;
 
 /// Events emitted by the terminal backend
 #[derive(Debug, Clone)]
@@ -37,11 +41,21 @@ pub enum TerminalEvent {
 #[derive(Clone)]
 pub struct EventProxy {
     sender: mpsc::Sender<TerminalEvent>,
+    colors: Arc<Mutex<TerminalColors>>,
+    window_size: Arc<Mutex<WindowSize>>,
 }
 
 impl EventProxy {
-    pub fn new(sender: mpsc::Sender<TerminalEvent>) -> Self {
-        Self { sender }
+    pub fn new(
+        sender: mpsc::Sender<TerminalEvent>,
+        colors: Arc<Mutex<TerminalColors>>,
+        window_size: Arc<Mutex<WindowSize>>,
+    ) -> Self {
+        Self {
+            sender,
+            colors,
+            window_size,
+        }
     }
 }
 
@@ -54,6 +68,14 @@ impl EventListener for EventProxy {
             Event::Title(title) => TerminalEvent::Title(title),
             Event::ClipboardStore(_, data) => TerminalEvent::ClipboardStore(data),
             Event::ClipboardLoad(_, _) => TerminalEvent::ClipboardLoad,
+            Event::ColorRequest(index, format) => {
+                let colors = *self.colors.lock();
+                TerminalEvent::PtyWrite(format(osc_color_for_index(index, &colors)).into_bytes())
+            }
+            Event::TextAreaSizeRequest(format) => {
+                let window_size = *self.window_size.lock();
+                TerminalEvent::PtyWrite(format(window_size).into_bytes())
+            }
             Event::PtyWrite(text) => TerminalEvent::PtyWrite(text.into_bytes()),
             _ => return, // Ignore other events for now
         };
@@ -61,6 +83,78 @@ impl EventListener for EventProxy {
             tracing::debug!("Terminal event dropped: {}", error);
         }
     }
+}
+
+fn iced_to_rgb(color: Color) -> Rgb {
+    fn component(value: f32) -> u8 {
+        (value.clamp(0.0, 1.0) * 255.0).round() as u8
+    }
+
+    Rgb {
+        r: component(color.r),
+        g: component(color.g),
+        b: component(color.b),
+    }
+}
+
+fn dim_color(color: Color) -> Color {
+    Color::from_rgba(color.r * 0.66, color.g * 0.66, color.b * 0.66, color.a)
+}
+
+fn indexed_color(index: usize) -> Option<Color> {
+    let idx = u8::try_from(index).ok()?;
+    if idx < 16 {
+        Some(ANSI_COLORS[idx as usize])
+    } else if idx < 232 {
+        let idx = idx - 16;
+        let r = (idx / 36) % 6;
+        let g = (idx / 6) % 6;
+        let b = idx % 6;
+        Some(Color::from_rgb(
+            if r == 0 {
+                0.0
+            } else {
+                (r as f32 * 40.0 + 55.0) / 255.0
+            },
+            if g == 0 {
+                0.0
+            } else {
+                (g as f32 * 40.0 + 55.0) / 255.0
+            },
+            if b == 0 {
+                0.0
+            } else {
+                (b as f32 * 40.0 + 55.0) / 255.0
+            },
+        ))
+    } else {
+        let gray = (idx - 232) as f32 * 10.0 + 8.0;
+        let v = gray / 255.0;
+        Some(Color::from_rgb(v, v, v))
+    }
+}
+
+fn osc_color_for_index(index: usize, colors: &TerminalColors) -> Rgb {
+    let color = match index {
+        0..=15 => colors.ansi[index],
+        index @ 16..=255 => indexed_color(index).unwrap_or(colors.foreground),
+        index if index == NamedColor::Foreground as usize => colors.foreground,
+        index if index == NamedColor::Background as usize => colors.background,
+        index if index == NamedColor::Cursor as usize => colors.cursor,
+        index if index == NamedColor::BrightForeground as usize => colors.ansi[15],
+        index if index == NamedColor::DimForeground as usize => dim_color(colors.foreground),
+        index if index == NamedColor::DimBlack as usize => dim_color(colors.ansi[0]),
+        index if index == NamedColor::DimRed as usize => dim_color(colors.ansi[1]),
+        index if index == NamedColor::DimGreen as usize => dim_color(colors.ansi[2]),
+        index if index == NamedColor::DimYellow as usize => dim_color(colors.ansi[3]),
+        index if index == NamedColor::DimBlue as usize => dim_color(colors.ansi[4]),
+        index if index == NamedColor::DimMagenta as usize => dim_color(colors.ansi[5]),
+        index if index == NamedColor::DimCyan as usize => dim_color(colors.ansi[6]),
+        index if index == NamedColor::DimWhite as usize => dim_color(colors.ansi[7]),
+        _ => colors.foreground,
+    };
+
+    iced_to_rgb(color)
 }
 
 /// Terminal dimensions
@@ -138,13 +232,27 @@ pub struct TerminalBackend {
     processor: Mutex<Processor>,
     size: TerminalSize,
     render_epoch: Arc<AtomicU64>,
+    colors: Arc<Mutex<TerminalColors>>,
+    window_size: Arc<Mutex<WindowSize>>,
 }
 
 impl TerminalBackend {
     /// Create a new terminal backend with the given size
     pub fn new(size: TerminalSize) -> (Self, mpsc::Receiver<TerminalEvent>) {
         let (event_tx, event_rx) = mpsc::channel(256);
-        let event_proxy = EventProxy::new(event_tx);
+        let colors = Arc::new(Mutex::new(TerminalColors {
+            foreground: DEFAULT_FG,
+            background: DEFAULT_BG,
+            cursor: DEFAULT_FG,
+            ansi: ANSI_COLORS,
+        }));
+        let window_size = Arc::new(Mutex::new(WindowSize {
+            num_lines: size.lines,
+            num_cols: size.columns,
+            cell_width: 1,
+            cell_height: 1,
+        }));
+        let event_proxy = EventProxy::new(event_tx, colors.clone(), window_size.clone());
         let render_epoch = Arc::new(AtomicU64::new(1));
 
         // Create terminal config with scrollback history
@@ -161,6 +269,8 @@ impl TerminalBackend {
             processor: Mutex::new(Processor::new()),
             size,
             render_epoch,
+            colors,
+            window_size,
         };
 
         (backend, event_rx)
@@ -174,6 +284,18 @@ impl TerminalBackend {
     /// Render version for change detection (incremented on output/resize).
     pub fn render_epoch(&self) -> Arc<AtomicU64> {
         self.render_epoch.clone()
+    }
+
+    /// Set the palette used for terminal color query responses.
+    pub fn set_colors(&self, colors: TerminalColors) {
+        *self.colors.lock() = colors;
+    }
+
+    /// Set the terminal cell dimensions used for text-area pixel-size reports.
+    pub fn set_cell_size(&self, cell_width: f32, cell_height: f32) {
+        let mut window_size = self.window_size.lock();
+        window_size.cell_width = cell_width.round().clamp(1.0, u16::MAX as f32) as u16;
+        window_size.cell_height = cell_height.round().clamp(1.0, u16::MAX as f32) as u16;
     }
 
     /// Get the terminal size
@@ -201,6 +323,11 @@ impl TerminalBackend {
 
         self.size.columns = cols;
         self.size.lines = rows;
+        {
+            let mut window_size = self.window_size.lock();
+            window_size.num_cols = cols;
+            window_size.num_lines = rows;
+        }
 
         let mut term = self.term.lock();
         term.resize(self.size);
@@ -211,6 +338,7 @@ impl TerminalBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::theme::Theme;
     use alacritty_terminal::index::{Column, Line};
 
     #[test]
@@ -232,5 +360,88 @@ mod tests {
         assert_eq!(line[Column(6)].c, '└');
         assert_eq!(line[Column(7)].c, '─');
         assert_eq!(line[Column(8)].c, '┘');
+    }
+
+    #[test]
+    fn osc_color_request_uses_terminal_theme_colors() {
+        let colors = Theme::portal_default().terminal;
+
+        assert_eq!(
+            osc_color_for_index(NamedColor::Foreground as usize, &colors),
+            Rgb {
+                r: 0xe6,
+                g: 0xe6,
+                b: 0xe6,
+            }
+        );
+        assert_eq!(
+            osc_color_for_index(NamedColor::Background as usize, &colors),
+            Rgb {
+                r: 0x1e,
+                g: 0x1e,
+                b: 0x2e,
+            }
+        );
+        assert_eq!(
+            osc_color_for_index(NamedColor::Cursor as usize, &colors),
+            Rgb {
+                r: 0xe6,
+                g: 0xe6,
+                b: 0xe6,
+            }
+        );
+    }
+
+    #[test]
+    fn osc_color_request_supports_indexed_palette_queries() {
+        let colors = Theme::portal_default().terminal;
+
+        assert_eq!(
+            osc_color_for_index(12, &colors),
+            Rgb {
+                r: 0x7a,
+                g: 0xa2,
+                b: 0xff,
+            }
+        );
+        assert_eq!(osc_color_for_index(16, &colors), Rgb { r: 0, g: 0, b: 0 });
+        assert_eq!(
+            osc_color_for_index(231, &colors),
+            Rgb {
+                r: 255,
+                g: 255,
+                b: 255,
+            }
+        );
+    }
+
+    #[test]
+    fn process_input_answers_osc_color_query() {
+        let (backend, mut event_rx) = TerminalBackend::new(TerminalSize::new(10, 3));
+        backend.set_colors(Theme::portal_default().terminal);
+
+        backend.process_input(b"\x1b]10;?\x1b\\");
+
+        let event = event_rx.try_recv().expect("OSC color response event");
+        assert!(matches!(
+            event,
+            TerminalEvent::PtyWrite(bytes)
+                if bytes == b"\x1b]10;rgb:e6e6/e6e6/e6e6\x1b\\"
+        ));
+    }
+
+    #[test]
+    fn process_input_answers_text_area_pixel_query() {
+        let (mut backend, mut event_rx) = TerminalBackend::new(TerminalSize::new(10, 3));
+        backend.set_cell_size(9.0, 18.0);
+        backend.resize(120, 40);
+
+        backend.process_input(b"\x1b[14t");
+
+        let event = event_rx.try_recv().expect("text area size response event");
+        assert!(matches!(
+            event,
+            TerminalEvent::PtyWrite(bytes) if bytes == b"\x1b[4;720;1080t"
+        ));
     }
 }

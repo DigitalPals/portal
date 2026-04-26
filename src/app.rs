@@ -18,6 +18,7 @@ use crate::keybindings::KeybindingsConfig;
 use crate::message::{
     Message, SessionId, SessionMessage, SettingsTab, SidebarMenuItem, UiMessage, VncMessage,
 };
+use crate::terminal::metrics::TerminalMetrics;
 use crate::theme::{ScaledFonts, ThemeId, get_theme};
 use crate::views::dialogs::about_dialog::about_dialog_view;
 use crate::views::dialogs::connecting_dialog::connecting_dialog_view;
@@ -926,6 +927,39 @@ impl Portal {
     /// Check if user has overridden the UI scale
     pub fn has_ui_scale_override(&self) -> bool {
         self.prefs.ui_scale_override.is_some()
+    }
+
+    /// Compute a best-effort terminal grid size before the first terminal render.
+    ///
+    /// SSH/local PTYs need an initial size before the custom terminal widget has
+    /// emitted its first exact resize. Use the same font metrics as the widget
+    /// and the post-connection layout, where terminal sessions hide the sidebar.
+    pub fn terminal_initial_size(&self) -> (u16, u16) {
+        const TAB_BAR_ESTIMATED_HEIGHT: f32 = 48.0;
+        const STATUS_BAR_ESTIMATED_HEIGHT: f32 = 30.0;
+
+        let metrics = TerminalMetrics::for_font_with_adjustments(
+            self.prefs.terminal_font,
+            self.prefs.terminal_font_size,
+            self.prefs.terminal_metric_adjustments,
+        );
+        let width = self.ui.window_size.width.max(metrics.cell_width * 10.0);
+        let height =
+            (self.ui.window_size.height - TAB_BAR_ESTIMATED_HEIGHT - STATUS_BAR_ESTIMATED_HEIGHT)
+                .max(metrics.cell_height * 3.0);
+        let bounds = iced::Rectangle {
+            x: 0.0,
+            y: 0.0,
+            width,
+            height,
+        };
+
+        let cols = metrics
+            .columns_for_bounds(bounds)
+            .clamp(10, u16::MAX as usize) as u16;
+        let rows = metrics.rows_for_bounds(bounds).clamp(3, u16::MAX as usize) as u16;
+
+        (cols, rows)
     }
 
     /// Compute a best-effort target size for VNC remote resize.
