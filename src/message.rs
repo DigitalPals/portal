@@ -606,6 +606,8 @@ pub enum UiMessage {
     WindowResized(iced::Size),
     /// Window lost focus
     WindowUnfocused,
+    /// Window gained focus
+    WindowFocused,
     /// Dismiss toast notification
     ToastDismiss(Uuid),
     /// Toast timer tick

@@ -15,6 +15,7 @@ use crate::app::{Portal, Tab};
 use crate::config::AuthMethod;
 use crate::message::{Message, SessionId, SessionMessage};
 use crate::ssh::reconnect::ReconnectPolicy;
+use crate::terminal::attention::{AttentionParser, AttentionSignal};
 use crate::terminal::backend::TerminalEvent;
 use crate::terminal::logger::SessionLogger;
 use crate::views::terminal_view::TerminalSession;
@@ -34,6 +35,7 @@ const OUTPUT_COALESCE_BYPASS_BYTES: usize = 8 * 1024;
 const BACKLOG_WARNING_THRESHOLD: usize = 1024 * 1024;
 const BACKLOG_AGE_WARNING: Duration = Duration::from_millis(500);
 const BACKLOG_WARNING_INTERVAL: Duration = Duration::from_secs(5);
+const DESKTOP_NOTIFICATION_THROTTLE: Duration = Duration::from_secs(3);
 
 fn output_budget_for_pending(pending_bytes: usize) -> usize {
     if pending_bytes >= LARGE_BACKLOG_THRESHOLD {
@@ -141,6 +143,48 @@ fn maybe_warn_terminal_backlog(session: &mut ActiveSession, now: Instant) {
             .map(|duration| duration.as_millis()),
         "Terminal output backlog is delaying rendering"
     );
+}
+
+fn should_show_desktop_attention(
+    active_tab: Option<SessionId>,
+    window_focused: bool,
+    session_id: SessionId,
+    last_notification_at: Option<Instant>,
+    now: Instant,
+) -> bool {
+    let needs_out_of_band_notice = !window_focused || active_tab != Some(session_id);
+    if !needs_out_of_band_notice {
+        return false;
+    }
+
+    last_notification_at
+        .is_none_or(|last| now.duration_since(last) >= DESKTOP_NOTIFICATION_THROTTLE)
+}
+
+fn attention_notification_text(
+    signal: &AttentionSignal,
+    host_name: &str,
+) -> (String, Option<String>) {
+    let fallback_title = format!("Portal: {} needs attention", host_name);
+
+    match (&signal.title, &signal.body) {
+        (Some(title), Some(body)) => (title.clone(), Some(body.clone())),
+        (Some(title), None) => (title.clone(), None),
+        (None, Some(body)) => (fallback_title, Some(body.clone())),
+        (None, None) => (fallback_title, None),
+    }
+}
+
+fn show_attention_notification(title: String, body: Option<String>) -> Task<Message> {
+    Task::perform(
+        async move { crate::platform::show_desktop_notification(&title, body.as_deref()) },
+        |result| {
+            if let Err(error) = result {
+                tracing::warn!("Failed to show desktop notification: {}", error);
+            }
+            Message::Noop
+        },
+    )
 }
 
 fn process_terminal_output_tick(session: &mut ActiveSession, now: Instant) {
@@ -277,6 +321,9 @@ fn start_terminal_session(
             last_output_process_duration: None,
             last_backlog_warning_at: None,
             logger: None,
+            attention_parser: AttentionParser::new(),
+            attention_since: None,
+            last_desktop_notification_at: None,
         },
     );
 
@@ -544,15 +591,56 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
             )
         }
         SessionMessage::Data(session_id, data) => {
+            let active_tab = portal.active_tab;
+            let window_focused = portal.ui.window_focused;
+            let now = Instant::now();
+            let mut mark_attention = false;
+            let mut notification = None;
+
             if let Some(session) = portal.sessions.get_mut(session_id) {
+                let attention_signals = if matches!(
+                    session.backend,
+                    SessionBackend::Ssh(_) | SessionBackend::Proxy(_)
+                ) {
+                    session.attention_parser.advance(&data)
+                } else {
+                    Vec::new()
+                };
+
                 if !data.is_empty() {
                     if let Some(logger) = session.logger.as_ref() {
                         logger.write(&data);
                     }
-                    queue_terminal_output(session, data, Instant::now());
+                    queue_terminal_output(session, data, now);
+                }
+
+                if let Some(signal) = attention_signals.last() {
+                    session.attention_since = Some(now);
+                    mark_attention = true;
+
+                    if should_show_desktop_attention(
+                        active_tab,
+                        window_focused,
+                        session_id,
+                        session.last_desktop_notification_at,
+                        now,
+                    ) {
+                        session.last_desktop_notification_at = Some(now);
+                        notification =
+                            Some(attention_notification_text(signal, &session.host_name));
+                    }
                 }
             }
-            Task::none()
+
+            if mark_attention {
+                portal.mark_terminal_attention(session_id);
+            }
+
+            if let Some((title, body)) = notification {
+                show_attention_notification(title, body)
+            } else {
+                Task::none()
+            }
         }
         SessionMessage::ProcessOutputTick => {
             let now = Instant::now();
@@ -702,6 +790,9 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
         }
         SessionMessage::Input(session_id, bytes) => {
             tracing::debug!("Terminal input ({} bytes)", bytes.len());
+            if !bytes.is_empty() {
+                portal.clear_terminal_attention(session_id);
+            }
             if let Some(session) = portal.sessions.get(session_id) {
                 match &session.backend {
                     SessionBackend::Ssh(ssh_session) => {
@@ -863,6 +954,9 @@ mod tests {
             last_output_process_duration: None,
             last_backlog_warning_at: None,
             logger: None,
+            attention_parser: AttentionParser::new(),
+            attention_since: None,
+            last_desktop_notification_at: None,
         }
     }
 
@@ -949,6 +1043,90 @@ mod tests {
                 .as_ref()
                 .map(|(message, _)| message.as_str()),
             Some("Terminal output skipped; catching up")
+        );
+    }
+
+    #[test]
+    fn desktop_attention_is_suppressed_for_focused_active_tab() {
+        let session_id = Uuid::new_v4();
+        let now = Instant::now();
+
+        assert!(!should_show_desktop_attention(
+            Some(session_id),
+            true,
+            session_id,
+            None,
+            now,
+        ));
+    }
+
+    #[test]
+    fn desktop_attention_is_allowed_for_inactive_tab_or_unfocused_window() {
+        let session_id = Uuid::new_v4();
+        let other_id = Uuid::new_v4();
+        let now = Instant::now();
+
+        assert!(should_show_desktop_attention(
+            Some(other_id),
+            true,
+            session_id,
+            None,
+            now,
+        ));
+        assert!(should_show_desktop_attention(
+            Some(session_id),
+            false,
+            session_id,
+            None,
+            now,
+        ));
+    }
+
+    #[test]
+    fn desktop_attention_is_throttled_per_session() {
+        let session_id = Uuid::new_v4();
+        let now = Instant::now();
+
+        assert!(!should_show_desktop_attention(
+            None,
+            false,
+            session_id,
+            Some(now - DESKTOP_NOTIFICATION_THROTTLE + Duration::from_millis(1)),
+            now,
+        ));
+        assert!(should_show_desktop_attention(
+            None,
+            false,
+            session_id,
+            Some(now - DESKTOP_NOTIFICATION_THROTTLE),
+            now,
+        ));
+    }
+
+    #[test]
+    fn attention_notification_text_prefers_signal_content() {
+        let signal = AttentionSignal {
+            title: Some("Claude Code".to_string()),
+            body: Some("Needs approval".to_string()),
+        };
+
+        assert_eq!(
+            attention_notification_text(&signal, "prod"),
+            (
+                "Claude Code".to_string(),
+                Some("Needs approval".to_string())
+            )
+        );
+
+        assert_eq!(
+            attention_notification_text(
+                &AttentionSignal {
+                    title: None,
+                    body: None
+                },
+                "prod"
+            ),
+            ("Portal: prod needs attention".to_string(), None)
         );
     }
 }

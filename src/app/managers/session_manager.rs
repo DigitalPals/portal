@@ -13,6 +13,7 @@ use crate::local::LocalSession;
 use crate::message::SessionId;
 use crate::proxy::ProxySession;
 use crate::ssh::SshSession;
+use crate::terminal::attention::AttentionParser;
 use crate::terminal::backend::EventProxy;
 use crate::terminal::logger::SessionLogger;
 use crate::views::terminal_view::TerminalSession;
@@ -66,6 +67,12 @@ pub struct ActiveSession {
     pub last_backlog_warning_at: Option<Instant>,
     /// Optional session logger for terminal output
     pub logger: Option<SessionLogger>,
+    /// Parser for terminal-emitted attention sequences (BEL, OSC notifications).
+    pub attention_parser: AttentionParser,
+    /// Timestamp of the most recent attention signal for this session.
+    pub attention_since: Option<Instant>,
+    /// Timestamp of the most recent desktop notification for throttling.
+    pub last_desktop_notification_at: Option<Instant>,
 }
 
 /// Active VNC session
@@ -214,6 +221,9 @@ mod tests {
             last_output_process_duration: None,
             last_backlog_warning_at: None,
             logger: None,
+            attention_parser: AttentionParser::new(),
+            attention_since: None,
+            last_desktop_notification_at: None,
         }
     }
 

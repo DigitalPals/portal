@@ -3,6 +3,26 @@
 //! This module provides platform-specific functionality such as detecting
 //! system UI scaling preferences.
 
+/// Show a best-effort desktop notification.
+pub fn show_desktop_notification(title: &str, body: Option<&str>) -> Result<(), String> {
+    let mut notification = notify_rust::Notification::new();
+    notification.appname("Portal").summary(title);
+    if let Some(body) = body.filter(|body| !body.trim().is_empty()) {
+        notification.body(body);
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        notification.icon("portal");
+        notification.timeout(notify_rust::Timeout::Milliseconds(6000));
+    }
+
+    notification
+        .show()
+        .map(|_| ())
+        .map_err(|error| error.to_string())
+}
+
 /// Detect the system UI scale factor.
 ///
 /// Returns a scale factor (typically 1.0-2.0) based on system preferences:

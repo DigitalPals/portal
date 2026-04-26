@@ -138,6 +138,7 @@ pub struct UiState {
     pub history_focus_index: Option<usize>,
     pub terminal_captured: bool,
     pub terminal_focus_token: u64,
+    pub window_focused: bool,
     pub tab_context_menu: TabContextMenuState,
     pub portal_proxy_status: Option<crate::proxy::ProxyStatus>,
     pub portal_proxy_status_error: Option<String>,
@@ -384,6 +385,7 @@ impl Portal {
                 history_focus_index: None,
                 terminal_captured: false,
                 terminal_focus_token: 0,
+                window_focused: true,
                 tab_context_menu: TabContextMenuState::default(),
                 portal_proxy_status: None,
                 portal_proxy_status_error: None,
@@ -1021,6 +1023,9 @@ impl Portal {
                 }
                 iced::Event::Window(window::Event::Unfocused) => {
                     Some(Message::Ui(UiMessage::WindowUnfocused))
+                }
+                iced::Event::Window(window::Event::Focused) => {
+                    Some(Message::Ui(UiMessage::WindowFocused))
                 }
                 _ => None,
             }),

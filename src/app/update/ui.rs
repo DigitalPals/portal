@@ -94,11 +94,16 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
             Task::none()
         }
         UiMessage::WindowUnfocused => {
+            portal.ui.window_focused = false;
             if let View::VncViewer(session_id) = portal.ui.active_view {
                 if let Some(vnc) = portal.vnc_sessions.get(&session_id) {
                     vnc.session.release_all_keys();
                 }
             }
+            Task::none()
+        }
+        UiMessage::WindowFocused => {
+            portal.ui.window_focused = true;
             Task::none()
         }
         UiMessage::ToastDismiss(id) => {

@@ -20,6 +20,8 @@ pub struct Tab {
     pub tab_type: TabType,
     /// Host ID for looking up detected_os (None for local terminal)
     pub host_id: Option<Uuid>,
+    /// Whether this tab has a pending terminal attention signal.
+    pub needs_attention: bool,
 }
 
 /// Type of content in a tab
@@ -38,6 +40,7 @@ impl Tab {
             title,
             tab_type: TabType::Terminal,
             host_id,
+            needs_attention: false,
         }
     }
 
@@ -47,6 +50,7 @@ impl Tab {
             title,
             tab_type: TabType::Sftp,
             host_id,
+            needs_attention: false,
         }
     }
 
@@ -56,6 +60,7 @@ impl Tab {
             title,
             tab_type: TabType::Vnc,
             host_id,
+            needs_attention: false,
         }
     }
 
@@ -65,6 +70,7 @@ impl Tab {
             title,
             tab_type: TabType::FileViewer,
             host_id: None,
+            needs_attention: false,
         }
     }
 }
@@ -241,9 +247,19 @@ fn tab_button<'a>(
         container(text("")).width(close_button_width).into()
     };
 
+    let attention_dot: Element<'_, Message> = if tab.needs_attention {
+        container(text("●").size(10).color(Color::from_rgb8(0xf9, 0xc7, 0x4f)))
+            .width(Length::Fixed(10.0))
+            .align_x(Alignment::Center)
+            .into()
+    } else {
+        container(text("")).width(Length::Fixed(10.0)).into()
+    };
+
     let content = row![
         icon,
         text(title).size(fonts.body).color(text_icon_color),
+        attention_dot,
         close_button,
     ]
     .spacing(6)

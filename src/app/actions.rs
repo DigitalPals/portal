@@ -87,6 +87,7 @@ impl Portal {
     pub(super) fn enter_terminal_view(&mut self, tab_id: Uuid, auto_hide_sidebar: bool) {
         self.active_tab = Some(tab_id);
         self.ui.active_view = View::Terminal(tab_id);
+        self.clear_terminal_attention(tab_id);
         self.ui.terminal_captured = true;
         self.ui.terminal_focus_token = self.ui.terminal_focus_token.wrapping_add(1);
         self.ui.focus_section = crate::app::FocusSection::Content;
@@ -123,6 +124,21 @@ impl Portal {
             self.enter_file_viewer_view(tab_id);
         } else if self.vnc_sessions.contains_key(&tab_id) {
             self.enter_vnc_view(tab_id);
+        }
+    }
+
+    pub(super) fn mark_terminal_attention(&mut self, tab_id: Uuid) {
+        if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == tab_id) {
+            tab.needs_attention = true;
+        }
+    }
+
+    pub(super) fn clear_terminal_attention(&mut self, tab_id: Uuid) {
+        if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == tab_id) {
+            tab.needs_attention = false;
+        }
+        if let Some(session) = self.sessions.get_mut(tab_id) {
+            session.attention_since = None;
         }
     }
 
