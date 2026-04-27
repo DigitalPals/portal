@@ -6,7 +6,7 @@ use uuid::Uuid;
 
 use crate::app::VaultUiState;
 use crate::config::{AuthMethod, HostsConfig};
-use crate::hub::vault::{HubVaultConfig, VaultKey};
+use crate::hub::vault::{HubVaultConfig, VaultKey, VaultSecret, VaultSecretKind};
 use crate::icons::{self, icon_with_color};
 use crate::message::{Message, VaultMessage};
 use crate::theme::{BORDER_RADIUS, CARD_BORDER_RADIUS, ScaledFonts, Theme};
@@ -46,7 +46,7 @@ pub fn vault_page_view(ctx: VaultPageContext<'_>) -> Element<'static, Message> {
             ]
             .spacing(10)
             .align_y(Alignment::Center),
-            text("Encrypted SSH keys stored locally and synced as client-side encrypted blobs when Portal Hub vault sync is enabled.")
+            text("Encrypted SSH keys and VNC passwords stored locally and synced as client-side encrypted blobs when Portal Hub vault sync is enabled.")
                 .size(ctx.fonts.label)
                 .color(ctx.theme.text_muted),
         ]
@@ -67,7 +67,7 @@ pub fn vault_page_view(ctx: VaultPageContext<'_>) -> Element<'static, Message> {
     ]
     .align_y(Alignment::Center);
 
-    let search = text_input("Search vault keys...", &ctx.state.search_query)
+    let search = text_input("Search vault...", &ctx.state.search_query)
         .on_input(|value| Message::Vault(VaultMessage::SearchChanged(value)))
         .padding([10, 14])
         .width(Fill);
@@ -83,11 +83,19 @@ pub fn vault_page_view(ctx: VaultPageContext<'_>) -> Element<'static, Message> {
     }
 
     let keys = filtered_keys(ctx.vault, &ctx.state.search_query);
-    if keys.is_empty() {
-        content = content.push(empty_state(ctx.vault.keys.is_empty(), ctx.theme, ctx.fonts));
+    let vnc_passwords = filtered_vnc_passwords(ctx.vault, &ctx.state.search_query);
+    if keys.is_empty() && vnc_passwords.is_empty() {
+        content = content.push(empty_state(
+            ctx.vault.keys.is_empty() && ctx.vault.secrets.is_empty(),
+            ctx.theme,
+            ctx.fonts,
+        ));
     } else {
         for key in keys {
             content = content.push(key_card(key, ctx.hosts, ctx.theme, ctx.fonts));
+        }
+        for secret in vnc_passwords {
+            content = content.push(vnc_password_card(secret, ctx.hosts, ctx.theme, ctx.fonts));
         }
     }
 
@@ -337,6 +345,21 @@ fn filtered_keys<'a>(vault: &'a HubVaultConfig, query: &str) -> Vec<&'a VaultKey
         .collect()
 }
 
+fn filtered_vnc_passwords<'a>(vault: &'a HubVaultConfig, query: &str) -> Vec<&'a VaultSecret> {
+    let query = query.trim().to_lowercase();
+    vault
+        .secrets
+        .iter()
+        .filter(|secret| {
+            secret.kind == VaultSecretKind::VncPassword
+                && (query.is_empty()
+                    || secret.name.to_lowercase().contains(&query)
+                    || "vnc password".contains(&query)
+                    || "saved credential".contains(&query))
+        })
+        .collect()
+}
+
 fn key_card(
     key: &VaultKey,
     hosts: &HostsConfig,
@@ -406,6 +429,61 @@ fn key_card(
             }
         })
         .on_press(Message::Vault(VaultMessage::EditOpen(key_id)))
+        .into()
+}
+
+fn vnc_password_card(
+    secret: &VaultSecret,
+    hosts: &HostsConfig,
+    theme: Theme,
+    fonts: ScaledFonts,
+) -> Element<'static, Message> {
+    let referenced = referenced_vnc_host_names(hosts, secret.id);
+    let updated = secret
+        .updated_at
+        .with_timezone(&chrono::Local)
+        .format("%Y-%m-%d %H:%M")
+        .to_string();
+    let host_text = if referenced.is_empty() {
+        "Not used by any VNC host".to_string()
+    } else {
+        format!("Used by {}", referenced.join(", "))
+    };
+
+    let card = column![
+        row![
+            row![
+                icon_with_color(icons::ui::KEY, 18, theme.accent),
+                text(secret.name.clone())
+                    .size(fonts.body)
+                    .color(theme.text_primary),
+                status_badge("VNC Password", BadgeTone::Info, theme, fonts),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
+            Space::new().width(Fill),
+            text(updated).size(fonts.label).color(theme.text_muted),
+        ]
+        .align_y(Alignment::Center),
+        text("Password value hidden")
+            .size(fonts.label)
+            .color(theme.text_secondary),
+        text(host_text).size(fonts.label).color(theme.text_muted),
+    ]
+    .spacing(10);
+
+    container(card)
+        .padding(16)
+        .width(Fill)
+        .style(move |_| container::Style {
+            background: Some(theme.surface.into()),
+            border: iced::Border {
+                color: theme.border,
+                width: 1.0,
+                radius: CARD_BORDER_RADIUS.into(),
+            },
+            ..Default::default()
+        })
         .into()
 }
 
@@ -585,6 +663,15 @@ fn referenced_host_names(hosts: &HostsConfig, key_id: Uuid) -> Vec<String> {
             AuthMethod::PublicKey { vault_key_id, .. } => *vault_key_id == Some(key_id),
             _ => false,
         })
+        .map(|host| host.name.clone())
+        .collect()
+}
+
+fn referenced_vnc_host_names(hosts: &HostsConfig, secret_id: Uuid) -> Vec<String> {
+    hosts
+        .hosts
+        .iter()
+        .filter(|host| host.vnc_password_id == Some(secret_id))
         .map(|host| host.name.clone())
         .collect()
 }
