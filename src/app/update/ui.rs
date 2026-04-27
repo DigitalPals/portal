@@ -164,8 +164,8 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
             portal.toast_manager.cleanup_expired();
             Task::none()
         }
-        UiMessage::KeyboardEvent(key, modifiers) => {
-            keyboard::handle_keyboard_event(portal, key, modifiers)
+        UiMessage::KeyboardEvent(key, modifiers, shortcut_key) => {
+            keyboard::handle_keyboard_event(portal, key, modifiers, shortcut_key)
         }
         UiMessage::KeyReleased(key, modifiers) => {
             keyboard::handle_key_released(portal, key, modifiers)

@@ -115,7 +115,32 @@ impl SidebarState {
 
 #[cfg(test)]
 mod tests {
-    use super::scaled_vnc_dimension;
+    use super::*;
+    use iced::keyboard::key::{Code, Physical};
+
+    fn ctrl_c_event() -> iced::Event {
+        iced::Event::Keyboard(keyboard::Event::KeyPressed {
+            key: keyboard::Key::Character("c".into()),
+            modified_key: keyboard::Key::Character("c".into()),
+            physical_key: Physical::Code(Code::KeyC),
+            location: keyboard::Location::Standard,
+            modifiers: keyboard::Modifiers::CTRL,
+            text: None,
+            repeat: false,
+        })
+    }
+
+    fn ctrl_c_control_character_event() -> iced::Event {
+        iced::Event::Keyboard(keyboard::Event::KeyPressed {
+            key: keyboard::Key::Character("\u{3}".into()),
+            modified_key: keyboard::Key::Character("\u{3}".into()),
+            physical_key: Physical::Code(Code::KeyC),
+            location: keyboard::Location::Standard,
+            modifiers: keyboard::Modifiers::CTRL,
+            text: None,
+            repeat: false,
+        })
+    }
 
     #[test]
     fn scaled_vnc_dimension_rejects_non_finite_values() {
@@ -130,6 +155,36 @@ mod tests {
     fn scaled_vnc_dimension_clamps_output() {
         assert_eq!(scaled_vnc_dimension(1.0, 1.0, 320.0, 8192.0), 320);
         assert_eq!(scaled_vnc_dimension(20_000.0, 2.0, 320.0, 8192.0), 8192);
+    }
+
+    #[test]
+    fn captured_keyboard_events_are_left_to_widgets() {
+        assert!(subscription_message(ctrl_c_event(), event::Status::Captured).is_none());
+    }
+
+    #[test]
+    fn ignored_keyboard_events_still_reach_global_shortcuts() {
+        let Some(Message::Ui(UiMessage::KeyboardEvent(key, modifiers, shortcut_key))) =
+            subscription_message(ctrl_c_event(), event::Status::Ignored)
+        else {
+            panic!("expected keyboard event message");
+        };
+
+        assert_eq!(key, keyboard::Key::Character("c".into()));
+        assert!(modifiers.control());
+        assert_eq!(shortcut_key, Some('c'));
+    }
+
+    #[test]
+    fn shortcut_key_falls_back_to_physical_key() {
+        let Some(Message::Ui(UiMessage::KeyboardEvent(_key, modifiers, shortcut_key))) =
+            subscription_message(ctrl_c_control_character_event(), event::Status::Ignored)
+        else {
+            panic!("expected keyboard event message");
+        };
+
+        assert!(modifiers.control());
+        assert_eq!(shortcut_key, Some('c'));
     }
 }
 
@@ -1257,30 +1312,7 @@ impl Portal {
     pub fn subscription(&self) -> Subscription<Message> {
         let mut subscriptions = vec![
             // Keyboard events
-            event::listen_with(|event, _status, _id| match event {
-                iced::Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => {
-                    Some(Message::Ui(UiMessage::KeyboardEvent(key, modifiers)))
-                }
-                iced::Event::Keyboard(keyboard::Event::KeyReleased { key, modifiers, .. }) => {
-                    Some(Message::Ui(UiMessage::KeyReleased(key, modifiers)))
-                }
-                iced::Event::Window(window::Event::Unfocused) => {
-                    Some(Message::Ui(UiMessage::WindowUnfocused))
-                }
-                iced::Event::Window(window::Event::Focused) => {
-                    Some(Message::Ui(UiMessage::WindowFocused))
-                }
-                iced::Event::Window(window::Event::FileHovered(path)) => Some(Message::Sftp(
-                    crate::message::SftpMessage::FilesHovered(vec![path]),
-                )),
-                iced::Event::Window(window::Event::FileDropped(path)) => Some(Message::Sftp(
-                    crate::message::SftpMessage::FilesDropped(Uuid::nil(), vec![path]),
-                )),
-                iced::Event::Window(window::Event::FilesHoveredLeft) => {
-                    Some(Message::Sftp(crate::message::SftpMessage::FilesHoveredLeft))
-                }
-                _ => None,
-            }),
+            event::listen_with(|event, status, _id| subscription_message(event, status)),
             // Window resize events
             window::resize_events().map(|(_id, size)| Message::Ui(UiMessage::WindowResized(size))),
         ];
@@ -1358,6 +1390,88 @@ impl Portal {
                     .is_some()
             })
             .map(|state| state.tab_id)
+    }
+}
+
+fn subscription_message(event: iced::Event, status: event::Status) -> Option<Message> {
+    if status == event::Status::Captured && matches!(event, iced::Event::Keyboard(_)) {
+        return None;
+    }
+
+    match event {
+        iced::Event::Keyboard(keyboard::Event::KeyPressed {
+            key,
+            physical_key,
+            modifiers,
+            ..
+        }) => Some(Message::Ui(UiMessage::KeyboardEvent(
+            key.clone(),
+            modifiers,
+            shortcut_key(&key, physical_key),
+        ))),
+        iced::Event::Keyboard(keyboard::Event::KeyReleased { key, modifiers, .. }) => {
+            Some(Message::Ui(UiMessage::KeyReleased(key, modifiers)))
+        }
+        iced::Event::Window(window::Event::Unfocused) => {
+            Some(Message::Ui(UiMessage::WindowUnfocused))
+        }
+        iced::Event::Window(window::Event::Focused) => Some(Message::Ui(UiMessage::WindowFocused)),
+        iced::Event::Window(window::Event::FileHovered(path)) => Some(Message::Sftp(
+            crate::message::SftpMessage::FilesHovered(vec![path]),
+        )),
+        iced::Event::Window(window::Event::FileDropped(path)) => Some(Message::Sftp(
+            crate::message::SftpMessage::FilesDropped(Uuid::nil(), vec![path]),
+        )),
+        iced::Event::Window(window::Event::FilesHoveredLeft) => {
+            Some(Message::Sftp(crate::message::SftpMessage::FilesHoveredLeft))
+        }
+        _ => None,
+    }
+}
+
+fn shortcut_key(key: &keyboard::Key, physical_key: keyboard::key::Physical) -> Option<char> {
+    if let keyboard::Key::Character(character) = key {
+        let mut chars = character.chars();
+        if let Some(character) = chars.next()
+            && chars.next().is_none()
+            && character.is_ascii_alphabetic()
+        {
+            return Some(character.to_ascii_lowercase());
+        }
+    }
+
+    let keyboard::key::Physical::Code(code) = physical_key else {
+        return None;
+    };
+
+    match code {
+        keyboard::key::Code::KeyA => Some('a'),
+        keyboard::key::Code::KeyB => Some('b'),
+        keyboard::key::Code::KeyC => Some('c'),
+        keyboard::key::Code::KeyD => Some('d'),
+        keyboard::key::Code::KeyE => Some('e'),
+        keyboard::key::Code::KeyF => Some('f'),
+        keyboard::key::Code::KeyG => Some('g'),
+        keyboard::key::Code::KeyH => Some('h'),
+        keyboard::key::Code::KeyI => Some('i'),
+        keyboard::key::Code::KeyJ => Some('j'),
+        keyboard::key::Code::KeyK => Some('k'),
+        keyboard::key::Code::KeyL => Some('l'),
+        keyboard::key::Code::KeyM => Some('m'),
+        keyboard::key::Code::KeyN => Some('n'),
+        keyboard::key::Code::KeyO => Some('o'),
+        keyboard::key::Code::KeyP => Some('p'),
+        keyboard::key::Code::KeyQ => Some('q'),
+        keyboard::key::Code::KeyR => Some('r'),
+        keyboard::key::Code::KeyS => Some('s'),
+        keyboard::key::Code::KeyT => Some('t'),
+        keyboard::key::Code::KeyU => Some('u'),
+        keyboard::key::Code::KeyV => Some('v'),
+        keyboard::key::Code::KeyW => Some('w'),
+        keyboard::key::Code::KeyX => Some('x'),
+        keyboard::key::Code::KeyY => Some('y'),
+        keyboard::key::Code::KeyZ => Some('z'),
+        _ => None,
     }
 }
 

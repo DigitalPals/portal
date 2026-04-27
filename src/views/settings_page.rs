@@ -2,8 +2,9 @@
 
 use iced::widget::{
     Column, Row, Space, button, column, container, mouse_area, row, scrollable, slider, text,
+    text_input,
 };
-use iced::{Alignment, Element, Fill, Length};
+use iced::{Alignment, Element, Fill, Length, Padding};
 
 use crate::config::settings::{
     PortalHubSettings, TERMINAL_SCROLL_SPEED_BASE, TERMINAL_SCROLL_SPEED_MAX,
@@ -854,10 +855,43 @@ fn read_only_setting(
     field(
         label,
         description,
-        text(value).size(fonts.label).color(theme.text_secondary),
+        selectable_read_only_value(value, Length::Fixed(280.0), theme, fonts),
         theme,
         fonts,
     )
+}
+
+fn selectable_read_only_value(
+    value: String,
+    width: Length,
+    theme: Theme,
+    fonts: ScaledFonts,
+) -> Element<'static, Message> {
+    text_input("", &value)
+        .size(fonts.label)
+        .padding(Padding::from([5, 8]))
+        .width(width)
+        .style(move |_theme, status| {
+            let border_color = match status {
+                text_input::Status::Focused { .. } => theme.accent,
+                text_input::Status::Hovered => theme.focus_ring,
+                _ => theme.border,
+            };
+
+            text_input::Style {
+                background: theme.surface.into(),
+                border: iced::Border {
+                    color: border_color,
+                    width: 1.0,
+                    radius: 6.0.into(),
+                },
+                icon: theme.text_secondary,
+                placeholder: theme.text_muted,
+                value: theme.text_secondary,
+                selection: theme.selected,
+            }
+        })
+        .into()
 }
 
 fn portal_hub_status_setting(
@@ -900,10 +934,7 @@ fn portal_hub_status_setting(
 
     let control = row![
         status_badge(badge_label, badge_tone, theme, fonts),
-        text(status_text)
-            .size(fonts.label)
-            .color(theme.text_secondary)
-            .width(Length::Fixed(240.0)),
+        selectable_read_only_value(status_text, Length::Fixed(240.0), theme, fonts),
         check_button,
     ]
     .spacing(10)
@@ -1045,7 +1076,7 @@ fn portal_hub_account_summary(
             ]
             .spacing(8)
             .align_y(Alignment::Center),
-            text(user).size(fonts.label).color(theme.text_secondary),
+            selectable_read_only_value(user, Length::Fixed(280.0), theme, fonts),
         ]
         .spacing(4),
         Space::new().width(Length::Fill),

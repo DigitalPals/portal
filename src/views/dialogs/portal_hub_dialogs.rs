@@ -1,5 +1,6 @@
 //! Portal Hub onboarding and sync conflict dialogs.
 
+use iced::widget::Id;
 use iced::widget::{Column, Space, button, column, container, row, scrollable, text, text_input};
 use iced::{Alignment, Element, Length};
 
@@ -86,8 +87,16 @@ pub fn portal_hub_onboarding_dialog_view(
             .color(theme.text_secondary),
         Space::new().height(8),
         section_title("Connection", theme, fonts),
-        labeled_input("Host / IP", host, UiMessage::PortalHubHostChanged, theme, fonts),
         labeled_input(
+            PortalHubOnboardingField::Host,
+            "Host / IP",
+            host,
+            UiMessage::PortalHubHostChanged,
+            theme,
+            fonts
+        ),
+        labeled_input(
+            PortalHubOnboardingField::WebPort,
             "Web port",
             web_port,
             UiMessage::PortalHubWebPortChanged,
@@ -95,6 +104,7 @@ pub fn portal_hub_onboarding_dialog_view(
             fonts
         ),
         labeled_input(
+            PortalHubOnboardingField::WebUrl,
             "Web URL",
             web_url.clone(),
             UiMessage::PortalHubWebUrlChanged,
@@ -249,7 +259,33 @@ fn section_title(
         .into()
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PortalHubOnboardingField {
+    Host,
+    WebPort,
+    WebUrl,
+}
+
+pub fn portal_hub_onboarding_field_id(field: PortalHubOnboardingField) -> Id {
+    match field {
+        PortalHubOnboardingField::Host => Id::new("portal-hub-onboarding-host"),
+        PortalHubOnboardingField::WebPort => Id::new("portal-hub-onboarding-web-port"),
+        PortalHubOnboardingField::WebUrl => Id::new("portal-hub-onboarding-web-url"),
+    }
+}
+
+pub fn portal_hub_onboarding_field_from_id(id: &Id) -> Option<PortalHubOnboardingField> {
+    [
+        PortalHubOnboardingField::Host,
+        PortalHubOnboardingField::WebPort,
+        PortalHubOnboardingField::WebUrl,
+    ]
+    .into_iter()
+    .find(|field| portal_hub_onboarding_field_id(*field) == *id)
+}
+
 fn labeled_input(
+    field: PortalHubOnboardingField,
     label: &'static str,
     value: String,
     message: fn(String) -> UiMessage,
@@ -259,6 +295,7 @@ fn labeled_input(
     column![
         text(label).size(fonts.label).color(theme.text_muted),
         text_input(label, &value)
+            .id(portal_hub_onboarding_field_id(field))
             .on_input(move |value| Message::Ui(message(value)))
             .padding([8, 10])
             .style(dialog_input_style(theme))
@@ -288,6 +325,25 @@ fn conflict_button_style(
                 radius: 4.0.into(),
             },
             ..Default::default()
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn portal_hub_onboarding_field_ids_roundtrip() {
+        for field in [
+            PortalHubOnboardingField::Host,
+            PortalHubOnboardingField::WebPort,
+            PortalHubOnboardingField::WebUrl,
+        ] {
+            assert_eq!(
+                portal_hub_onboarding_field_from_id(&portal_hub_onboarding_field_id(field)),
+                Some(field)
+            );
         }
     }
 }

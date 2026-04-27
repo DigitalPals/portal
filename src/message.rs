@@ -745,7 +745,7 @@ pub enum UiMessage {
     /// Toast timer tick
     ToastTick,
     /// Keyboard event
-    KeyboardEvent(iced::keyboard::Key, iced::keyboard::Modifiers),
+    KeyboardEvent(iced::keyboard::Key, iced::keyboard::Modifiers, Option<char>),
     /// Key released event (used for VNC)
     KeyReleased(iced::keyboard::Key, iced::keyboard::Modifiers),
 }

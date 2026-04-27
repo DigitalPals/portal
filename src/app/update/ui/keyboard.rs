@@ -1,7 +1,10 @@
 //! Keyboard handling for UI state messages.
 
-use iced::Task;
+use iced::advanced::widget::Operation;
+use iced::advanced::widget::operation::{Focusable, Outcome, TextInput};
 use iced::keyboard::{self, Key};
+use iced::widget::Id;
+use iced::{Rectangle, Task};
 
 use crate::app::ActiveDialog;
 use crate::app::{FocusSection, Portal, VaultModal, View};
@@ -12,6 +15,9 @@ use crate::message::{
 };
 use crate::ssh::host_key_verification::HostKeyVerificationResponse;
 use crate::views::dialogs::host_dialog::host_dialog_field_id;
+use crate::views::dialogs::portal_hub_dialogs::{
+    PortalHubOnboardingField, portal_hub_onboarding_field_from_id,
+};
 use crate::views::sftp::PaneId;
 use crate::views::toast::Toast;
 
@@ -58,6 +64,7 @@ pub(super) fn handle_keyboard_event(
     portal: &mut Portal,
     key: Key,
     modifiers: keyboard::Modifiers,
+    shortcut_key: Option<char>,
 ) -> Task<Message> {
     if portal.ui.command_palette_open {
         match &key {
@@ -84,6 +91,11 @@ pub(super) fn handle_keyboard_event(
 
     // Priority 1: Dialog open - handle dialog-specific keyboard navigation
     if portal.dialogs.is_open() {
+        if let Some(task) =
+            handle_portal_hub_onboarding_clipboard(portal, &key, &modifiers, shortcut_key)
+        {
+            return task;
+        }
         return handle_dialog_keyboard(portal, &key, &modifiers);
     }
 
@@ -330,6 +342,122 @@ fn handle_configured_actions(
         }
     }
     None
+}
+
+#[derive(Debug, Clone)]
+struct FocusedPortalHubInput {
+    field: PortalHubOnboardingField,
+    text: String,
+}
+
+#[derive(Default)]
+struct FocusedPortalHubInputOperation {
+    focused_field: Option<PortalHubOnboardingField>,
+    inputs: Vec<FocusedPortalHubInput>,
+}
+
+impl Operation<Option<FocusedPortalHubInput>> for FocusedPortalHubInputOperation {
+    fn traverse(
+        &mut self,
+        operate: &mut dyn FnMut(&mut dyn Operation<Option<FocusedPortalHubInput>>),
+    ) {
+        operate(self);
+    }
+
+    fn text_input(&mut self, id: Option<&Id>, _bounds: Rectangle, state: &mut dyn TextInput) {
+        let Some(field) = id.and_then(portal_hub_onboarding_field_from_id) else {
+            return;
+        };
+
+        self.inputs.push(FocusedPortalHubInput {
+            field,
+            text: state.text().to_string(),
+        });
+    }
+
+    fn focusable(&mut self, id: Option<&Id>, _bounds: Rectangle, state: &mut dyn Focusable) {
+        let Some(field) = id.and_then(portal_hub_onboarding_field_from_id) else {
+            return;
+        };
+
+        if state.is_focused() {
+            self.focused_field = Some(field);
+        }
+    }
+
+    fn finish(&self) -> Outcome<Option<FocusedPortalHubInput>> {
+        let focused = self.focused_field.and_then(|field| {
+            self.inputs
+                .iter()
+                .find(|input| input.field == field)
+                .cloned()
+        });
+        Outcome::Some(focused)
+    }
+}
+
+fn handle_portal_hub_onboarding_clipboard(
+    portal: &Portal,
+    key: &Key,
+    modifiers: &keyboard::Modifiers,
+    shortcut_key: Option<char>,
+) -> Option<Task<Message>> {
+    if !matches!(portal.dialogs.active(), ActiveDialog::PortalHubOnboarding) {
+        return None;
+    }
+    if !is_portal_hub_clipboard_modifier(*modifiers) {
+        return None;
+    }
+
+    let shortcut = shortcut_key.or_else(|| character_shortcut_key(key))?;
+
+    match shortcut.to_ascii_lowercase() {
+        'c' => Some(
+            iced::advanced::widget::operate(FocusedPortalHubInputOperation::default())
+                .and_then(|input| iced::clipboard::write::<Message>(input.text)),
+        ),
+        'v' => Some(
+            iced::advanced::widget::operate(FocusedPortalHubInputOperation::default()).then(
+                |focused| {
+                    let Some(focused) = focused else {
+                        return Task::none();
+                    };
+                    iced::clipboard::read().map(move |contents| {
+                        let Some(contents) = contents else {
+                            return Message::Noop;
+                        };
+                        Message::Ui(match focused.field {
+                            PortalHubOnboardingField::Host => {
+                                UiMessage::PortalHubHostChanged(contents)
+                            }
+                            PortalHubOnboardingField::WebPort => {
+                                UiMessage::PortalHubWebPortChanged(contents)
+                            }
+                            PortalHubOnboardingField::WebUrl => {
+                                UiMessage::PortalHubWebUrlChanged(contents)
+                            }
+                        })
+                    })
+                },
+            ),
+        ),
+        _ => None,
+    }
+}
+
+fn is_portal_hub_clipboard_modifier(modifiers: keyboard::Modifiers) -> bool {
+    modifiers.command() || modifiers.logo()
+}
+
+fn character_shortcut_key(key: &Key) -> Option<char> {
+    let Key::Character(character) = key else {
+        return None;
+    };
+
+    let mut chars = character.chars();
+    let shortcut = chars.next()?;
+
+    chars.next().is_none().then_some(shortcut)
 }
 
 fn shift_modified_key(key: &Key) -> Key {
@@ -970,4 +1098,28 @@ fn handle_sftp_keyboard(
         _ => {}
     }
     Task::none()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn portal_hub_clipboard_modifier_accepts_platform_command() {
+        assert!(is_portal_hub_clipboard_modifier(
+            keyboard::Modifiers::COMMAND
+        ));
+    }
+
+    #[test]
+    fn portal_hub_clipboard_modifier_accepts_super_on_linux() {
+        assert!(is_portal_hub_clipboard_modifier(keyboard::Modifiers::LOGO));
+    }
+
+    #[test]
+    fn portal_hub_clipboard_modifier_rejects_shift_only() {
+        assert!(!is_portal_hub_clipboard_modifier(
+            keyboard::Modifiers::SHIFT
+        ));
+    }
 }

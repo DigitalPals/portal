@@ -1038,8 +1038,10 @@ web_url = "https://hub.example.test"
 
     #[test]
     fn portal_hub_full_tailscale_url_in_web_url_field_is_canonicalized() {
-        let mut settings = PortalHubSettings::default();
-        settings.host = "portal-hub.risk-bull.ts.net".to_string();
+        let mut settings = PortalHubSettings {
+            host: "portal-hub.risk-bull.ts.net".to_string(),
+            ..Default::default()
+        };
 
         settings.apply_web_url_input("https://portal-hub.risk-bull.ts.net/".to_string());
 
