@@ -146,8 +146,9 @@ fn settings_tabs(
             .map(|item| settings_tab_button(*item, active_tab, theme, fonts))
             .collect(),
     )
-    .spacing(10)
-    .padding(4);
+    .spacing(8)
+    .padding(4)
+    .width(Fill);
 
     let tab_bar = container(controls)
         .padding(6)
@@ -161,12 +162,7 @@ fn settings_tabs(
             ..Default::default()
         });
 
-    scrollable(tab_bar)
-        .direction(scrollable::Direction::Horizontal(
-            scrollable::Scrollbar::new().width(3).scroller_width(3),
-        ))
-        .width(Fill)
-        .into()
+    tab_bar.width(Fill).into()
 }
 
 #[derive(Clone, Copy)]
@@ -194,24 +190,10 @@ fn settings_tab_button(
         theme.text_secondary
     };
 
-    let indicator = container(Space::new().width(Length::Fixed(34.0)).height(3)).style(move |_| {
-        container::Style {
-            background: Some(if selected {
-                theme.focus_ring.into()
-            } else {
-                iced::Color::TRANSPARENT.into()
-            }),
-            border: iced::Border {
-                radius: 2.0.into(),
-                ..Default::default()
-            },
-            ..Default::default()
-        }
-    });
-
     button(
         container(
-            column![
+            row![
+                Space::new().width(Fill),
                 row![
                     icon_with_color(item.icon, 18, icon_color),
                     text(item.label)
@@ -221,17 +203,17 @@ fn settings_tab_button(
                 ]
                 .spacing(8)
                 .align_y(Alignment::Center),
-                indicator,
+                Space::new().width(Fill),
             ]
-            .spacing(8)
-            .align_x(Alignment::Center),
+            .align_y(Alignment::Center),
         )
-        .width(Length::Fixed(128.0))
+        .width(Fill)
         .height(Length::Fixed(56.0))
         .align_x(Alignment::Center)
         .align_y(Alignment::Center),
     )
     .padding(0)
+    .width(Length::FillPortion(1))
     .style(move |_theme, status| {
         let background = match (selected, status) {
             (true, _) => Some(theme.selected.into()),

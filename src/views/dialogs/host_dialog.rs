@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use crate::config::hosts::default_username;
 use crate::config::{AuthMethod, Host, PortForward, PortForwardKind, Protocol};
-use crate::hub::vault::VaultKey;
+use crate::hub::vault::{VaultKey, VaultSecret};
 use crate::message::{DialogMessage, HostDialogField, Message};
 use crate::theme::{BORDER_RADIUS, Theme};
 use crate::validation::{validate_hostname, validate_port, validate_username};
@@ -47,6 +47,7 @@ pub struct HostDialogState {
     pub key_source: KeySourceChoice,
     pub key_path: String,
     pub vault_key_id: Option<Uuid>,
+    pub vnc_password_id: Option<Uuid>,
     pub agent_forwarding: bool,
     pub portal_hub_enabled: bool,
     pub tags: String,
@@ -65,6 +66,36 @@ pub struct HostDialogState {
 pub struct VaultKeyOption {
     pub id: Uuid,
     pub label: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VncPasswordOption {
+    pub id: Option<Uuid>,
+    pub label: String,
+}
+
+impl VncPasswordOption {
+    fn ask_every_time() -> Self {
+        Self {
+            id: None,
+            label: "Ask every time".to_string(),
+        }
+    }
+}
+
+impl From<&VaultSecret> for VncPasswordOption {
+    fn from(secret: &VaultSecret) -> Self {
+        Self {
+            id: Some(secret.id),
+            label: secret.name.clone(),
+        }
+    }
+}
+
+impl std::fmt::Display for VncPasswordOption {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.label)
+    }
 }
 
 impl From<&VaultKey> for VaultKeyOption {
@@ -285,6 +316,7 @@ impl HostDialogState {
             key_source: KeySourceChoice::Local,
             key_path: String::new(),
             vault_key_id: None,
+            vnc_password_id: None,
             agent_forwarding: false,
             portal_hub_enabled,
             tags: String::new(),
@@ -328,6 +360,7 @@ impl HostDialogState {
                 AuthMethod::PublicKey { vault_key_id, .. } => *vault_key_id,
                 _ => None,
             },
+            vnc_password_id: host.vnc_password_id,
             agent_forwarding: host.agent_forwarding,
             portal_hub_enabled: host.portal_hub_enabled,
             tags: host.tags.join(", "),
@@ -462,6 +495,11 @@ impl HostDialogState {
         } else {
             None
         };
+        let vnc_password_id = if protocol == Protocol::Vnc {
+            self.vnc_password_id
+        } else {
+            None
+        };
 
         let port_forwards = if protocol == Protocol::Ssh {
             self.port_forwards.clone()
@@ -477,6 +515,7 @@ impl HostDialogState {
             username,
             protocol,
             vnc_port,
+            vnc_password_id,
             auth,
             agent_forwarding,
             port_forwards,
@@ -513,6 +552,7 @@ pub fn host_dialog_view(
     state: &HostDialogState,
     theme: Theme,
     vault_keys: Vec<VaultKeyOption>,
+    vault_vnc_passwords: Vec<VncPasswordOption>,
 ) -> Element<'static, Message> {
     let title = if state.editing_id.is_some() {
         "Edit Host"
@@ -528,6 +568,7 @@ pub fn host_dialog_view(
     let key_path_value = state.key_path.clone();
     let key_source = state.key_source;
     let selected_vault_key_id = state.vault_key_id;
+    let selected_vnc_password_id = state.vnc_password_id;
     let agent_forwarding = state.agent_forwarding;
     let portal_hub_enabled = state.portal_hub_enabled;
     let tags_value = state.tags.clone();
@@ -537,6 +578,9 @@ pub fn host_dialog_view(
     let is_vnc = protocol == ProtocolChoice::Vnc;
     let is_valid = state.is_valid();
     let username_placeholder = std::env::var("USER").unwrap_or_default();
+    let mut vnc_password_options = Vec::with_capacity(vault_vnc_passwords.len() + 1);
+    vnc_password_options.push(VncPasswordOption::ask_every_time());
+    vnc_password_options.extend(vault_vnc_passwords);
 
     // Get validation errors
     let name_error = state.get_error("name").cloned();
@@ -772,6 +816,33 @@ pub fn host_dialog_view(
         }
     } else {
         column![].into()
+    };
+
+    let vnc_password_section = {
+        let selected = vnc_password_options
+            .iter()
+            .find(|option| option.id == selected_vnc_password_id)
+            .cloned()
+            .unwrap_or_else(VncPasswordOption::ask_every_time);
+
+        column![
+            section_heading("VNC", theme),
+            text("Default password")
+                .size(12)
+                .color(theme.text_secondary),
+            pick_list(vnc_password_options, Some(selected), |choice| {
+                Message::Dialog(DialogMessage::FieldChanged(
+                    HostDialogField::VncPasswordId,
+                    choice.id.map(|id| id.to_string()).unwrap_or_default(),
+                ))
+            })
+            .width(Length::Fill)
+            .padding(8)
+            .style(dialog_pick_list_style(theme))
+            .menu_style(dialog_pick_list_menu_style(theme)),
+        ]
+        .spacing(6)
+        .width(Length::FillPortion(1))
     };
 
     let tags_input = column![
@@ -1115,7 +1186,10 @@ pub fn host_dialog_view(
     .width(Length::FillPortion(1));
 
     let top_sections: Element<'static, Message> = if is_vnc {
-        connection_section.width(Length::Fill).into()
+        row![connection_section, vnc_password_section]
+            .spacing(20)
+            .align_y(Alignment::Start)
+            .into()
     } else {
         row![connection_section, ssh_section]
             .spacing(20)

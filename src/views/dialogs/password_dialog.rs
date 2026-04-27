@@ -34,6 +34,8 @@ pub struct PasswordDialogState {
     pub username: String,
     /// The password being entered (sensitive - should be cleared after use)
     pub password: SecretString,
+    /// Whether to save the VNC password in the encrypted vault after submit
+    pub save_to_vault: bool,
     /// Error message to display if authentication failed
     pub error: Option<String>,
     /// The host ID for resuming the connection
@@ -68,6 +70,7 @@ impl PasswordDialogState {
             port,
             username,
             password: SecretString::from(String::new()),
+            save_to_vault: false,
             error: None,
             host_id,
             is_ssh: true,
@@ -92,6 +95,7 @@ impl PasswordDialogState {
             port,
             username,
             password: SecretString::from(String::new()),
+            save_to_vault: false,
             error: None,
             host_id,
             is_ssh: false,
@@ -114,6 +118,7 @@ impl PasswordDialogState {
             port,
             username,
             password: SecretString::from(String::new()),
+            save_to_vault: false,
             error: None,
             host_id,
             is_ssh: false,
@@ -232,9 +237,18 @@ pub fn password_dialog_view(
         password_label.into(),
         Space::new().height(4).into(),
         password_input.into(),
-        Space::new().height(24).into(),
-        button_row.into(),
     ]);
+
+    if state.connection_kind == PasswordConnectionKind::Vnc {
+        let save_checkbox = iced::widget::checkbox(state.save_to_vault)
+            .label("Save password to vault")
+            .on_toggle(|value| Message::Dialog(DialogMessage::PasswordSaveToVaultToggled(value)))
+            .spacing(8);
+        content_items.push(Space::new().height(8).into());
+        content_items.push(save_checkbox.into());
+    }
+
+    content_items.extend([Space::new().height(24).into(), button_row.into()]);
 
     let content = column(content_items)
         .spacing(4)

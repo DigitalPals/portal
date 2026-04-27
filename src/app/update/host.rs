@@ -229,6 +229,7 @@ mod tests {
             auth: AuthMethod::Agent,
             protocol: Protocol::Ssh,
             vnc_port: None,
+            vnc_password_id: None,
             agent_forwarding: false,
             port_forwards: Vec::new(),
             portal_hub_enabled: true,

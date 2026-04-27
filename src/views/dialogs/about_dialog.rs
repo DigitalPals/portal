@@ -1,6 +1,6 @@
-//! About dialog showing application info and credits
+//! About dialog showing application info
 
-use iced::widget::{Column, Space, button, column, container, row, scrollable, text};
+use iced::widget::{Space, button, column, container, text};
 use iced::{Alignment, Element, Font, Length};
 
 use crate::message::{DialogMessage, Message};
@@ -59,51 +59,6 @@ pub fn about_dialog_view(
         .size(fonts.button_small)
         .color(theme.text_secondary);
 
-    // Vibe coded note
-    let vibe_text = row![
-        text("Proudly vibe coded with ")
-            .size(fonts.label)
-            .color(theme.text_muted),
-        text("Claude Code")
-            .size(fonts.label)
-            .color(theme.text_primary),
-        text(" & ").size(fonts.label).color(theme.text_muted),
-        text("Codex CLI")
-            .size(fonts.label)
-            .color(theme.text_primary),
-    ];
-
-    // Credits section
-    let credits_title = text("Built with")
-        .size(fonts.body)
-        .color(theme.text_primary);
-
-    let credits_list = vec![
-        ("Iced", "Cross-platform GUI framework"),
-        ("Alacritty Terminal", "Terminal emulation"),
-        ("Russh", "SSH protocol implementation"),
-        ("vnc-rs", "VNC protocol implementation"),
-        ("Tokio", "Async runtime"),
-    ];
-
-    let credits_items: Vec<Element<'static, Message>> = credits_list
-        .into_iter()
-        .map(|(name, desc)| {
-            row![
-                text(name)
-                    .size(fonts.button_small)
-                    .color(theme.text_primary),
-                text(" - ").size(fonts.button_small).color(theme.text_muted),
-                text(desc)
-                    .size(fonts.button_small)
-                    .color(theme.text_secondary),
-            ]
-            .into()
-        })
-        .collect();
-
-    let credits_column = Column::with_children(credits_items).spacing(6);
-
     // Close button
     let close_btn = button(text("Close").size(fonts.body).color(theme.text_primary))
         .style(secondary_button_style(theme))
@@ -125,14 +80,6 @@ pub fn about_dialog_view(
         container(author_text)
             .width(Length::Fill)
             .align_x(Alignment::Center),
-        Space::new().height(12),
-        container(vibe_text)
-            .width(Length::Fill)
-            .align_x(Alignment::Center),
-        Space::new().height(20),
-        credits_title,
-        Space::new().height(8),
-        scrollable(credits_column).height(Length::Shrink),
         Space::new().height(20),
         container(close_btn)
             .width(Length::Fill)

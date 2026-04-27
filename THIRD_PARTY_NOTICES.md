@@ -1,5 +1,22 @@
 # Third-Party Notices
 
+## Application runtime dependencies
+
+Portal uses third-party packages as part of the application runtime. This
+notice records the primary runtime packages that were previously surfaced in
+the About dialog; redistribution must also comply with the complete dependency
+license set in `Cargo.lock`.
+
+| Package | Version | License | Project |
+| --- | --- | --- | --- |
+| Iced | 0.14.0 | MIT | https://github.com/iced-rs/iced |
+| Alacritty Terminal | 0.26.0 | Apache-2.0 | https://github.com/alacritty/alacritty |
+| Russh | 0.56.0 | Apache-2.0 | https://github.com/warp-tech/russh |
+| vnc-rs | 0.5.2 | MIT OR Apache-2.0 | https://github.com/HsuJv/vnc-rs |
+| Tokio | 1.52.1 | MIT | https://github.com/tokio-rs/tokio |
+
+Vendored license texts for `vnc-rs` are included under `vendor/vnc-rs/`.
+
 ## Ghostty sprite renderer reference
 
 Parts of Portal's built-in terminal sprite rendering are derived from the

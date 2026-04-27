@@ -228,6 +228,7 @@ impl SshTestEnvironment {
             auth,
             protocol: portal::config::Protocol::Ssh,
             vnc_port: None,
+            vnc_password_id: None,
             port_forwards: Vec::new(),
             portal_hub_enabled: false,
             group_id: None,

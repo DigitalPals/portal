@@ -334,6 +334,9 @@ pub struct Host {
     /// VNC port (defaults to 5900 when protocol is VNC)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vnc_port: Option<u16>,
+    /// Encrypted vault secret used as the default VNC password.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vnc_password_id: Option<Uuid>,
     #[serde(default)]
     pub auth: AuthMethod,
     /// Enable SSH agent forwarding for this host

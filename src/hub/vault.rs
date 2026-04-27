@@ -28,6 +28,8 @@ const DEVICE_SECRET_LEN: usize = 32;
 pub struct HubVaultConfig {
     #[serde(default)]
     pub keys: Vec<VaultKey>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub secrets: Vec<VaultSecret>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,6 +45,22 @@ pub struct VaultKey {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub encryption: VaultEncryption,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VaultSecret {
+    pub id: Uuid,
+    pub name: String,
+    pub kind: VaultSecretKind,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub encryption: VaultEncryption,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum VaultSecretKind {
+    VncPassword,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -93,6 +111,14 @@ impl HubVaultConfig {
     pub fn find_key_mut(&mut self, id: Uuid) -> Option<&mut VaultKey> {
         self.keys.iter_mut().find(|key| key.id == id)
     }
+
+    pub fn find_secret(&self, id: Uuid) -> Option<&VaultSecret> {
+        self.secrets.iter().find(|secret| secret.id == id)
+    }
+
+    pub fn find_secret_mut(&mut self, id: Uuid) -> Option<&mut VaultSecret> {
+        self.secrets.iter_mut().find(|secret| secret.id == id)
+    }
 }
 
 #[allow(dead_code)]
@@ -120,18 +146,7 @@ pub fn encrypt_private_key(
     private_key: &[u8],
     passphrase: &SecretString,
 ) -> Result<VaultKey, String> {
-    let mut salt = [0u8; SALT_LEN];
-    let mut nonce = [0u8; NONCE_LEN];
-    OsRng.fill_bytes(&mut salt);
-    OsRng.fill_bytes(&mut nonce);
-
-    let kdf = default_kdf();
-    let key = derive_key(passphrase.expose_secret().as_bytes(), &salt, &kdf)?;
-    let cipher = XChaCha20Poly1305::new_from_slice(&key)
-        .map_err(|_| "failed to initialize vault cipher".to_string())?;
-    let ciphertext = cipher
-        .encrypt(XNonce::from_slice(&nonce), private_key)
-        .map_err(|_| "failed to encrypt private key".to_string())?;
+    let encryption = encrypt_bytes(private_key, passphrase, "private key")?;
     let now = Utc::now();
 
     let metadata = private_key_metadata(private_key, None).ok().flatten();
@@ -144,13 +159,76 @@ pub fn encrypt_private_key(
         algorithm: metadata.map(|value| value.algorithm),
         created_at: now,
         updated_at: now,
-        encryption: VaultEncryption {
-            kdf,
-            salt_base64: BASE64.encode(&salt),
-            cipher: CIPHER.to_string(),
-            nonce_base64: BASE64.encode(&nonce),
-            ciphertext_base64: BASE64.encode(&ciphertext),
-        },
+        encryption,
+    })
+}
+
+pub fn encrypt_secret(
+    name: String,
+    kind: VaultSecretKind,
+    secret: &SecretString,
+    passphrase: &SecretString,
+) -> Result<VaultSecret, String> {
+    let now = Utc::now();
+    Ok(VaultSecret {
+        id: Uuid::new_v4(),
+        name,
+        kind,
+        created_at: now,
+        updated_at: now,
+        encryption: encrypt_bytes(secret.expose_secret().as_bytes(), passphrase, "secret")?,
+    })
+}
+
+pub fn upsert_vnc_password(
+    vault: &mut HubVaultConfig,
+    existing_id: Option<Uuid>,
+    name: String,
+    password: &SecretString,
+    passphrase: &SecretString,
+) -> Result<Uuid, String> {
+    let replacement = encrypt_secret(name, VaultSecretKind::VncPassword, password, passphrase)?;
+    let id = replacement.id;
+
+    if let Some(existing_id) = existing_id {
+        if let Some(secret) = vault.find_secret_mut(existing_id) {
+            *secret = VaultSecret {
+                id: existing_id,
+                created_at: secret.created_at,
+                ..replacement
+            };
+            return Ok(existing_id);
+        }
+    }
+
+    vault.secrets.push(replacement);
+    Ok(id)
+}
+
+fn encrypt_bytes(
+    plaintext: &[u8],
+    passphrase: &SecretString,
+    label: &str,
+) -> Result<VaultEncryption, String> {
+    let mut salt = [0u8; SALT_LEN];
+    let mut nonce = [0u8; NONCE_LEN];
+    OsRng.fill_bytes(&mut salt);
+    OsRng.fill_bytes(&mut nonce);
+
+    let kdf = default_kdf();
+    let key = derive_key(passphrase.expose_secret().as_bytes(), &salt, &kdf)?;
+    let cipher = XChaCha20Poly1305::new_from_slice(&key)
+        .map_err(|_| "failed to initialize vault cipher".to_string())?;
+    let ciphertext = cipher
+        .encrypt(XNonce::from_slice(&nonce), plaintext)
+        .map_err(|_| format!("failed to encrypt vault {}", label))?;
+
+    Ok(VaultEncryption {
+        kdf,
+        salt_base64: BASE64.encode(&salt),
+        cipher: CIPHER.to_string(),
+        nonce_base64: BASE64.encode(&nonce),
+        ciphertext_base64: BASE64.encode(&ciphertext),
     })
 }
 
@@ -188,21 +266,33 @@ pub fn decrypt_private_key(
     key: &VaultKey,
     passphrase: &SecretString,
 ) -> Result<SecretString, String> {
-    if key.encryption.cipher != CIPHER {
-        return Err(format!(
-            "unsupported vault cipher: {}",
-            key.encryption.cipher
-        ));
+    decrypt_encryption(&key.encryption, passphrase, "key")
+}
+
+pub fn decrypt_secret(
+    secret: &VaultSecret,
+    passphrase: &SecretString,
+) -> Result<SecretString, String> {
+    decrypt_encryption(&secret.encryption, passphrase, "secret")
+}
+
+fn decrypt_encryption(
+    encryption: &VaultEncryption,
+    passphrase: &SecretString,
+    label: &str,
+) -> Result<SecretString, String> {
+    if encryption.cipher != CIPHER {
+        return Err(format!("unsupported vault cipher: {}", encryption.cipher));
     }
 
     let salt = BASE64
-        .decode(key.encryption.salt_base64.as_bytes())
+        .decode(encryption.salt_base64.as_bytes())
         .map_err(|error| format!("invalid vault salt: {}", error))?;
     let nonce = BASE64
-        .decode(key.encryption.nonce_base64.as_bytes())
+        .decode(encryption.nonce_base64.as_bytes())
         .map_err(|error| format!("invalid vault nonce: {}", error))?;
     let ciphertext = BASE64
-        .decode(key.encryption.ciphertext_base64.as_bytes())
+        .decode(encryption.ciphertext_base64.as_bytes())
         .map_err(|error| format!("invalid vault ciphertext: {}", error))?;
     if nonce.len() != NONCE_LEN {
         return Err("invalid vault nonce length".to_string());
@@ -211,7 +301,7 @@ pub fn decrypt_private_key(
     let derived = derive_key(
         passphrase.expose_secret().as_bytes(),
         &salt,
-        &key.encryption.kdf,
+        &encryption.kdf,
     )?;
     let cipher = XChaCha20Poly1305::new_from_slice(&derived)
         .map_err(|_| "failed to initialize vault cipher".to_string())?;
@@ -221,7 +311,7 @@ pub fn decrypt_private_key(
             "failed to decrypt vault key; check the OS keychain vault secret".to_string()
         })?;
     let text = String::from_utf8(plaintext)
-        .map_err(|_| "decrypted vault key is not valid UTF-8".to_string())?;
+        .map_err(|_| format!("decrypted vault {} is not valid UTF-8", label))?;
     Ok(SecretString::from(text))
 }
 
@@ -235,12 +325,22 @@ pub fn load_decrypted_private_key(id: Uuid) -> Result<SecretString, String> {
     decrypt_private_key(key, &vault_secret)
 }
 
+pub fn load_decrypted_secret(id: Uuid) -> Result<SecretString, String> {
+    let vault = HubVaultConfig::load()?;
+    let secret = vault
+        .find_secret(id)
+        .ok_or_else(|| format!("vault secret {} was not found", id))?;
+    let vault_secret =
+        load_stored_vault_secret()?.ok_or_else(|| "Portal Hub vault is locked".to_string())?;
+    decrypt_secret(secret, &vault_secret)
+}
+
 pub fn load_or_create_vault_secret(vault: &HubVaultConfig) -> Result<SecretString, String> {
     if let Some(vault_secret) = load_stored_vault_secret()? {
         return Ok(vault_secret);
     }
 
-    if !vault.keys.is_empty() {
+    if !vault.keys.is_empty() || !vault.secrets.is_empty() {
         return Err(
             "Portal vault is locked because no vault secret was found in the OS keychain"
                 .to_string(),
@@ -340,6 +440,28 @@ mod tests {
         .unwrap();
 
         assert!(decrypt_private_key(&key, &SecretString::from("wrong")).is_err());
+    }
+
+    #[test]
+    fn vault_secret_encrypts_and_decrypts_vnc_password() {
+        let passphrase = SecretString::from("correct horse battery staple");
+        let password = SecretString::from("screen-sharing-password");
+        let secret = encrypt_secret(
+            "VNC password for Lab Mac".to_string(),
+            VaultSecretKind::VncPassword,
+            &password,
+            &passphrase,
+        )
+        .unwrap();
+
+        assert_ne!(
+            secret.encryption.ciphertext_base64,
+            "screen-sharing-password"
+        );
+        assert_eq!(secret.kind, VaultSecretKind::VncPassword);
+
+        let decrypted = decrypt_secret(&secret, &passphrase).unwrap();
+        assert_eq!(decrypted.expose_secret(), password.expose_secret());
     }
 
     #[test]

@@ -309,6 +309,18 @@ impl Portal {
     pub(super) fn connect_vnc_host(&mut self, host: &Host) -> Task<Message> {
         let port = host.effective_vnc_port();
 
+        if let Some(password_id) = host.vnc_password_id {
+            match crate::hub::vault::load_decrypted_secret(password_id) {
+                Ok(password) => return self.connect_vnc_host_with_password(host, password),
+                Err(error) => {
+                    self.toast_manager.push(Toast::warning(format!(
+                        "Could not load saved VNC password: {}",
+                        error
+                    )));
+                }
+            }
+        }
+
         // VNC (especially macOS ARD) always needs a password — prompt for it
         let password_dialog = PasswordDialogState::new_vnc(
             host.name.clone(),

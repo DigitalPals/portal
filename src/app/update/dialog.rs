@@ -83,6 +83,13 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                     HostDialogField::VaultKeyId => {
                         dialog_state.vault_key_id = value.parse().ok();
                     }
+                    HostDialogField::VncPasswordId => {
+                        dialog_state.vnc_password_id = if value.trim().is_empty() {
+                            None
+                        } else {
+                            value.parse().ok()
+                        };
+                    }
                     HostDialogField::AgentForwarding => {
                         dialog_state.agent_forwarding =
                             matches!(value.trim().to_lowercase().as_str(), "true" | "1" | "yes");
@@ -313,6 +320,12 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
             }
             Task::none()
         }
+        DialogMessage::PasswordSaveToVaultToggled(save) => {
+            if let Some(dialog) = portal.dialogs.password_mut() {
+                dialog.save_to_vault = save;
+            }
+            Task::none()
+        }
         DialogMessage::PasswordSubmit => {
             if let Some(dialog) = portal.dialogs.password_mut() {
                 let password = std::mem::take(&mut dialog.password);
@@ -320,6 +333,7 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                 let connection_kind = dialog.connection_kind;
                 let sftp_context = dialog.sftp_context;
                 let dialog_username = dialog.username.clone();
+                let save_to_vault = dialog.save_to_vault;
                 dialog.error = None;
 
                 // Find the host and start connection with password
@@ -362,6 +376,26 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                             }
                         }
                         PasswordConnectionKind::Vnc => {
+                            if save_to_vault {
+                                if let Err(error) =
+                                    save_vnc_password_to_vault(portal, host_id, &host, &password)
+                                {
+                                    let mut retry_dialog =
+                                        crate::views::dialogs::password_dialog::PasswordDialogState::new_vnc(
+                                            host.name.clone(),
+                                            host.hostname.clone(),
+                                            host.effective_vnc_port(),
+                                            dialog_username.clone(),
+                                            host_id,
+                                        );
+                                    retry_dialog.password = password;
+                                    retry_dialog.save_to_vault = true;
+                                    retry_dialog.error = Some(error);
+                                    portal.dialogs.open_password(retry_dialog);
+                                    return Task::none();
+                                }
+                            }
+
                             // Use username from dialog (user may have edited it)
                             if host.username != dialog_username {
                                 let mut host_with_username = (*host).clone();
@@ -564,6 +598,7 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                     username,
                     protocol: crate::config::Protocol::Ssh,
                     vnc_port: None,
+                    vnc_password_id: None,
                     auth,
                     agent_forwarding: false,
                     port_forwards: Vec::new(),
@@ -594,6 +629,40 @@ fn preserve_existing_host_metadata(mut host: Host, existing: &Host) -> Host {
     host
 }
 
+fn save_vnc_password_to_vault(
+    portal: &mut Portal,
+    host_id: Uuid,
+    host: &Host,
+    password: &SecretString,
+) -> Result<(), String> {
+    if password.expose_secret().is_empty() {
+        return Err("Enter a VNC password before saving it to the vault".to_string());
+    }
+
+    let vault_secret = crate::hub::vault::load_or_create_vault_secret(&portal.config.vault)?;
+    let secret_id = crate::hub::vault::upsert_vnc_password(
+        &mut portal.config.vault,
+        host.vnc_password_id,
+        format!("VNC password for {}", host.name),
+        password,
+        &vault_secret,
+    )?;
+    portal.config.vault.save()?;
+
+    if let Some(stored_host) = portal.config.hosts.find_host_mut(host_id) {
+        stored_host.vnc_password_id = Some(secret_id);
+        stored_host.updated_at = chrono::Utc::now();
+        portal
+            .config
+            .hosts
+            .save()
+            .map_err(|error| error.to_string())?;
+    }
+
+    super::ui::settings::queue_portal_hub_local_sync(portal);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use chrono::{Duration, Utc};
@@ -612,6 +681,7 @@ mod tests {
             username: "root".to_string(),
             protocol: Protocol::Ssh,
             vnc_port: None,
+            vnc_password_id: None,
             auth: AuthMethod::Agent,
             agent_forwarding: false,
             port_forwards: Vec::new(),

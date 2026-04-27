@@ -225,6 +225,7 @@ fn resolve_host(alias: &str, blocks: &[HostBlock]) -> Host {
         username,
         protocol: Protocol::Ssh,
         vnc_port: None,
+        vnc_password_id: None,
         auth,
         agent_forwarding: false,
         port_forwards: Vec::new(),

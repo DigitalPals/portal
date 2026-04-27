@@ -922,7 +922,15 @@ impl Portal {
                     .iter()
                     .map(crate::views::dialogs::host_dialog::VaultKeyOption::from)
                     .collect();
-                let dialog = host_dialog_view(dialog_state, theme, vault_keys);
+                let vault_vnc_passwords = self
+                    .config
+                    .vault
+                    .secrets
+                    .iter()
+                    .filter(|secret| secret.kind == crate::hub::vault::VaultSecretKind::VncPassword)
+                    .map(crate::views::dialogs::host_dialog::VncPasswordOption::from)
+                    .collect();
+                let dialog = host_dialog_view(dialog_state, theme, vault_keys, vault_vnc_passwords);
                 stack![main_layout, dialog].into()
             }
             ActiveDialog::About(about_state) => {

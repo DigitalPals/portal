@@ -72,6 +72,7 @@ pub enum HostDialogField {
     KeySource,
     KeyPath,
     VaultKeyId,
+    VncPasswordId,
     AgentForwarding,
     PortalHubEnabled,
     Tags,
@@ -312,6 +313,8 @@ pub enum DialogMessage {
     PasswordUsernameChanged(String),
     /// Password dialog: password text changed
     PasswordChanged(SecretString),
+    /// Password dialog: save VNC password in the vault
+    PasswordSaveToVaultToggled(bool),
     /// Password dialog: user submitted password
     PasswordSubmit,
     /// Password dialog: user cancelled

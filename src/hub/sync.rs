@@ -841,6 +841,7 @@ mod tests {
             username: "john".to_string(),
             protocol: Protocol::Ssh,
             vnc_port: None,
+            vnc_password_id: None,
             auth: AuthMethod::Agent,
             agent_forwarding: false,
             port_forwards: Vec::new(),
