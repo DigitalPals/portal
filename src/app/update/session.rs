@@ -673,6 +673,9 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                             Instant::now(),
                         ));
                     }
+                    if clean {
+                        finalize_disconnection(portal, session_id);
+                    }
                     return close_task;
                 }
 
