@@ -5,5 +5,6 @@ pub mod host_dialog;
 pub mod host_key_dialog;
 pub mod passphrase_dialog;
 pub mod password_dialog;
+pub mod portal_hub_dialogs;
 pub mod quick_connect_dialog;
 pub mod session_choice_dialog;

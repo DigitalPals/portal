@@ -1,7 +1,7 @@
 //! UI state message handlers
 
 mod keyboard;
-mod settings;
+pub(crate) mod settings;
 
 use iced::Task;
 
@@ -67,18 +67,37 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
         | UiMessage::PortalHubEnabled(_)
         | UiMessage::PortalHubDefaultForNewHosts(_)
         | UiMessage::PortalHubHostChanged(_)
+        | UiMessage::PortalHubWebPortChanged(_)
         | UiMessage::PortalHubPortChanged(_)
         | UiMessage::PortalHubUsernameChanged(_)
         | UiMessage::PortalHubIdentityFileChanged(_)
         | UiMessage::PortalHubWebUrlChanged(_)
+        | UiMessage::PortalHubHostsSyncChanged(_)
+        | UiMessage::PortalHubSettingsSyncChanged(_)
+        | UiMessage::PortalHubSnippetsSyncChanged(_)
+        | UiMessage::PortalHubKeyVaultChanged(_)
+        | UiMessage::PortalHubDisableSyncRequested(_)
+        | UiMessage::PortalHubDisableSyncKeepData(_)
+        | UiMessage::PortalHubDisableSyncDeleteData(_)
+        | UiMessage::PortalHubDisableSyncDeleteDone(_, _)
+        | UiMessage::PortalHubOpenOnboarding
         | UiMessage::PortalHubCheckStatus
         | UiMessage::PortalHubStatusLoaded(_)
         | UiMessage::PortalHubAuthenticate
         | UiMessage::PortalHubAuthenticated(_)
+        | UiMessage::PortalHubLogout
+        | UiMessage::PortalHubLoggedOut(_)
         | UiMessage::PortalHubUploadLocalProfile
         | UiMessage::PortalHubUploadLocalProfileDone(_)
         | UiMessage::PortalHubPullProfile
-        | UiMessage::PortalHubPullProfileDone(_)) => settings::handle_settings_message(portal, msg),
+        | UiMessage::PortalHubPullProfileDone(_)
+        | UiMessage::PortalHubSyncNow
+        | UiMessage::PortalHubSyncDone(_)
+        | UiMessage::PortalHubConflictChoiceChanged(_, _)
+        | UiMessage::PortalHubResolveConflicts
+        | UiMessage::PortalHubResolveConflictsDone(_)) => {
+            settings::handle_settings_message(portal, msg)
+        }
         UiMessage::WindowResized(size) => {
             portal.ui.window_size = size;
             if !portal.ui.sidebar_manually_set {

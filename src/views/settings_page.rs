@@ -2,7 +2,6 @@
 
 use iced::widget::{
     Column, Row, Space, button, column, container, mouse_area, row, scrollable, slider, text,
-    text_input,
 };
 use iced::{Alignment, Element, Fill, Length};
 
@@ -12,6 +11,7 @@ use crate::config::settings::{
     VncSettings,
 };
 use crate::fonts::TerminalFont;
+use crate::hub::sync::PortalHubSyncService;
 use crate::message::{Message, SettingsTab, UiMessage};
 use crate::proxy::ProxyStatus;
 use crate::theme::{
@@ -40,8 +40,10 @@ pub struct SettingsPageContext {
     pub portal_hub_status_error: Option<String>,
     pub portal_hub_status_loading: bool,
     pub portal_hub_auth_user: Option<String>,
-    pub portal_hub_auth_error: Option<String>,
-    pub portal_hub_auth_loading: bool,
+    pub portal_hub_sync_loading: bool,
+    pub portal_hub_sync_error: Option<String>,
+    pub portal_hub_sync_status: Option<String>,
+    pub portal_hub_conflict_count: usize,
     /// Credential cache timeout in seconds (0 = disabled)
     pub credential_timeout: u64,
     pub security_audit_enabled: bool,
@@ -265,93 +267,7 @@ fn active_tab_sections(
                 vnc_settings_items(&context.vnc_settings, theme, fonts),
             ),
         ],
-        SettingsTab::PortalHub => vec![settings_section(
-            "Portal Hub",
-            theme,
-            fonts,
-            vec![
-                toggle_setting(
-                    "Use Portal Hub",
-                    "Master switch for hosts configured to use Portal Hub",
-                    context.portal_hub.enabled,
-                    |value| Message::Ui(UiMessage::PortalHubEnabled(value)),
-                    theme,
-                    fonts,
-                ),
-                toggle_setting(
-                    "Default for new SSH hosts",
-                    "Enable Portal Hub automatically when creating SSH hosts",
-                    context.portal_hub.default_for_new_ssh_hosts,
-                    |value| Message::Ui(UiMessage::PortalHubDefaultForNewHosts(value)),
-                    theme,
-                    fonts,
-                ),
-                text_setting(
-                    "Host / IP",
-                    "Tailscale name or IP address of the proxy",
-                    context.portal_hub.host.clone(),
-                    |value| Message::Ui(UiMessage::PortalHubHostChanged(value)),
-                    theme,
-                    fonts,
-                ),
-                text_setting(
-                    "Port",
-                    "SSH port for the proxy",
-                    context.portal_hub.port.to_string(),
-                    |value| Message::Ui(UiMessage::PortalHubPortChanged(value)),
-                    theme,
-                    fonts,
-                ),
-                text_setting(
-                    "Username",
-                    "SSH user on the proxy",
-                    context.portal_hub.username.clone(),
-                    |value| Message::Ui(UiMessage::PortalHubUsernameChanged(value)),
-                    theme,
-                    fonts,
-                ),
-                text_setting(
-                    "Identity file",
-                    "Optional key for authenticating to the proxy",
-                    context
-                        .portal_hub
-                        .identity_file
-                        .as_ref()
-                        .map(|path| path.to_string_lossy().to_string())
-                        .unwrap_or_default(),
-                    |value| Message::Ui(UiMessage::PortalHubIdentityFileChanged(value)),
-                    theme,
-                    fonts,
-                ),
-                text_setting(
-                    "Web URL",
-                    "HTTPS URL for Portal Hub account sign-in and sync",
-                    context.portal_hub.web_url.clone(),
-                    |value| Message::Ui(UiMessage::PortalHubWebUrlChanged(value)),
-                    theme,
-                    fonts,
-                ),
-                portal_hub_auth_setting(
-                    context.portal_hub_auth_user.clone(),
-                    context.portal_hub_auth_error.clone(),
-                    context.portal_hub_auth_loading,
-                    theme,
-                    fonts,
-                ),
-                portal_hub_sync_adoption_setting(
-                    context.portal_hub_auth_user.is_some(),
-                    theme,
-                    fonts,
-                ),
-                portal_hub_status_setting(
-                    context.portal_hub_status.clone(),
-                    context.portal_hub_status_error.clone(),
-                    context.portal_hub_status_loading,
-                    theme,
-                    fonts,
-                ),
-            ],
-        )],
+        SettingsTab::PortalHub => portal_hub_sections(&context, theme, fonts),
         SettingsTab::SecurityLogs => vec![settings_section(
             "Security & Logs",
             theme,
@@ -867,45 +783,11 @@ where
 
     let description_text = text(description).size(fonts.label).color(theme.text_muted);
 
-    let toggle_label = if enabled { "Enabled" } else { "Disabled" };
-    let toggle_color = if enabled {
-        theme.text_primary
-    } else {
-        theme.text_secondary
-    };
-
-    let toggle_button = button(
-        container(text(toggle_label).size(fonts.label).color(toggle_color))
-            .width(92)
-            .padding([7, 0])
-            .align_x(Alignment::Center)
-            .align_y(Alignment::Center),
-    )
-    .padding(0)
-    .style(move |_theme, status| {
-        let background = match (enabled, status) {
-            (true, _) => Some(theme.selected.into()),
-            (false, iced::widget::button::Status::Hovered) => Some(theme.hover.into()),
-            (false, _) => Some(theme.background.into()),
-        };
-        iced::widget::button::Style {
-            background,
-            text_color: toggle_color,
-            border: iced::Border {
-                radius: BORDER_RADIUS.into(),
-                width: 1.0,
-                color: if enabled { theme.accent } else { theme.border },
-            },
-            ..Default::default()
-        }
-    })
-    .on_press(on_toggle(!enabled));
-
     column![
         row![
             column![label_text, Space::new().height(4), description_text].spacing(0),
             Space::new().width(Length::Fill),
-            toggle_button,
+            switch_button(enabled, on_toggle, theme, fonts),
         ]
         .align_y(Alignment::Center),
     ]
@@ -1011,107 +893,313 @@ fn portal_hub_status_setting(
     .into()
 }
 
-fn portal_hub_auth_setting(
-    user: Option<String>,
-    error: Option<String>,
-    loading: bool,
+fn portal_hub_sections(
+    context: &SettingsPageContext,
+    theme: Theme,
+    fonts: ScaledFonts,
+) -> Vec<Element<'static, Message>> {
+    if context.portal_hub_auth_user.is_none() {
+        return vec![settings_section(
+            "Portal Hub",
+            theme,
+            fonts,
+            vec![portal_hub_intro_setting(theme, fonts)],
+        )];
+    }
+
+    vec![settings_section(
+        "Portal Hub",
+        theme,
+        fonts,
+        vec![
+            portal_hub_account_summary(context, theme, fonts),
+            portal_hub_service_toggles(&context.portal_hub, theme, fonts),
+            portal_hub_sync_status_setting(context, theme, fonts),
+            portal_hub_status_setting(
+                context.portal_hub_status.clone(),
+                context.portal_hub_status_error.clone(),
+                context.portal_hub_status_loading,
+                theme,
+                fonts,
+            ),
+        ],
+    )]
+}
+
+fn portal_hub_intro_setting(theme: Theme, fonts: ScaledFonts) -> Element<'static, Message> {
+    let start_button = small_settings_button("Set up Portal Hub", theme, fonts)
+        .on_press(Message::Ui(UiMessage::PortalHubOpenOnboarding));
+    column![
+        text("Portal Hub keeps SSH sessions alive through a private proxy, stores encrypted key vault items, and syncs hosts, settings, and snippets between devices.")
+            .size(fonts.body)
+            .color(theme.text_secondary),
+        Space::new().height(10),
+        row![start_button].align_y(Alignment::Center),
+    ]
+    .spacing(4)
+    .into()
+}
+
+fn portal_hub_account_summary(
+    context: &SettingsPageContext,
     theme: Theme,
     fonts: ScaledFonts,
 ) -> Element<'static, Message> {
-    let label_text = text("Account").size(fonts.body).color(theme.text_primary);
-    let description_text = text("Sign in through the Portal Hub web interface")
-        .size(fonts.label)
-        .color(theme.text_muted);
+    let user = context
+        .portal_hub_auth_user
+        .clone()
+        .unwrap_or_else(|| "Signed in".to_string());
+    let manage_button = small_settings_button("Edit setup", theme, fonts)
+        .on_press(Message::Ui(UiMessage::PortalHubOpenOnboarding));
+    let logout_button = small_settings_button("Logout", theme, fonts)
+        .on_press(Message::Ui(UiMessage::PortalHubLogout));
 
-    let status_text = if loading {
-        "Opening browser...".to_string()
-    } else if let Some(user) = user {
-        format!("Signed in as {}", user)
-    } else if let Some(error) = error.as_ref() {
+    row![
+        column![
+            text("Account").size(fonts.body).color(theme.text_primary),
+            text(user).size(fonts.label).color(theme.text_secondary),
+        ]
+        .spacing(4),
+        Space::new().width(Length::Fill),
+        manage_button,
+        logout_button,
+    ]
+    .spacing(8)
+    .align_y(Alignment::Center)
+    .into()
+}
+
+fn portal_hub_service_toggles(
+    settings: &PortalHubSettings,
+    theme: Theme,
+    fonts: ScaledFonts,
+) -> Element<'static, Message> {
+    column![
+        portal_hub_switch_row(
+            "Persistent sessions / proxy",
+            "Keep remote SSH sessions active through Portal Hub.",
+            settings.enabled,
+            |enabled| Message::Ui(UiMessage::PortalHubEnabled(enabled)),
+            theme,
+            fonts,
+        ),
+        portal_hub_switch_row(
+            "Hosts sync",
+            "Sync host definitions between devices.",
+            settings.hosts_sync_enabled,
+            |enabled| portal_hub_sync_toggle_message(PortalHubSyncService::Hosts, enabled),
+            theme,
+            fonts,
+        ),
+        portal_hub_switch_row(
+            "Settings sync",
+            "Sync Portal preferences between devices.",
+            settings.settings_sync_enabled,
+            |enabled| portal_hub_sync_toggle_message(PortalHubSyncService::Settings, enabled),
+            theme,
+            fonts,
+        ),
+        portal_hub_switch_row(
+            "Snippets sync",
+            "Sync reusable command snippets.",
+            settings.snippets_sync_enabled,
+            |enabled| portal_hub_sync_toggle_message(PortalHubSyncService::Snippets, enabled),
+            theme,
+            fonts,
+        ),
+        portal_hub_switch_row(
+            "Key vault",
+            "Sync encrypted Key Vault metadata.",
+            settings.key_vault_enabled,
+            |enabled| portal_hub_sync_toggle_message(PortalHubSyncService::Vault, enabled),
+            theme,
+            fonts,
+        ),
+    ]
+    .spacing(12)
+    .into()
+}
+
+fn portal_hub_sync_toggle_message(service: PortalHubSyncService, enabled: bool) -> Message {
+    if enabled {
+        match service {
+            PortalHubSyncService::Hosts => Message::Ui(UiMessage::PortalHubHostsSyncChanged(true)),
+            PortalHubSyncService::Settings => {
+                Message::Ui(UiMessage::PortalHubSettingsSyncChanged(true))
+            }
+            PortalHubSyncService::Snippets => {
+                Message::Ui(UiMessage::PortalHubSnippetsSyncChanged(true))
+            }
+            PortalHubSyncService::Vault => Message::Ui(UiMessage::PortalHubKeyVaultChanged(true)),
+        }
+    } else {
+        Message::Ui(UiMessage::PortalHubDisableSyncRequested(service))
+    }
+}
+
+fn portal_hub_switch_row<F>(
+    label: &'static str,
+    description: &'static str,
+    enabled: bool,
+    on_toggle: F,
+    theme: Theme,
+    fonts: ScaledFonts,
+) -> Element<'static, Message>
+where
+    F: Fn(bool) -> Message + 'static,
+{
+    row![
+        column![
+            text(label).size(fonts.body).color(theme.text_primary),
+            text(description).size(fonts.label).color(theme.text_muted),
+        ]
+        .spacing(4),
+        Space::new().width(Length::Fill),
+        switch_button(enabled, on_toggle, theme, fonts),
+    ]
+    .align_y(Alignment::Center)
+    .into()
+}
+
+fn switch_button<F>(
+    enabled: bool,
+    on_toggle: F,
+    theme: Theme,
+    _fonts: ScaledFonts,
+) -> Element<'static, Message>
+where
+    F: Fn(bool) -> Message + 'static,
+{
+    let track_background = if enabled {
+        theme.focus_ring
+    } else {
+        theme.surface
+    };
+    let track_border = if enabled {
+        theme.focus_ring
+    } else {
+        theme.border
+    };
+    let thumb = container(Space::new().width(20).height(20))
+        .width(20)
+        .height(20)
+        .style(move |_theme| iced::widget::container::Style {
+            background: Some(theme.background.into()),
+            border: iced::Border {
+                color: iced::Color::TRANSPARENT,
+                width: 0.0,
+                radius: 999.0.into(),
+            },
+            shadow: iced::Shadow {
+                color: iced::Color {
+                    a: 0.24,
+                    ..iced::Color::BLACK
+                },
+                offset: iced::Vector::new(0.0, 2.0),
+                blur_radius: 6.0,
+            },
+            ..Default::default()
+        });
+    let track = container(thumb)
+        .width(44)
+        .height(24)
+        .padding(2)
+        .align_x(if enabled {
+            Alignment::End
+        } else {
+            Alignment::Start
+        })
+        .align_y(Alignment::Center)
+        .style(move |_theme| iced::widget::container::Style {
+            background: Some(track_background.into()),
+            border: iced::Border {
+                color: track_border,
+                width: 1.0,
+                radius: 999.0.into(),
+            },
+            ..Default::default()
+        });
+
+    button(track)
+        .padding(0)
+        .width(44)
+        .height(24)
+        .style(move |_theme, status| {
+            let border = if matches!(status, iced::widget::button::Status::Hovered) {
+                iced::Border {
+                    color: theme.focus_ring,
+                    width: 1.0,
+                    radius: 999.0.into(),
+                }
+            } else {
+                iced::Border {
+                    color: iced::Color::TRANSPARENT,
+                    width: 0.0,
+                    radius: 999.0.into(),
+                }
+            };
+            iced::widget::button::Style {
+                background: None,
+                text_color: iced::Color::TRANSPARENT,
+                border,
+                ..Default::default()
+            }
+        })
+        .on_press(on_toggle(!enabled))
+        .into()
+}
+
+fn portal_hub_sync_status_setting(
+    context: &SettingsPageContext,
+    theme: Theme,
+    fonts: ScaledFonts,
+) -> Element<'static, Message> {
+    let status = if context.portal_hub_sync_loading {
+        "Syncing...".to_string()
+    } else if context.portal_hub_conflict_count > 0 {
+        format!(
+            "{} conflict(s) need review",
+            context.portal_hub_conflict_count
+        )
+    } else if let Some(error) = &context.portal_hub_sync_error {
         error.clone()
     } else {
-        "Not signed in".to_string()
+        context
+            .portal_hub_sync_status
+            .clone()
+            .unwrap_or_else(|| "Ready".to_string())
     };
-    let status_color = if error.is_some() {
+    let color = if context.portal_hub_sync_error.is_some() || context.portal_hub_conflict_count > 0
+    {
         STATUS_FAILURE
     } else {
         theme.text_secondary
     };
-
-    let sign_in_button = button(
-        container(
-            text(if loading { "Waiting" } else { "Sign in" })
-                .size(fonts.label)
-                .color(theme.text_primary),
-        )
-        .padding([6, 12])
-        .align_x(Alignment::Center)
-        .align_y(Alignment::Center),
+    let sync_button = small_settings_button(
+        if context.portal_hub_conflict_count > 0 {
+            "Resolve"
+        } else {
+            "Sync now"
+        },
+        theme,
+        fonts,
     )
-    .padding(0)
-    .style(move |_theme, status| {
-        let background = match status {
-            iced::widget::button::Status::Hovered => Some(theme.hover.into()),
-            _ => Some(theme.surface.into()),
-        };
-        iced::widget::button::Style {
-            background,
-            border: iced::Border {
-                radius: BORDER_RADIUS.into(),
-                width: 1.0,
-                color: theme.border,
-            },
-            ..Default::default()
-        }
-    })
-    .on_press_maybe((!loading).then_some(Message::Ui(UiMessage::PortalHubAuthenticate)));
+    .on_press(if context.portal_hub_conflict_count > 0 {
+        Message::Ui(UiMessage::PortalHubResolveConflicts)
+    } else {
+        Message::Ui(UiMessage::PortalHubSyncNow)
+    });
 
-    column![
-        row![
-            column![label_text, Space::new().height(4), description_text].spacing(0),
-            Space::new().width(Length::Fill),
-            text(status_text)
-                .size(fonts.label)
-                .color(status_color)
-                .width(Length::Fixed(240.0)),
-            Space::new().width(12),
-            sign_in_button,
+    row![
+        column![
+            text("Sync").size(fonts.body).color(theme.text_primary),
+            text(status).size(fonts.label).color(color),
         ]
-        .align_y(Alignment::Center),
+        .spacing(4),
+        Space::new().width(Length::Fill),
+        sync_button,
     ]
-    .spacing(0)
-    .into()
-}
-
-fn portal_hub_sync_adoption_setting(
-    authenticated: bool,
-    theme: Theme,
-    fonts: ScaledFonts,
-) -> Element<'static, Message> {
-    let label_text = text("Sync Source")
-        .size(fonts.body)
-        .color(theme.text_primary);
-    let description_text = text("Choose how this device should adopt Portal Hub sync")
-        .size(fonts.label)
-        .color(theme.text_muted);
-
-    let upload_button = small_settings_button("Upload local", theme, fonts).on_press_maybe(
-        authenticated.then_some(Message::Ui(UiMessage::PortalHubUploadLocalProfile)),
-    );
-    let pull_button = small_settings_button("Pull from Hub", theme, fonts)
-        .on_press_maybe(authenticated.then_some(Message::Ui(UiMessage::PortalHubPullProfile)));
-
-    column![
-        row![
-            column![label_text, Space::new().height(4), description_text].spacing(0),
-            Space::new().width(Length::Fill),
-            upload_button,
-            Space::new().width(8),
-            pull_button,
-        ]
-        .align_y(Alignment::Center),
-    ]
-    .spacing(0)
+    .align_y(Alignment::Center)
     .into()
 }
 
@@ -1142,49 +1230,6 @@ fn small_settings_button<'a>(
             ..Default::default()
         }
     })
-}
-
-fn text_setting<F>(
-    label: &'static str,
-    description: &'static str,
-    value: String,
-    on_input: F,
-    theme: Theme,
-    fonts: ScaledFonts,
-) -> Element<'static, Message>
-where
-    F: Fn(String) -> Message + 'static,
-{
-    let label_text = text(label).size(fonts.body).color(theme.text_primary);
-    let description_text = text(description).size(fonts.label).color(theme.text_muted);
-
-    let input = text_input("", &value)
-        .on_input(on_input)
-        .padding(8)
-        .width(220)
-        .style(move |_theme, _status| iced::widget::text_input::Style {
-            background: theme.background.into(),
-            border: iced::Border {
-                radius: BORDER_RADIUS.into(),
-                width: 1.0,
-                color: theme.border,
-            },
-            icon: theme.text_secondary,
-            placeholder: theme.text_muted,
-            value: theme.text_primary,
-            selection: theme.accent,
-        });
-
-    column![
-        row![
-            column![label_text, Space::new().height(4), description_text].spacing(0),
-            Space::new().width(Length::Fill),
-            input,
-        ]
-        .align_y(Alignment::Center),
-    ]
-    .spacing(0)
-    .into()
 }
 
 fn choice_setting<T, F>(

@@ -202,6 +202,22 @@ pub struct PortalHubSettings {
     #[serde(default)]
     pub enabled: bool,
 
+    /// Sync host definitions through Portal Hub.
+    #[serde(default = "default_portal_hub_service_enabled")]
+    pub hosts_sync_enabled: bool,
+
+    /// Sync application settings through Portal Hub.
+    #[serde(default = "default_portal_hub_service_enabled")]
+    pub settings_sync_enabled: bool,
+
+    /// Sync snippets through Portal Hub.
+    #[serde(default = "default_portal_hub_service_enabled")]
+    pub snippets_sync_enabled: bool,
+
+    /// Sync encrypted key vault metadata through Portal Hub.
+    #[serde(default = "default_portal_hub_service_enabled")]
+    pub key_vault_enabled: bool,
+
     /// Enable Portal Hub automatically when creating new SSH hosts.
     #[serde(default)]
     pub default_for_new_ssh_hosts: bool,
@@ -210,15 +226,19 @@ pub struct PortalHubSettings {
     #[serde(default)]
     pub host: String,
 
-    /// SSH port for the Portal Hub OpenSSH server.
+    /// Web/OAuth port for Portal Hub.
+    #[serde(default = "default_portal_hub_web_port")]
+    pub web_port: u16,
+
+    /// Deprecated legacy SSH port for the Portal Hub OpenSSH server.
     #[serde(default = "default_portal_hub_port")]
     pub port: u16,
 
-    /// SSH user on the proxy host.
+    /// Deprecated legacy SSH user on the proxy host.
     #[serde(default = "default_portal_hub_username")]
     pub username: String,
 
-    /// Optional identity file for authenticating to the proxy.
+    /// Deprecated legacy identity file for authenticating to the proxy.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub identity_file: Option<PathBuf>,
 
@@ -231,8 +251,13 @@ impl Default for PortalHubSettings {
     fn default() -> Self {
         Self {
             enabled: false,
+            hosts_sync_enabled: true,
+            settings_sync_enabled: true,
+            snippets_sync_enabled: true,
+            key_vault_enabled: true,
             default_for_new_ssh_hosts: false,
             host: String::new(),
+            web_port: default_portal_hub_web_port(),
             port: default_portal_hub_port(),
             username: default_portal_hub_username(),
             identity_file: None,
@@ -243,10 +268,36 @@ impl Default for PortalHubSettings {
 
 impl PortalHubSettings {
     pub fn is_configured(&self) -> bool {
-        self.enabled
-            && self.port > 0
-            && !self.host.trim().is_empty()
-            && !self.username.trim().is_empty()
+        self.enabled && !self.host.trim().is_empty() && self.web_port > 0
+    }
+
+    pub fn sync_configured(&self) -> bool {
+        !self.effective_web_url().is_empty()
+            && (self.hosts_sync_enabled
+                || self.settings_sync_enabled
+                || self.snippets_sync_enabled
+                || self.key_vault_enabled)
+    }
+
+    pub fn effective_web_url(&self) -> String {
+        let configured = self.web_url.trim().trim_end_matches('/').to_string();
+        if !configured.is_empty() {
+            return configured;
+        }
+        self.derived_web_url()
+    }
+
+    pub fn derived_web_url(&self) -> String {
+        let host = normalize_portal_hub_host(&self.host);
+        if host.is_empty() || self.web_port == 0 {
+            return String::new();
+        }
+        let scheme = if is_local_web_host(&host) {
+            "http"
+        } else {
+            "https"
+        };
+        format!("{}://{}:{}", scheme, host, self.web_port)
     }
 }
 
@@ -254,8 +305,28 @@ fn default_portal_hub_port() -> u16 {
     2222
 }
 
+fn default_portal_hub_web_port() -> u16 {
+    8080
+}
+
 fn default_portal_hub_username() -> String {
     "portal-hub".to_string()
+}
+
+fn default_portal_hub_service_enabled() -> bool {
+    true
+}
+
+fn normalize_portal_hub_host(host: &str) -> String {
+    host.trim()
+        .trim_start_matches("http://")
+        .trim_start_matches("https://")
+        .trim_end_matches('/')
+        .to_string()
+}
+
+fn is_local_web_host(host: &str) -> bool {
+    host == "localhost" || host == "127.0.0.1" || host == "::1" || host.ends_with(".localhost")
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -816,6 +887,7 @@ adjust-icon-height = "10%"
 enabled = true
 default_for_new_ssh_hosts = true
 host = "127.0.0.1"
+web_port = 8080
 port = 2222
 username = "john"
 identity_file = "/tmp/proxy-key"
@@ -827,6 +899,7 @@ web_url = "https://hub.example.test"
         assert!(config.portal_hub.enabled);
         assert!(config.portal_hub.default_for_new_ssh_hosts);
         assert_eq!(config.portal_hub.host, "127.0.0.1");
+        assert_eq!(config.portal_hub.web_port, 8080);
         assert_eq!(config.portal_hub.port, 2222);
         assert_eq!(config.portal_hub.username, "john");
         assert_eq!(

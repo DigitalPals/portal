@@ -19,6 +19,31 @@ pub struct HubAuthSummary {
     pub hub_url: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct HubInfo {
+    pub api_version: u16,
+    #[serde(default)]
+    pub version: String,
+    #[serde(default)]
+    pub public_url: String,
+    #[serde(default)]
+    pub capabilities: HubCapabilities,
+    #[serde(default)]
+    pub ssh_port: Option<u16>,
+    #[serde(default)]
+    pub ssh_username: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct HubCapabilities {
+    #[serde(default)]
+    pub sync_v2: bool,
+    #[serde(default)]
+    pub key_vault: bool,
+    #[serde(default)]
+    pub web_proxy: bool,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct StoredTokens {
     access_token: String,
@@ -37,7 +62,7 @@ struct MeResponse {
 }
 
 pub async fn authenticate(settings: PortalHubSettings) -> Result<HubAuthSummary, String> {
-    let hub_url = settings.web_url.trim().trim_end_matches('/').to_string();
+    let hub_url = settings.effective_web_url();
     if hub_url.is_empty() {
         return Err("Portal Hub web URL is not configured".to_string());
     }
@@ -114,6 +139,23 @@ pub async fn authenticate(settings: PortalHubSettings) -> Result<HubAuthSummary,
     })
 }
 
+pub async fn fetch_hub_info(settings: &PortalHubSettings) -> Result<HubInfo, String> {
+    let hub_url = settings.effective_web_url();
+    if hub_url.is_empty() {
+        return Err("Portal Hub host and web port are not configured".to_string());
+    }
+    reqwest::Client::new()
+        .get(format!("{}/api/info", hub_url))
+        .send()
+        .await
+        .map_err(|error| format!("failed to read Portal Hub info: {}", error))?
+        .error_for_status()
+        .map_err(|error| format!("Portal Hub info check failed: {}", error))?
+        .json()
+        .await
+        .map_err(|error| format!("failed to parse Portal Hub info: {}", error))
+}
+
 pub fn load_access_token(hub_url: &str) -> Result<Option<String>, String> {
     let entry = keyring_entry(hub_url)?;
     match entry.get_password() {
@@ -125,6 +167,21 @@ pub fn load_access_token(hub_url: &str) -> Result<Option<String>, String> {
         Err(keyring::Error::NoEntry) => Ok(None),
         Err(error) => Err(format!(
             "failed to read Portal Hub tokens from OS keychain: {}",
+            error
+        )),
+    }
+}
+
+pub fn logout(settings: &PortalHubSettings) -> Result<(), String> {
+    let hub_url = settings.effective_web_url();
+    if hub_url.is_empty() {
+        return Ok(());
+    }
+    let entry = keyring_entry(&hub_url)?;
+    match entry.delete_credential() {
+        Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
+        Err(error) => Err(format!(
+            "failed to remove Portal Hub tokens from OS keychain: {}",
             error
         )),
     }

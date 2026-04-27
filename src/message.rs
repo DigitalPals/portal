@@ -592,6 +592,8 @@ pub enum UiMessage {
     PortalHubDefaultForNewHosts(bool),
     /// Portal Hub host/IP changed
     PortalHubHostChanged(String),
+    /// Portal Hub web port changed
+    PortalHubWebPortChanged(String),
     /// Portal Hub port changed
     PortalHubPortChanged(String),
     /// Portal Hub SSH username changed
@@ -600,6 +602,27 @@ pub enum UiMessage {
     PortalHubIdentityFileChanged(String),
     /// Portal Hub web URL changed
     PortalHubWebUrlChanged(String),
+    /// Portal Hub hosts sync enabled/disabled
+    PortalHubHostsSyncChanged(bool),
+    /// Portal Hub settings sync enabled/disabled
+    PortalHubSettingsSyncChanged(bool),
+    /// Portal Hub snippets sync enabled/disabled
+    PortalHubSnippetsSyncChanged(bool),
+    /// Portal Hub key vault sync enabled/disabled
+    PortalHubKeyVaultChanged(bool),
+    /// User chose to disable a Portal Hub sync service.
+    PortalHubDisableSyncRequested(crate::hub::sync::PortalHubSyncService),
+    /// Disable a Portal Hub sync service but keep existing Hub data.
+    PortalHubDisableSyncKeepData(crate::hub::sync::PortalHubSyncService),
+    /// Disable a Portal Hub sync service and delete existing Hub data.
+    PortalHubDisableSyncDeleteData(crate::hub::sync::PortalHubSyncService),
+    /// Portal Hub stored data deletion result.
+    PortalHubDisableSyncDeleteDone(
+        crate::hub::sync::PortalHubSyncService,
+        Result<String, String>,
+    ),
+    /// Open Portal Hub onboarding
+    PortalHubOpenOnboarding,
     /// Check Portal Hub version and compatibility
     PortalHubCheckStatus,
     /// Portal Hub version and compatibility check result
@@ -607,7 +630,13 @@ pub enum UiMessage {
     /// Authenticate Portal with Portal Hub through browser OAuth.
     PortalHubAuthenticate,
     /// Portal Hub browser OAuth result.
-    PortalHubAuthenticated(Result<crate::hub::auth::HubAuthSummary, String>),
+    PortalHubAuthenticated(
+        Result<(crate::hub::auth::HubInfo, crate::hub::auth::HubAuthSummary), String>,
+    ),
+    /// Sign out of Portal Hub on this device.
+    PortalHubLogout,
+    /// Portal Hub sign out result.
+    PortalHubLoggedOut(Result<(), String>),
     /// Upload this device's local profile to Portal Hub.
     PortalHubUploadLocalProfile,
     /// Local profile upload result.
@@ -616,6 +645,16 @@ pub enum UiMessage {
     PortalHubPullProfile,
     /// Portal Hub profile pull result.
     PortalHubPullProfileDone(Result<String, String>),
+    /// Run Portal Hub sync now.
+    PortalHubSyncNow,
+    /// Portal Hub sync result.
+    PortalHubSyncDone(Result<crate::hub::sync::SyncRunResult, String>),
+    /// Portal Hub conflict choice changed.
+    PortalHubConflictChoiceChanged(usize, crate::hub::sync::ConflictChoice),
+    /// Resolve pending Portal Hub conflicts.
+    PortalHubResolveConflicts,
+    /// Portal Hub conflict resolution result.
+    PortalHubResolveConflictsDone(Result<String, String>),
     /// Window resized
     WindowResized(iced::Size),
     /// Window lost focus

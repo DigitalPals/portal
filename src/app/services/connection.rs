@@ -95,8 +95,15 @@ pub fn should_detect_os(detected_os: Option<&DetectedOs>) -> bool {
 pub fn should_use_portal_hub(settings: &PortalHubSettings, host: &Host) -> bool {
     settings.is_configured()
         && host.portal_hub_enabled
+        && settings.key_vault_enabled
         && host.protocol == Protocol::Ssh
-        && matches!(host.auth, AuthMethod::Agent | AuthMethod::PublicKey { .. })
+        && matches!(
+            host.auth,
+            AuthMethod::PublicKey {
+                vault_key_id: Some(_),
+                ..
+            }
+        )
 }
 
 fn ssh_event_listener(session_id: SessionId, event_rx: mpsc::Receiver<SshEvent>) -> Task<Message> {
@@ -820,18 +827,27 @@ mod tests {
     fn configured_proxy_settings() -> PortalHubSettings {
         PortalHubSettings {
             enabled: true,
+            hosts_sync_enabled: true,
+            settings_sync_enabled: true,
+            snippets_sync_enabled: true,
+            key_vault_enabled: true,
             default_for_new_ssh_hosts: false,
             host: "proxy.example.com".to_string(),
+            web_port: 8080,
             port: 22,
             username: "portal-hub".to_string(),
             identity_file: None,
+            web_url: "http://portal-hub.localhost:8080".to_string(),
         }
     }
 
     #[test]
     fn portal_hub_routing_requires_global_and_host_enablement() {
         let settings = configured_proxy_settings();
-        let mut host = proxy_test_host(AuthMethod::Agent);
+        let mut host = proxy_test_host(AuthMethod::PublicKey {
+            key_path: None,
+            vault_key_id: Some(Uuid::new_v4()),
+        });
 
         assert!(should_use_portal_hub(&settings, &host));
 
@@ -845,14 +861,21 @@ mod tests {
     }
 
     #[test]
-    fn portal_hub_routing_supports_agent_and_public_key_only() {
+    fn portal_hub_routing_uses_key_vault_public_keys_only() {
         let settings = configured_proxy_settings();
 
         assert!(should_use_portal_hub(
             &settings,
+            &proxy_test_host(AuthMethod::PublicKey {
+                key_path: None,
+                vault_key_id: Some(Uuid::new_v4()),
+            })
+        ));
+        assert!(!should_use_portal_hub(
+            &settings,
             &proxy_test_host(AuthMethod::Agent)
         ));
-        assert!(should_use_portal_hub(
+        assert!(!should_use_portal_hub(
             &settings,
             &proxy_test_host(AuthMethod::PublicKey {
                 key_path: Some("/tmp/key".into()),

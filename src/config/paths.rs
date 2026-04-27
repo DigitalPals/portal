@@ -58,6 +58,11 @@ pub fn hub_vault_file() -> Option<PathBuf> {
     config_dir().map(|dir| dir.join("hub_vault.json"))
 }
 
+/// Get the path to local Portal Hub sync metadata.
+pub fn hub_sync_state_file() -> Option<PathBuf> {
+    config_dir().map(|dir| dir.join("portal_hub_sync_state.json"))
+}
+
 /// Get the path to the snippet execution history file
 pub fn snippet_history_file() -> Option<PathBuf> {
     config_dir().map(|dir| dir.join("snippet_history.toml"))

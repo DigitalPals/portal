@@ -56,6 +56,7 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                         tracing::error!("Failed to save config: {}", e);
                     }
                     portal.dialogs.close();
+                    return super::ui::settings::portal_hub_sync_task(portal);
                 }
                 // If to_host() returned None, validation failed and errors are shown in the UI
             }

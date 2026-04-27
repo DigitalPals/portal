@@ -35,6 +35,12 @@ pub enum ActiveDialog {
     Connecting(ConnectingDialogState),
     /// Existing-session picker for duplicate host clicks
     SessionChoice(SessionChoiceDialogState),
+    /// Portal Hub onboarding wizard
+    PortalHubOnboarding,
+    /// Portal Hub sync conflict resolver
+    PortalHubConflicts,
+    /// Confirmation before disabling a Portal Hub sync service
+    PortalHubDisableSync(crate::hub::sync::PortalHubSyncService),
 }
 
 /// Manages the active dialog state
@@ -185,6 +191,24 @@ impl DialogManager {
     /// Open the duplicate host session choice dialog.
     pub fn open_session_choice(&mut self, state: SessionChoiceDialogState) {
         self.active = ActiveDialog::SessionChoice(state);
+    }
+
+    /// Open the Portal Hub onboarding wizard.
+    pub fn open_portal_hub_onboarding(&mut self) {
+        self.active = ActiveDialog::PortalHubOnboarding;
+    }
+
+    /// Open the Portal Hub conflict resolver.
+    pub fn open_portal_hub_conflicts(&mut self) {
+        self.active = ActiveDialog::PortalHubConflicts;
+    }
+
+    /// Open confirmation before disabling a Portal Hub sync service.
+    pub fn open_portal_hub_disable_sync(
+        &mut self,
+        service: crate::hub::sync::PortalHubSyncService,
+    ) {
+        self.active = ActiveDialog::PortalHubDisableSync(service);
     }
 
     /// Get mutable session choice dialog state if it is active.

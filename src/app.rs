@@ -14,6 +14,7 @@ use iced::keyboard;
 use crate::config::{
     HistoryConfig, HostsConfig, SettingsConfig, SnippetHistoryConfig, SnippetsConfig,
 };
+use crate::hub::sync::{ConflictChoice, SyncConflict};
 use crate::keybindings::KeybindingsConfig;
 use crate::message::{
     Message, SessionId, SessionMessage, SettingsTab, SidebarMenuItem, UiMessage, VncMessage,
@@ -26,6 +27,10 @@ use crate::views::dialogs::host_dialog::host_dialog_view;
 use crate::views::dialogs::host_key_dialog::host_key_dialog_view;
 use crate::views::dialogs::passphrase_dialog::passphrase_dialog_view;
 use crate::views::dialogs::password_dialog::password_dialog_view;
+use crate::views::dialogs::portal_hub_dialogs::{
+    portal_hub_conflict_dialog_view, portal_hub_disable_sync_dialog_view,
+    portal_hub_onboarding_dialog_view,
+};
 use crate::views::dialogs::quick_connect_dialog::quick_connect_dialog_view;
 use crate::views::dialogs::session_choice_dialog::session_choice_dialog_view;
 use crate::views::file_viewer::file_viewer_view;
@@ -146,6 +151,11 @@ pub struct UiState {
     pub portal_hub_auth_user: Option<String>,
     pub portal_hub_auth_error: Option<String>,
     pub portal_hub_auth_loading: bool,
+    pub portal_hub_sync_loading: bool,
+    pub portal_hub_sync_error: Option<String>,
+    pub portal_hub_sync_status: Option<String>,
+    pub portal_hub_conflicts: Vec<SyncConflict>,
+    pub portal_hub_conflict_choices: Vec<ConflictChoice>,
 }
 
 /// User preference state (theme, fonts, sizing).
@@ -368,7 +378,7 @@ impl Portal {
         let system_ui_scale = crate::platform::detect_system_ui_scale();
         tracing::info!("System UI scale: {}", system_ui_scale);
 
-        let app = Self {
+        let mut app = Self {
             ui: UiState {
                 active_view: View::HostGrid,
                 search_query: String::new(),
@@ -396,6 +406,11 @@ impl Portal {
                 portal_hub_auth_user: None,
                 portal_hub_auth_error: None,
                 portal_hub_auth_loading: false,
+                portal_hub_sync_loading: false,
+                portal_hub_sync_error: None,
+                portal_hub_sync_status: None,
+                portal_hub_conflicts: Vec::new(),
+                portal_hub_conflict_choices: Vec::new(),
             },
             tabs: Vec::new(),
             active_tab: None,
@@ -466,9 +481,23 @@ impl Portal {
             crate::security_log::init_audit_log(None);
         }
 
-        // Focus the search input on startup
-        let focus_task = iced::widget::operation::focus(search_input_id());
-        (app, focus_task)
+        let hub_url = app.prefs.portal_hub.effective_web_url();
+        if !hub_url.is_empty() {
+            if crate::hub::auth::load_access_token(&hub_url)
+                .ok()
+                .flatten()
+                .is_some()
+            {
+                app.ui.portal_hub_auth_user = Some(format!("Authenticated @ {}", hub_url));
+            }
+        }
+
+        // Focus the search input on startup and kick off Hub sync when already authenticated.
+        let mut startup_tasks = vec![iced::widget::operation::focus(search_input_id())];
+        if app.ui.portal_hub_auth_user.is_some() && app.prefs.portal_hub.sync_configured() {
+            startup_tasks.push(Task::done(Message::Ui(UiMessage::PortalHubSyncNow)));
+        }
+        (app, Task::batch(startup_tasks))
     }
 
     /// Handle messages - dispatches to specialized handlers
@@ -540,8 +569,10 @@ impl Portal {
                     portal_hub_status_error: self.ui.portal_hub_status_error.clone(),
                     portal_hub_status_loading: self.ui.portal_hub_status_loading,
                     portal_hub_auth_user: self.ui.portal_hub_auth_user.clone(),
-                    portal_hub_auth_error: self.ui.portal_hub_auth_error.clone(),
-                    portal_hub_auth_loading: self.ui.portal_hub_auth_loading,
+                    portal_hub_sync_loading: self.ui.portal_hub_sync_loading,
+                    portal_hub_sync_error: self.ui.portal_hub_sync_error.clone(),
+                    portal_hub_sync_status: self.ui.portal_hub_sync_status.clone(),
+                    portal_hub_conflict_count: self.ui.portal_hub_conflicts.len(),
                     credential_timeout: self.prefs.credential_timeout,
                     security_audit_enabled: self.prefs.security_audit_enabled,
                     security_audit_log_location: self
@@ -808,6 +839,30 @@ impl Portal {
                 let dialog = passphrase_dialog_view(passphrase_state, theme);
                 stack![main_layout, dialog].into()
             }
+            ActiveDialog::PortalHubOnboarding => {
+                let dialog = portal_hub_onboarding_dialog_view(
+                    &self.prefs.portal_hub,
+                    self.ui.portal_hub_auth_user.as_deref(),
+                    self.ui.portal_hub_auth_error.as_deref(),
+                    self.ui.portal_hub_auth_loading,
+                    theme,
+                    fonts,
+                );
+                stack![main_layout, dialog].into()
+            }
+            ActiveDialog::PortalHubConflicts => {
+                let dialog = portal_hub_conflict_dialog_view(
+                    &self.ui.portal_hub_conflicts,
+                    &self.ui.portal_hub_conflict_choices,
+                    theme,
+                    fonts,
+                );
+                stack![main_layout, dialog].into()
+            }
+            ActiveDialog::PortalHubDisableSync(service) => {
+                let dialog = portal_hub_disable_sync_dialog_view(*service, theme, fonts);
+                stack![main_layout, dialog].into()
+            }
             ActiveDialog::QuickConnect(quick_connect_state) => {
                 let dialog = quick_connect_dialog_view(quick_connect_state, theme);
                 stack![main_layout, dialog].into()
@@ -1071,6 +1126,17 @@ impl Portal {
             subscriptions.push(
                 time::every(Duration::from_millis(16))
                     .map(|_| Message::Session(SessionMessage::ProcessOutputTick)),
+            );
+        }
+
+        if self.ui.portal_hub_auth_user.is_some()
+            && self.prefs.portal_hub.sync_configured()
+            && !self.ui.portal_hub_sync_loading
+            && self.ui.portal_hub_conflicts.is_empty()
+        {
+            subscriptions.push(
+                time::every(Duration::from_secs(30))
+                    .map(|_| Message::Ui(UiMessage::PortalHubSyncNow)),
             );
         }
 
