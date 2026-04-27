@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 
-use iced::widget::{Space, button, checkbox, column, pick_list, row, text, text_input, tooltip};
+use iced::widget::{
+    Space, button, checkbox, column, container, pick_list, row, scrollable, text, text_input,
+    tooltip,
+};
 use iced::{Alignment, Element, Length};
 use uuid::Uuid;
 
@@ -8,13 +11,12 @@ use crate::config::hosts::default_username;
 use crate::config::{AuthMethod, Host, PortForward, PortForwardKind, Protocol};
 use crate::hub::vault::VaultKey;
 use crate::message::{DialogMessage, HostDialogField, Message};
-use crate::theme::Theme;
+use crate::theme::{BORDER_RADIUS, Theme};
 use crate::validation::{validate_hostname, validate_port, validate_username};
 
 use super::common::{
-    ERROR_COLOR, dialog_backdrop, dialog_input_style, dialog_input_style_with_error,
-    dialog_pick_list_menu_style, dialog_pick_list_style, primary_button_style,
-    secondary_button_style,
+    ERROR_COLOR, dialog_input_style, dialog_input_style_with_error, dialog_pick_list_menu_style,
+    dialog_pick_list_style, primary_button_style, secondary_button_style,
 };
 
 /// Widget ID for host dialog fields (for keyboard navigation)
@@ -1079,38 +1081,128 @@ pub fn host_dialog_view(
     ]
     .spacing(4);
 
-    // Form layout - conditionally show SSH-specific fields
-    let mut form = column![
-        text(title).size(20).color(theme.text_primary),
-        Space::new().height(16),
+    let connection_section = column![
+        section_heading("Connection", theme),
         name_input,
-        protocol_picker,
+        row![
+            column![protocol_picker].width(Length::FillPortion(1)),
+            column![username_input].width(Length::FillPortion(2)),
+        ]
+        .spacing(12),
         row![
             column![hostname_input].width(Length::FillPortion(3)),
             column![port_input].width(Length::FillPortion(1)),
         ]
         .spacing(12),
+        tags_input,
+        notes_input,
     ]
-    .spacing(12)
-    .padding(24)
-    .width(Length::Fixed(450.0));
+    .spacing(10)
+    .width(Length::FillPortion(1));
 
-    // Username is shown for both SSH and VNC; auth fields are SSH-only
-    form = form.push(username_input);
+    let ssh_section = column![
+        section_heading("SSH", theme),
+        auth_picker,
+        key_path_section,
+        row![
+            column![agent_forwarding_section].width(Length::FillPortion(1)),
+            column![portal_hub_section].width(Length::FillPortion(1)),
+        ]
+        .spacing(12)
+        .align_y(Alignment::Start),
+    ]
+    .spacing(10)
+    .width(Length::FillPortion(1));
+
+    let top_sections: Element<'static, Message> = if is_vnc {
+        connection_section.width(Length::Fill).into()
+    } else {
+        row![connection_section, ssh_section]
+            .spacing(20)
+            .align_y(Alignment::Start)
+            .into()
+    };
+
+    let mut body = column![top_sections].spacing(18);
     if !is_vnc {
-        form = form.push(auth_picker);
-        form = form.push(key_path_section);
-        form = form.push(agent_forwarding_section);
-        form = form.push(portal_hub_section);
-        form = form.push(port_forwards_section);
+        body = body.push(port_forwards_section);
     }
 
-    form = form.push(tags_input);
-    form = form.push(notes_input);
-    form = form.push(Space::new().height(16));
-    form = form.push(button_row);
+    let header = container(text(title).size(20).color(theme.text_primary))
+        .padding([18, 24])
+        .width(Length::Fill);
 
-    dialog_backdrop(form, theme)
+    let footer = container(button_row)
+        .padding([14, 24])
+        .width(Length::Fill)
+        .style(move |_theme| container::Style {
+            background: Some(theme.surface.into()),
+            border: iced::Border {
+                color: theme.border,
+                width: 1.0,
+                radius: 0.0.into(),
+            },
+            ..Default::default()
+        });
+
+    let form = column![
+        header,
+        scrollable(container(body).padding([18, 24]).width(Length::Fill)).height(Length::Fill),
+        footer,
+    ]
+    .width(Length::Fill)
+    .max_width(760)
+    .height(Length::Fill);
+
+    host_dialog_backdrop(form, theme)
+}
+
+fn section_heading(label: &'static str, theme: Theme) -> Element<'static, Message> {
+    text(label).size(13).color(theme.text_primary).into()
+}
+
+fn host_dialog_backdrop(
+    content: impl Into<Element<'static, Message>>,
+    theme: Theme,
+) -> Element<'static, Message> {
+    let dialog_box = container(content)
+        .width(Length::Fill)
+        .max_width(760)
+        .height(Length::Fill)
+        .style(move |_theme| container::Style {
+            background: Some(theme.surface.into()),
+            border: iced::Border {
+                color: theme.border,
+                width: 1.0,
+                radius: (BORDER_RADIUS * 2.0).into(),
+            },
+            shadow: iced::Shadow {
+                color: iced::Color::from_rgba8(0, 0, 0, 0.5),
+                offset: iced::Vector::new(0.0, 4.0),
+                blur_radius: 16.0,
+            },
+            ..Default::default()
+        });
+
+    let backdrop = container(
+        container(dialog_box)
+            .padding([24, 16])
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(Alignment::Center)
+            .align_y(Alignment::Center),
+    )
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .style(move |_theme| container::Style {
+        background: Some(iced::Color::from_rgba8(0, 0, 0, 0.7).into()),
+        ..Default::default()
+    });
+
+    iced::widget::mouse_area(backdrop)
+        .on_press(Message::Noop)
+        .on_release(Message::Noop)
+        .into()
 }
 
 #[cfg(test)]
