@@ -336,7 +336,7 @@ pub fn snippet_edit_view(
         .on_press(Message::Snippet(SnippetMessage::EditCancel));
 
     let save_btn = if is_valid {
-        button(text("Save").size(fonts.body).color(iced::Color::WHITE))
+        button(text("Save").size(fonts.body).color(theme.text_on_accent()))
             .style(move |_theme, status| {
                 let bg = match status {
                     button::Status::Hovered => iced::Color::from_rgb8(0x00, 0x8B, 0xE8),
@@ -344,7 +344,7 @@ pub fn snippet_edit_view(
                 };
                 button::Style {
                     background: Some(bg.into()),
-                    text_color: iced::Color::WHITE,
+                    text_color: theme.text_on(bg),
                     border: iced::Border {
                         radius: BORDER_RADIUS.into(),
                         ..Default::default()

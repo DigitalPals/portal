@@ -93,6 +93,23 @@ pub struct Theme {
 }
 
 impl Theme {
+    /// Pick a readable foreground color for text/icons rendered on a solid background.
+    pub fn text_on(&self, background: Color) -> Color {
+        let dark_text = Color::from_rgb8(0x1e, 0x20, 0x30);
+        let light_text = Color::WHITE;
+
+        if contrast_ratio(background, dark_text) >= contrast_ratio(background, light_text) {
+            dark_text
+        } else {
+            light_text
+        }
+    }
+
+    /// Pick a readable foreground color for text/icons rendered on this theme's accent color.
+    pub fn text_on_accent(&self) -> Color {
+        self.text_on(self.accent)
+    }
+
     /// Portal Default theme - Dark navy blue
     pub fn portal_default() -> Self {
         Self {
@@ -350,6 +367,24 @@ impl Theme {
     }
 }
 
+fn contrast_ratio(background: Color, foreground: Color) -> f32 {
+    let lighter = relative_luminance(background).max(relative_luminance(foreground));
+    let darker = relative_luminance(background).min(relative_luminance(foreground));
+    (lighter + 0.05) / (darker + 0.05)
+}
+
+fn relative_luminance(color: Color) -> f32 {
+    0.2126 * linear_srgb(color.r) + 0.7152 * linear_srgb(color.g) + 0.0722 * linear_srgb(color.b)
+}
+
+fn linear_srgb(component: f32) -> f32 {
+    if component <= 0.04045 {
+        component / 12.92
+    } else {
+        ((component + 0.055) / 1.055).powf(2.4)
+    }
+}
+
 /// Get theme by ID
 pub fn get_theme(id: ThemeId) -> Theme {
     match id {
@@ -499,5 +534,28 @@ impl ScaledFonts {
             small: (FONT_SIZE_SMALL * scale).round(),
             mono_tiny: (FONT_SIZE_MONO_TINY * scale).round(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn text_on_accent_uses_dark_text_for_light_dark_theme_accents() {
+        assert_eq!(
+            Theme::catppuccin_macchiato().text_on_accent(),
+            Color::from_rgb8(0x1e, 0x20, 0x30)
+        );
+        assert_eq!(
+            Theme::catppuccin_mocha().text_on_accent(),
+            Color::from_rgb8(0x1e, 0x20, 0x30)
+        );
+    }
+
+    #[test]
+    fn text_on_accent_uses_light_text_for_dark_accents() {
+        assert_eq!(Theme::catppuccin_latte().text_on_accent(), Color::WHITE);
+        assert_eq!(Theme::portal_default().text_on_accent(), Color::WHITE);
     }
 }

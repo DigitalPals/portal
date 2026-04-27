@@ -211,18 +211,14 @@ pub fn quick_connect_dialog_view(
     .style(secondary_button_style(theme))
     .on_press(Message::Dialog(DialogMessage::Close));
 
-    let connect_button = button(
-        text("Connect")
-            .size(fonts.button_small)
-            .color(theme.text_primary),
-    )
-    .padding([8, 16])
-    .style(primary_button_style(theme))
-    .on_press_maybe(if is_valid {
-        Some(Message::Dialog(DialogMessage::QuickConnectSubmit))
-    } else {
-        None
-    });
+    let connect_button = button(text("Connect").size(fonts.button_small))
+        .padding([8, 16])
+        .style(primary_button_style(theme))
+        .on_press_maybe(if is_valid {
+            Some(Message::Dialog(DialogMessage::QuickConnectSubmit))
+        } else {
+            None
+        });
 
     let button_row = row![
         Space::new().width(Length::Fill),

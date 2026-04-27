@@ -135,7 +135,7 @@ fn file_viewer_toolbar(
         button(
             text("Save")
                 .size(fonts.button_small)
-                .color(iced::Color::WHITE),
+                .color(theme.text_on_accent()),
         )
         .style(move |_theme, status| {
             let bg = match status {
@@ -144,7 +144,7 @@ fn file_viewer_toolbar(
             };
             button::Style {
                 background: Some(bg.into()),
-                text_color: iced::Color::WHITE,
+                text_color: theme.text_on(bg),
                 border: iced::Border {
                     radius: 4.0.into(),
                     ..Default::default()

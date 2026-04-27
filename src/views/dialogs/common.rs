@@ -94,7 +94,7 @@ pub fn primary_button_style(
     move |_iced_theme, status| {
         let (background, text_color) = match status {
             button::Status::Disabled => (theme.surface, theme.text_muted),
-            _ => (theme.accent, theme.text_primary),
+            _ => (theme.accent, theme.text_on_accent()),
         };
         button::Style {
             background: Some(background.into()),

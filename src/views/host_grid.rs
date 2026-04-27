@@ -762,6 +762,7 @@ fn host_card(
 
 /// Empty state when no hosts are configured
 fn empty_state(theme: Theme, fonts: ScaledFonts) -> Element<'static, Message> {
+    let accent_text = theme.text_on_accent();
     let content = column![
         icon_with_color(icons::ui::SERVER, 48, theme.text_muted),
         text("No hosts configured")
@@ -773,8 +774,8 @@ fn empty_state(theme: Theme, fonts: ScaledFonts) -> Element<'static, Message> {
         Space::new().height(16),
         button(
             row![
-                icon_with_color(icons::ui::PLUS, 14, iced::Color::WHITE),
-                text("NEW HOST").size(fonts.body).color(iced::Color::WHITE),
+                icon_with_color(icons::ui::PLUS, 14, accent_text),
+                text("NEW HOST").size(fonts.body).color(accent_text),
             ]
             .spacing(6)
             .align_y(Alignment::Center),
@@ -786,7 +787,7 @@ fn empty_state(theme: Theme, fonts: ScaledFonts) -> Element<'static, Message> {
             };
             button::Style {
                 background: Some(bg.into()),
-                text_color: iced::Color::WHITE,
+                text_color: theme.text_on(bg),
                 border: iced::Border {
                     radius: BORDER_RADIUS.into(),
                     ..Default::default()

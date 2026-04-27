@@ -23,6 +23,8 @@ pub struct VaultPageContext<'a> {
 }
 
 pub fn vault_page_view(ctx: VaultPageContext<'_>) -> Element<'static, Message> {
+    let theme = ctx.theme;
+    let accent_text = theme.text_on_accent();
     let sync_label = if ctx.portal_hub_configured && ctx.portal_hub_vault_enabled {
         "Hub sync enabled"
     } else if ctx.portal_hub_configured {
@@ -54,14 +56,28 @@ pub fn vault_page_view(ctx: VaultPageContext<'_>) -> Element<'static, Message> {
         Space::new().width(Fill),
         button(
             row![
-                icon_with_color(icons::ui::PLUS, 14, ctx.theme.text_primary),
-                text("Add Key")
-                    .size(ctx.fonts.label)
-                    .color(ctx.theme.text_primary),
+                icon_with_color(icons::ui::PLUS, 14, accent_text),
+                text("Add Key").size(ctx.fonts.label).color(accent_text),
             ]
             .spacing(6)
             .align_y(Alignment::Center),
         )
+        .style(move |_theme, status| {
+            let bg = match status {
+                button::Status::Hovered => theme.focus_ring,
+                _ => theme.accent,
+            };
+            button::Style {
+                background: Some(bg.into()),
+                text_color: theme.text_on(bg),
+                border: iced::Border {
+                    color: theme.accent,
+                    width: 1.0,
+                    radius: BORDER_RADIUS.into(),
+                },
+                ..Default::default()
+            }
+        })
         .padding([8, 12])
         .on_press(Message::Vault(VaultMessage::AddKeyOpen)),
     ]
@@ -579,7 +595,7 @@ fn dialog_button<'a>(
     fonts: ScaledFonts,
     primary: bool,
 ) -> iced::widget::Button<'a, Message> {
-    button(text(label).size(fonts.label).color(theme.text_primary))
+    button(text(label).size(fonts.label))
         .padding([8, 16])
         .style(move |_theme, status| {
             if primary {
@@ -589,7 +605,7 @@ fn dialog_button<'a>(
                 };
                 button::Style {
                     background: Some(bg.into()),
-                    text_color: iced::Color::WHITE,
+                    text_color: theme.text_on(bg),
                     border: iced::Border {
                         color: theme.accent,
                         width: 1.0,

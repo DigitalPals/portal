@@ -149,14 +149,10 @@ pub fn passphrase_dialog_view(
     .style(secondary_button_style(theme))
     .on_press(Message::Dialog(DialogMessage::PassphraseCancel));
 
-    let unlock_button = button(
-        text("Unlock")
-            .size(fonts.button_small)
-            .color(theme.text_primary),
-    )
-    .padding([8, 16])
-    .style(primary_button_style(theme))
-    .on_press(Message::Dialog(DialogMessage::PassphraseSubmit));
+    let unlock_button = button(text("Unlock").size(fonts.button_small))
+        .padding([8, 16])
+        .style(primary_button_style(theme))
+        .on_press(Message::Dialog(DialogMessage::PassphraseSubmit));
 
     let button_row = row![
         Space::new().width(Length::Fill),

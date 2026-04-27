@@ -154,14 +154,10 @@ fn new_host_dialog_view(
     .style(secondary_button_style(theme))
     .on_press(Message::Dialog(DialogMessage::HostKeyReject));
 
-    let accept_button = button(
-        text("Accept")
-            .size(fonts.button_small)
-            .color(theme.text_primary),
-    )
-    .padding([8, 16])
-    .style(primary_button_style(theme))
-    .on_press(Message::Dialog(DialogMessage::HostKeyAccept));
+    let accept_button = button(text("Accept").size(fonts.button_small))
+        .padding([8, 16])
+        .style(primary_button_style(theme))
+        .on_press(Message::Dialog(DialogMessage::HostKeyAccept));
 
     let button_row = row![
         Space::new().width(Length::Fill),
@@ -280,14 +276,10 @@ fn changed_host_dialog_view(
     })
     .on_press(Message::Dialog(DialogMessage::HostKeyAccept));
 
-    let reject_button = button(
-        text("Reject")
-            .size(fonts.button_small)
-            .color(theme.text_primary),
-    )
-    .padding([8, 16])
-    .style(primary_button_style(theme))
-    .on_press(Message::Dialog(DialogMessage::HostKeyReject));
+    let reject_button = button(text("Reject").size(fonts.button_small))
+        .padding([8, 16])
+        .style(primary_button_style(theme))
+        .on_press(Message::Dialog(DialogMessage::HostKeyReject));
 
     let button_row = row![
         Space::new().width(Length::Fill),

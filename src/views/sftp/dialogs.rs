@@ -575,7 +575,7 @@ fn permission_checkbox(
         theme.background
     };
     let icon_color = if checked {
-        theme.background
+        theme.text_on_accent()
     } else {
         theme.text_muted
     };
@@ -675,7 +675,7 @@ fn dialog_submit_button(
         text(label.to_string())
             .size(fonts.button_small)
             .color(if is_valid {
-                theme.background
+                theme.text_on(normal_color)
             } else {
                 theme.text_muted
             }),
@@ -693,7 +693,7 @@ fn dialog_submit_button(
         iced::widget::button::Style {
             background: Some(bg.into()),
             text_color: if is_valid {
-                theme.background
+                theme.text_on(bg)
             } else {
                 theme.text_muted
             },

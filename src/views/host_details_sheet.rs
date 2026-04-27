@@ -115,13 +115,12 @@ pub fn host_details_sheet_view(
     ]
     .align_y(Alignment::Start);
 
+    let accent_text = theme.text_on_accent();
     let actions = row![
         button(
             row![
-                icon_with_color(icons::ui::ZAP, 14, theme.background),
-                text("Connect")
-                    .size(fonts.button_small)
-                    .color(theme.background),
+                icon_with_color(icons::ui::ZAP, 14, accent_text),
+                text("Connect").size(fonts.button_small).color(accent_text),
             ]
             .spacing(6)
             .align_y(Alignment::Center),
@@ -129,7 +128,7 @@ pub fn host_details_sheet_view(
         .padding([9, 14])
         .style(move |_theme, _status| button::Style {
             background: Some(theme.accent.into()),
-            text_color: theme.background,
+            text_color: theme.text_on_accent(),
             border: iced::Border {
                 radius: BORDER_RADIUS.into(),
                 ..Default::default()

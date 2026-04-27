@@ -119,10 +119,8 @@ pub fn session_choice_dialog_view(
 
     let new_button = button(
         row![
-            icon_with_color(icons::ui::PLUS, 16, theme.text_primary),
-            text("Create New Session")
-                .size(fonts.button_small)
-                .color(theme.text_primary),
+            icon_with_color(icons::ui::PLUS, 16, theme.text_on_accent()),
+            text("Create New Session").size(fonts.button_small),
         ]
         .spacing(8)
         .align_y(Alignment::Center),

@@ -318,7 +318,11 @@ fn conflict_button_style(
         };
         iced::widget::button::Style {
             background: Some(background.into()),
-            text_color: theme.text_primary,
+            text_color: if selected {
+                theme.text_on(background)
+            } else {
+                theme.text_primary
+            },
             border: iced::Border {
                 color: theme.border,
                 width: 1.0,

@@ -196,14 +196,10 @@ pub fn password_dialog_view(
     .style(secondary_button_style(theme))
     .on_press(Message::Dialog(DialogMessage::PasswordCancel));
 
-    let connect_button = button(
-        text("Connect")
-            .size(fonts.button_small)
-            .color(theme.text_primary),
-    )
-    .padding([8, 16])
-    .style(primary_button_style(theme))
-    .on_press(Message::Dialog(DialogMessage::PasswordSubmit));
+    let connect_button = button(text("Connect").size(fonts.button_small))
+        .padding([8, 16])
+        .style(primary_button_style(theme))
+        .on_press(Message::Dialog(DialogMessage::PasswordSubmit));
 
     let button_row = row![
         Space::new().width(Length::Fill),

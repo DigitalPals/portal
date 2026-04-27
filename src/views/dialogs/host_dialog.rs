@@ -1153,18 +1153,14 @@ pub fn host_dialog_view(
     .style(secondary_button_style(theme))
     .on_press(Message::Dialog(DialogMessage::Close));
 
-    let save_button = button(
-        text("Save")
-            .size(fonts.button_small)
-            .color(theme.text_primary),
-    )
-    .padding([8, 16])
-    .style(primary_button_style(theme))
-    .on_press_maybe(if is_valid {
-        Some(Message::Dialog(DialogMessage::Submit))
-    } else {
-        None
-    });
+    let save_button = button(text("Save").size(fonts.button_small))
+        .padding([8, 16])
+        .style(primary_button_style(theme))
+        .on_press_maybe(if is_valid {
+            Some(Message::Dialog(DialogMessage::Submit))
+        } else {
+            None
+        });
 
     let button_row = row![
         import_button,
