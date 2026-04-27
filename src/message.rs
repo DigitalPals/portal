@@ -46,6 +46,22 @@ pub enum SettingsTab {
     Snippets,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CommandAction {
+    Hosts,
+    Sftp,
+    Snippets,
+    Vault,
+    History,
+    Settings,
+    QuickConnect,
+    NewHost,
+    LocalTerminal,
+    ConnectHost(Uuid),
+    RunSnippet(Uuid),
+    PortalHubSync,
+}
+
 #[derive(Debug, Clone)]
 pub enum HostDialogField {
     Name,
@@ -237,6 +253,20 @@ pub enum SftpMessage {
     ToggleActionsMenu(SessionId, PaneId),
     /// Filter text changed
     FilterChanged(SessionId, PaneId, String),
+    /// Sort a file list column
+    SortColumn(SessionId, PaneId, SftpColumn),
+    /// Local files hovered over the app window
+    FilesHovered(Vec<PathBuf>),
+    /// Local file drag left the app window
+    FilesHoveredLeft,
+    /// Local files dropped into the active SFTP pane
+    FilesDropped(SessionId, Vec<PathBuf>),
+    /// Start press-and-hold destructive confirmation
+    DeleteHoldStart(SessionId),
+    /// Cancel press-and-hold destructive confirmation
+    DeleteHoldCancel(SessionId),
+    /// Advance press-and-hold destructive confirmation
+    DeleteHoldTick,
     /// Navigate to specific breadcrumb path segment
     PaneBreadcrumbNavigate(SessionId, PaneId, PathBuf),
     /// Column resize drag started (tab_id, pane_id, column, start_x)
@@ -376,6 +406,10 @@ pub enum HostMessage {
     Edit(Uuid),
     /// Track which host is being hovered (for showing edit button)
     Hover(Option<Uuid>),
+    /// Open the host details sheet
+    DetailsOpen(Uuid),
+    /// Close the host details sheet
+    DetailsClose,
     /// Quick connect using search query
     QuickConnect,
     /// Open local terminal (stubbed)
@@ -553,6 +587,13 @@ pub enum UiMessage {
     SidebarToggleCollapse,
     /// Active settings tab changed
     SettingsTabSelected(SettingsTab),
+    /// Open/close the command palette
+    CommandPaletteToggle,
+    CommandPaletteClose,
+    /// Command palette search changed
+    CommandPaletteChanged(String),
+    /// Execute a command palette action
+    CommandPaletteRun(CommandAction),
     /// Theme changed
     ThemeChange(ThemeId),
     /// Terminal font changed

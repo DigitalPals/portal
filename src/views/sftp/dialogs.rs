@@ -3,13 +3,14 @@
 //! This module contains the rendering functions for SFTP-related dialogs
 //! (New Folder, Rename, Delete, Permissions).
 
-use iced::widget::{Column, Space, button, column, container, row, text, text_input};
+use iced::widget::{Column, Space, button, column, container, mouse_area, row, text, text_input};
 use iced::{Alignment, Element, Fill, Length, Padding};
 use std::path::PathBuf;
 
 use crate::icons::{self, icon_with_color};
 use crate::message::{Message, SessionId, SftpMessage};
 use crate::theme::{ScaledFonts, Theme};
+use crate::views::components::progress_bar;
 
 use super::state::{DualPaneSftpState, SftpDialogState};
 use super::types::{PermissionBit, PermissionBits, SftpDialogType};
@@ -28,9 +29,14 @@ pub fn sftp_dialog_view(
 
     // Build dialog content based on type
     let dialog_content: Element<'_, Message> = match &dialog.dialog_type {
-        SftpDialogType::Delete { entries } => {
-            build_delete_dialog(tab_id, entries, dialog.error.as_deref(), theme, fonts)
-        }
+        SftpDialogType::Delete { entries } => build_delete_dialog(
+            tab_id,
+            entries,
+            dialog.error.as_deref(),
+            dialog.delete_hold_started,
+            theme,
+            fonts,
+        ),
         SftpDialogType::EditPermissions {
             name, permissions, ..
         } => build_permissions_dialog(
@@ -190,6 +196,7 @@ fn build_delete_dialog<'a>(
     tab_id: SessionId,
     entries: &'a [(String, PathBuf, bool)],
     error: Option<&'a str>,
+    hold_started: Option<std::time::Instant>,
     theme: Theme,
     fonts: ScaledFonts,
 ) -> Element<'a, Message> {
@@ -321,7 +328,7 @@ fn build_delete_dialog<'a>(
     };
 
     let cancel_btn = dialog_cancel_button(tab_id, theme, fonts);
-    let delete_btn = dialog_submit_button(tab_id, "Delete", true, true, theme, fonts);
+    let delete_btn = hold_delete_button(tab_id, hold_started, theme, fonts);
 
     let button_row = row![Space::new().width(Fill), cancel_btn, delete_btn].spacing(8);
 
@@ -341,6 +348,56 @@ fn build_delete_dialog<'a>(
     .padding(24)
     .width(Length::Fixed(400.0))
     .into()
+}
+
+fn hold_delete_button<'a>(
+    tab_id: SessionId,
+    hold_started: Option<std::time::Instant>,
+    theme: Theme,
+    fonts: ScaledFonts,
+) -> Element<'a, Message> {
+    let progress = hold_started
+        .map(|started| started.elapsed().as_millis() as f32 / 1200.0)
+        .unwrap_or(0.0)
+        .clamp(0.0, 1.0);
+
+    let label = if hold_started.is_some() {
+        "Keep holding..."
+    } else {
+        "Hold to Delete"
+    };
+
+    let content = container(
+        column![
+            row![
+                icon_with_color(icons::ui::ALERT_TRIANGLE, 14, iced::Color::WHITE),
+                text(label)
+                    .size(fonts.button_small)
+                    .color(iced::Color::WHITE),
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center),
+            progress_bar(progress, theme, 3.0),
+        ]
+        .spacing(6)
+        .align_x(Alignment::Center),
+    )
+    .padding([8, 14])
+    .width(Length::Fixed(154.0))
+    .style(move |_| container::Style {
+        background: Some(iced::Color::from_rgb8(180, 60, 60).into()),
+        border: iced::Border {
+            radius: 4.0.into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+
+    mouse_area(content)
+        .on_press(Message::Sftp(SftpMessage::DeleteHoldStart(tab_id)))
+        .on_release(Message::Sftp(SftpMessage::DeleteHoldCancel(tab_id)))
+        .on_exit(Message::Sftp(SftpMessage::DeleteHoldCancel(tab_id)))
+        .into()
 }
 
 /// Build the permissions dialog

@@ -12,6 +12,7 @@ use crate::config::settings::{
 };
 use crate::fonts::TerminalFont;
 use crate::hub::sync::PortalHubSyncService;
+use crate::icons::{self, icon_with_color};
 use crate::message::{Message, SettingsTab, UiMessage};
 use crate::proxy::ProxyStatus;
 use crate::theme::{BORDER_RADIUS, ScaledFonts, Theme, ThemeId, get_theme};
@@ -108,28 +109,152 @@ fn settings_tabs(
     fonts: ScaledFonts,
 ) -> Element<'static, Message> {
     let tabs = [
-        (SettingsTab::UiUx, "UI & UX"),
-        (SettingsTab::Terminal, "Terminal"),
-        (SettingsTab::Connections, "Connections"),
-        (SettingsTab::PortalHub, "Portal Hub"),
-        (SettingsTab::SecurityLogs, "Security & Logs"),
-        (SettingsTab::Snippets, "Snippets"),
+        SettingsTabItem {
+            tab: SettingsTab::UiUx,
+            label: "UI & UX",
+            icon: icons::ui::SETTINGS,
+        },
+        SettingsTabItem {
+            tab: SettingsTab::Terminal,
+            label: "Terminal",
+            icon: icons::ui::TERMINAL,
+        },
+        SettingsTabItem {
+            tab: SettingsTab::Connections,
+            label: "Connections",
+            icon: icons::ui::SERVER,
+        },
+        SettingsTabItem {
+            tab: SettingsTab::PortalHub,
+            label: "Portal Hub",
+            icon: icons::ui::REFRESH,
+        },
+        SettingsTabItem {
+            tab: SettingsTab::SecurityLogs,
+            label: "Security",
+            icon: icons::ui::KEY,
+        },
+        SettingsTabItem {
+            tab: SettingsTab::Snippets,
+            label: "Snippets",
+            icon: icons::ui::CODE,
+        },
     ];
 
-    let controls = toggle_group(
-        active_tab,
-        &tabs,
-        |tab| Message::Ui(UiMessage::SettingsTabSelected(tab)),
-        theme,
-        fonts,
-    );
+    let controls = Row::from_vec(
+        tabs.iter()
+            .map(|item| settings_tab_button(*item, active_tab, theme, fonts))
+            .collect(),
+    )
+    .spacing(10)
+    .padding(4);
 
-    scrollable(controls)
+    let tab_bar = container(controls)
+        .padding(6)
+        .style(move |_| container::Style {
+            background: Some(theme.surface.into()),
+            border: iced::Border {
+                color: theme.border,
+                width: 1.0,
+                radius: BORDER_RADIUS.into(),
+            },
+            ..Default::default()
+        });
+
+    scrollable(tab_bar)
         .direction(scrollable::Direction::Horizontal(
-            scrollable::Scrollbar::new().width(0).scroller_width(0),
+            scrollable::Scrollbar::new().width(3).scroller_width(3),
         ))
         .width(Fill)
         .into()
+}
+
+#[derive(Clone, Copy)]
+struct SettingsTabItem {
+    tab: SettingsTab,
+    label: &'static str,
+    icon: &'static [u8],
+}
+
+fn settings_tab_button(
+    item: SettingsTabItem,
+    active_tab: SettingsTab,
+    theme: Theme,
+    fonts: ScaledFonts,
+) -> Element<'static, Message> {
+    let selected = item.tab == active_tab;
+    let icon_color = if selected {
+        theme.text_primary
+    } else {
+        theme.text_secondary
+    };
+    let text_color = if selected {
+        theme.text_primary
+    } else {
+        theme.text_secondary
+    };
+
+    let indicator = container(Space::new().width(Length::Fixed(34.0)).height(3)).style(move |_| {
+        container::Style {
+            background: Some(if selected {
+                theme.focus_ring.into()
+            } else {
+                iced::Color::TRANSPARENT.into()
+            }),
+            border: iced::Border {
+                radius: 2.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    });
+
+    button(
+        container(
+            column![
+                row![
+                    icon_with_color(item.icon, 18, icon_color),
+                    text(item.label)
+                        .size(fonts.body)
+                        .color(text_color)
+                        .wrapping(text::Wrapping::None),
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center),
+                indicator,
+            ]
+            .spacing(8)
+            .align_x(Alignment::Center),
+        )
+        .width(Length::Fixed(128.0))
+        .height(Length::Fixed(56.0))
+        .align_x(Alignment::Center)
+        .align_y(Alignment::Center),
+    )
+    .padding(0)
+    .style(move |_theme, status| {
+        let background = match (selected, status) {
+            (true, _) => Some(theme.selected.into()),
+            (false, button::Status::Hovered) => Some(theme.hover.into()),
+            (false, _) => Some(theme.background.into()),
+        };
+        button::Style {
+            background,
+            text_color,
+            border: iced::Border {
+                color: if selected {
+                    theme.focus_ring
+                } else {
+                    theme.border
+                },
+                width: 1.0,
+                radius: (BORDER_RADIUS - 1.0).into(),
+            },
+            ..Default::default()
+        }
+    })
+    .on_press(Message::Ui(UiMessage::SettingsTabSelected(item.tab)))
+    .into()
 }
 
 fn active_tab_description(tab: SettingsTab) -> &'static str {

@@ -16,6 +16,7 @@ use crate::icons::{self, icon_with_color};
 use crate::message::{Message, SessionId, SftpMessage};
 use crate::sftp::{FileEntry, FileIcon, format_size};
 use crate::theme::{ScaledFonts, Theme};
+use crate::views::components::skeleton_rows;
 use crate::widgets::{column_resize_handle, mouse_area};
 
 use super::state::FilePaneState;
@@ -359,12 +360,7 @@ pub fn pane_file_list<'a>(
     fonts: ScaledFonts,
 ) -> Element<'a, Message> {
     if state.loading {
-        return container(text("Loading...").size(fonts.body).color(theme.text_muted))
-            .width(Fill)
-            .height(Fill)
-            .align_x(Alignment::Center)
-            .align_y(Alignment::Center)
-            .into();
+        return skeleton_rows(9, theme, fonts);
     }
 
     if let Some(ref error) = state.error {
@@ -409,87 +405,53 @@ pub fn pane_file_list<'a>(
 
     // Column headers with resize handles at right edge
     // Name column with resize handle at right edge
-    let name_header: Element<'_, Message> = container(
-        row![
-            text("Name")
-                .size(fonts.body)
-                .color(theme.text_muted)
-                .wrapping(text::Wrapping::None),
-            Space::new().width(Fill), // Push resize handle to right edge
-            column_resize_handle()
-                .on_drag_start(move |x| Message::Sftp(SftpMessage::ColumnResizeStart(
-                    tab_id,
-                    pane_id,
-                    SftpColumn::Name,
-                    x
-                )))
-                .on_drag(move |x| Message::Sftp(SftpMessage::ColumnResizing(tab_id, x)))
-                .on_drag_end(Message::Sftp(SftpMessage::ColumnResizeEnd(tab_id))),
-        ]
-        .align_y(Alignment::Center),
-    )
-    .width(Length::Fixed(column_widths.name))
-    .clip(true)
-    .into();
+    let name_header: Element<'_, Message> = table_header_cell(
+        "Name",
+        SftpColumn::Name,
+        state.sort_order,
+        tab_id,
+        pane_id,
+        column_widths.name,
+        true,
+        theme,
+        fonts,
+    );
 
-    // Date Modified column with resize handle at right edge
-    let date_header: Element<'_, Message> = container(
-        row![
-            text("Date Modified")
-                .size(fonts.body)
-                .color(theme.text_muted)
-                .wrapping(text::Wrapping::None),
-            Space::new().width(Fill),
-            column_resize_handle()
-                .on_drag_start(move |x| Message::Sftp(SftpMessage::ColumnResizeStart(
-                    tab_id,
-                    pane_id,
-                    SftpColumn::DateModified,
-                    x
-                )))
-                .on_drag(move |x| Message::Sftp(SftpMessage::ColumnResizing(tab_id, x)))
-                .on_drag_end(Message::Sftp(SftpMessage::ColumnResizeEnd(tab_id))),
-        ]
-        .align_y(Alignment::Center),
-    )
-    .width(Length::Fixed(column_widths.date_modified))
-    .clip(true)
-    .into();
+    let date_header: Element<'_, Message> = table_header_cell(
+        "Date Modified",
+        SftpColumn::DateModified,
+        state.sort_order,
+        tab_id,
+        pane_id,
+        column_widths.date_modified,
+        true,
+        theme,
+        fonts,
+    );
 
-    // Size column with resize handle at right edge
-    let size_header: Element<'_, Message> = container(
-        row![
-            text("Size")
-                .size(fonts.body)
-                .color(theme.text_muted)
-                .wrapping(text::Wrapping::None),
-            Space::new().width(Fill),
-            column_resize_handle()
-                .on_drag_start(move |x| Message::Sftp(SftpMessage::ColumnResizeStart(
-                    tab_id,
-                    pane_id,
-                    SftpColumn::Size,
-                    x
-                )))
-                .on_drag(move |x| Message::Sftp(SftpMessage::ColumnResizing(tab_id, x)))
-                .on_drag_end(Message::Sftp(SftpMessage::ColumnResizeEnd(tab_id))),
-        ]
-        .align_y(Alignment::Center),
-    )
-    .width(Length::Fixed(column_widths.size))
-    .clip(true)
-    .into();
+    let size_header: Element<'_, Message> = table_header_cell(
+        "Size",
+        SftpColumn::Size,
+        state.sort_order,
+        tab_id,
+        pane_id,
+        column_widths.size,
+        true,
+        theme,
+        fonts,
+    );
 
-    // Kind column (last column, no resize handle - fills remaining space)
-    let kind_header: Element<'_, Message> = container(
-        text("Kind")
-            .size(fonts.body)
-            .color(theme.text_muted)
-            .wrapping(text::Wrapping::None),
-    )
-    .width(Fill)
-    .clip(true)
-    .into();
+    let kind_header: Element<'_, Message> = table_header_cell(
+        "Kind",
+        SftpColumn::Kind,
+        state.sort_order,
+        tab_id,
+        pane_id,
+        column_widths.kind,
+        false,
+        theme,
+        fonts,
+    );
 
     let headers = container(
         Row::with_children(vec![name_header, date_header, size_header, kind_header])
@@ -573,6 +535,90 @@ pub fn pane_file_list<'a>(
     column![headers, file_list].spacing(0).into()
 }
 
+#[allow(clippy::too_many_arguments)]
+fn table_header_cell<'a>(
+    label: &'static str,
+    column: SftpColumn,
+    sort_order: crate::sftp::SortOrder,
+    tab_id: SessionId,
+    pane_id: PaneId,
+    width: f32,
+    resizable: bool,
+    theme: Theme,
+    fonts: ScaledFonts,
+) -> Element<'a, Message> {
+    let active = sort_order.column() == column;
+    let icon = if sort_order.is_desc() {
+        icons::ui::CHEVRON_DOWN
+    } else {
+        icons::ui::CHEVRON_RIGHT
+    };
+    let label_color = if active {
+        theme.text_primary
+    } else {
+        theme.text_muted
+    };
+
+    let mut header = row![
+        button(
+            row![
+                text(label)
+                    .size(fonts.body)
+                    .color(label_color)
+                    .wrapping(text::Wrapping::None),
+                if active {
+                    icon_with_color(icon, 12, theme.text_secondary)
+                } else {
+                    icon_with_color(icons::ui::CHEVRON_RIGHT, 12, iced::Color::TRANSPARENT)
+                },
+            ]
+            .spacing(4)
+            .align_y(Alignment::Center),
+        )
+        .padding([2, 4])
+        .style(move |_theme, status| {
+            let bg = match status {
+                button::Status::Hovered => Some(theme.hover.into()),
+                _ => None,
+            };
+            button::Style {
+                background: bg,
+                text_color: label_color,
+                border: iced::Border {
+                    radius: 4.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+        })
+        .on_press(Message::Sftp(SftpMessage::SortColumn(
+            tab_id, pane_id, column
+        ))),
+        Space::new().width(Fill),
+    ]
+    .align_y(Alignment::Center);
+
+    if resizable {
+        header = header.push(
+            column_resize_handle()
+                .on_drag_start(move |x| {
+                    Message::Sftp(SftpMessage::ColumnResizeStart(tab_id, pane_id, column, x))
+                })
+                .on_drag(move |x| Message::Sftp(SftpMessage::ColumnResizing(tab_id, x)))
+                .on_drag_end(Message::Sftp(SftpMessage::ColumnResizeEnd(tab_id))),
+        );
+    }
+
+    container(header)
+        .width(if resizable {
+            Length::Fixed(width)
+        } else {
+            Length::Fill
+        })
+        .clip(true)
+        .into()
+}
+
 /// Single file entry row for a pane
 #[allow(clippy::too_many_arguments)]
 pub fn pane_file_entry_row(
@@ -619,12 +665,9 @@ pub fn pane_file_entry_row(
     let modified = entry.formatted_modified();
     let kind = entry.kind_description();
 
-    // Clone name for tooltip
-    let tooltip_name = name.clone();
-
     let name_row = row![
         icon_with_color(icon_data, 16, icon_color),
-        text(name)
+        text(name.clone())
             .size(fonts.button_small)
             .color(text_color)
             .wrapping(text::Wrapping::None),
@@ -632,10 +675,31 @@ pub fn pane_file_entry_row(
     .spacing(8)
     .align_y(Alignment::Center);
 
-    // Wrap name in tooltip showing full name on hover (1 second delay)
+    let hover_card = column![
+        text(name.clone())
+            .size(fonts.body)
+            .color(theme.text_primary),
+        text(path.display().to_string())
+            .size(fonts.label)
+            .color(theme.text_muted),
+        row![
+            text(kind).size(fonts.label).color(theme.text_secondary),
+            text("·").size(fonts.label).color(theme.text_muted),
+            text(size.clone())
+                .size(fonts.label)
+                .color(theme.text_secondary),
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center),
+        text(modified.clone())
+            .size(fonts.label)
+            .color(theme.text_secondary),
+    ]
+    .spacing(5);
+
     let name_with_tooltip = tooltip(
         container(name_row).width(Fill).clip(true),
-        text(tooltip_name).size(fonts.label),
+        container(hover_card).padding(8).width(Length::Fixed(280.0)),
         tooltip::Position::Top,
     )
     .delay(std::time::Duration::from_secs(1))

@@ -1,5 +1,5 @@
 use iced::widget::{
-    Column, Row, Space, button, column, container, mouse_area, row, text, text_input,
+    Column, Row, Space, button, column, container, mouse_area, row, text, text_input, tooltip,
 };
 use iced::{Alignment, Element, Fill, Length, Padding};
 use uuid::Uuid;
@@ -607,7 +607,7 @@ fn host_card(
         detail_row = detail_row.push(text("·").size(fonts.label).color(theme.text_muted));
     }
     detail_row = detail_row.push(
-        text(last_connected_text)
+        text(last_connected_text.clone())
             .size(fonts.label)
             .color(theme.text_secondary),
     );
@@ -623,10 +623,8 @@ fn host_card(
     // Protocol badge (top-right)
     let top_right = column![badge].align_x(Alignment::End);
 
-    // Edit button - only visible on hover
-    // Use fixed dimensions (16px icon + 8px padding each side = 32px)
-    let edit_button: Element<'static, Message> = if is_hovered {
-        button(icon_with_color(icons::ui::PENCIL, 16, theme.text_secondary))
+    let icon_button = |icon: &'static [u8], message: Message| {
+        button(icon_with_color(icon, 16, theme.text_secondary))
             .padding(8)
             .width(32)
             .height(32)
@@ -645,17 +643,31 @@ fn host_card(
                     ..Default::default()
                 }
             })
-            .on_press(Message::Host(HostMessage::Edit(host_id)))
-            .into()
+            .on_press(message)
+    };
+
+    let details_button: Element<'static, Message> = if is_hovered {
+        icon_button(
+            icons::ui::INFO,
+            Message::Host(HostMessage::DetailsOpen(host_id)),
+        )
+        .into()
+    } else {
+        Space::new().width(32).height(32).into()
+    };
+
+    let edit_button: Element<'static, Message> = if is_hovered {
+        icon_button(icons::ui::PENCIL, Message::Host(HostMessage::Edit(host_id))).into()
     } else {
         Space::new().width(32).height(32).into()
     };
 
     // Right side: badge at top, edit button below
-    let right_side: Element<'static, Message> = column![top_right, edit_button]
-        .spacing(4)
-        .align_x(Alignment::End)
-        .into();
+    let right_side: Element<'static, Message> =
+        column![top_right, row![details_button, edit_button].spacing(2)]
+            .spacing(4)
+            .align_x(Alignment::End)
+            .into();
 
     let card_content = row![icon_widget, container(info).width(Length::Fill), right_side,]
         .spacing(14)
@@ -705,8 +717,44 @@ fn host_card(
     .height(Length::Fixed(CARD_HEIGHT))
     .on_press(Message::Host(HostMessage::Connect(host_id)));
 
+    let hover_content = container(
+        column![
+            text(host.name.clone())
+                .size(fonts.body)
+                .color(theme.text_primary),
+            text(format!(
+                "{}://{}",
+                protocol_label.to_lowercase(),
+                host.hostname
+            ))
+            .size(fonts.label)
+            .color(theme.text_muted),
+            text(format!("Last connected: {}", last_connected_text))
+                .size(fonts.label)
+                .color(theme.text_secondary),
+        ]
+        .spacing(5),
+    )
+    .padding(8)
+    .width(Length::Fixed(260.0));
+
+    let card_element: Element<'static, Message> =
+        tooltip(card_button, hover_content, tooltip::Position::Top)
+            .delay(std::time::Duration::from_millis(650))
+            .style(move |_theme| container::Style {
+                background: Some(theme.surface.into()),
+                border: iced::Border {
+                    color: theme.border,
+                    width: 1.0,
+                    radius: 6.0.into(),
+                },
+                ..Default::default()
+            })
+            .padding(6)
+            .into();
+
     // Wrap in mouse_area for hover detection
-    mouse_area(card_button)
+    mouse_area(card_element)
         .on_enter(Message::Host(HostMessage::Hover(Some(host_id))))
         .on_exit(Message::Host(HostMessage::Hover(None)))
         .into()

@@ -83,6 +83,11 @@ impl SftpManager {
         self.tabs.values_mut()
     }
 
+    /// Get all tab values
+    pub fn tab_values(&self) -> impl Iterator<Item = &DualPaneSftpState> {
+        self.tabs.values()
+    }
+
     // ---- Connection operations ----
 
     /// Get a reference to an SFTP connection by session ID

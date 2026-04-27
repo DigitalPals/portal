@@ -89,6 +89,14 @@ pub fn handle_host(portal: &mut Portal, msg: HostMessage) -> Task<Message> {
             portal.ui.hovered_host = id;
             Task::none()
         }
+        HostMessage::DetailsOpen(id) => {
+            portal.ui.host_details_sheet = Some(id);
+            Task::none()
+        }
+        HostMessage::DetailsClose => {
+            portal.ui.host_details_sheet = None;
+            Task::none()
+        }
         HostMessage::QuickConnect => {
             portal.dialogs.open_quick_connect();
             Task::none()

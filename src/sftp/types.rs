@@ -209,9 +209,47 @@ impl FileEntry {
 pub enum SortOrder {
     #[default]
     NameAsc,
+    NameDesc,
+    DateAsc,
+    DateDesc,
+    SizeAsc,
+    SizeDesc,
+    KindAsc,
+    KindDesc,
 }
 
 impl SortOrder {
+    pub fn for_column_next(self, column: crate::views::sftp::SftpColumn) -> Self {
+        use crate::views::sftp::SftpColumn;
+        match (column, self) {
+            (SftpColumn::Name, SortOrder::NameAsc) => SortOrder::NameDesc,
+            (SftpColumn::Name, _) => SortOrder::NameAsc,
+            (SftpColumn::DateModified, SortOrder::DateDesc) => SortOrder::DateAsc,
+            (SftpColumn::DateModified, _) => SortOrder::DateDesc,
+            (SftpColumn::Size, SortOrder::SizeDesc) => SortOrder::SizeAsc,
+            (SftpColumn::Size, _) => SortOrder::SizeDesc,
+            (SftpColumn::Kind, SortOrder::KindAsc) => SortOrder::KindDesc,
+            (SftpColumn::Kind, _) => SortOrder::KindAsc,
+        }
+    }
+
+    pub fn column(self) -> crate::views::sftp::SftpColumn {
+        use crate::views::sftp::SftpColumn;
+        match self {
+            SortOrder::NameAsc | SortOrder::NameDesc => SftpColumn::Name,
+            SortOrder::DateAsc | SortOrder::DateDesc => SftpColumn::DateModified,
+            SortOrder::SizeAsc | SortOrder::SizeDesc => SftpColumn::Size,
+            SortOrder::KindAsc | SortOrder::KindDesc => SftpColumn::Kind,
+        }
+    }
+
+    pub fn is_desc(self) -> bool {
+        matches!(
+            self,
+            SortOrder::NameDesc | SortOrder::DateDesc | SortOrder::SizeDesc | SortOrder::KindDesc
+        )
+    }
+
     /// Sort file entries according to this order
     pub fn sort(&self, entries: &mut [FileEntry]) {
         // Always keep ".." at the top, then directories, then files
@@ -236,6 +274,13 @@ impl SortOrder {
             // Apply sort order
             match self {
                 SortOrder::NameAsc => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+                SortOrder::NameDesc => b.name.to_lowercase().cmp(&a.name.to_lowercase()),
+                SortOrder::DateAsc => a.modified.cmp(&b.modified),
+                SortOrder::DateDesc => b.modified.cmp(&a.modified),
+                SortOrder::SizeAsc => a.size.cmp(&b.size),
+                SortOrder::SizeDesc => b.size.cmp(&a.size),
+                SortOrder::KindAsc => a.kind_description().cmp(b.kind_description()),
+                SortOrder::KindDesc => b.kind_description().cmp(a.kind_description()),
             }
         });
     }

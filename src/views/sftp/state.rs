@@ -4,6 +4,7 @@
 
 use std::collections::HashSet;
 use std::path::PathBuf;
+use std::time::Instant;
 
 use iced::widget::Id;
 
@@ -150,6 +151,7 @@ pub struct SftpDialogState {
     pub target_pane: PaneId,
     pub input_value: String,
     pub error: Option<String>,
+    pub delete_hold_started: Option<Instant>,
 }
 
 impl SftpDialogState {
@@ -159,6 +161,7 @@ impl SftpDialogState {
             target_pane: pane_id,
             input_value: String::new(),
             error: None,
+            delete_hold_started: None,
         }
     }
 
@@ -170,6 +173,7 @@ impl SftpDialogState {
             target_pane: pane_id,
             input_value: original_name,
             error: None,
+            delete_hold_started: None,
         }
     }
 
@@ -179,6 +183,7 @@ impl SftpDialogState {
             target_pane: pane_id,
             input_value: String::new(),
             error: None,
+            delete_hold_started: None,
         }
     }
 
@@ -197,6 +202,7 @@ impl SftpDialogState {
             target_pane: pane_id,
             input_value: String::new(),
             error: None,
+            delete_hold_started: None,
         }
     }
 

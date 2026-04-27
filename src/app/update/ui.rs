@@ -6,7 +6,10 @@ pub(crate) mod settings;
 use iced::Task;
 
 use crate::app::{Portal, SIDEBAR_AUTO_COLLAPSE_THRESHOLD, View};
-use crate::message::{Message, ProxySessionsMessage, SftpMessage, SidebarMenuItem, UiMessage};
+use crate::message::{
+    CommandAction, HostMessage, Message, ProxySessionsMessage, SftpMessage, SidebarMenuItem,
+    SnippetMessage, UiMessage,
+};
 
 /// Handle UI state messages.
 pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
@@ -35,6 +38,24 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
             portal.ui.settings_tab = tab;
             Task::none()
         }
+        UiMessage::CommandPaletteToggle => {
+            portal.ui.command_palette_open = !portal.ui.command_palette_open;
+            if portal.ui.command_palette_open {
+                portal.ui.command_palette_query.clear();
+                iced::widget::operation::focus(crate::views::command_palette::command_input_id())
+            } else {
+                Task::none()
+            }
+        }
+        UiMessage::CommandPaletteClose => {
+            portal.ui.command_palette_open = false;
+            Task::none()
+        }
+        UiMessage::CommandPaletteChanged(query) => {
+            portal.ui.command_palette_query = query;
+            Task::none()
+        }
+        UiMessage::CommandPaletteRun(action) => run_command_action(portal, action),
         msg @ (UiMessage::ThemeChange(_)
         | UiMessage::FontChange(_)
         | UiMessage::FontSizeChange(_)
@@ -148,6 +169,26 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
         UiMessage::KeyReleased(key, modifiers) => {
             keyboard::handle_key_released(portal, key, modifiers)
         }
+    }
+}
+
+fn run_command_action(portal: &mut Portal, action: CommandAction) -> Task<Message> {
+    portal.ui.command_palette_open = false;
+    portal.ui.command_palette_query.clear();
+
+    match action {
+        CommandAction::Hosts => handle_sidebar_item_select(portal, SidebarMenuItem::Hosts),
+        CommandAction::Sftp => handle_sidebar_item_select(portal, SidebarMenuItem::Sftp),
+        CommandAction::Snippets => handle_sidebar_item_select(portal, SidebarMenuItem::Snippets),
+        CommandAction::Vault => handle_sidebar_item_select(portal, SidebarMenuItem::Vault),
+        CommandAction::History => handle_sidebar_item_select(portal, SidebarMenuItem::History),
+        CommandAction::Settings => handle_sidebar_item_select(portal, SidebarMenuItem::Settings),
+        CommandAction::QuickConnect => portal.update(Message::Host(HostMessage::QuickConnect)),
+        CommandAction::NewHost => portal.update(Message::Host(HostMessage::Add)),
+        CommandAction::LocalTerminal => portal.update(Message::Host(HostMessage::LocalTerminal)),
+        CommandAction::ConnectHost(id) => portal.update(Message::Host(HostMessage::Connect(id))),
+        CommandAction::RunSnippet(id) => portal.update(Message::Snippet(SnippetMessage::Run(id))),
+        CommandAction::PortalHubSync => portal.update(Message::Ui(UiMessage::PortalHubSyncNow)),
     }
 }
 

@@ -59,6 +59,29 @@ pub(super) fn handle_keyboard_event(
     key: Key,
     modifiers: keyboard::Modifiers,
 ) -> Task<Message> {
+    if portal.ui.command_palette_open {
+        match &key {
+            Key::Named(keyboard::key::Named::Escape) => {
+                return Task::done(Message::Ui(UiMessage::CommandPaletteClose));
+            }
+            Key::Named(keyboard::key::Named::Enter) => {
+                let commands = crate::views::command_palette::available_commands(
+                    &portal.config.hosts,
+                    &portal.config.snippets,
+                    portal.prefs.portal_hub.sync_configured(),
+                );
+                if let Some(action) = crate::views::command_palette::first_matching_action(
+                    &commands,
+                    &portal.ui.command_palette_query,
+                ) {
+                    return Task::done(Message::Ui(UiMessage::CommandPaletteRun(action)));
+                }
+                return Task::none();
+            }
+            _ => {}
+        }
+    }
+
     // Priority 1: Dialog open - handle dialog-specific keyboard navigation
     if portal.dialogs.is_open() {
         return handle_dialog_keyboard(portal, &key, &modifiers);
@@ -226,6 +249,9 @@ pub(super) fn handle_keyboard_event(
 
     // Priority 3: Global shortcuts (always work unless terminal captured)
     match (&key, modifiers.control(), modifiers.shift()) {
+        (Key::Character(c), true, false) if c.as_str() == "k" || c.as_str() == "K" => {
+            return Task::done(Message::Ui(UiMessage::CommandPaletteToggle));
+        }
         // F1 - Focus Sidebar
         (Key::Named(keyboard::key::Named::F1), false, false) => {
             portal.ui.focus_section = FocusSection::Sidebar;

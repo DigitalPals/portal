@@ -23,6 +23,8 @@ use crate::message::{
 };
 use crate::terminal::metrics::TerminalMetrics;
 use crate::theme::{ScaledFonts, ThemeId, get_theme};
+use crate::views::command_palette::{available_commands, command_palette_view};
+use crate::views::components::dropzone_overlay;
 use crate::views::dialogs::about_dialog::about_dialog_view;
 use crate::views::dialogs::connecting_dialog::connecting_dialog_view;
 use crate::views::dialogs::host_dialog::host_dialog_view;
@@ -37,6 +39,7 @@ use crate::views::dialogs::quick_connect_dialog::quick_connect_dialog_view;
 use crate::views::dialogs::session_choice_dialog::session_choice_dialog_view;
 use crate::views::file_viewer::file_viewer_view;
 use crate::views::history_view::history_view;
+use crate::views::host_details_sheet::host_details_sheet_view;
 use crate::views::host_grid::{calculate_columns, host_grid_view, search_input_id};
 use crate::views::proxy_sessions::proxy_sessions_view;
 use crate::views::settings_page::{SettingsPageContext, settings_page_view};
@@ -134,7 +137,10 @@ mod tests {
 pub struct UiState {
     pub active_view: View,
     pub search_query: String,
+    pub command_palette_open: bool,
+    pub command_palette_query: String,
     pub hovered_host: Option<Uuid>,
+    pub host_details_sheet: Option<Uuid>,
     pub hovered_tab: Option<Uuid>,
     pub sidebar_state: SidebarState,
     pub sidebar_state_before_session: Option<SidebarState>, // Saved state before hiding for terminal
@@ -164,6 +170,7 @@ pub struct UiState {
     pub portal_hub_remote_sync_pending: bool,
     pub portal_hub_conflicts: Vec<SyncConflict>,
     pub portal_hub_conflict_choices: Vec<ConflictChoice>,
+    pub hovered_drop_files: Vec<std::path::PathBuf>,
 }
 
 /// User preference state (theme, fonts, sizing).
@@ -445,7 +452,10 @@ impl Portal {
             ui: UiState {
                 active_view: View::HostGrid,
                 search_query: String::new(),
+                command_palette_open: false,
+                command_palette_query: String::new(),
                 hovered_host: None,
+                host_details_sheet: None,
                 hovered_tab: None,
                 sidebar_state: SidebarState::Expanded,
                 sidebar_state_before_session: None,
@@ -476,6 +486,7 @@ impl Portal {
                 portal_hub_remote_sync_pending: false,
                 portal_hub_conflicts: Vec::new(),
                 portal_hub_conflict_choices: Vec::new(),
+                hovered_drop_files: Vec::new(),
             },
             tabs: Vec::new(),
             active_tab: None,
@@ -1048,15 +1059,65 @@ impl Portal {
             with_context_menu
         };
 
+        let with_host_sheet: Element<'_, Message> =
+            if let Some(host_id) = self.ui.host_details_sheet {
+                if let Some(host) = self.config.hosts.find_host(host_id) {
+                    let group_name = host.group_id.and_then(|group_id| {
+                        self.config
+                            .hosts
+                            .groups
+                            .iter()
+                            .find(|group| group.id == group_id)
+                            .map(|group| group.name.as_str())
+                    });
+                    stack![
+                        with_tab_context_menu,
+                        host_details_sheet_view(host, group_name, theme, fonts)
+                    ]
+                    .into()
+                } else {
+                    with_tab_context_menu
+                }
+            } else {
+                with_tab_context_menu
+            };
+
+        let with_dropzone: Element<'_, Message> = if !self.ui.hovered_drop_files.is_empty()
+            && matches!(self.ui.active_view, View::DualSftp(_))
+        {
+            let label = match self.ui.hovered_drop_files.len() {
+                1 => "Drop 1 item".to_string(),
+                count => format!("Drop {} items", count),
+            };
+            stack![with_host_sheet, dropzone_overlay(label, theme, fonts)].into()
+        } else {
+            with_host_sheet
+        };
+
+        let with_command_palette: Element<'_, Message> = if self.ui.command_palette_open {
+            let commands = available_commands(
+                &self.config.hosts,
+                &self.config.snippets,
+                self.prefs.portal_hub.sync_configured(),
+            );
+            stack![
+                with_dropzone,
+                command_palette_view(&self.ui.command_palette_query, &commands, theme, fonts)
+            ]
+            .into()
+        } else {
+            with_dropzone
+        };
+
         // Overlay toast notifications on top of everything
         let final_content = if self.toast_manager.has_toasts() {
             stack![
-                with_tab_context_menu,
+                with_command_palette,
                 toast_overlay_view(&self.toast_manager, theme, fonts)
             ]
             .into()
         } else {
-            with_tab_context_menu
+            with_command_palette
         };
 
         // Wrap everything in a container with our background color
@@ -1200,6 +1261,15 @@ impl Portal {
                 iced::Event::Window(window::Event::Focused) => {
                     Some(Message::Ui(UiMessage::WindowFocused))
                 }
+                iced::Event::Window(window::Event::FileHovered(path)) => Some(Message::Sftp(
+                    crate::message::SftpMessage::FilesHovered(vec![path]),
+                )),
+                iced::Event::Window(window::Event::FileDropped(path)) => Some(Message::Sftp(
+                    crate::message::SftpMessage::FilesDropped(Uuid::nil(), vec![path]),
+                )),
+                iced::Event::Window(window::Event::FilesHoveredLeft) => {
+                    Some(Message::Sftp(crate::message::SftpMessage::FilesHoveredLeft))
+                }
                 _ => None,
             }),
             // Window resize events
@@ -1238,6 +1308,13 @@ impl Portal {
             );
         }
 
+        if self.active_delete_hold_tab().is_some() {
+            subscriptions.push(
+                time::every(Duration::from_millis(16))
+                    .map(|_| Message::Sftp(crate::message::SftpMessage::DeleteHoldTick)),
+            );
+        }
+
         if self.ui.portal_hub_local_sync_pending
             && !self.ui.portal_hub_sync_loading
             && self.ui.portal_hub_conflicts.is_empty()
@@ -1259,6 +1336,19 @@ impl Portal {
         }
 
         Subscription::batch(subscriptions)
+    }
+
+    fn active_delete_hold_tab(&self) -> Option<SessionId> {
+        self.sftp
+            .tab_values()
+            .find(|state| {
+                state
+                    .dialog
+                    .as_ref()
+                    .and_then(|dialog| dialog.delete_hold_started)
+                    .is_some()
+            })
+            .map(|state| state.tab_id)
     }
 }
 

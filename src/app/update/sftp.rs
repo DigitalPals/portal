@@ -3,12 +3,17 @@
 use iced::Task;
 use uuid::Uuid;
 
-use crate::app::{Portal, Tab};
+use crate::app::{Portal, Tab, View};
 use crate::config::SettingsConfig;
+use crate::fs_utils::{
+    copy_dir_recursive, count_items_in_dir, ensure_not_same_path, ensure_not_symlink,
+};
 use crate::message::{Message, SftpMessage};
 use crate::views::sftp::state::ColumnResizeDrag;
 use crate::views::sftp::{DualPaneSftpState, PaneId, PaneSource};
 use crate::views::toast::Toast;
+
+const DELETE_HOLD_DURATION: std::time::Duration = std::time::Duration::from_millis(1200);
 
 /// Handle SFTP browser messages
 pub fn handle_sftp(portal: &mut Portal, msg: SftpMessage) -> Task<Message> {
@@ -378,6 +383,78 @@ pub fn handle_sftp(portal: &mut Portal, msg: SftpMessage) -> Task<Message> {
             }
             Task::none()
         }
+        SftpMessage::SortColumn(tab_id, pane_id, column) => {
+            if let Some(tab_state) = portal.sftp.get_tab_mut(tab_id) {
+                tab_state.close_actions_menus();
+                let pane = tab_state.pane_mut(pane_id);
+                pane.sort_order = pane.sort_order.for_column_next(column);
+                pane.sort_order.sort(&mut pane.entries);
+                pane.selected_indices.clear();
+                pane.last_selected_index = None;
+            }
+            Task::none()
+        }
+        SftpMessage::FilesHovered(paths) => {
+            portal.ui.hovered_drop_files = paths;
+            Task::none()
+        }
+        SftpMessage::FilesHoveredLeft => {
+            portal.ui.hovered_drop_files.clear();
+            Task::none()
+        }
+        SftpMessage::FilesDropped(tab_id, paths) => {
+            portal.ui.hovered_drop_files.clear();
+            let tab_id = if portal.sftp.contains_tab(tab_id) {
+                tab_id
+            } else if let View::DualSftp(active_tab_id) = portal.ui.active_view {
+                active_tab_id
+            } else {
+                return Task::none();
+            };
+            handle_dropped_files(portal, tab_id, paths)
+        }
+        SftpMessage::DeleteHoldStart(tab_id) => {
+            if let Some(tab_state) = portal.sftp.get_tab_mut(tab_id) {
+                if let Some(dialog) = tab_state.dialog.as_mut() {
+                    if matches!(
+                        dialog.dialog_type,
+                        crate::views::sftp::SftpDialogType::Delete { .. }
+                    ) {
+                        dialog.delete_hold_started = Some(std::time::Instant::now());
+                    }
+                }
+            }
+            Task::none()
+        }
+        SftpMessage::DeleteHoldCancel(tab_id) => {
+            if let Some(tab_state) = portal.sftp.get_tab_mut(tab_id) {
+                if let Some(dialog) = tab_state.dialog.as_mut() {
+                    dialog.delete_hold_started = None;
+                }
+            }
+            Task::none()
+        }
+        SftpMessage::DeleteHoldTick => {
+            let tab_id = portal.sftp.tab_values().find_map(|tab_state| {
+                let complete = tab_state
+                    .dialog
+                    .as_ref()
+                    .and_then(|dialog| dialog.delete_hold_started)
+                    .is_some_and(|started| started.elapsed() >= DELETE_HOLD_DURATION);
+                complete.then_some(tab_state.tab_id)
+            });
+
+            if let Some(tab_id) = tab_id {
+                if let Some(tab_state) = portal.sftp.get_tab_mut(tab_id) {
+                    if let Some(dialog) = tab_state.dialog.as_mut() {
+                        dialog.delete_hold_started = None;
+                    }
+                }
+                return portal.handle_sftp_dialog_submit(tab_id);
+            }
+
+            Task::none()
+        }
         SftpMessage::PaneBreadcrumbNavigate(tab_id, pane_id, path) => {
             if let Some(tab_state) = portal.sftp.get_tab_mut(tab_id) {
                 tab_state.close_actions_menus();
@@ -446,6 +523,126 @@ fn navigable_parent(path: &std::path::Path) -> Option<&std::path::Path> {
         return None;
     }
     Some(parent)
+}
+
+fn handle_dropped_files(
+    portal: &mut Portal,
+    tab_id: crate::message::SessionId,
+    paths: Vec<std::path::PathBuf>,
+) -> Task<Message> {
+    if paths.is_empty() {
+        return Task::none();
+    }
+
+    let Some(tab_state) = portal.sftp.get_tab(tab_id) else {
+        return Task::none();
+    };
+    let target_pane_id = tab_state.active_pane;
+    let target_pane = tab_state.pane(target_pane_id);
+    let target_dir = target_pane.current_path.clone();
+    let target_source = target_pane.source.clone();
+
+    match target_source {
+        PaneSource::Local => {
+            if let Some(tab_state) = portal.sftp.get_tab_mut(tab_id) {
+                tab_state.pane_mut(target_pane_id).loading = true;
+            }
+            Task::perform(
+                async move {
+                    tokio::task::spawn_blocking(move || {
+                        let mut count = 0;
+                        for source_path in paths {
+                            let metadata =
+                                std::fs::symlink_metadata(&source_path).map_err(|e| {
+                                    format!("Failed to read {}: {}", source_path.display(), e)
+                                })?;
+                            if metadata.file_type().is_symlink() {
+                                return Err(format!(
+                                    "Cannot copy symbolic link {}",
+                                    source_path.display()
+                                ));
+                            }
+
+                            let name = source_path
+                                .file_name()
+                                .ok_or_else(|| {
+                                    format!("Cannot copy unnamed path {}", source_path.display())
+                                })?
+                                .to_owned();
+                            let target_path = target_dir.join(name);
+
+                            if metadata.is_dir() {
+                                copy_dir_recursive(&source_path, &target_path)?;
+                                count += count_items_in_dir(&source_path)?;
+                            } else {
+                                ensure_not_symlink(&source_path)?;
+                                ensure_not_same_path(&source_path, &target_path)?;
+                                std::fs::copy(&source_path, &target_path).map_err(|e| {
+                                    format!("Failed to copy {}: {}", source_path.display(), e)
+                                })?;
+                                count += 1;
+                            }
+                        }
+                        Ok(count)
+                    })
+                    .await
+                    .map_err(|e| e.to_string())?
+                },
+                move |result| {
+                    Message::Sftp(SftpMessage::CopyResult(tab_id, target_pane_id, result))
+                },
+            )
+        }
+        PaneSource::Remote { session_id, .. } => {
+            let Some(sftp) = portal.sftp.get_connection(session_id).cloned() else {
+                return Task::none();
+            };
+            if let Some(tab_state) = portal.sftp.get_tab_mut(tab_id) {
+                tab_state.pane_mut(target_pane_id).loading = true;
+            }
+            Task::perform(
+                async move {
+                    let mut count = 0;
+                    for source_path in paths {
+                        let metadata =
+                            tokio::fs::symlink_metadata(&source_path)
+                                .await
+                                .map_err(|e| {
+                                    format!("Failed to read {}: {}", source_path.display(), e)
+                                })?;
+                        if metadata.file_type().is_symlink() {
+                            return Err(format!(
+                                "Cannot upload symbolic link {}",
+                                source_path.display()
+                            ));
+                        }
+                        let name = source_path
+                            .file_name()
+                            .ok_or_else(|| {
+                                format!("Cannot upload unnamed path {}", source_path.display())
+                            })?
+                            .to_owned();
+                        let target_path = target_dir.join(name);
+                        if metadata.is_dir() {
+                            count += sftp
+                                .upload_recursive(&source_path, &target_path)
+                                .await
+                                .map_err(|e| e.to_string())?;
+                        } else {
+                            sftp.upload(&source_path, &target_path)
+                                .await
+                                .map_err(|e| e.to_string())?;
+                            count += 1;
+                        }
+                    }
+                    Ok(count)
+                },
+                move |result| {
+                    Message::Sftp(SftpMessage::CopyResult(tab_id, target_pane_id, result))
+                },
+            )
+        }
+    }
 }
 
 #[cfg(test)]
