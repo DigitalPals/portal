@@ -10,6 +10,7 @@ use iced::{Alignment, Element, Length};
 
 use crate::message::Message;
 use crate::theme::{ScaledFonts, Theme};
+use crate::views::components::kbd;
 
 /// Format duration as MM:SS or HH:MM:SS
 fn format_duration(start: Instant) -> String {
@@ -57,13 +58,12 @@ pub fn terminal_status_bar<'a>(
 
     // Right side: shortcut hint
     let right = row![
-        text("Ctrl+Shift+K")
-            .size(fonts.small)
-            .color(theme.text_muted),
-        text(" Install SSH Key")
+        kbd("Ctrl+Shift+K", theme, fonts),
+        text("Install SSH Key")
             .size(fonts.small)
             .color(theme.text_secondary),
     ]
+    .spacing(6)
     .align_y(Alignment::Center);
 
     let content = row![

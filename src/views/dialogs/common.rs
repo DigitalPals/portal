@@ -7,11 +7,13 @@
 //! - `dialog_input_style` - Styled text input for dialogs
 //! - `dialog_pick_list_style` - Styled pick list for dialogs
 
-use iced::widget::{button, container, mouse_area, pick_list, text_input};
+use iced::widget::{
+    Space, button, column, container, mouse_area, pick_list, row, text, text_input,
+};
 use iced::{Alignment, Element, Length};
 
 use crate::message::Message;
-use crate::theme::{BORDER_RADIUS, Theme};
+use crate::theme::{BORDER_RADIUS, ScaledFonts, Theme};
 
 /// Wrap dialog content in a centered backdrop with modal styling.
 ///
@@ -56,6 +58,31 @@ pub fn dialog_backdrop(
         .on_press(Message::Noop)
         .on_release(Message::Noop)
         .into()
+}
+
+/// Alert dialog layout with title, description, and action row.
+pub fn alert_dialog(
+    title: impl Into<String>,
+    description: impl Into<String>,
+    actions: impl Into<Element<'static, Message>>,
+    theme: Theme,
+    fonts: ScaledFonts,
+) -> Element<'static, Message> {
+    let content = column![
+        text(title.into())
+            .size(fonts.dialog_title)
+            .color(theme.text_primary),
+        text(description.into())
+            .size(fonts.body)
+            .color(theme.text_secondary),
+        Space::new().height(4),
+        row![actions.into()].align_y(Alignment::Center),
+    ]
+    .spacing(10)
+    .padding(24)
+    .width(Length::Fixed(560.0));
+
+    dialog_backdrop(content, theme)
 }
 
 /// Primary button style - accent-colored for main actions (Save, Submit, etc.)

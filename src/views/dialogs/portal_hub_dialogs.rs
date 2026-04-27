@@ -9,7 +9,7 @@ use crate::message::{DialogMessage, Message, UiMessage};
 use crate::theme::{STATUS_FAILURE, ScaledFonts, Theme};
 
 use super::common::{
-    dialog_backdrop, dialog_input_style, primary_button_style, secondary_button_style,
+    alert_dialog, dialog_backdrop, dialog_input_style, primary_button_style, secondary_button_style,
 };
 
 pub fn portal_hub_onboarding_dialog_view(
@@ -113,43 +113,38 @@ pub fn portal_hub_disable_sync_dialog_view(
     theme: Theme,
     fonts: ScaledFonts,
 ) -> Element<'static, Message> {
-    let content = column![
-        text(format!("Disable {}?", service.label()))
-            .size(fonts.dialog_title)
-            .color(theme.text_primary),
-        text(format!(
+    let actions = row![
+        button(text("Cancel").size(fonts.body))
+            .padding([8, 18])
+            .style(secondary_button_style(theme))
+            .on_press(Message::Dialog(DialogMessage::Close)),
+        Space::new().width(Length::Fill),
+        button(text("Keep data").size(fonts.body))
+            .padding([8, 18])
+            .style(secondary_button_style(theme))
+            .on_press(Message::Ui(UiMessage::PortalHubDisableSyncKeepData(
+                service
+            ))),
+        button(text("Delete data").size(fonts.body))
+            .padding([8, 18])
+            .style(primary_button_style(theme))
+            .on_press(Message::Ui(UiMessage::PortalHubDisableSyncDeleteData(
+                service
+            ))),
+    ]
+    .spacing(10)
+    .align_y(Alignment::Center);
+
+    alert_dialog(
+        format!("Disable {}?", service.label()),
+        format!(
             "Do you want to delete {} already stored in Portal Hub, or only stop syncing it from this device?",
             service.stored_data_label()
-        ))
-        .size(fonts.body)
-        .color(theme.text_secondary),
-        row![
-            button(text("Cancel").size(fonts.body))
-                .padding([8, 18])
-                .style(secondary_button_style(theme))
-                .on_press(Message::Dialog(DialogMessage::Close)),
-            Space::new().width(Length::Fill),
-            button(text("Keep data").size(fonts.body))
-                .padding([8, 18])
-                .style(secondary_button_style(theme))
-                .on_press(Message::Ui(UiMessage::PortalHubDisableSyncKeepData(
-                    service
-                ))),
-            button(text("Delete data").size(fonts.body))
-                .padding([8, 18])
-                .style(primary_button_style(theme))
-                .on_press(Message::Ui(UiMessage::PortalHubDisableSyncDeleteData(
-                    service
-                ))),
-        ]
-        .spacing(10)
-        .align_y(Alignment::Center)
-    ]
-    .spacing(14)
-    .padding(24)
-    .width(Length::Fixed(560.0));
-
-    dialog_backdrop(content, theme)
+        ),
+        actions,
+        theme,
+        fonts,
+    )
 }
 
 pub fn portal_hub_conflict_dialog_view(

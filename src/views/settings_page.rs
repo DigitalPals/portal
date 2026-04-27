@@ -14,8 +14,9 @@ use crate::fonts::TerminalFont;
 use crate::hub::sync::PortalHubSyncService;
 use crate::message::{Message, SettingsTab, UiMessage};
 use crate::proxy::ProxyStatus;
-use crate::theme::{
-    BORDER_RADIUS, CARD_BORDER_RADIUS, STATUS_FAILURE, ScaledFonts, Theme, ThemeId, get_theme,
+use crate::theme::{BORDER_RADIUS, ScaledFonts, Theme, ThemeId, get_theme};
+use crate::views::components::{
+    BadgeTone, field, form_card, help_tooltip, status_badge, toggle_group,
 };
 
 pub struct SettingsPageContext {
@@ -115,58 +116,20 @@ fn settings_tabs(
         (SettingsTab::Snippets, "Snippets"),
     ];
 
-    let mut row = Row::new().spacing(8);
-    for (tab, label) in tabs {
-        row = row.push(tab_button(tab, label, tab == active_tab, theme, fonts));
-    }
+    let controls = toggle_group(
+        active_tab,
+        &tabs,
+        |tab| Message::Ui(UiMessage::SettingsTabSelected(tab)),
+        theme,
+        fonts,
+    );
 
-    scrollable(row)
+    scrollable(controls)
         .direction(scrollable::Direction::Horizontal(
             scrollable::Scrollbar::new().width(0).scroller_width(0),
         ))
         .width(Fill)
         .into()
-}
-
-fn tab_button(
-    tab: SettingsTab,
-    label: &'static str,
-    selected: bool,
-    theme: Theme,
-    fonts: ScaledFonts,
-) -> Element<'static, Message> {
-    let text_color = if selected {
-        theme.text_primary
-    } else {
-        theme.text_secondary
-    };
-
-    button(
-        container(text(label).size(fonts.body).color(text_color))
-            .padding([8, 14])
-            .align_x(Alignment::Center)
-            .align_y(Alignment::Center),
-    )
-    .padding(0)
-    .style(move |_theme, status| {
-        let background = match (selected, status) {
-            (true, _) => Some(theme.selected.into()),
-            (false, iced::widget::button::Status::Hovered) => Some(theme.hover.into()),
-            (false, _) => Some(theme.surface.into()),
-        };
-        iced::widget::button::Style {
-            background,
-            text_color,
-            border: iced::Border {
-                radius: BORDER_RADIUS.into(),
-                width: 1.0,
-                color: if selected { theme.accent } else { theme.border },
-            },
-            ..Default::default()
-        }
-    })
-    .on_press(Message::Ui(UiMessage::SettingsTabSelected(tab)))
-    .into()
 }
 
 fn active_tab_description(tab: SettingsTab) -> &'static str {
@@ -353,24 +316,7 @@ fn settings_section<'a>(
     // Section title
     section = section.push(text(title).size(fonts.label).color(theme.text_muted));
 
-    // Section card with items
-    let mut card_content = Column::new().spacing(16).padding(20);
-    for item in items {
-        card_content = card_content.push(item);
-    }
-
-    let card = container(card_content)
-        .width(Fill)
-        .style(move |_| container::Style {
-            background: Some(theme.surface.into()),
-            border: iced::Border {
-                radius: CARD_BORDER_RADIUS.into(),
-                ..Default::default()
-            },
-            ..Default::default()
-        });
-
-    section.push(card).into()
+    section.push(form_card(items, theme)).into()
 }
 
 /// Theme selector with visual tile previews
@@ -779,20 +725,16 @@ fn toggle_setting<F>(
 where
     F: Fn(bool) -> Message + 'static,
 {
-    let label_text = text(label).size(fonts.body).color(theme.text_primary);
+    let tooltip = if enabled { "Turn off" } else { "Turn on" };
+    let control = help_tooltip(
+        switch_button(enabled, on_toggle, theme, fonts),
+        tooltip,
+        theme,
+        fonts,
+        iced::widget::tooltip::Position::Top,
+    );
 
-    let description_text = text(description).size(fonts.label).color(theme.text_muted);
-
-    column![
-        row![
-            column![label_text, Space::new().height(4), description_text].spacing(0),
-            Space::new().width(Length::Fill),
-            switch_button(enabled, on_toggle, theme, fonts),
-        ]
-        .align_y(Alignment::Center),
-    ]
-    .spacing(0)
-    .into()
+    field(label, description, control, theme, fonts)
 }
 
 fn read_only_setting(
@@ -802,21 +744,13 @@ fn read_only_setting(
     theme: Theme,
     fonts: ScaledFonts,
 ) -> Element<'static, Message> {
-    let label_text = text(label).size(fonts.body).color(theme.text_primary);
-    let description_text = text(description).size(fonts.label).color(theme.text_muted);
-
-    let value_text = text(value).size(fonts.label).color(theme.text_secondary);
-
-    column![
-        row![
-            column![label_text, Space::new().height(4), description_text].spacing(0),
-            Space::new().width(Length::Fill),
-            value_text,
-        ]
-        .align_y(Alignment::Center),
-    ]
-    .spacing(0)
-    .into()
+    field(
+        label,
+        description,
+        text(value).size(fonts.label).color(theme.text_secondary),
+        theme,
+        fonts,
+    )
 }
 
 fn portal_hub_status_setting(
@@ -826,71 +760,55 @@ fn portal_hub_status_setting(
     theme: Theme,
     fonts: ScaledFonts,
 ) -> Element<'static, Message> {
-    let label_text = text("Status").size(fonts.body).color(theme.text_primary);
-    let description_text = text("Check proxy version and API compatibility")
-        .size(fonts.label)
-        .color(theme.text_muted);
-
-    let status_text = if loading {
-        "Checking...".to_string()
+    let (badge_label, badge_tone, status_text) = if loading {
+        (
+            "Checking",
+            BadgeTone::Warning,
+            "Checking Portal Hub...".to_string(),
+        )
     } else if let Some(status) = status {
-        format!(
-            "v{} · API {} · schema {}",
-            status.version, status.api_version, status.metadata_schema_version
+        (
+            "Ready",
+            BadgeTone::Success,
+            format!(
+                "v{} · API {} · schema {}",
+                status.version, status.api_version, status.metadata_schema_version
+            ),
         )
     } else if let Some(error) = error.as_ref() {
-        error.clone()
+        ("Error", BadgeTone::Danger, error.clone())
     } else {
-        "Not checked".to_string()
+        ("Unknown", BadgeTone::Neutral, "Not checked".to_string())
     };
 
-    let status_color = if loading {
-        theme.text_muted
-    } else if error.is_some() {
-        STATUS_FAILURE
-    } else {
-        theme.text_secondary
-    };
+    let check_button = small_settings_button("Check", theme, fonts)
+        .on_press_maybe((!loading).then_some(Message::Ui(UiMessage::PortalHubCheckStatus)));
+    let check_button = help_tooltip(
+        check_button,
+        "Check Portal Hub API compatibility",
+        theme,
+        fonts,
+        iced::widget::tooltip::Position::Top,
+    );
 
-    let check_button = button(
-        container(text("Check").size(fonts.label).color(theme.text_primary))
-            .padding([6, 12])
-            .align_x(Alignment::Center)
-            .align_y(Alignment::Center),
-    )
-    .padding(0)
-    .style(move |_theme, status| {
-        let background = match status {
-            iced::widget::button::Status::Hovered => Some(theme.hover.into()),
-            _ => Some(theme.surface.into()),
-        };
-        iced::widget::button::Style {
-            background,
-            border: iced::Border {
-                radius: BORDER_RADIUS.into(),
-                width: 1.0,
-                color: theme.border,
-            },
-            ..Default::default()
-        }
-    })
-    .on_press_maybe((!loading).then_some(Message::Ui(UiMessage::PortalHubCheckStatus)));
-
-    column![
-        row![
-            column![label_text, Space::new().height(4), description_text].spacing(0),
-            Space::new().width(Length::Fill),
-            text(status_text)
-                .size(fonts.label)
-                .color(status_color)
-                .width(Length::Fixed(240.0)),
-            Space::new().width(12),
-            check_button,
-        ]
-        .align_y(Alignment::Center),
+    let control = row![
+        status_badge(badge_label, badge_tone, theme, fonts),
+        text(status_text)
+            .size(fonts.label)
+            .color(theme.text_secondary)
+            .width(Length::Fixed(240.0)),
+        check_button,
     ]
-    .spacing(0)
-    .into()
+    .spacing(10)
+    .align_y(Alignment::Center);
+
+    field(
+        "Status",
+        "Check proxy version and API compatibility",
+        control,
+        theme,
+        fonts,
+    )
 }
 
 fn portal_hub_sections(
@@ -953,10 +871,29 @@ fn portal_hub_account_summary(
         .on_press(Message::Ui(UiMessage::PortalHubOpenOnboarding));
     let logout_button = small_settings_button("Logout", theme, fonts)
         .on_press(Message::Ui(UiMessage::PortalHubLogout));
+    let manage_button = help_tooltip(
+        manage_button,
+        "Edit Portal Hub host and web port",
+        theme,
+        fonts,
+        iced::widget::tooltip::Position::Top,
+    );
+    let logout_button = help_tooltip(
+        logout_button,
+        "Sign out of Portal Hub on this device",
+        theme,
+        fonts,
+        iced::widget::tooltip::Position::Top,
+    );
 
     row![
         column![
-            text("Account").size(fonts.body).color(theme.text_primary),
+            row![
+                text("Account").size(fonts.body).color(theme.text_primary),
+                status_badge("Connected", BadgeTone::Success, theme, fonts),
+            ]
+            .spacing(8)
+            .align_y(Alignment::Center),
             text(user).size(fonts.label).color(theme.text_secondary),
         ]
         .spacing(4),
@@ -1048,17 +985,16 @@ fn portal_hub_switch_row<F>(
 where
     F: Fn(bool) -> Message + 'static,
 {
-    row![
-        column![
-            text(label).size(fonts.body).color(theme.text_primary),
-            text(description).size(fonts.label).color(theme.text_muted),
-        ]
-        .spacing(4),
-        Space::new().width(Length::Fill),
+    let tooltip = if enabled { "Turn off" } else { "Turn on" };
+    let control = help_tooltip(
         switch_button(enabled, on_toggle, theme, fonts),
-    ]
-    .align_y(Alignment::Center)
-    .into()
+        tooltip,
+        theme,
+        fonts,
+        iced::widget::tooltip::Position::Top,
+    );
+
+    field(label, description, control, theme, fonts)
 }
 
 fn switch_button<F>(
@@ -1154,26 +1090,28 @@ fn portal_hub_sync_status_setting(
     theme: Theme,
     fonts: ScaledFonts,
 ) -> Element<'static, Message> {
-    let status = if context.portal_hub_sync_loading {
-        "Syncing...".to_string()
+    let (badge_label, badge_tone, status) = if context.portal_hub_sync_loading {
+        ("Syncing", BadgeTone::Info, "Syncing...".to_string())
     } else if context.portal_hub_conflict_count > 0 {
-        format!(
-            "{} conflict(s) need review",
-            context.portal_hub_conflict_count
+        (
+            "Conflict",
+            BadgeTone::Danger,
+            format!(
+                "{} conflict(s) need review",
+                context.portal_hub_conflict_count
+            ),
         )
     } else if let Some(error) = &context.portal_hub_sync_error {
-        error.clone()
+        ("Error", BadgeTone::Danger, error.clone())
     } else {
-        context
-            .portal_hub_sync_status
-            .clone()
-            .unwrap_or_else(|| "Ready".to_string())
-    };
-    let color = if context.portal_hub_sync_error.is_some() || context.portal_hub_conflict_count > 0
-    {
-        STATUS_FAILURE
-    } else {
-        theme.text_secondary
+        (
+            "Ready",
+            BadgeTone::Success,
+            context
+                .portal_hub_sync_status
+                .clone()
+                .unwrap_or_else(|| "Ready".to_string()),
+        )
     };
     let sync_button = small_settings_button(
         if context.portal_hub_conflict_count > 0 {
@@ -1189,18 +1127,26 @@ fn portal_hub_sync_status_setting(
     } else {
         Message::Ui(UiMessage::PortalHubSyncNow)
     });
+    let sync_button = help_tooltip(
+        sync_button,
+        if context.portal_hub_conflict_count > 0 {
+            "Review conflicting Portal Hub data"
+        } else {
+            "Sync Portal Hub data now"
+        },
+        theme,
+        fonts,
+        iced::widget::tooltip::Position::Top,
+    );
 
-    row![
-        column![
-            text("Sync").size(fonts.body).color(theme.text_primary),
-            text(status).size(fonts.label).color(color),
-        ]
-        .spacing(4),
-        Space::new().width(Length::Fill),
+    let control = row![
+        status_badge(badge_label, badge_tone, theme, fonts),
         sync_button,
     ]
-    .align_y(Alignment::Center)
-    .into()
+    .spacing(10)
+    .align_y(Alignment::Center);
+
+    field("Sync", status, control, theme, fonts)
 }
 
 fn small_settings_button<'a>(
@@ -1245,72 +1191,13 @@ where
     T: Copy + PartialEq + 'static,
     F: Fn(T) -> Message + Copy + 'static,
 {
-    let label_text = text(label).size(fonts.body).color(theme.text_primary);
-    let description_text = text(description).size(fonts.label).color(theme.text_muted);
-
-    let mut controls = Row::new().spacing(6);
-    for &(value, option_label) in options {
-        let selected = value == current;
-        controls = controls.push(choice_button(
-            option_label,
-            selected,
-            on_select(value),
-            theme,
-            fonts,
-        ));
-    }
-
-    column![
-        row![
-            column![label_text, Space::new().height(4), description_text].spacing(0),
-            Space::new().width(Length::Fill),
-            controls,
-        ]
-        .align_y(Alignment::Center),
-    ]
-    .spacing(0)
-    .into()
-}
-
-fn choice_button(
-    label: &'static str,
-    selected: bool,
-    on_press: Message,
-    theme: Theme,
-    fonts: ScaledFonts,
-) -> Element<'static, Message> {
-    let text_color = if selected {
-        theme.text_primary
-    } else {
-        theme.text_secondary
-    };
-
-    button(
-        container(text(label).size(fonts.label).color(text_color))
-            .padding([7, 10])
-            .align_x(Alignment::Center)
-            .align_y(Alignment::Center),
+    field(
+        label,
+        description,
+        toggle_group(current, options, on_select, theme, fonts),
+        theme,
+        fonts,
     )
-    .padding(0)
-    .style(move |_theme, status| {
-        let background = match (selected, status) {
-            (true, _) => Some(theme.selected.into()),
-            (false, iced::widget::button::Status::Hovered) => Some(theme.hover.into()),
-            (false, _) => Some(theme.background.into()),
-        };
-        iced::widget::button::Style {
-            background,
-            text_color,
-            border: iced::Border {
-                radius: BORDER_RADIUS.into(),
-                width: 1.0,
-                color: if selected { theme.accent } else { theme.border },
-            },
-            ..Default::default()
-        }
-    })
-    .on_press(on_press)
-    .into()
 }
 
 fn reconnect_attempts_setting(

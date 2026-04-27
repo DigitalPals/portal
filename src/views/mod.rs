@@ -1,3 +1,4 @@
+pub mod components;
 pub mod dialogs;
 pub mod file_viewer;
 pub mod history_view;
