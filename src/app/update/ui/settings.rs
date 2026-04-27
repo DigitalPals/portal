@@ -233,6 +233,14 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
         UiMessage::PortalHubOpenOnboarding => {
             portal.dialogs.open_portal_hub_onboarding();
         }
+        UiMessage::PortalHubOpenGithub => {
+            if let Err(error) = open::that("https://github.com/DigitalPals/portal-hub") {
+                portal.toast_manager.push(Toast::error(format!(
+                    "Failed to open Portal Hub project: {}",
+                    error
+                )));
+            }
+        }
         UiMessage::PortalHubDefaultForNewHosts(enabled) => {
             portal.prefs.portal_hub.default_for_new_ssh_hosts = enabled;
             save_settings_and_queue_sync(portal);

@@ -692,6 +692,8 @@ pub enum UiMessage {
     ),
     /// Open Portal Hub onboarding
     PortalHubOpenOnboarding,
+    /// Open Portal Hub project page
+    PortalHubOpenGithub,
     /// Check Portal Hub version and compatibility
     PortalHubCheckStatus,
     /// Portal Hub version and compatibility check result

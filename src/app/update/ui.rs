@@ -102,6 +102,7 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
         | UiMessage::PortalHubDisableSyncDeleteData(_)
         | UiMessage::PortalHubDisableSyncDeleteDone(_, _)
         | UiMessage::PortalHubOpenOnboarding
+        | UiMessage::PortalHubOpenGithub
         | UiMessage::PortalHubCheckStatus
         | UiMessage::PortalHubStatusLoaded(_)
         | UiMessage::PortalHubAuthenticate

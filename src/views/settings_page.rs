@@ -954,14 +954,84 @@ fn portal_hub_sections(
 fn portal_hub_intro_setting(theme: Theme, fonts: ScaledFonts) -> Element<'static, Message> {
     let start_button = small_settings_button("Set up Portal Hub", theme, fonts)
         .on_press(Message::Ui(UiMessage::PortalHubOpenOnboarding));
+    let github_button = small_settings_button("GitHub project", theme, fonts)
+        .on_press(Message::Ui(UiMessage::PortalHubOpenGithub));
+
     column![
-        text("Portal Hub keeps SSH sessions alive through a private proxy, stores encrypted key vault items, and syncs hosts, settings, and snippets between devices.")
+        text("Portal Hub is a small private companion service for Portal.")
             .size(fonts.body)
+            .color(theme.text_primary),
+        text("Run it on a Tailscale-only Linux host to make Portal feel more continuous across devices.")
+            .size(fonts.label)
             .color(theme.text_secondary),
+        Space::new().height(8),
+        portal_hub_benefit_row(
+            "😌",
+            "Resumable SSH sessions",
+            "Keep remote shells alive through sleep, crashes, and network drops.",
+            theme,
+            fonts,
+        ),
+        portal_hub_benefit_row(
+            "🔁",
+            "Synced Portal profile",
+            "Share hosts, settings, and snippets between your machines.",
+            theme,
+            fonts,
+        ),
+        portal_hub_benefit_row(
+            "🔐",
+            "Encrypted key vault",
+            "Store private-key vault items encrypted before they reach the hub.",
+            theme,
+            fonts,
+        ),
         Space::new().height(10),
-        row![start_button].align_y(Alignment::Center),
+        row![start_button, github_button]
+            .spacing(8)
+            .align_y(Alignment::Center),
     ]
-    .spacing(4)
+    .spacing(6)
+    .into()
+}
+
+fn portal_hub_benefit_row(
+    emoji: &'static str,
+    title: &'static str,
+    description: &'static str,
+    theme: Theme,
+    fonts: ScaledFonts,
+) -> Element<'static, Message> {
+    row![
+        container(
+            text(emoji)
+                .size(fonts.body + 2.0)
+                .width(Length::Fixed(28.0))
+        )
+        .width(Length::Fixed(34.0))
+        .height(Length::Fixed(34.0))
+        .align_x(Alignment::Center)
+        .align_y(Alignment::Center)
+        .style(move |_| container::Style {
+            background: Some(theme.background.into()),
+            border: iced::Border {
+                color: theme.border,
+                width: 1.0,
+                radius: 8.0.into(),
+            },
+            ..Default::default()
+        }),
+        column![
+            text(title).size(fonts.label).color(theme.text_primary),
+            text(description)
+                .size(fonts.label)
+                .color(theme.text_secondary),
+        ]
+        .spacing(2)
+        .width(Length::Fill),
+    ]
+    .spacing(10)
+    .align_y(Alignment::Center)
     .into()
 }
 
