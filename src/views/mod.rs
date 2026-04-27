@@ -15,4 +15,5 @@ pub mod tabs;
 pub mod terminal_status_bar;
 pub mod terminal_view;
 pub mod toast;
+pub mod vault_page;
 pub mod vnc_view;

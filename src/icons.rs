@@ -28,6 +28,7 @@ pub mod ui {
     pub const PENCIL: &[u8] = include_bytes!("../assets/icons/ui/pencil.svg");
     pub const INFO: &[u8] = include_bytes!("../assets/icons/ui/info.svg");
     pub const ZAP: &[u8] = include_bytes!("../assets/icons/ui/zap.svg");
+    pub const KEY: &[u8] = include_bytes!("../assets/icons/ui/key.svg");
 }
 
 /// File type icons for SFTP browser

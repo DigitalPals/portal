@@ -8,7 +8,9 @@ use crate::message::{
 };
 use crate::security_log;
 use crate::ssh::host_key_verification::HostKeyVerificationResponse;
-use crate::views::dialogs::host_dialog::{AuthMethodChoice, PortForwardEditorState};
+use crate::views::dialogs::host_dialog::{
+    AuthMethodChoice, KeySourceChoice, PortForwardEditorState,
+};
 use crate::views::dialogs::host_key_dialog::HostKeyDialogState;
 use crate::views::dialogs::passphrase_dialog::PassphraseDialogState;
 use crate::views::toast::Toast;
@@ -70,7 +72,17 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                     HostDialogField::Hostname => dialog_state.hostname = value,
                     HostDialogField::Port => dialog_state.port = value,
                     HostDialogField::Username => dialog_state.username = value,
+                    HostDialogField::KeySource => {
+                        dialog_state.key_source = match value.as_str() {
+                            "Local" => KeySourceChoice::Local,
+                            "Vault" => KeySourceChoice::Vault,
+                            _ => dialog_state.key_source,
+                        };
+                    }
                     HostDialogField::KeyPath => dialog_state.key_path = value,
+                    HostDialogField::VaultKeyId => {
+                        dialog_state.vault_key_id = value.parse().ok();
+                    }
                     HostDialogField::AgentForwarding => {
                         dialog_state.agent_forwarding =
                             matches!(value.trim().to_lowercase().as_str(), "true" | "1" | "yes");
@@ -90,6 +102,10 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                         };
                         if dialog_state.auth_method == AuthMethodChoice::Password {
                             dialog_state.portal_hub_enabled = false;
+                        }
+                        if dialog_state.auth_method != AuthMethodChoice::PublicKey {
+                            dialog_state.key_source = KeySourceChoice::Local;
+                            dialog_state.vault_key_id = None;
                         }
                     }
                     HostDialogField::Protocol => {

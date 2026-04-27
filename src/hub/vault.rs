@@ -5,6 +5,7 @@ use chacha20poly1305::aead::{Aead, OsRng, rand_core::RngCore};
 use chacha20poly1305::{KeyInit, XChaCha20Poly1305, XNonce};
 use chrono::{DateTime, Utc};
 use data_encoding::BASE64;
+use russh::keys::{HashAlg, PublicKeyBase64};
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -21,6 +22,7 @@ const KDF_PARALLELISM: u32 = 1;
 const KEY_LEN: usize = 32;
 const SALT_LEN: usize = 16;
 const NONCE_LEN: usize = 24;
+const DEVICE_SECRET_LEN: usize = 32;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct HubVaultConfig {
@@ -87,8 +89,13 @@ impl HubVaultConfig {
     pub fn find_key(&self, id: Uuid) -> Option<&VaultKey> {
         self.keys.iter().find(|key| key.id == id)
     }
+
+    pub fn find_key_mut(&mut self, id: Uuid) -> Option<&mut VaultKey> {
+        self.keys.iter_mut().find(|key| key.id == id)
+    }
 }
 
+#[allow(dead_code)]
 pub fn import_private_key_file(
     path: &Path,
     name: Option<String>,
@@ -127,12 +134,14 @@ pub fn encrypt_private_key(
         .map_err(|_| "failed to encrypt private key".to_string())?;
     let now = Utc::now();
 
+    let metadata = private_key_metadata(private_key, None).ok().flatten();
+
     Ok(VaultKey {
         id: Uuid::new_v4(),
         name,
-        public_key: None,
-        fingerprint: None,
-        algorithm: None,
+        public_key: metadata.as_ref().map(|value| value.public_key.clone()),
+        fingerprint: metadata.as_ref().map(|value| value.fingerprint.clone()),
+        algorithm: metadata.map(|value| value.algorithm),
         created_at: now,
         updated_at: now,
         encryption: VaultEncryption {
@@ -143,6 +152,36 @@ pub fn encrypt_private_key(
             ciphertext_base64: BASE64.encode(&ciphertext),
         },
     })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VaultKeyMetadata {
+    pub public_key: String,
+    pub fingerprint: String,
+    pub algorithm: String,
+}
+
+pub fn private_key_metadata(
+    private_key: &[u8],
+    key_passphrase: Option<&str>,
+) -> Result<Option<VaultKeyMetadata>, String> {
+    let content = std::str::from_utf8(private_key)
+        .map_err(|_| "private key is not valid UTF-8".to_string())?;
+    let first_line = content.lines().next().unwrap_or("");
+    if !first_line.starts_with("-----BEGIN") {
+        return Ok(None);
+    }
+
+    let key = russh::keys::decode_secret_key(content, key_passphrase)
+        .map_err(|error| format!("failed to read private key metadata: {}", error))?;
+    let public = key.public_key();
+    let public_key = format!("{} {}", public.algorithm(), public.public_key_base64());
+    let fingerprint = public.fingerprint(HashAlg::Sha256).to_string();
+    Ok(Some(VaultKeyMetadata {
+        public_key,
+        fingerprint,
+        algorithm: key.algorithm().to_string(),
+    }))
 }
 
 pub fn decrypt_private_key(
@@ -178,7 +217,9 @@ pub fn decrypt_private_key(
         .map_err(|_| "failed to initialize vault cipher".to_string())?;
     let plaintext = cipher
         .decrypt(XNonce::from_slice(&nonce), ciphertext.as_ref())
-        .map_err(|_| "failed to decrypt vault key; check the vault passphrase".to_string())?;
+        .map_err(|_| {
+            "failed to decrypt vault key; check the OS keychain vault secret".to_string()
+        })?;
     let text = String::from_utf8(plaintext)
         .map_err(|_| "decrypted vault key is not valid UTF-8".to_string())?;
     Ok(SecretString::from(text))
@@ -189,27 +230,46 @@ pub fn load_decrypted_private_key(id: Uuid) -> Result<SecretString, String> {
     let key = vault
         .find_key(id)
         .ok_or_else(|| format!("vault key {} was not found", id))?;
-    let passphrase =
-        load_stored_vault_passphrase()?.ok_or_else(|| "Portal Hub vault is locked".to_string())?;
-    decrypt_private_key(key, &passphrase)
+    let vault_secret =
+        load_stored_vault_secret()?.ok_or_else(|| "Portal Hub vault is locked".to_string())?;
+    decrypt_private_key(key, &vault_secret)
 }
 
-pub fn store_vault_passphrase(passphrase: &SecretString) -> Result<(), String> {
+pub fn load_or_create_vault_secret(vault: &HubVaultConfig) -> Result<SecretString, String> {
+    if let Some(vault_secret) = load_stored_vault_secret()? {
+        return Ok(vault_secret);
+    }
+
+    if !vault.keys.is_empty() {
+        return Err(
+            "Portal vault is locked because no vault secret was found in the OS keychain"
+                .to_string(),
+        );
+    }
+
+    let mut secret = [0u8; DEVICE_SECRET_LEN];
+    OsRng.fill_bytes(&mut secret);
+    let vault_secret = SecretString::from(BASE64.encode(&secret));
+    store_vault_secret(&vault_secret)?;
+    Ok(vault_secret)
+}
+
+pub fn store_vault_secret(vault_secret: &SecretString) -> Result<(), String> {
     let entry = keyring::Entry::new(KEYCHAIN_SERVICE, KEYCHAIN_USER)
         .map_err(|error| format!("failed to open OS keychain: {}", error))?;
     entry
-        .set_password(passphrase.expose_secret())
-        .map_err(|error| format!("failed to store vault passphrase in OS keychain: {}", error))
+        .set_password(vault_secret.expose_secret())
+        .map_err(|error| format!("failed to store vault secret in OS keychain: {}", error))
 }
 
-pub fn load_stored_vault_passphrase() -> Result<Option<SecretString>, String> {
+pub fn load_stored_vault_secret() -> Result<Option<SecretString>, String> {
     let entry = keyring::Entry::new(KEYCHAIN_SERVICE, KEYCHAIN_USER)
         .map_err(|error| format!("failed to open OS keychain: {}", error))?;
     match entry.get_password() {
-        Ok(passphrase) => Ok(Some(SecretString::from(passphrase))),
+        Ok(vault_secret) => Ok(Some(SecretString::from(vault_secret))),
         Err(keyring::Error::NoEntry) => Ok(None),
         Err(error) => Err(format!(
-            "failed to read vault passphrase from OS keychain: {}",
+            "failed to read vault secret from OS keychain: {}",
             error
         )),
     }
@@ -271,7 +331,7 @@ mod tests {
     }
 
     #[test]
-    fn vault_decrypt_rejects_wrong_passphrase() {
+    fn vault_decrypt_rejects_wrong_secret() {
         let key = encrypt_private_key(
             "default".to_string(),
             b"-----BEGIN OPENSSH PRIVATE KEY-----\nexample\n-----END OPENSSH PRIVATE KEY-----\n",
@@ -280,5 +340,24 @@ mod tests {
         .unwrap();
 
         assert!(decrypt_private_key(&key, &SecretString::from("wrong")).is_err());
+    }
+
+    #[test]
+    fn import_metadata_extracts_public_key_details_when_key_is_plaintext() {
+        let key_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/docker/test_keys/id_ed25519");
+        if !key_path.exists() {
+            eprintln!("Skipping test: test key not found at {:?}", key_path);
+            return;
+        }
+
+        let private_key = std::fs::read(&key_path).unwrap();
+        let metadata = private_key_metadata(&private_key, None)
+            .unwrap()
+            .expect("metadata");
+
+        assert!(metadata.public_key.starts_with("ssh-ed25519 "));
+        assert!(metadata.fingerprint.starts_with("SHA256:"));
+        assert!(metadata.algorithm.contains("ssh-ed25519"));
     }
 }

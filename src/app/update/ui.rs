@@ -191,6 +191,11 @@ fn handle_sidebar_item_select(portal: &mut Portal, item: SidebarMenuItem) -> Tas
             portal.ui.active_view = View::ProxySessions;
             portal.update(Message::ProxySessions(ProxySessionsMessage::Refresh))
         }
+        SidebarMenuItem::Vault => {
+            portal.restore_sidebar_after_session();
+            portal.ui.active_view = View::Vault;
+            Task::none()
+        }
         SidebarMenuItem::Settings => {
             portal.ui.active_view = View::Settings;
             Task::none()

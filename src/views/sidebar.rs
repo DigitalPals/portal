@@ -30,6 +30,11 @@ const MENU_ITEMS: &[MenuItem] = &[
         label: "Sessions",
     },
     MenuItem {
+        item: SidebarMenuItem::Vault,
+        icon: icons::ui::KEY,
+        label: "Vault",
+    },
+    MenuItem {
         item: SidebarMenuItem::Snippets,
         icon: icons::ui::CODE,
         label: "Snippets",

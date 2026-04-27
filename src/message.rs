@@ -28,6 +28,7 @@ pub enum SidebarMenuItem {
     Hosts,
     Sftp,
     Sessions,
+    Vault,
     Snippets,
     History,
     Settings,
@@ -52,12 +53,36 @@ pub enum HostDialogField {
     Port,
     Username,
     AuthMethod,
+    KeySource,
     KeyPath,
+    VaultKeyId,
     AgentForwarding,
     PortalHubEnabled,
     Tags,
     Notes,
     Protocol,
+}
+
+#[derive(Debug, Clone)]
+pub enum VaultMessage {
+    SearchChanged(String),
+    AddKeyOpen,
+    AddKeyCancel,
+    AddKeyNameChanged(String),
+    AddKeyPrivateKeyChanged(text_editor::Action),
+    AddKeyImportFileRequested,
+    AddKeyImportDefaultRequested,
+    AddKeyFileLoaded(Result<(PathBuf, String), String>),
+    AddKeySubmit,
+    AddKeyDone(Result<crate::hub::vault::VaultKey, String>),
+    EditOpen(Uuid),
+    EditNameChanged(String),
+    EditSave,
+    EditDeleteRequested,
+    EditDeleteConfirm,
+    EditCancel,
+    CopyPublicKey(Uuid),
+    CopyFingerprint(Uuid),
 }
 
 #[derive(Debug, Clone)]
@@ -713,6 +738,8 @@ pub enum Message {
     Vnc(VncMessage),
     /// Portal Hub sessions dashboard messages
     ProxySessions(ProxySessionsMessage),
+    /// Portal Hub/local encrypted key vault messages
+    Vault(VaultMessage),
     /// UI state messages
     Ui(UiMessage),
     /// No-op placeholder
@@ -774,6 +801,12 @@ impl From<VncMessage> for Message {
 impl From<ProxySessionsMessage> for Message {
     fn from(msg: ProxySessionsMessage) -> Self {
         Message::ProxySessions(msg)
+    }
+}
+
+impl From<VaultMessage> for Message {
+    fn from(msg: VaultMessage) -> Self {
+        Message::Vault(msg)
     }
 }
 

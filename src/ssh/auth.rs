@@ -51,7 +51,12 @@ impl ResolvedAuth {
                     let private_key = crate::hub::vault::load_decrypted_private_key(*vault_key_id)
                         .map_err(SshError::KeyFile)?;
                     let passphrase = passphrase.as_ref().map(|p| p.expose_secret());
-                    return load_key_text(private_key.expose_secret(), passphrase).await;
+                    return load_key_text(
+                        private_key.expose_secret(),
+                        passphrase,
+                        Some(*vault_key_id),
+                    )
+                    .await;
                 }
 
                 let path = key_path
@@ -135,7 +140,11 @@ async fn load_key_file(path: &Path, passphrase: Option<&str>) -> Result<Resolved
     Ok(public_key_auth(key))
 }
 
-async fn load_key_text(content: &str, passphrase: Option<&str>) -> Result<ResolvedAuth, SshError> {
+async fn load_key_text(
+    content: &str,
+    passphrase: Option<&str>,
+    vault_key_id: Option<uuid::Uuid>,
+) -> Result<ResolvedAuth, SshError> {
     let first_line = content.lines().next().unwrap_or("");
     if is_public_key_line(first_line) {
         return Err(SshError::KeyFile(
@@ -148,8 +157,30 @@ async fn load_key_text(content: &str, passphrase: Option<&str>) -> Result<Resolv
         ));
     }
 
-    let key = russh::keys::decode_secret_key(content, passphrase)
-        .map_err(|error| SshError::KeyFile(format!("Failed to load vault key: {}", error)))?;
+    let key = russh::keys::decode_secret_key(content, passphrase).map_err(|error| {
+        let msg = error.to_string();
+        let normalized = msg.to_lowercase();
+        let is_passphrase_error = matches!(error, russh::keys::Error::KeyIsEncrypted)
+            || normalized.contains("encrypted")
+            || normalized.contains("passphrase")
+            || normalized.contains("cryptographic")
+            || normalized.contains("decrypt")
+            || normalized.contains("mac check")
+            || normalized.contains("integrity");
+
+        if is_passphrase_error {
+            let path = vault_key_id
+                .map(|id| std::path::PathBuf::from(format!("vault:{}", id)))
+                .unwrap_or_else(|| std::path::PathBuf::from("vault:key"));
+            if passphrase.is_some() {
+                SshError::KeyFilePassphraseInvalid(path)
+            } else {
+                SshError::KeyFilePassphraseRequired(path)
+            }
+        } else {
+            SshError::KeyFile(format!("Failed to load vault key: {}", error))
+        }
+    })?;
     Ok(public_key_auth(key))
 }
 

@@ -721,6 +721,9 @@ fn reload_synced_config(portal: &mut Portal) {
     if let Ok(settings) = SettingsConfig::load() {
         apply_settings_config(portal, settings);
     }
+    if let Ok(vault) = HubVaultConfig::load() {
+        portal.config.vault = vault;
+    }
 }
 
 fn apply_settings_config(portal: &mut Portal, settings: SettingsConfig) {

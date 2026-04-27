@@ -4,7 +4,7 @@ use iced::Task;
 use iced::keyboard::{self, Key};
 
 use crate::app::ActiveDialog;
-use crate::app::{FocusSection, Portal, View};
+use crate::app::{FocusSection, Portal, VaultModal, View};
 use crate::keybindings::AppAction;
 use crate::message::{
     DialogMessage, HistoryMessage, HostMessage, Message, SessionMessage, SftpMessage,
@@ -62,6 +62,13 @@ pub(super) fn handle_keyboard_event(
     // Priority 1: Dialog open - handle dialog-specific keyboard navigation
     if portal.dialogs.is_open() {
         return handle_dialog_keyboard(portal, &key, &modifiers);
+    }
+
+    if portal.vault_ui.modal != VaultModal::None {
+        if let Key::Named(keyboard::key::Named::Escape) = key {
+            portal.vault_ui.modal = VaultModal::None;
+        }
+        return Task::none();
     }
 
     // Priority 2: VNC viewer — forward all keys to remote (except Ctrl+Shift combos for UI)
@@ -434,6 +441,7 @@ fn visible_sidebar_items(show_sessions: bool) -> Vec<SidebarMenuItem> {
         items.push(SidebarMenuItem::Sessions);
     }
     items.extend([
+        SidebarMenuItem::Vault,
         SidebarMenuItem::Snippets,
         SidebarMenuItem::History,
         SidebarMenuItem::Settings,
@@ -542,12 +550,19 @@ fn handle_content_keyboard(
             SidebarMenuItem::Hosts
             | SidebarMenuItem::Sftp
             | SidebarMenuItem::Sessions
+            | SidebarMenuItem::Vault
             | SidebarMenuItem::Snippets
             | SidebarMenuItem::Settings
             | SidebarMenuItem::About => handle_host_grid_keyboard(portal, key, modifiers),
             SidebarMenuItem::History => handle_history_keyboard(portal, key, modifiers),
         },
         View::ProxySessions => {
+            if let Key::Named(keyboard::key::Named::ArrowLeft) = key {
+                portal.ui.focus_section = FocusSection::Sidebar;
+            }
+            Task::none()
+        }
+        View::Vault => {
             if let Key::Named(keyboard::key::Named::ArrowLeft) = key {
                 portal.ui.focus_section = FocusSection::Sidebar;
             }

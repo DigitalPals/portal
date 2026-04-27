@@ -6,6 +6,7 @@ use uuid::Uuid;
 
 use crate::config::hosts::default_username;
 use crate::config::{AuthMethod, Host, PortForward, PortForwardKind, Protocol};
+use crate::hub::vault::VaultKey;
 use crate::message::{DialogMessage, HostDialogField, Message};
 use crate::theme::Theme;
 use crate::validation::{validate_hostname, validate_port, validate_username};
@@ -41,7 +42,9 @@ pub struct HostDialogState {
     pub port: String,
     pub username: String,
     pub auth_method: AuthMethodChoice,
+    pub key_source: KeySourceChoice,
     pub key_path: String,
+    pub vault_key_id: Option<Uuid>,
     pub agent_forwarding: bool,
     pub portal_hub_enabled: bool,
     pub tags: String,
@@ -54,6 +57,38 @@ pub struct HostDialogState {
     pub port_forward_editor: Option<PortForwardEditorState>,
     /// Validation errors by field name
     pub validation_errors: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VaultKeyOption {
+    pub id: Uuid,
+    pub label: String,
+}
+
+impl From<&VaultKey> for VaultKeyOption {
+    fn from(key: &VaultKey) -> Self {
+        let suffix = key
+            .fingerprint
+            .as_deref()
+            .map(|fingerprint| {
+                let short = fingerprint
+                    .rsplit_once(':')
+                    .map(|(_, value)| value)
+                    .unwrap_or(fingerprint);
+                format!(" ({})", short.chars().take(12).collect::<String>())
+            })
+            .unwrap_or_default();
+        Self {
+            id: key.id,
+            label: format!("{}{}", key.name, suffix),
+        }
+    }
+}
+
+impl std::fmt::Display for VaultKeyOption {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.label)
+    }
 }
 
 /// Simplified protocol for the dropdown
@@ -102,6 +137,26 @@ impl AuthMethodChoice {
         AuthMethodChoice::Password,
         AuthMethodChoice::PublicKey,
     ];
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum KeySourceChoice {
+    #[default]
+    Local,
+    Vault,
+}
+
+impl std::fmt::Display for KeySourceChoice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            KeySourceChoice::Local => write!(f, "Local key"),
+            KeySourceChoice::Vault => write!(f, "Vault key"),
+        }
+    }
+}
+
+impl KeySourceChoice {
+    pub const ALL: [KeySourceChoice; 2] = [KeySourceChoice::Local, KeySourceChoice::Vault];
 }
 
 /// Port forward editor state within the host dialog
@@ -225,7 +280,9 @@ impl HostDialogState {
             port: "22".to_string(),
             username: String::new(),
             auth_method: AuthMethodChoice::Agent,
+            key_source: KeySourceChoice::Local,
             key_path: String::new(),
+            vault_key_id: None,
             agent_forwarding: false,
             portal_hub_enabled,
             tags: String::new(),
@@ -251,12 +308,23 @@ impl HostDialogState {
                 AuthMethod::Password => AuthMethodChoice::Password,
                 AuthMethod::PublicKey { .. } => AuthMethodChoice::PublicKey,
             },
+            key_source: match &host.auth {
+                AuthMethod::PublicKey {
+                    vault_key_id: Some(_),
+                    ..
+                } => KeySourceChoice::Vault,
+                _ => KeySourceChoice::Local,
+            },
             key_path: match &host.auth {
                 AuthMethod::PublicKey { key_path, .. } => key_path
                     .as_ref()
                     .map(|p| p.to_string_lossy().to_string())
                     .unwrap_or_default(),
                 _ => String::new(),
+            },
+            vault_key_id: match &host.auth {
+                AuthMethod::PublicKey { vault_key_id, .. } => *vault_key_id,
+                _ => None,
             },
             agent_forwarding: host.agent_forwarding,
             portal_hub_enabled: host.portal_hub_enabled,
@@ -301,6 +369,14 @@ impl HostDialogState {
                 .insert("username".to_string(), e.message);
         }
 
+        if self.auth_method == AuthMethodChoice::PublicKey
+            && self.key_source == KeySourceChoice::Vault
+            && self.vault_key_id.is_none()
+        {
+            self.validation_errors
+                .insert("vault_key".to_string(), "Select a vault key".to_string());
+        }
+
         self.validation_errors.is_empty()
     }
 
@@ -329,12 +405,18 @@ impl HostDialogState {
             AuthMethodChoice::Agent => AuthMethod::Agent,
             AuthMethodChoice::Password => AuthMethod::Password,
             AuthMethodChoice::PublicKey => AuthMethod::PublicKey {
-                key_path: if self.key_path.trim().is_empty() {
-                    None
-                } else {
+                key_path: if self.key_source == KeySourceChoice::Local
+                    && !self.key_path.trim().is_empty()
+                {
                     Some(self.key_path.trim().into())
+                } else {
+                    None
                 },
-                vault_key_id: None,
+                vault_key_id: if self.key_source == KeySourceChoice::Vault {
+                    self.vault_key_id
+                } else {
+                    None
+                },
             },
         };
 
@@ -425,7 +507,11 @@ impl HostDialogState {
 }
 
 /// Build the host dialog view
-pub fn host_dialog_view(state: &HostDialogState, theme: Theme) -> Element<'static, Message> {
+pub fn host_dialog_view(
+    state: &HostDialogState,
+    theme: Theme,
+    vault_keys: Vec<VaultKeyOption>,
+) -> Element<'static, Message> {
     let title = if state.editing_id.is_some() {
         "Edit Host"
     } else {
@@ -438,6 +524,8 @@ pub fn host_dialog_view(state: &HostDialogState, theme: Theme) -> Element<'stati
     let port_value = state.port.clone();
     let username_value = state.username.clone();
     let key_path_value = state.key_path.clone();
+    let key_source = state.key_source;
+    let selected_vault_key_id = state.vault_key_id;
     let agent_forwarding = state.agent_forwarding;
     let portal_hub_enabled = state.portal_hub_enabled;
     let tags_value = state.tags.clone();
@@ -453,6 +541,7 @@ pub fn host_dialog_view(state: &HostDialogState, theme: Theme) -> Element<'stati
     let hostname_error = state.get_error("hostname").cloned();
     let port_error = state.get_error("port").cloned();
     let username_error = state.get_error("username").cloned();
+    let vault_key_error = state.get_error("vault_key").cloned();
 
     // Form fields using owned values with validation error display
     let name_input = {
@@ -564,21 +653,63 @@ pub fn host_dialog_view(state: &HostDialogState, theme: Theme) -> Element<'stati
     // Key path (only shown for PublicKey auth)
     let key_path_section: Element<'static, Message> = if auth_method == AuthMethodChoice::PublicKey
     {
-        column![
-            text("Key Path").size(12).color(theme.text_secondary),
-            text_input("~/.ssh/id_ed25519", &key_path_value)
-                .id(host_dialog_field_id(5))
-                .on_input(|s| Message::Dialog(DialogMessage::FieldChanged(
-                    HostDialogField::KeyPath,
-                    s
-                )))
-                .on_submit(Message::Dialog(DialogMessage::Submit))
-                .padding(8)
+        let source_picker = pick_list(
+            KeySourceChoice::ALL.as_slice(),
+            Some(key_source),
+            |choice| {
+                Message::Dialog(DialogMessage::FieldChanged(
+                    HostDialogField::KeySource,
+                    format!("{:?}", choice),
+                ))
+            },
+        )
+        .width(Length::Fill)
+        .padding(8)
+        .style(dialog_pick_list_style(theme))
+        .menu_style(dialog_pick_list_menu_style(theme));
+
+        if key_source == KeySourceChoice::Vault {
+            let selected = selected_vault_key_id
+                .and_then(|id| vault_keys.iter().find(|key| key.id == id).cloned());
+            let mut col = column![
+                text("Key Source").size(12).color(theme.text_secondary),
+                source_picker,
+                text("Vault Key").size(12).color(theme.text_secondary),
+                pick_list(vault_keys, selected, |choice| {
+                    Message::Dialog(DialogMessage::FieldChanged(
+                        HostDialogField::VaultKeyId,
+                        choice.id.to_string(),
+                    ))
+                })
                 .width(Length::Fill)
-                .style(dialog_input_style(theme))
-        ]
-        .spacing(4)
-        .into()
+                .padding(8)
+                .style(dialog_pick_list_style(theme))
+                .menu_style(dialog_pick_list_menu_style(theme))
+            ]
+            .spacing(4);
+            if let Some(error) = vault_key_error {
+                col = col.push(text(error).size(11).color(ERROR_COLOR));
+            }
+            col.into()
+        } else {
+            column![
+                text("Key Source").size(12).color(theme.text_secondary),
+                source_picker,
+                text("Key Path").size(12).color(theme.text_secondary),
+                text_input("~/.ssh/id_ed25519", &key_path_value)
+                    .id(host_dialog_field_id(5))
+                    .on_input(|s| Message::Dialog(DialogMessage::FieldChanged(
+                        HostDialogField::KeyPath,
+                        s
+                    )))
+                    .on_submit(Message::Dialog(DialogMessage::Submit))
+                    .padding(8)
+                    .width(Length::Fill)
+                    .style(dialog_input_style(theme))
+            ]
+            .spacing(4)
+            .into()
+        }
     } else {
         column![].into()
     };
@@ -980,4 +1111,47 @@ pub fn host_dialog_view(state: &HostDialogState, theme: Theme) -> Element<'stati
     form = form.push(button_row);
 
     dialog_backdrop(form, theme)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn public_key_host_can_use_vault_key() {
+        let key_id = Uuid::new_v4();
+        let mut state = HostDialogState::new_host();
+        state.name = "prod".to_string();
+        state.hostname = "prod.example.test".to_string();
+        state.auth_method = AuthMethodChoice::PublicKey;
+        state.key_source = KeySourceChoice::Vault;
+        state.vault_key_id = Some(key_id);
+
+        let host = state.to_host().expect("host");
+        match host.auth {
+            AuthMethod::PublicKey {
+                key_path,
+                vault_key_id,
+            } => {
+                assert_eq!(key_path, None);
+                assert_eq!(vault_key_id, Some(key_id));
+            }
+            other => panic!("unexpected auth method: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn vault_key_source_requires_selection() {
+        let mut state = HostDialogState::new_host();
+        state.name = "prod".to_string();
+        state.hostname = "prod.example.test".to_string();
+        state.auth_method = AuthMethodChoice::PublicKey;
+        state.key_source = KeySourceChoice::Vault;
+
+        assert!(state.to_host().is_none());
+        assert_eq!(
+            state.get_error("vault_key"),
+            Some(&"Select a vault key".to_string())
+        );
+    }
 }

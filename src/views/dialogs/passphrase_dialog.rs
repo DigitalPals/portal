@@ -93,9 +93,14 @@ pub fn passphrase_dialog_view(
         .size(14)
         .color(theme.text_secondary);
 
-    let key_path_text = text(format!("Key: {}", state.key_path.display()))
-        .size(12)
-        .color(theme.text_muted);
+    let key_label = state.key_path.to_string_lossy();
+    let key_path_text = text(if key_label.starts_with("vault:") {
+        format!("Vault key: {}", key_label.trim_start_matches("vault:"))
+    } else {
+        format!("Key: {}", state.key_path.display())
+    })
+    .size(12)
+    .color(theme.text_muted);
 
     let passphrase_label = text("Passphrase").size(12).color(theme.text_muted);
 

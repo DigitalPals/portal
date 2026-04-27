@@ -4,7 +4,7 @@ mod services;
 mod update;
 mod view_model;
 
-use iced::widget::{column, row, stack, text};
+use iced::widget::{column, row, stack, text, text_editor};
 use iced::{Element, Fill, Subscription, Task, Theme as IcedTheme, event, time, window};
 use std::time::Duration;
 use uuid::Uuid;
@@ -16,6 +16,7 @@ use crate::config::{
     HistoryConfig, HostsConfig, SettingsConfig, SnippetHistoryConfig, SnippetsConfig,
 };
 use crate::hub::sync::{ConflictChoice, SyncConflict};
+use crate::hub::vault::HubVaultConfig;
 use crate::keybindings::KeybindingsConfig;
 use crate::message::{
     Message, SessionId, SessionMessage, SettingsTab, SidebarMenuItem, UiMessage, VncMessage,
@@ -49,6 +50,9 @@ use crate::views::tab_context_menu::{TabContextMenuState, tab_context_menu_overl
 use crate::views::tabs::{Tab, tab_bar_view};
 use crate::views::terminal_view::terminal_view_with_status;
 use crate::views::toast::{ToastManager, toast_overlay_view};
+use crate::views::vault_page::{
+    VaultPageContext, vault_add_key_dialog_view, vault_edit_key_dialog_view, vault_page_view,
+};
 use crate::views::vnc_view::vnc_viewer_view;
 
 pub use self::managers::ActiveSession;
@@ -73,6 +77,7 @@ pub enum View {
     Settings,              // Full-page settings view
     Snippets,              // Snippets page with execution
     ProxySessions,         // Portal Hub sessions dashboard
+    Vault,                 // Encrypted key vault
 }
 
 /// Major UI sections that can receive keyboard focus
@@ -195,6 +200,47 @@ pub struct ConfigState {
     pub snippets: SnippetsConfig,
     pub history: HistoryConfig,
     pub snippet_history: SnippetHistoryConfig,
+    pub vault: HubVaultConfig,
+}
+
+/// UI state for the Vault page.
+#[derive(Debug)]
+pub struct VaultUiState {
+    pub search_query: String,
+    pub modal: VaultModal,
+    pub key_name: String,
+    pub private_key: text_editor::Content,
+    pub imported_path: Option<std::path::PathBuf>,
+    pub add_key_error: Option<String>,
+    pub edit_key_id: Option<Uuid>,
+    pub edit_name: String,
+    pub edit_delete_requested: bool,
+    pub operation_error: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum VaultModal {
+    #[default]
+    None,
+    AddKey,
+    EditKey,
+}
+
+impl Default for VaultUiState {
+    fn default() -> Self {
+        Self {
+            search_query: String::new(),
+            modal: VaultModal::None,
+            key_name: String::new(),
+            private_key: text_editor::Content::new(),
+            imported_path: None,
+            add_key_error: None,
+            edit_key_id: None,
+            edit_name: String::new(),
+            edit_delete_requested: false,
+            operation_error: None,
+        }
+    }
 }
 
 /// Snippets page state.
@@ -287,6 +333,9 @@ pub struct Portal {
 
     // Snippets page state
     snippets: SnippetUiState,
+
+    // Vault page state
+    vault_ui: VaultUiState,
 }
 
 fn scaled_vnc_dimension(logical_size: f32, scale: f32, min: f32, max: f32) -> u16 {
@@ -377,6 +426,17 @@ impl Portal {
             }
         };
 
+        let vault_config = match HubVaultConfig::load() {
+            Ok(config) => {
+                tracing::info!("Loaded {} vault key(s)", config.keys.len());
+                config
+            }
+            Err(e) => {
+                tracing::warn!("Failed to load Hub vault config: {}, using empty vault", e);
+                HubVaultConfig::default()
+            }
+        };
+
         // Detect system UI scale at startup
         let system_ui_scale = crate::platform::detect_system_ui_scale();
         tracing::info!("System UI scale: {}", system_ui_scale);
@@ -455,6 +515,7 @@ impl Portal {
                 snippets: snippets_config,
                 history: history_config,
                 snippet_history,
+                vault: vault_config,
             },
             toast_manager: ToastManager::new(),
             snippets: SnippetUiState {
@@ -465,6 +526,7 @@ impl Portal {
                 selected_snippet: None,
                 viewed_history_entry: None,
             },
+            vault_ui: VaultUiState::default(),
         };
 
         // Initialize the global passphrase cache with the configured timeout
@@ -518,6 +580,7 @@ impl Portal {
             Message::Snippet(msg) => update::handle_snippet(self, msg),
             Message::Vnc(msg) => update::handle_vnc(self, msg),
             Message::ProxySessions(msg) => update::handle_proxy_sessions(self, msg),
+            Message::Vault(msg) => update::handle_vault(self, msg),
             Message::Ui(msg) => update::handle_ui(self, msg),
             Message::Noop => Task::none(),
         }
@@ -737,6 +800,15 @@ impl Portal {
                 );
                 proxy_sessions_view(&self.proxy_sessions, column_count, theme, fonts)
             }
+            View::Vault => vault_page_view(VaultPageContext {
+                vault: &self.config.vault,
+                hosts: &self.config.hosts,
+                state: &self.vault_ui,
+                portal_hub_configured: self.prefs.portal_hub.sync_configured(),
+                portal_hub_vault_enabled: self.prefs.portal_hub.key_vault_enabled,
+                theme,
+                fonts,
+            }),
             View::HostGrid => {
                 // Calculate responsive column count
                 let column_count =
@@ -744,7 +816,10 @@ impl Portal {
 
                 // Show content based on sidebar selection
                 match self.ui.sidebar_selection {
-                    SidebarMenuItem::Hosts | SidebarMenuItem::Sftp | SidebarMenuItem::Sessions => {
+                    SidebarMenuItem::Hosts
+                    | SidebarMenuItem::Sftp
+                    | SidebarMenuItem::Sessions
+                    | SidebarMenuItem::Vault => {
                         // SFTP now opens directly into dual-pane view, so show hosts grid as fallback
                         host_grid_view(
                             &self.ui.search_query,
@@ -829,7 +904,14 @@ impl Portal {
                 stack![main_layout, dialog].into()
             }
             ActiveDialog::Host(dialog_state) => {
-                let dialog = host_dialog_view(dialog_state, theme);
+                let vault_keys = self
+                    .config
+                    .vault
+                    .keys
+                    .iter()
+                    .map(crate::views::dialogs::host_dialog::VaultKeyOption::from)
+                    .collect();
+                let dialog = host_dialog_view(dialog_state, theme, vault_keys);
                 stack![main_layout, dialog].into()
             }
             ActiveDialog::About(about_state) => {
@@ -883,19 +965,41 @@ impl Portal {
             ActiveDialog::None => main_layout,
         };
 
+        let with_vault_modal: Element<'_, Message> = match self.vault_ui.modal {
+            VaultModal::AddKey => {
+                let dialog = vault_add_key_dialog_view(&self.vault_ui, theme, fonts);
+                stack![with_dialog, dialog].into()
+            }
+            VaultModal::EditKey => {
+                let dialog = vault_edit_key_dialog_view(
+                    &self.vault_ui,
+                    &self.config.vault,
+                    &self.config.hosts,
+                    theme,
+                    fonts,
+                );
+                stack![with_dialog, dialog].into()
+            }
+            VaultModal::None => with_dialog,
+        };
+
         // Overlay SFTP actions menu dismiss background if visible (rendered at app level for window-wide dismissal)
         let with_actions_dismiss: Element<'_, Message> = if let Some(tab_id) = self.active_tab {
             if let Some(sftp_state) = self.sftp.get_tab(tab_id) {
                 if has_actions_menu_open(sftp_state) {
-                    stack![with_dialog, sftp_actions_menu_dismiss_overlay(sftp_state)].into()
+                    stack![
+                        with_vault_modal,
+                        sftp_actions_menu_dismiss_overlay(sftp_state)
+                    ]
+                    .into()
                 } else {
-                    with_dialog
+                    with_vault_modal
                 }
             } else {
-                with_dialog
+                with_vault_modal
             }
         } else {
-            with_dialog
+            with_vault_modal
         };
 
         // Overlay SFTP context menu if visible (rendered at app level for correct window positioning)
