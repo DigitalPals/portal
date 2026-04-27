@@ -450,6 +450,17 @@ impl HostsConfig {
         Ok(())
     }
 
+    /// Remove an existing host.
+    pub fn remove_host(&mut self, id: Uuid) -> Result<Host, ConfigError> {
+        let index = self
+            .hosts
+            .iter()
+            .position(|host| host.id == id)
+            .ok_or(ConfigError::HostNotFound(id))?;
+
+        Ok(self.hosts.remove(index))
+    }
+
     /// Load from file, creating default if not exists
     pub fn load() -> Result<Self, ConfigError> {
         let path = super::paths::hosts_file().ok_or_else(|| ConfigError::ReadFile {
@@ -530,6 +541,58 @@ impl HostsConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_host(name: &str) -> Host {
+        let now = chrono::Utc::now();
+        Host {
+            id: Uuid::new_v4(),
+            name: name.to_string(),
+            hostname: format!("{}.example.test", name.to_lowercase()),
+            port: 22,
+            username: "root".to_string(),
+            protocol: Protocol::Ssh,
+            vnc_port: None,
+            vnc_password_id: None,
+            auth: AuthMethod::Agent,
+            agent_forwarding: false,
+            port_forwards: Vec::new(),
+            portal_hub_enabled: false,
+            group_id: None,
+            notes: None,
+            tags: Vec::new(),
+            created_at: now,
+            updated_at: now,
+            detected_os: None,
+            last_connected: None,
+        }
+    }
+
+    #[test]
+    fn remove_host_removes_matching_host() {
+        let kept = test_host("Kept");
+        let deleted = test_host("Deleted");
+        let deleted_id = deleted.id;
+        let mut config = HostsConfig {
+            hosts: vec![kept.clone(), deleted],
+            groups: Vec::new(),
+        };
+
+        let removed = config.remove_host(deleted_id).unwrap();
+
+        assert_eq!(removed.id, deleted_id);
+        assert_eq!(config.hosts.len(), 1);
+        assert_eq!(config.hosts[0].id, kept.id);
+    }
+
+    #[test]
+    fn remove_host_returns_error_for_missing_host() {
+        let missing_id = Uuid::new_v4();
+        let mut config = HostsConfig::default();
+
+        let error = config.remove_host(missing_id).unwrap_err();
+
+        assert!(matches!(error, ConfigError::HostNotFound(id) if id == missing_id));
+    }
 
     // === DetectedOs::from_uname tests ===
 

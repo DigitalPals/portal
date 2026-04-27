@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use iced::widget::{
-    Space, button, checkbox, column, container, pick_list, row, scrollable, text, text_input,
+    Row, Space, button, checkbox, column, container, pick_list, row, scrollable, text, text_input,
     tooltip,
 };
 use iced::{Alignment, Element, Length};
@@ -15,8 +15,9 @@ use crate::theme::{BORDER_RADIUS, ScaledFonts, Theme};
 use crate::validation::{validate_hostname, validate_port, validate_username};
 
 use super::common::{
-    ERROR_COLOR, dialog_input_style, dialog_input_style_with_error, dialog_pick_list_menu_style,
-    dialog_pick_list_style, primary_button_style, secondary_button_style,
+    ERROR_COLOR, destructive_button_style, dialog_input_style, dialog_input_style_with_error,
+    dialog_pick_list_menu_style, dialog_pick_list_style, primary_button_style,
+    secondary_button_style,
 };
 
 /// Widget ID for host dialog fields (for keyboard navigation)
@@ -58,6 +59,7 @@ pub struct HostDialogState {
     pub port_forwards: Vec<PortForward>,
     pub port_forwards_expanded: bool,
     pub port_forward_editor: Option<PortForwardEditorState>,
+    pub delete_requested: bool,
     /// Validation errors by field name
     pub validation_errors: HashMap<String, String>,
 }
@@ -325,6 +327,7 @@ impl HostDialogState {
             port_forwards: Vec::new(),
             port_forwards_expanded: false,
             port_forward_editor: None,
+            delete_requested: false,
             validation_errors: HashMap::new(),
         }
     }
@@ -372,6 +375,7 @@ impl HostDialogState {
             port_forwards: host.port_forwards.clone(),
             port_forwards_expanded: false,
             port_forward_editor: None,
+            delete_requested: false,
             validation_errors: HashMap::new(),
         }
     }
@@ -1162,14 +1166,33 @@ pub fn host_dialog_view(
             None
         });
 
-    let button_row = row![
-        import_button,
-        Space::new().width(Length::Fill),
-        cancel_button,
-        save_button,
-    ]
-    .spacing(8)
-    .align_y(Alignment::Center);
+    let mut button_row = Row::new()
+        .spacing(8)
+        .align_y(Alignment::Center)
+        .push(import_button);
+
+    if state.editing_id.is_some() {
+        let delete_label = if state.delete_requested {
+            "Confirm Delete"
+        } else {
+            "Delete"
+        };
+        let delete_message = if state.delete_requested {
+            DialogMessage::HostDeleteConfirm
+        } else {
+            DialogMessage::HostDeleteRequested
+        };
+        let delete_button = button(text(delete_label).size(fonts.button_small))
+            .padding([8, 16])
+            .style(destructive_button_style(theme))
+            .on_press(Message::Dialog(delete_message));
+        button_row = button_row.push(delete_button);
+    }
+
+    let button_row = button_row
+        .push(Space::new().width(Length::Fill))
+        .push(cancel_button)
+        .push(save_button);
 
     // Protocol picker
     let protocol_picker = column![

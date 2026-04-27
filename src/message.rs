@@ -286,6 +286,10 @@ pub enum DialogMessage {
     Close,
     /// Submit host dialog
     Submit,
+    /// Ask for confirmation before deleting the host being edited
+    HostDeleteRequested,
+    /// Delete the host being edited
+    HostDeleteConfirm,
     /// Host dialog field changed
     FieldChanged(HostDialogField, String),
     /// Port forward editor field changed

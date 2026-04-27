@@ -4,6 +4,7 @@
 //! - `dialog_backdrop` - Modal backdrop with centered content
 //! - `primary_button_style` - Accent-colored action button
 //! - `secondary_button_style` - Outlined cancel/secondary button
+//! - `destructive_button_style` - Red action button for destructive actions
 //! - `dialog_input_style` - Styled text input for dialogs
 //! - `dialog_pick_list_style` - Styled pick list for dialogs
 
@@ -126,6 +127,34 @@ pub fn secondary_button_style(
                 color: theme.border,
                 width: 1.0,
                 radius: BORDER_RADIUS.into(),
+            },
+            ..Default::default()
+        }
+    }
+}
+
+/// Destructive button style - red action button for delete/remove actions.
+///
+/// Returns a closure suitable for use with `button.style(...)`.
+pub fn destructive_button_style(
+    theme: Theme,
+) -> impl Fn(&iced::Theme, button::Status) -> button::Style {
+    move |_iced_theme, status| {
+        let bg = match status {
+            button::Status::Hovered => iced::Color::from_rgb8(0xf3, 0x8b, 0xa8),
+            button::Status::Disabled => theme.surface,
+            _ => ERROR_COLOR,
+        };
+        button::Style {
+            background: Some(bg.into()),
+            text_color: if matches!(status, button::Status::Disabled) {
+                theme.text_muted
+            } else {
+                theme.text_on(bg)
+            },
+            border: iced::Border {
+                radius: BORDER_RADIUS.into(),
+                ..Default::default()
             },
             ..Default::default()
         }

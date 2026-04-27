@@ -65,8 +65,51 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
             }
             Task::none()
         }
+        DialogMessage::HostDeleteRequested => {
+            if let Some(dialog_state) = portal.dialogs.host_mut()
+                && dialog_state.editing_id.is_some()
+            {
+                dialog_state.delete_requested = true;
+            }
+            Task::none()
+        }
+        DialogMessage::HostDeleteConfirm => {
+            let Some(host_id) = portal.dialogs.host_mut().and_then(|state| state.editing_id) else {
+                return Task::none();
+            };
+
+            match portal.config.hosts.remove_host(host_id) {
+                Ok(host) => {
+                    if portal.ui.host_details_sheet == Some(host_id) {
+                        portal.ui.host_details_sheet = None;
+                    }
+                    if let Err(error) = portal.config.hosts.save() {
+                        tracing::error!("Failed to save config after deleting host: {}", error);
+                        portal.toast_manager.push(Toast::error(
+                            "Deleted host, but failed to save hosts config",
+                        ));
+                    } else {
+                        tracing::info!("Deleted host");
+                        portal
+                            .toast_manager
+                            .push(Toast::success(format!("Deleted {}", host.name)));
+                    }
+                    portal.dialogs.close();
+                    super::ui::settings::queue_portal_hub_local_sync(portal);
+                }
+                Err(error) => {
+                    tracing::error!("Failed to delete host: {}", error);
+                    portal
+                        .toast_manager
+                        .push(Toast::error("Host could not be deleted"));
+                    portal.dialogs.close();
+                }
+            }
+            Task::none()
+        }
         DialogMessage::FieldChanged(field, value) => {
             if let Some(dialog_state) = portal.dialogs.host_mut() {
+                dialog_state.delete_requested = false;
                 match field {
                     HostDialogField::Name => dialog_state.name = value,
                     HostDialogField::Hostname => dialog_state.hostname = value,
