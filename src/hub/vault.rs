@@ -118,7 +118,8 @@ pub fn encrypt_private_key(
     OsRng.fill_bytes(&mut salt);
     OsRng.fill_bytes(&mut nonce);
 
-    let key = derive_key(passphrase.expose_secret().as_bytes(), &salt, default_kdf())?;
+    let kdf = default_kdf();
+    let key = derive_key(passphrase.expose_secret().as_bytes(), &salt, &kdf)?;
     let cipher = XChaCha20Poly1305::new_from_slice(&key)
         .map_err(|_| "failed to initialize vault cipher".to_string())?;
     let ciphertext = cipher
@@ -135,7 +136,7 @@ pub fn encrypt_private_key(
         created_at: now,
         updated_at: now,
         encryption: VaultEncryption {
-            kdf: default_kdf(),
+            kdf,
             salt_base64: BASE64.encode(&salt),
             cipher: CIPHER.to_string(),
             nonce_base64: BASE64.encode(&nonce),
