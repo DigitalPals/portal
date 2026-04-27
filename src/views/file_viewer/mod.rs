@@ -72,12 +72,14 @@ pub fn file_viewer_view(
             height,
             is_svg,
         } => image_viewer_view(
-            data,
-            *zoom,
-            *width,
-            *height,
-            *is_svg,
-            state.viewer_id,
+            ImageViewerParams {
+                data,
+                zoom: *zoom,
+                width: *width,
+                height: *height,
+                is_svg: *is_svg,
+                viewer_id: state.viewer_id,
+            },
             theme,
             fonts,
         ),
@@ -274,13 +276,17 @@ fn markdown_preview_view(raw_text: &str, theme: Theme, fonts: ScaledFonts) -> El
 }
 
 /// Image viewer with zoom controls
-fn image_viewer_view(
-    data: &[u8],
+struct ImageViewerParams<'a> {
+    data: &'a [u8],
     zoom: f32,
     width: u32,
     height: u32,
     is_svg: bool,
     viewer_id: SessionId,
+}
+
+fn image_viewer_view(
+    params: ImageViewerParams<'_>,
     theme: Theme,
     fonts: ScaledFonts,
 ) -> Element<'_, Message> {
@@ -288,38 +294,40 @@ fn image_viewer_view(
         button(text("-").size(fonts.section))
             .padding([4, 12])
             .on_press(Message::FileViewer(FileViewerMessage::ImageZoom(
-                viewer_id,
-                zoom - 0.1
+                params.viewer_id,
+                params.zoom - 0.1
             ))),
         Space::new().width(8),
         button(text("+").size(fonts.section))
             .padding([4, 12])
             .on_press(Message::FileViewer(FileViewerMessage::ImageZoom(
-                viewer_id,
-                zoom + 0.1
+                params.viewer_id,
+                params.zoom + 0.1
             ))),
         Space::new().width(12),
-        text(format!("Zoom: {:.0}%", zoom * 100.0))
+        text(format!("Zoom: {:.0}%", params.zoom * 100.0))
             .size(fonts.small)
             .color(theme.text_secondary),
     ]
     .align_y(Alignment::Center);
 
-    let image_element: Element<'_, Message> = if is_svg {
+    let image_element: Element<'_, Message> = if params.is_svg {
         let base = 600.0;
-        let size = Length::Fixed((base * zoom).max(80.0));
-        Svg::new(iced::widget::svg::Handle::from_memory(data.to_vec()))
+        let size = Length::Fixed((base * params.zoom).max(80.0));
+        Svg::new(iced::widget::svg::Handle::from_memory(params.data.to_vec()))
             .width(size)
             .height(size)
             .into()
     } else {
-        let scaled_width = (width as f32 * zoom).max(1.0);
-        let scaled_height = (height as f32 * zoom).max(1.0);
-        Image::new(iced::widget::image::Handle::from_bytes(data.to_vec()))
-            .width(Length::Fixed(scaled_width))
-            .height(Length::Fixed(scaled_height))
-            .scale(zoom)
-            .into()
+        let scaled_width = (params.width as f32 * params.zoom).max(1.0);
+        let scaled_height = (params.height as f32 * params.zoom).max(1.0);
+        Image::new(iced::widget::image::Handle::from_bytes(
+            params.data.to_vec(),
+        ))
+        .width(Length::Fixed(scaled_width))
+        .height(Length::Fixed(scaled_height))
+        .scale(params.zoom)
+        .into()
     };
 
     let content = scrollable(
