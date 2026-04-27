@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use url::{Host, Url};
 
 use crate::error::ConfigError;
 use crate::fonts::TerminalFont;
@@ -268,7 +269,7 @@ impl Default for PortalHubSettings {
 
 impl PortalHubSettings {
     pub fn is_configured(&self) -> bool {
-        self.enabled && !self.host.trim().is_empty() && self.web_port > 0
+        self.enabled && !self.effective_web_url().is_empty()
     }
 
     pub fn sync_configured(&self) -> bool {
@@ -280,14 +281,19 @@ impl PortalHubSettings {
     }
 
     pub fn effective_web_url(&self) -> String {
-        let configured = self.web_url.trim().trim_end_matches('/').to_string();
-        if !configured.is_empty() {
+        if let Some(configured) = canonicalize_portal_hub_web_url(&self.web_url) {
             return configured;
         }
         self.derived_web_url()
     }
 
     pub fn derived_web_url(&self) -> String {
+        if let Some(configured) = canonicalize_portal_hub_web_url(&self.host) {
+            return configured;
+        }
+        if let Some(configured) = canonicalize_host_input_with_port(&self.host) {
+            return configured;
+        }
         let host = normalize_portal_hub_host(&self.host);
         if host.is_empty() || self.web_port == 0 {
             return String::new();
@@ -297,7 +303,23 @@ impl PortalHubSettings {
         } else {
             "https"
         };
-        format!("{}://{}:{}", scheme, host, self.web_port)
+        format!("{}://{}:{}", scheme, format_url_host(&host), self.web_port)
+    }
+
+    pub fn apply_host_input(&mut self, host: String) {
+        self.host = portal_hub_host_from_input(&host);
+        self.web_url = if canonicalize_portal_hub_web_url(&host).is_some()
+            || canonicalize_host_input_with_port(&host).is_some()
+        {
+            portal_hub_web_url_from_input(&host, self.web_port)
+        } else {
+            self.derived_web_url()
+        };
+    }
+
+    pub fn apply_web_url_input(&mut self, url: String) {
+        self.web_url =
+            canonicalize_portal_hub_web_url(&url).unwrap_or_else(|| url.trim().to_string());
     }
 }
 
@@ -318,15 +340,104 @@ fn default_portal_hub_service_enabled() -> bool {
 }
 
 fn normalize_portal_hub_host(host: &str) -> String {
-    host.trim()
+    portal_hub_host_from_input(host)
+}
+
+fn is_local_web_host(host: &str) -> bool {
+    host == "localhost" || host == "127.0.0.1" || host == "::1" || host.ends_with(".localhost")
+}
+
+fn canonicalize_portal_hub_web_url(input: &str) -> Option<String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() || !(trimmed.starts_with("http://") || trimmed.starts_with("https://")) {
+        return None;
+    }
+    let parsed = Url::parse(trimmed).ok()?;
+    canonicalize_http_url(&parsed)
+}
+
+fn canonicalize_host_input_with_port(input: &str) -> Option<String> {
+    let trimmed = input.trim().trim_end_matches('/');
+    if trimmed.is_empty()
+        || trimmed.starts_with("http://")
+        || trimmed.starts_with("https://")
+        || trimmed.contains('/')
+        || trimmed.contains('?')
+        || trimmed.contains('#')
+    {
+        return None;
+    }
+
+    let parsed = Url::parse(&format!("https://{}", trimmed)).ok()?;
+    parsed.port()?;
+    canonicalize_http_url(&parsed)
+}
+
+fn portal_hub_web_url_from_input(input: &str, web_port: u16) -> String {
+    if let Some(url) = canonicalize_portal_hub_web_url(input) {
+        return url;
+    }
+    if let Some(url) = canonicalize_host_input_with_port(input) {
+        return url;
+    }
+
+    let host = portal_hub_host_from_input(input);
+    if host.is_empty() || web_port == 0 {
+        return String::new();
+    }
+    let scheme = if is_local_web_host(&host) {
+        "http"
+    } else {
+        "https"
+    };
+    format!("{}://{}:{}", scheme, format_url_host(&host), web_port)
+}
+
+fn portal_hub_host_from_input(input: &str) -> String {
+    let trimmed = input.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    if let Ok(parsed) = Url::parse(trimmed) {
+        if matches!(parsed.scheme(), "http" | "https") {
+            return parsed.host_str().unwrap_or_default().to_string();
+        }
+    }
+    if !trimmed.contains('/') && !trimmed.contains('?') && !trimmed.contains('#') {
+        if let Ok(parsed) = Url::parse(&format!("https://{}", trimmed)) {
+            if parsed.host_str().is_some() {
+                return parsed.host_str().unwrap_or_default().to_string();
+            }
+        }
+    }
+    trimmed
         .trim_start_matches("http://")
         .trim_start_matches("https://")
         .trim_end_matches('/')
         .to_string()
 }
 
-fn is_local_web_host(host: &str) -> bool {
-    host == "localhost" || host == "127.0.0.1" || host == "::1" || host.ends_with(".localhost")
+fn canonicalize_http_url(url: &Url) -> Option<String> {
+    if !matches!(url.scheme(), "http" | "https") {
+        return None;
+    }
+    let host = match url.host()? {
+        Host::Domain(domain) => domain.to_string(),
+        Host::Ipv4(ip) => ip.to_string(),
+        Host::Ipv6(ip) => format!("[{}]", ip),
+    };
+    Some(match url.port() {
+        Some(port) => format!("{}://{}:{}", url.scheme(), host, port),
+        None => format!("{}://{}", url.scheme(), host),
+    })
+}
+
+fn format_url_host(host: &str) -> String {
+    if host.contains(':') && !host.starts_with('[') && !host.ends_with(']') {
+        format!("[{}]", host)
+    } else {
+        host.to_string()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -910,6 +1021,72 @@ web_url = "https://hub.example.test"
 
         let serialized = toml::to_string(&config).unwrap();
         assert!(serialized.contains("default_for_new_ssh_hosts = true"));
+    }
+
+    #[test]
+    fn portal_hub_full_tailscale_url_in_host_field_uses_https_origin() {
+        let mut settings = PortalHubSettings::default();
+
+        settings.apply_host_input("https://portal-hub.risk-bull.ts.net/".to_string());
+
+        assert_eq!(settings.host, "portal-hub.risk-bull.ts.net");
+        assert_eq!(
+            settings.effective_web_url(),
+            "https://portal-hub.risk-bull.ts.net"
+        );
+    }
+
+    #[test]
+    fn portal_hub_full_tailscale_url_in_web_url_field_is_canonicalized() {
+        let mut settings = PortalHubSettings::default();
+        settings.host = "portal-hub.risk-bull.ts.net".to_string();
+
+        settings.apply_web_url_input("https://portal-hub.risk-bull.ts.net/".to_string());
+
+        assert_eq!(
+            settings.effective_web_url(),
+            "https://portal-hub.risk-bull.ts.net"
+        );
+    }
+
+    #[test]
+    fn portal_hub_explicit_https_port_is_preserved() {
+        let mut settings = PortalHubSettings::default();
+
+        settings.apply_host_input("https://portal-hub.risk-bull.ts.net:8443".to_string());
+
+        assert_eq!(settings.host, "portal-hub.risk-bull.ts.net");
+        assert_eq!(
+            settings.effective_web_url(),
+            "https://portal-hub.risk-bull.ts.net:8443"
+        );
+    }
+
+    #[test]
+    fn portal_hub_bare_hosts_keep_existing_derived_url_behavior() {
+        let mut settings = PortalHubSettings::default();
+        settings.apply_host_input("portal-hub.risk-bull.ts.net".to_string());
+        assert_eq!(
+            settings.effective_web_url(),
+            "https://portal-hub.risk-bull.ts.net:8080"
+        );
+
+        settings.apply_host_input("localhost".to_string());
+        assert_eq!(settings.effective_web_url(), "http://localhost:8080");
+    }
+
+    #[test]
+    fn portal_hub_can_be_configured_with_web_url_only() {
+        let mut settings = PortalHubSettings {
+            enabled: true,
+            web_url: "https://portal-hub.risk-bull.ts.net".to_string(),
+            ..PortalHubSettings::default()
+        };
+
+        assert!(settings.is_configured());
+
+        settings.web_url.clear();
+        assert!(!settings.is_configured());
     }
 
     #[test]

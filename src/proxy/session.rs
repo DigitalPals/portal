@@ -607,4 +607,12 @@ mod tests {
         assert_eq!(raw.metadata_schema_version, 1);
         assert!(raw.capabilities.web_proxy);
     }
+
+    #[test]
+    fn terminal_ws_url_uses_wss_for_tailscale_https() {
+        assert_eq!(
+            terminal_ws_url("https://portal-hub.risk-bull.ts.net").unwrap(),
+            "wss://portal-hub.risk-bull.ts.net/api/sessions/terminal"
+        );
+    }
 }

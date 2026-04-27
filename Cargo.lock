@@ -4932,6 +4932,7 @@ dependencies = [
  "tracing-appender",
  "tracing-subscriber",
  "ttf-parser",
+ "url",
  "urlencoding",
  "uuid",
  "vnc-rs",

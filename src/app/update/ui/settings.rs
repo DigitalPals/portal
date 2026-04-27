@@ -246,8 +246,7 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
             save_settings_and_queue_sync(portal);
         }
         UiMessage::PortalHubHostChanged(host) => {
-            portal.prefs.portal_hub.host = host;
-            portal.prefs.portal_hub.web_url = portal.prefs.portal_hub.derived_web_url();
+            portal.prefs.portal_hub.apply_host_input(host);
             clear_portal_hub_status(portal);
             save_settings_and_queue_sync(portal);
         }
@@ -289,7 +288,7 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
             save_settings_and_queue_sync(portal);
         }
         UiMessage::PortalHubWebUrlChanged(url) => {
-            portal.prefs.portal_hub.web_url = url;
+            portal.prefs.portal_hub.apply_web_url_input(url);
             portal.ui.portal_hub_auth_user = None;
             portal.ui.portal_hub_auth_error = None;
             save_settings_and_queue_sync(portal);

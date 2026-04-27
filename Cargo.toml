@@ -59,6 +59,7 @@ argon2 = "0.5"
 chacha20poly1305 = "0.10"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
+url = "2.5"
 urlencoding = "2.1"
 
 # Additional
