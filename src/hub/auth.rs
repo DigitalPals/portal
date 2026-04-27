@@ -39,6 +39,8 @@ pub struct HubCapabilities {
     #[serde(default)]
     pub sync_v2: bool,
     #[serde(default)]
+    pub sync_events: bool,
+    #[serde(default)]
     pub key_vault: bool,
     #[serde(default)]
     pub web_proxy: bool,

@@ -9,6 +9,7 @@ use iced::{Element, Fill, Subscription, Task, Theme as IcedTheme, event, time, w
 use std::time::Duration;
 use uuid::Uuid;
 
+use futures::{StreamExt, stream};
 use iced::keyboard;
 
 use crate::config::{
@@ -154,6 +155,8 @@ pub struct UiState {
     pub portal_hub_sync_loading: bool,
     pub portal_hub_sync_error: Option<String>,
     pub portal_hub_sync_status: Option<String>,
+    pub portal_hub_local_sync_pending: bool,
+    pub portal_hub_remote_sync_pending: bool,
     pub portal_hub_conflicts: Vec<SyncConflict>,
     pub portal_hub_conflict_choices: Vec<ConflictChoice>,
 }
@@ -409,6 +412,8 @@ impl Portal {
                 portal_hub_sync_loading: false,
                 portal_hub_sync_error: None,
                 portal_hub_sync_status: None,
+                portal_hub_local_sync_pending: false,
+                portal_hub_remote_sync_pending: false,
                 portal_hub_conflicts: Vec::new(),
                 portal_hub_conflict_choices: Vec::new(),
             },
@@ -492,10 +497,10 @@ impl Portal {
             }
         }
 
-        // Focus the search input on startup and kick off Hub sync when already authenticated.
+        // Focus the search input on startup and check for offline local sync changes.
         let mut startup_tasks = vec![iced::widget::operation::focus(search_input_id())];
         if app.ui.portal_hub_auth_user.is_some() && app.prefs.portal_hub.sync_configured() {
-            startup_tasks.push(Task::done(Message::Ui(UiMessage::PortalHubSyncNow)));
+            startup_tasks.push(Task::done(Message::Ui(UiMessage::PortalHubLocalSyncDue)));
         }
         (app, Task::batch(startup_tasks))
     }
@@ -1129,17 +1134,32 @@ impl Portal {
             );
         }
 
-        if self.ui.portal_hub_auth_user.is_some()
-            && self.prefs.portal_hub.sync_configured()
+        if self.ui.portal_hub_local_sync_pending
             && !self.ui.portal_hub_sync_loading
             && self.ui.portal_hub_conflicts.is_empty()
         {
             subscriptions.push(
-                time::every(Duration::from_secs(30))
-                    .map(|_| Message::Ui(UiMessage::PortalHubSyncNow)),
+                time::every(Duration::from_millis(1500))
+                    .map(|_| Message::Ui(UiMessage::PortalHubLocalSyncDue)),
             );
+        }
+
+        if self.ui.portal_hub_auth_user.is_some() && self.prefs.portal_hub.sync_configured() {
+            let hub_url = self.prefs.portal_hub.effective_web_url();
+            if !hub_url.is_empty() {
+                subscriptions.push(Subscription::run_with(
+                    hub_url,
+                    portal_hub_sync_event_stream,
+                ));
+            }
         }
 
         Subscription::batch(subscriptions)
     }
+}
+
+fn portal_hub_sync_event_stream(hub_url: &String) -> stream::BoxStream<'static, Message> {
+    crate::hub::sync::sync_revision_event_stream(hub_url.clone())
+        .map(|result| Message::Ui(UiMessage::PortalHubRemoteRevisions(result)))
+        .boxed()
 }

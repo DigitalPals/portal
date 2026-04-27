@@ -1,5 +1,7 @@
 use std::collections::HashMap;
+use std::time::Duration;
 
+use futures::{StreamExt, stream::BoxStream};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -64,6 +66,12 @@ pub struct HubSyncV2Response {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HubSyncRevisionEvent {
+    pub api_version: u16,
+    pub services: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HubSyncServiceState {
     pub revision: String,
     pub payload: Value,
@@ -95,8 +103,47 @@ pub enum ConflictChoice {
 
 #[derive(Debug, Clone)]
 pub enum SyncRunResult {
-    Synced(String),
+    Synced(SyncRunSummary),
     Conflicts(Vec<SyncConflict>),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyncRunOrigin {
+    Manual,
+    Background,
+    Startup,
+    RemoteEvent,
+    Login,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyncRunActivity {
+    NoChanges,
+    UploadedLocalChanges,
+    AppliedRemoteChanges,
+    UploadedAndApplied,
+    Disabled,
+}
+
+#[derive(Debug, Clone)]
+pub struct SyncRunSummary {
+    pub activity: SyncRunActivity,
+}
+
+impl SyncRunSummary {
+    pub const fn new(activity: SyncRunActivity) -> Self {
+        Self { activity }
+    }
+
+    pub const fn message(&self) -> &'static str {
+        match self.activity {
+            SyncRunActivity::NoChanges => "Portal Hub is up to date",
+            SyncRunActivity::UploadedLocalChanges => "Uploaded local changes to Portal Hub",
+            SyncRunActivity::AppliedRemoteChanges => "Applied Portal Hub changes",
+            SyncRunActivity::UploadedAndApplied => "Synced local and Portal Hub changes",
+            SyncRunActivity::Disabled => "Portal Hub sync is disabled",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -217,9 +264,9 @@ pub async fn run_bidirectional_sync(
     profile: LocalSyncProfile,
 ) -> Result<SyncRunResult, String> {
     if !settings.sync_configured() {
-        return Ok(SyncRunResult::Synced(
-            "Portal Hub sync is disabled".to_string(),
-        ));
+        return Ok(SyncRunResult::Synced(SyncRunSummary::new(
+            SyncRunActivity::Disabled,
+        )));
     }
 
     let hub_url = web_url(&settings)?;
@@ -228,6 +275,8 @@ pub async fn run_bidirectional_sync(
     let mut updates = HashMap::new();
     let mut conflicts = Vec::new();
     let mut final_payloads: HashMap<String, Value> = HashMap::new();
+    let mut uploaded_local = false;
+    let mut applied_remote = false;
 
     for (service, local_payload) in enabled_service_payloads(&settings, &profile)? {
         let hub_service = hub
@@ -263,6 +312,7 @@ pub async fn run_bidirectional_sync(
         let local_changed = local_payload != baseline;
         match (local_changed, hub_changed) {
             (false, true) => {
+                applied_remote = true;
                 final_payloads.insert(service.to_string(), hub_service.payload.clone());
                 local_state.services.insert(
                     service.to_string(),
@@ -273,6 +323,7 @@ pub async fn run_bidirectional_sync(
                 );
             }
             (true, false) => {
+                uploaded_local = true;
                 updates.insert(
                     service.to_string(),
                     json!({
@@ -315,9 +366,60 @@ pub async fn run_bidirectional_sync(
 
     apply_payloads(settings, profile, final_payloads)?;
     save_local_sync_state(&local_state)?;
-    Ok(SyncRunResult::Synced(
-        "Portal Hub sync complete".to_string(),
-    ))
+    let activity = match (uploaded_local, applied_remote) {
+        (true, true) => SyncRunActivity::UploadedAndApplied,
+        (true, false) => SyncRunActivity::UploadedLocalChanges,
+        (false, true) => SyncRunActivity::AppliedRemoteChanges,
+        (false, false) => SyncRunActivity::NoChanges,
+    };
+    Ok(SyncRunResult::Synced(SyncRunSummary::new(activity)))
+}
+
+pub fn local_sync_changes_pending(
+    settings: &PortalHubSettings,
+    profile: &LocalSyncProfile,
+) -> Result<bool, String> {
+    if !settings.sync_configured() {
+        return Ok(false);
+    }
+    let hub_url = web_url(settings)?;
+    let local_state = load_local_sync_state(&hub_url)?;
+    for (service, local_payload) in enabled_service_payloads(settings, profile)? {
+        let baseline = local_state
+            .services
+            .get(service)
+            .map(|state| state.baseline.clone())
+            .unwrap_or_else(|| default_service_payload(service));
+        if local_payload != baseline {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+pub fn remote_revisions_require_sync(
+    settings: &PortalHubSettings,
+    revisions: &HashMap<String, String>,
+) -> Result<bool, String> {
+    if !settings.sync_configured() {
+        return Ok(false);
+    }
+    let hub_url = web_url(settings)?;
+    let local_state = load_local_sync_state(&hub_url)?;
+    for service in enabled_service_names(settings) {
+        let Some(remote_revision) = revisions.get(service) else {
+            continue;
+        };
+        let local_revision = local_state
+            .services
+            .get(service)
+            .map(|state| state.revision.as_str())
+            .unwrap_or("0");
+        if remote_revision != local_revision {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 pub async fn resolve_sync_conflicts(
@@ -423,6 +525,61 @@ pub async fn http_sync_v2_get(settings: &PortalHubSettings) -> Result<HubSyncV2R
         .map_err(|error| format!("failed to parse Portal Hub sync state: {}", error))
 }
 
+pub fn sync_revision_event_stream(
+    hub_url: String,
+) -> BoxStream<'static, Result<HubSyncRevisionEvent, String>> {
+    async_stream::stream! {
+        loop {
+            match connect_sync_revision_events(&hub_url).await {
+                Ok(mut response) => {
+                    let mut buffer = String::new();
+                    loop {
+                        match response.chunk().await {
+                            Ok(Some(chunk)) => {
+                                buffer.push_str(&String::from_utf8_lossy(&chunk));
+                                while let Some((index, separator_len)) = next_sse_event_boundary(&buffer) {
+                                    let raw = buffer[..index].to_string();
+                                    buffer.drain(..index + separator_len);
+                                    match parse_sync_revision_event(&raw) {
+                                        Ok(Some(event)) => yield Ok(event),
+                                        Ok(None) => {}
+                                        Err(error) => yield Err(error),
+                                    }
+                                }
+                            }
+                            Ok(None) => {
+                                yield Err("Portal Hub sync event stream closed".to_string());
+                                break;
+                            }
+                            Err(error) => {
+                                yield Err(format!("failed to read Portal Hub sync events: {}", error));
+                                break;
+                            }
+                        }
+                    }
+                }
+                Err(error) => yield Err(error),
+            }
+
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        }
+    }
+    .boxed()
+}
+
+async fn connect_sync_revision_events(hub_url: &str) -> Result<reqwest::Response, String> {
+    let token = crate::hub::auth::load_access_token(hub_url)?
+        .ok_or_else(|| "Portal Hub is not authenticated".to_string())?;
+    reqwest::Client::new()
+        .get(format!("{}/api/sync/v2/events", hub_url))
+        .bearer_auth(token)
+        .send()
+        .await
+        .map_err(|error| format!("failed to connect Portal Hub sync events: {}", error))?
+        .error_for_status()
+        .map_err(|error| format!("Portal Hub sync events failed: {}", error))
+}
+
 async fn http_sync_v2_put_values(
     settings: &PortalHubSettings,
     services: HashMap<String, Value>,
@@ -451,11 +608,8 @@ fn enabled_service_payloads<'a>(
 ) -> Result<Vec<(&'static str, Value)>, String> {
     let mut services = Vec::new();
     if settings.hosts_sync_enabled {
-        services.push((
-            HOSTS,
-            serde_json::to_value(&profile.hosts)
-                .map_err(|error| format!("failed to serialize hosts: {}", error))?,
-        ));
+        let hosts = canonical_hosts_payload(&profile.hosts)?;
+        services.push((HOSTS, hosts));
     }
     if settings.settings_sync_enabled {
         let mut synced_settings = profile.settings.clone();
@@ -506,8 +660,9 @@ fn apply_payloads(
     payloads: HashMap<String, Value>,
 ) -> Result<(), String> {
     if let Some(value) = payloads.get(HOSTS) {
-        let hosts: HostsConfig = serde_json::from_value(value.clone())
+        let mut hosts: HostsConfig = serde_json::from_value(value.clone())
             .map_err(|error| format!("failed to parse synced hosts: {}", error))?;
+        preserve_runtime_host_metadata(&mut hosts, &profile.hosts);
         hosts.save().map_err(|error| error.to_string())?;
     }
     if let Some(value) = payloads.get(SETTINGS) {
@@ -571,6 +726,66 @@ fn default_hub_service(service: &str) -> HubSyncServiceState {
     }
 }
 
+fn canonical_hosts_payload(hosts: &HostsConfig) -> Result<Value, String> {
+    let mut value = serde_json::to_value(hosts)
+        .map_err(|error| format!("failed to serialize hosts: {}", error))?;
+    if let Some(hosts) = value.get_mut("hosts").and_then(Value::as_array_mut) {
+        for host in hosts {
+            if let Some(host) = host.as_object_mut() {
+                host.remove("last_connected");
+                host.remove("detected_os");
+                if let Some(created_at) = host.get("created_at").cloned() {
+                    host.insert("updated_at".to_string(), created_at);
+                }
+            }
+        }
+    }
+    Ok(value)
+}
+
+fn preserve_runtime_host_metadata(remote: &mut HostsConfig, local: &HostsConfig) {
+    for host in &mut remote.hosts {
+        if let Some(local_host) = local.find_host(host.id) {
+            host.last_connected = local_host.last_connected;
+            host.detected_os = local_host.detected_os.clone();
+            host.updated_at = local_host.updated_at;
+        }
+    }
+}
+
+fn parse_sync_revision_event(raw: &str) -> Result<Option<HubSyncRevisionEvent>, String> {
+    let mut event_name = "message";
+    let mut data = String::new();
+
+    for line in raw.lines() {
+        if let Some(value) = line.strip_prefix("event:") {
+            event_name = value.trim();
+        } else if let Some(value) = line.strip_prefix("data:") {
+            if !data.is_empty() {
+                data.push('\n');
+            }
+            data.push_str(value.trim_start());
+        }
+    }
+
+    if event_name != "sync" || data.trim().is_empty() {
+        return Ok(None);
+    }
+
+    serde_json::from_str(&data)
+        .map(Some)
+        .map_err(|error| format!("failed to parse Portal Hub sync event: {}", error))
+}
+
+fn next_sse_event_boundary(buffer: &str) -> Option<(usize, usize)> {
+    match (buffer.find("\n\n"), buffer.find("\r\n\r\n")) {
+        (Some(lf), Some(crlf)) if crlf < lf => Some((crlf, 4)),
+        (Some(lf), _) => Some((lf, 2)),
+        (None, Some(crlf)) => Some((crlf, 4)),
+        (None, None) => None,
+    }
+}
+
 fn default_service_payload(service: &str) -> Value {
     match service {
         HOSTS => json!({"hosts": [], "groups": []}),
@@ -592,6 +807,7 @@ fn web_url(settings: &crate::config::settings::PortalHubSettings) -> Result<Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::{AuthMethod, Host, Protocol};
 
     #[test]
     fn sync_request_contains_profile_and_vault_sections() {
@@ -607,5 +823,67 @@ mod tests {
         assert!(request.profile.get("settings").is_some());
         assert!(request.profile.get("snippets").is_some());
         assert!(request.vault.get("keys").is_some());
+    }
+
+    #[test]
+    fn canonical_hosts_payload_ignores_runtime_metadata() {
+        let created_at = chrono::DateTime::parse_from_rfc3339("2026-04-25T00:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let updated_at = chrono::DateTime::parse_from_rfc3339("2026-04-26T00:00:00Z")
+            .unwrap()
+            .with_timezone(&chrono::Utc);
+        let host = Host {
+            id: uuid::Uuid::new_v4(),
+            name: "Test".to_string(),
+            hostname: "example.com".to_string(),
+            port: 22,
+            username: "john".to_string(),
+            protocol: Protocol::Ssh,
+            vnc_port: None,
+            auth: AuthMethod::Agent,
+            agent_forwarding: false,
+            port_forwards: Vec::new(),
+            portal_hub_enabled: true,
+            group_id: None,
+            notes: None,
+            tags: Vec::new(),
+            created_at,
+            updated_at,
+            detected_os: Some(crate::config::DetectedOs::Linux),
+            last_connected: Some(updated_at),
+        };
+
+        let payload = canonical_hosts_payload(&HostsConfig {
+            hosts: vec![host],
+            groups: Vec::new(),
+        })
+        .unwrap();
+        let host = payload["hosts"][0].as_object().unwrap();
+
+        assert!(!host.contains_key("last_connected"));
+        assert!(!host.contains_key("detected_os"));
+        assert_eq!(host.get("updated_at"), host.get("created_at"));
+    }
+
+    #[test]
+    fn parses_sync_revision_sse_event() {
+        let event = parse_sync_revision_event(
+            "event: sync\ndata: {\"api_version\":2,\"services\":{\"hosts\":\"rev-1\"}}\n",
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(event.api_version, 2);
+        assert_eq!(event.services.get("hosts"), Some(&"rev-1".to_string()));
+    }
+
+    #[test]
+    fn finds_lf_and_crlf_sse_boundaries() {
+        assert_eq!(next_sse_event_boundary("event: sync\n\n"), Some((11, 2)));
+        assert_eq!(
+            next_sse_event_boundary("event: sync\r\n\r\n"),
+            Some((11, 4))
+        );
     }
 }

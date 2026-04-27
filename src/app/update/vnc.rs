@@ -305,6 +305,7 @@ pub fn handle_vnc(portal: &mut Portal, msg: VncMessage) -> Task<Message> {
                 VncScalingMode::Stretch => VncScalingMode::Fit,
             };
             portal.save_settings();
+            super::ui::settings::queue_portal_hub_local_sync(portal);
             Task::none()
         }
         VncMessage::ManualRefresh(session_id) => {
@@ -350,6 +351,7 @@ pub fn handle_vnc(portal: &mut Portal, msg: VncMessage) -> Task<Message> {
                     VncQualityPreset::Lossless => VncQualityPreset::Auto,
                 };
             portal.save_settings();
+            super::ui::settings::queue_portal_hub_local_sync(portal);
             portal.toast_manager.push(Toast::success(format!(
                 "VNC quality applies to new sessions: {}",
                 portal.prefs.vnc_settings.quality_preset.label()

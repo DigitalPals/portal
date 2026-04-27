@@ -10,6 +10,8 @@ use futures::{SinkExt, StreamExt};
 use secrecy::ExposeSecret;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::sync::mpsc as std_mpsc;
+use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
@@ -178,6 +180,7 @@ impl ProxySession {
         private_key: Option<String>,
     ) -> Result<Self, LocalError> {
         let (command_tx, command_rx) = mpsc::channel::<ProxyCommand>(256);
+        let (ready_tx, ready_rx) = std_mpsc::sync_channel::<Result<(), String>>(1);
         let settings = settings.clone();
         let target = target.clone();
         std::thread::spawn(move || {
@@ -192,6 +195,7 @@ impl ProxySession {
                             .into_bytes(),
                     ));
                     let _ = event_tx.blocking_send(ProxyEvent::Disconnected { clean: false });
+                    let _ = ready_tx.send(Err(error.to_string()));
                     return;
                 }
             };
@@ -203,8 +207,24 @@ impl ProxySession {
                 private_key,
                 command_rx,
                 event_tx,
+                Some(ready_tx),
             ));
         });
+
+        match ready_rx.recv_timeout(Duration::from_secs(15)) {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => return Err(LocalError::SpawnFailed(error)),
+            Err(std_mpsc::RecvTimeoutError::Timeout) => {
+                return Err(LocalError::SpawnFailed(
+                    "timed out waiting for Portal Hub terminal to start".to_string(),
+                ));
+            }
+            Err(std_mpsc::RecvTimeoutError::Disconnected) => {
+                return Err(LocalError::SpawnFailed(
+                    "Portal Hub terminal startup ended before it reported readiness".to_string(),
+                ));
+            }
+        }
 
         Ok(Self {
             command_tx,
@@ -235,6 +255,7 @@ async fn run_web_terminal(
     private_key: Option<String>,
     mut command_rx: mpsc::Receiver<ProxyCommand>,
     event_tx: mpsc::Sender<ProxyEvent>,
+    mut ready_tx: Option<std_mpsc::SyncSender<Result<(), String>>>,
 ) {
     let result = async {
         let hub_url = settings.effective_web_url();
@@ -273,6 +294,49 @@ async fn run_web_terminal(
             ))
             .await
             .map_err(|error| format!("failed to start Portal Hub terminal: {}", error))?;
+
+        loop {
+            let Some(message) = read.next().await else {
+                return Err("Portal Hub terminal closed before it started".to_string());
+            };
+            match message.map_err(|error| format!("Portal Hub terminal read failed: {}", error))? {
+                WsMessage::Text(text) => {
+                    if let Ok(value) = serde_json::from_str::<Value>(&text) {
+                        match value.get("type").and_then(Value::as_str) {
+                            Some("started") => {
+                                if let Some(ready_tx) = ready_tx.take() {
+                                    let _ = ready_tx.send(Ok(()));
+                                }
+                                break;
+                            }
+                            Some("error") => {
+                                let message = value
+                                    .get("message")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or(&text)
+                                    .to_string();
+                                return Err(message);
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                WsMessage::Binary(data) => {
+                    if let Some(ready_tx) = ready_tx.take() {
+                        let _ = ready_tx.send(Ok(()));
+                    }
+                    let _ = event_tx.send(ProxyEvent::Data(data)).await;
+                    break;
+                }
+                WsMessage::Close(_) => {
+                    return Err("Portal Hub terminal closed before it started".to_string());
+                }
+                WsMessage::Ping(data) => {
+                    let _ = write.send(WsMessage::Pong(data)).await;
+                }
+                _ => {}
+            }
+        }
 
         loop {
             tokio::select! {
@@ -327,6 +391,9 @@ async fn run_web_terminal(
     .await;
 
     if let Err(error) = result {
+        if let Some(ready_tx) = ready_tx.take() {
+            let _ = ready_tx.send(Err(error.clone()));
+        }
         let _ = event_tx
             .send(ProxyEvent::Data(format!("{}\r\n", error).into_bytes()))
             .await;
@@ -334,6 +401,9 @@ async fn run_web_terminal(
             .send(ProxyEvent::Disconnected { clean: false })
             .await;
     } else {
+        if let Some(ready_tx) = ready_tx.take() {
+            let _ = ready_tx.send(Ok(()));
+        }
         let _ = event_tx
             .send(ProxyEvent::Disconnected { clean: true })
             .await;
@@ -364,9 +434,13 @@ fn proxy_private_key(auth: &AuthMethod) -> Result<Option<String>, LocalError> {
         } => crate::hub::vault::load_decrypted_private_key(*vault_key_id)
             .map(|key| Some(key.expose_secret().to_string()))
             .map_err(LocalError::SpawnFailed),
-        _ => Err(LocalError::SpawnFailed(
-            "Portal Hub proxy requires a Key Vault private key for this host".to_string(),
-        )),
+        AuthMethod::PublicKey {
+            key_path: Some(key_path),
+            ..
+        } => std::fs::read_to_string(key_path)
+            .map(Some)
+            .map_err(|error| LocalError::SpawnFailed(error.to_string())),
+        _ => Ok(None),
     }
 }
 

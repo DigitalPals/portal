@@ -647,8 +647,15 @@ pub enum UiMessage {
     PortalHubPullProfileDone(Result<String, String>),
     /// Run Portal Hub sync now.
     PortalHubSyncNow,
+    /// Debounced local change sync.
+    PortalHubLocalSyncDue,
+    /// Portal Hub pushed remote sync revisions.
+    PortalHubRemoteRevisions(Result<crate::hub::sync::HubSyncRevisionEvent, String>),
     /// Portal Hub sync result.
-    PortalHubSyncDone(Result<crate::hub::sync::SyncRunResult, String>),
+    PortalHubSyncDone(
+        crate::hub::sync::SyncRunOrigin,
+        Result<crate::hub::sync::SyncRunResult, String>,
+    ),
     /// Portal Hub conflict choice changed.
     PortalHubConflictChoiceChanged(usize, crate::hub::sync::ConflictChoice),
     /// Resolve pending Portal Hub conflicts.

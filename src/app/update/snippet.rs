@@ -66,7 +66,8 @@ pub fn handle_snippet(portal: &mut Portal, msg: SnippetMessage) -> Task<Message>
             portal.snippets.editing = None;
             portal.snippets.selected_snippet = None;
             portal.snippets.executions.clear_results(id);
-            super::ui::settings::portal_hub_sync_task(portal)
+            super::ui::settings::queue_portal_hub_local_sync(portal);
+            Task::none()
         }
 
         SnippetMessage::FieldChanged(field, value) => {
@@ -133,7 +134,8 @@ pub fn handle_snippet(portal: &mut Portal, msg: SnippetMessage) -> Task<Message>
                             .toast_manager
                             .push(Toast::error("Failed to save snippet"));
                     }
-                    return super::ui::settings::portal_hub_sync_task(portal);
+                    super::ui::settings::queue_portal_hub_local_sync(portal);
+                    return Task::none();
                 }
             }
             Task::none()

@@ -8,7 +8,7 @@ use tokio::sync::{Mutex, mpsc};
 use uuid::Uuid;
 
 use crate::config::settings::PortalHubSettings;
-use crate::config::{AuthMethod, DetectedOs, Host, PortForwardKind, Protocol};
+use crate::config::{DetectedOs, Host, PortForwardKind, Protocol};
 use crate::message::{
     DialogMessage, Message, PassphraseRequest, PassphraseSftpContext, SessionId, SessionMessage,
     SftpMessage, VerificationRequestWrapper,
@@ -93,17 +93,7 @@ pub fn should_detect_os(detected_os: Option<&DetectedOs>) -> bool {
 }
 
 pub fn should_use_portal_hub(settings: &PortalHubSettings, host: &Host) -> bool {
-    settings.is_configured()
-        && host.portal_hub_enabled
-        && settings.key_vault_enabled
-        && host.protocol == Protocol::Ssh
-        && matches!(
-            host.auth,
-            AuthMethod::PublicKey {
-                vault_key_id: Some(_),
-                ..
-            }
-        )
+    settings.is_configured() && host.portal_hub_enabled && host.protocol == Protocol::Ssh
 }
 
 fn ssh_event_listener(session_id: SessionId, event_rx: mpsc::Receiver<SshEvent>) -> Task<Message> {
@@ -861,7 +851,7 @@ mod tests {
     }
 
     #[test]
-    fn portal_hub_routing_uses_key_vault_public_keys_only() {
+    fn portal_hub_routing_supports_any_ssh_auth_method() {
         let settings = configured_proxy_settings();
 
         assert!(should_use_portal_hub(
@@ -871,18 +861,18 @@ mod tests {
                 vault_key_id: Some(Uuid::new_v4()),
             })
         ));
-        assert!(!should_use_portal_hub(
+        assert!(should_use_portal_hub(
             &settings,
             &proxy_test_host(AuthMethod::Agent)
         ));
-        assert!(!should_use_portal_hub(
+        assert!(should_use_portal_hub(
             &settings,
             &proxy_test_host(AuthMethod::PublicKey {
                 key_path: Some("/tmp/key".into()),
                 vault_key_id: None,
             })
         ));
-        assert!(!should_use_portal_hub(
+        assert!(should_use_portal_hub(
             &settings,
             &proxy_test_host(AuthMethod::Password)
         ));

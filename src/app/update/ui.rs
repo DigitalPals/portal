@@ -92,7 +92,9 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
         | UiMessage::PortalHubPullProfile
         | UiMessage::PortalHubPullProfileDone(_)
         | UiMessage::PortalHubSyncNow
-        | UiMessage::PortalHubSyncDone(_)
+        | UiMessage::PortalHubLocalSyncDue
+        | UiMessage::PortalHubRemoteRevisions(_)
+        | UiMessage::PortalHubSyncDone(_, _)
         | UiMessage::PortalHubConflictChoiceChanged(_, _)
         | UiMessage::PortalHubResolveConflicts
         | UiMessage::PortalHubResolveConflictsDone(_)) => {

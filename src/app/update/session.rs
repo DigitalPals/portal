@@ -654,6 +654,28 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
             tracing::info!("Terminal session disconnected (clean: {})", clean);
             let close_task = close_session_logger(portal, session_id);
             if let Some(session) = portal.sessions.get(session_id) {
+                if matches!(session.backend, SessionBackend::Proxy(_)) {
+                    if history::mark_entry_disconnected(
+                        &mut portal.config.history,
+                        session.history_entry_id,
+                    ) {
+                        if let Err(e) = portal.config.history.save() {
+                            tracing::error!("Failed to save history config: {}", e);
+                        }
+                    }
+                    if let Some(session) = portal.sessions.get_mut(session_id) {
+                        session.status_message = Some((
+                            if clean {
+                                "Portal Hub session ended".to_string()
+                            } else {
+                                "Portal Hub session disconnected".to_string()
+                            },
+                            Instant::now(),
+                        ));
+                    }
+                    return close_task;
+                }
+
                 // Only auto-reconnect for unexpected disconnections, not clean exits
                 if !clean
                     && portal.prefs.auto_reconnect

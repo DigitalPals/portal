@@ -5,7 +5,10 @@ use crate::app::services;
 use crate::config::settings::{
     SettingsConfig, TERMINAL_SCROLL_SPEED_MAX, TERMINAL_SCROLL_SPEED_MIN,
 };
-use crate::hub::sync::{ConflictChoice, LocalSyncProfile, PortalHubSyncService, SyncRunResult};
+use crate::hub::sync::{
+    ConflictChoice, LocalSyncProfile, PortalHubSyncService, SyncRunActivity, SyncRunOrigin,
+    SyncRunResult,
+};
 use crate::hub::vault::HubVaultConfig;
 use crate::message::{Message, UiMessage};
 use crate::views::toast::Toast;
@@ -14,29 +17,29 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
     match msg {
         UiMessage::ThemeChange(theme_id) => {
             portal.prefs.theme_id = theme_id;
-            portal.save_settings();
+            save_settings_and_queue_sync(portal);
         }
         UiMessage::FontChange(font) => {
             tracing::info!("Font changed");
             portal.prefs.terminal_font = font;
-            portal.save_settings();
+            save_settings_and_queue_sync(portal);
         }
         UiMessage::FontSizeChange(size) => {
             portal.prefs.terminal_font_size = size;
-            portal.save_settings();
+            save_settings_and_queue_sync(portal);
         }
         UiMessage::TerminalScrollSpeedChange(speed) => {
             portal.prefs.terminal_scroll_speed =
                 speed.clamp(TERMINAL_SCROLL_SPEED_MIN, TERMINAL_SCROLL_SPEED_MAX);
-            portal.save_settings();
+            save_settings_and_queue_sync(portal);
         }
         UiMessage::UiScaleChange(scale) => {
             portal.prefs.ui_scale_override = Some(scale.clamp(0.8, 1.5));
-            portal.save_settings();
+            save_settings_and_queue_sync(portal);
         }
         UiMessage::UiScaleReset => {
             portal.prefs.ui_scale_override = None;
-            portal.save_settings();
+            save_settings_and_queue_sync(portal);
         }
         UiMessage::SnippetHistoryEnabled(enabled) => {
             portal.config.snippet_history.enabled = enabled;
@@ -56,19 +59,19 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
         }
         UiMessage::SessionLoggingEnabled(enabled) => {
             portal.prefs.session_logging_enabled = enabled;
-            portal.save_settings();
+            save_settings_and_queue_sync(portal);
         }
         UiMessage::AllowAgentForwarding(enabled) => {
             portal.prefs.allow_agent_forwarding = enabled;
-            portal.save_settings();
+            save_settings_and_queue_sync(portal);
         }
         UiMessage::AutoReconnectEnabled(enabled) => {
             portal.prefs.auto_reconnect = enabled;
-            portal.save_settings();
+            save_settings_and_queue_sync(portal);
         }
         UiMessage::ReconnectMaxAttemptsChanged(attempts) => {
             portal.prefs.reconnect_max_attempts = attempts.clamp(1, 20);
-            portal.save_settings();
+            save_settings_and_queue_sync(portal);
         }
         UiMessage::ReconnectBaseDelayChanged(delay_ms) => {
             let base_delay = delay_ms.clamp(500, 10_000);
@@ -76,17 +79,17 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
             if portal.prefs.reconnect_max_delay_ms < base_delay {
                 portal.prefs.reconnect_max_delay_ms = base_delay;
             }
-            portal.save_settings();
+            save_settings_and_queue_sync(portal);
         }
         UiMessage::ReconnectMaxDelayChanged(delay_ms) => {
             portal.prefs.reconnect_max_delay_ms =
                 delay_ms.clamp(portal.prefs.reconnect_base_delay_ms.max(500), 120_000);
-            portal.save_settings();
+            save_settings_and_queue_sync(portal);
         }
         UiMessage::CredentialTimeoutChange(timeout_seconds) => {
             let clamped = timeout_seconds.min(3600);
             portal.prefs.credential_timeout = clamped;
-            portal.save_settings();
+            save_settings_and_queue_sync(portal);
             services::connection::init_passphrase_cache(clamped);
         }
         UiMessage::SecurityAuditLoggingEnabled(enabled) => {
@@ -98,7 +101,7 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
                         .map(|dir| dir.join("logs").join("security"));
                 }
 
-                portal.save_settings();
+                save_settings_and_queue_sync(portal);
                 let audit_path = portal.prefs.security_audit_dir.as_ref().map(|dir| {
                     let _ = std::fs::create_dir_all(dir);
                     dir.join("audit.log")
@@ -106,88 +109,88 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
                 crate::security_log::init_audit_log(audit_path);
                 tracing::info!("Security audit logging enabled");
             } else {
-                portal.save_settings();
+                save_settings_and_queue_sync(portal);
                 crate::security_log::init_audit_log(None);
                 tracing::info!("Security audit logging disabled");
             }
         }
         UiMessage::VncQualityPresetChanged(preset) => {
             portal.prefs.vnc_settings.quality_preset = preset;
-            portal.save_settings();
+            save_settings_and_queue_sync(portal);
         }
         UiMessage::VncScalingModeChanged(mode) => {
             portal.prefs.vnc_settings.scaling_mode = mode;
-            portal.save_settings();
+            save_settings_and_queue_sync(portal);
         }
         UiMessage::VncEncodingPreferenceChanged(encoding) => {
             portal.prefs.vnc_settings.encoding = encoding;
-            portal.save_settings();
+            save_settings_and_queue_sync(portal);
         }
         UiMessage::VncColorDepthChanged(depth) => {
             if matches!(depth, 16 | 32) {
                 portal.prefs.vnc_settings.color_depth = depth;
-                portal.save_settings();
+                save_settings_and_queue_sync(portal);
             }
         }
         UiMessage::VncRefreshFpsChanged(fps) => {
             portal.prefs.vnc_settings.refresh_fps = fps.clamp(1, 20);
-            portal.save_settings();
+            save_settings_and_queue_sync(portal);
         }
         UiMessage::VncPointerIntervalChanged(interval_ms) => {
             portal.prefs.vnc_settings.pointer_interval_ms = interval_ms.min(1000);
-            portal.save_settings();
+            save_settings_and_queue_sync(portal);
         }
         UiMessage::VncRemoteResizeChanged(enabled) => {
             portal.prefs.vnc_settings.remote_resize = enabled;
-            portal.save_settings();
+            save_settings_and_queue_sync(portal);
         }
         UiMessage::VncClipboardSharingChanged(enabled) => {
             portal.prefs.vnc_settings.clipboard_sharing = enabled;
-            portal.save_settings();
+            save_settings_and_queue_sync(portal);
         }
         UiMessage::VncViewOnlyChanged(enabled) => {
             portal.prefs.vnc_settings.view_only = enabled;
-            portal.save_settings();
+            save_settings_and_queue_sync(portal);
         }
         UiMessage::VncShowCursorDotChanged(enabled) => {
             portal.prefs.vnc_settings.show_cursor_dot = enabled;
-            portal.save_settings();
+            save_settings_and_queue_sync(portal);
         }
         UiMessage::VncShowStatsOverlayChanged(enabled) => {
             portal.prefs.vnc_settings.show_stats_overlay = enabled;
-            portal.save_settings();
+            save_settings_and_queue_sync(portal);
         }
         UiMessage::PortalHubEnabled(enabled) => {
             portal.prefs.portal_hub.enabled = enabled;
             clear_portal_hub_status(portal);
-            portal.save_settings();
+            save_settings_and_queue_sync(portal);
         }
         UiMessage::PortalHubHostsSyncChanged(enabled) => {
             portal.prefs.portal_hub.hosts_sync_enabled = enabled;
-            portal.save_settings();
-            return portal_hub_sync_task(portal);
+            save_settings_and_queue_sync(portal);
+            return portal_hub_sync_task(portal, SyncRunOrigin::Manual, true);
         }
         UiMessage::PortalHubSettingsSyncChanged(enabled) => {
             portal.prefs.portal_hub.settings_sync_enabled = enabled;
-            portal.save_settings();
-            return portal_hub_sync_task(portal);
+            save_settings_and_queue_sync(portal);
+            return portal_hub_sync_task(portal, SyncRunOrigin::Manual, true);
         }
         UiMessage::PortalHubSnippetsSyncChanged(enabled) => {
             portal.prefs.portal_hub.snippets_sync_enabled = enabled;
-            portal.save_settings();
-            return portal_hub_sync_task(portal);
+            save_settings_and_queue_sync(portal);
+            return portal_hub_sync_task(portal, SyncRunOrigin::Manual, true);
         }
         UiMessage::PortalHubKeyVaultChanged(enabled) => {
             portal.prefs.portal_hub.key_vault_enabled = enabled;
-            portal.save_settings();
-            return portal_hub_sync_task(portal);
+            save_settings_and_queue_sync(portal);
+            return portal_hub_sync_task(portal, SyncRunOrigin::Manual, true);
         }
         UiMessage::PortalHubDisableSyncRequested(service) => {
             portal.dialogs.open_portal_hub_disable_sync(service);
         }
         UiMessage::PortalHubDisableSyncKeepData(service) => {
             set_portal_hub_sync_service(&mut portal.prefs.portal_hub, service, false);
-            portal.save_settings();
+            save_settings_and_queue_sync(portal);
             portal.dialogs.close();
             portal.toast_manager.push(Toast::success(format!(
                 "{} disabled. Existing Portal Hub data was kept.",
@@ -196,7 +199,7 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
         }
         UiMessage::PortalHubDisableSyncDeleteData(service) => {
             set_portal_hub_sync_service(&mut portal.prefs.portal_hub, service, false);
-            portal.save_settings();
+            save_settings_and_queue_sync(portal);
             portal.dialogs.close();
             portal.ui.portal_hub_sync_loading = true;
             portal.ui.portal_hub_sync_error = None;
@@ -218,7 +221,7 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
                 }
                 Err(error) => {
                     set_portal_hub_sync_service(&mut portal.prefs.portal_hub, service, true);
-                    portal.save_settings();
+                    save_settings_and_queue_sync(portal);
                     portal.ui.portal_hub_sync_error = Some(error.clone());
                     portal.toast_manager.push(Toast::error(format!(
                         "Portal Hub data deletion failed: {}",
@@ -232,13 +235,13 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
         }
         UiMessage::PortalHubDefaultForNewHosts(enabled) => {
             portal.prefs.portal_hub.default_for_new_ssh_hosts = enabled;
-            portal.save_settings();
+            save_settings_and_queue_sync(portal);
         }
         UiMessage::PortalHubHostChanged(host) => {
             portal.prefs.portal_hub.host = host;
             portal.prefs.portal_hub.web_url = portal.prefs.portal_hub.derived_web_url();
             clear_portal_hub_status(portal);
-            portal.save_settings();
+            save_settings_and_queue_sync(portal);
         }
         UiMessage::PortalHubWebPortChanged(port) => {
             if let Ok(parsed) = port.trim().parse::<u16>() {
@@ -247,7 +250,7 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
                     portal.prefs.portal_hub.web_url = portal.prefs.portal_hub.derived_web_url();
                     portal.ui.portal_hub_auth_user = None;
                     portal.ui.portal_hub_auth_error = None;
-                    portal.save_settings();
+                    save_settings_and_queue_sync(portal);
                 }
             }
         }
@@ -257,7 +260,7 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
                     // Deprecated legacy SSH transport setting; retained only for old configs.
                     portal.prefs.portal_hub.port = parsed;
                     clear_portal_hub_status(portal);
-                    portal.save_settings();
+                    save_settings_and_queue_sync(portal);
                 }
             }
         }
@@ -265,7 +268,7 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
             // Deprecated legacy SSH transport setting; retained only for old configs.
             portal.prefs.portal_hub.username = username;
             clear_portal_hub_status(portal);
-            portal.save_settings();
+            save_settings_and_queue_sync(portal);
         }
         UiMessage::PortalHubIdentityFileChanged(path) => {
             let trimmed = path.trim();
@@ -275,13 +278,13 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
                 Some(trimmed.into())
             };
             clear_portal_hub_status(portal);
-            portal.save_settings();
+            save_settings_and_queue_sync(portal);
         }
         UiMessage::PortalHubWebUrlChanged(url) => {
             portal.prefs.portal_hub.web_url = url;
             portal.ui.portal_hub_auth_user = None;
             portal.ui.portal_hub_auth_error = None;
-            portal.save_settings();
+            save_settings_and_queue_sync(portal);
         }
         UiMessage::PortalHubCheckStatus => {
             if !portal.prefs.portal_hub.is_configured() {
@@ -346,14 +349,14 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
                     portal.prefs.portal_hub.settings_sync_enabled = true;
                     portal.prefs.portal_hub.snippets_sync_enabled = true;
                     portal.prefs.portal_hub.key_vault_enabled = true;
-                    portal.save_settings();
+                    save_settings_and_queue_sync(portal);
                     portal.ui.portal_hub_auth_user =
                         Some(format!("{} @ {}", summary.username, summary.hub_url));
                     portal.ui.portal_hub_auth_error = None;
                     portal
                         .toast_manager
                         .push(Toast::success("Signed in to Portal Hub. Sync is enabled."));
-                    return portal_hub_sync_task(portal);
+                    return portal_hub_sync_task(portal, SyncRunOrigin::Login, true);
                 }
                 Err(error) => {
                     portal.ui.portal_hub_auth_user = None;
@@ -380,10 +383,12 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
                     portal.ui.portal_hub_sync_loading = false;
                     portal.ui.portal_hub_sync_error = None;
                     portal.ui.portal_hub_sync_status = None;
+                    portal.ui.portal_hub_local_sync_pending = false;
+                    portal.ui.portal_hub_remote_sync_pending = false;
                     portal.ui.portal_hub_conflicts.clear();
                     portal.ui.portal_hub_conflict_choices.clear();
                     clear_portal_hub_status(portal);
-                    portal.save_settings();
+                    save_settings_and_queue_sync(portal);
                     portal
                         .toast_manager
                         .push(Toast::success("Signed out of Portal Hub"));
@@ -398,7 +403,7 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
         }
         UiMessage::PortalHubUploadLocalProfile => {
             let settings = portal.prefs.portal_hub.clone();
-            portal.save_settings();
+            save_settings_and_queue_sync(portal);
             let hosts = portal.config.hosts.clone();
             let snippets = portal.config.snippets.clone();
             let settings_config = current_settings_config(portal);
@@ -467,12 +472,40 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
                 .push(Toast::error(format!("Portal Hub pull failed: {}", error))),
         },
         UiMessage::PortalHubSyncNow => {
-            return portal_hub_sync_task(portal);
+            return portal_hub_sync_task(portal, SyncRunOrigin::Manual, true);
         }
-        UiMessage::PortalHubSyncDone(result) => {
+        UiMessage::PortalHubLocalSyncDue => {
+            portal.ui.portal_hub_local_sync_pending = false;
+            return portal_hub_sync_task(portal, SyncRunOrigin::Background, false);
+        }
+        UiMessage::PortalHubRemoteRevisions(result) => match result {
+            Ok(event) => {
+                match crate::hub::sync::remote_revisions_require_sync(
+                    &portal.prefs.portal_hub,
+                    &event.services,
+                ) {
+                    Ok(true) => {
+                        return portal_hub_sync_task(portal, SyncRunOrigin::RemoteEvent, true);
+                    }
+                    Ok(false) => {
+                        portal.ui.portal_hub_sync_status =
+                            Some("Portal Hub is up to date".to_string());
+                    }
+                    Err(error) => {
+                        portal.ui.portal_hub_sync_error = Some(error.clone());
+                        tracing::warn!("Portal Hub sync event handling failed: {}", error);
+                    }
+                }
+            }
+            Err(error) => {
+                tracing::warn!("Portal Hub sync event stream disconnected: {}", error);
+            }
+        },
+        UiMessage::PortalHubSyncDone(origin, result) => {
             portal.ui.portal_hub_sync_loading = false;
             match result {
-                Ok(SyncRunResult::Synced(message)) => {
+                Ok(SyncRunResult::Synced(summary)) => {
+                    let message = summary.message().to_string();
                     portal.ui.portal_hub_sync_error = None;
                     portal.ui.portal_hub_sync_status = Some(message.clone());
                     portal.ui.portal_hub_conflicts.clear();
@@ -484,7 +517,9 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
                     ) {
                         portal.dialogs.close();
                     }
-                    portal.toast_manager.push(Toast::success(message));
+                    if should_show_sync_success(origin, summary.activity) {
+                        portal.toast_manager.push(Toast::success(message));
+                    }
                 }
                 Ok(SyncRunResult::Conflicts(conflicts)) => {
                     portal.ui.portal_hub_sync_error = None;
@@ -500,6 +535,11 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
                         .toast_manager
                         .push(Toast::error(format!("Portal Hub sync failed: {}", error)));
                 }
+            }
+            if portal.ui.portal_hub_remote_sync_pending && portal.ui.portal_hub_conflicts.is_empty()
+            {
+                portal.ui.portal_hub_remote_sync_pending = false;
+                return portal_hub_sync_task(portal, SyncRunOrigin::RemoteEvent, true);
             }
         }
         UiMessage::PortalHubConflictChoiceChanged(index, choice) => {
@@ -569,22 +609,84 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
     Task::none()
 }
 
-pub(crate) fn portal_hub_sync_task(portal: &mut Portal) -> Task<Message> {
+pub(crate) fn portal_hub_sync_task(
+    portal: &mut Portal,
+    origin: SyncRunOrigin,
+    force: bool,
+) -> Task<Message> {
     if !portal.prefs.portal_hub.sync_configured() {
         return Task::none();
     }
-    portal.ui.portal_hub_sync_loading = true;
-    portal.ui.portal_hub_sync_error = None;
+    if portal.ui.portal_hub_sync_loading {
+        if force {
+            portal.ui.portal_hub_remote_sync_pending = true;
+        } else {
+            portal.ui.portal_hub_local_sync_pending = true;
+        }
+        return Task::none();
+    }
     let settings = portal.prefs.portal_hub.clone();
     let profile = current_sync_profile(portal);
+    let vault = match HubVaultConfig::load() {
+        Ok(vault) => vault,
+        Err(error) => {
+            return Task::done(Message::Ui(UiMessage::PortalHubSyncDone(
+                origin,
+                Err(error),
+            )));
+        }
+    };
+    let profile = LocalSyncProfile { vault, ..profile };
+
+    if !force {
+        match crate::hub::sync::local_sync_changes_pending(&settings, &profile) {
+            Ok(false) => {
+                return Task::done(Message::Ui(UiMessage::PortalHubSyncDone(
+                    origin,
+                    Ok(SyncRunResult::Synced(
+                        crate::hub::sync::SyncRunSummary::new(SyncRunActivity::NoChanges),
+                    )),
+                )));
+            }
+            Ok(true) => {}
+            Err(error) => {
+                return Task::done(Message::Ui(UiMessage::PortalHubSyncDone(
+                    origin,
+                    Err(error),
+                )));
+            }
+        }
+    }
+
+    portal.ui.portal_hub_sync_loading = true;
+    portal.ui.portal_hub_sync_error = None;
+    portal.ui.portal_hub_local_sync_pending = false;
+    portal.ui.portal_hub_remote_sync_pending = false;
     Task::perform(
-        async move {
-            let vault = HubVaultConfig::load()?;
-            let profile = LocalSyncProfile { vault, ..profile };
-            crate::hub::sync::run_bidirectional_sync(settings, profile).await
-        },
-        |result| Message::Ui(UiMessage::PortalHubSyncDone(result)),
+        async move { crate::hub::sync::run_bidirectional_sync(settings, profile).await },
+        move |result| Message::Ui(UiMessage::PortalHubSyncDone(origin, result)),
     )
+}
+
+pub(crate) fn queue_portal_hub_local_sync(portal: &mut Portal) {
+    if portal.ui.portal_hub_auth_user.is_some()
+        && portal.prefs.portal_hub.sync_configured()
+        && portal.ui.portal_hub_conflicts.is_empty()
+    {
+        portal.ui.portal_hub_local_sync_pending = true;
+    }
+}
+
+fn save_settings_and_queue_sync(portal: &mut Portal) {
+    portal.save_settings();
+    queue_portal_hub_local_sync(portal);
+}
+
+fn should_show_sync_success(origin: SyncRunOrigin, activity: SyncRunActivity) -> bool {
+    if activity == SyncRunActivity::Disabled {
+        return false;
+    }
+    matches!(origin, SyncRunOrigin::Manual | SyncRunOrigin::Login)
 }
 
 fn current_sync_profile(portal: &Portal) -> LocalSyncProfile {

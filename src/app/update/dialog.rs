@@ -56,7 +56,8 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                         tracing::error!("Failed to save config: {}", e);
                     }
                     portal.dialogs.close();
-                    return super::ui::settings::portal_hub_sync_task(portal);
+                    super::ui::settings::queue_portal_hub_local_sync(portal);
+                    return Task::none();
                 }
                 // If to_host() returned None, validation failed and errors are shown in the UI
             }
@@ -224,6 +225,7 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                     }
                     let message = format!("Imported {} host(s) from SSH config", count);
                     if count > 0 {
+                        super::ui::settings::queue_portal_hub_local_sync(portal);
                         portal.toast_manager.push(Toast::success(message));
                     } else {
                         portal.toast_manager.push(Toast::warning(message));
