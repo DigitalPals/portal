@@ -602,9 +602,9 @@ async fn http_sync_v2_put_values(
         .map_err(|error| format!("failed to parse Portal Hub sync response: {}", error))
 }
 
-fn enabled_service_payloads<'a>(
+fn enabled_service_payloads(
     settings: &PortalHubSettings,
-    profile: &'a LocalSyncProfile,
+    profile: &LocalSyncProfile,
 ) -> Result<Vec<(&'static str, Value)>, String> {
     let mut services = Vec::new();
     if settings.hosts_sync_enabled {

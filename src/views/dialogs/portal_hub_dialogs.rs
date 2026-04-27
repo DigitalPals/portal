@@ -22,7 +22,7 @@ pub fn portal_hub_onboarding_dialog_view(
 ) -> Element<'static, Message> {
     let host = settings.host.clone();
     let web_port = settings.web_port.to_string();
-    let web_url = settings.derived_web_url();
+    let web_url = settings.effective_web_url();
 
     let auth_status = if auth_loading {
         text("Waiting for browser sign-in...")
@@ -91,6 +91,13 @@ pub fn portal_hub_onboarding_dialog_view(
             "Web port",
             web_port,
             UiMessage::PortalHubWebPortChanged,
+            theme,
+            fonts
+        ),
+        labeled_input(
+            "Web URL",
+            web_url.clone(),
+            UiMessage::PortalHubWebUrlChanged,
             theme,
             fonts
         ),

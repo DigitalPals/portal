@@ -337,7 +337,7 @@ fn active_tab_sections(
                 vnc_settings_items(&context.vnc_settings, theme, fonts),
             ),
         ],
-        SettingsTab::PortalHub => portal_hub_sections(&context, theme, fonts),
+        SettingsTab::PortalHub => portal_hub_sections(context, theme, fonts),
         SettingsTab::SecurityLogs => vec![settings_section(
             "Security & Logs",
             theme,

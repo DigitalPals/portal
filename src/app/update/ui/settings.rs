@@ -326,7 +326,9 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
             }
         }
         UiMessage::PortalHubAuthenticate => {
-            portal.prefs.portal_hub.web_url = portal.prefs.portal_hub.derived_web_url();
+            if portal.prefs.portal_hub.web_url.trim().is_empty() {
+                portal.prefs.portal_hub.web_url = portal.prefs.portal_hub.derived_web_url();
+            }
             if portal.prefs.portal_hub.web_url.trim().is_empty() {
                 portal.ui.portal_hub_auth_user = None;
                 portal.ui.portal_hub_auth_error =

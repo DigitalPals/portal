@@ -6,6 +6,7 @@ mod view_model;
 
 use iced::widget::{column, row, stack, text, text_editor};
 use iced::{Element, Fill, Subscription, Task, Theme as IcedTheme, event, time, window};
+use std::sync::Arc;
 use std::time::Duration;
 use uuid::Uuid;
 
@@ -560,14 +561,13 @@ impl Portal {
         }
 
         let hub_url = app.prefs.portal_hub.effective_web_url();
-        if !hub_url.is_empty() {
-            if crate::hub::auth::load_access_token(&hub_url)
+        if !hub_url.is_empty()
+            && crate::hub::auth::load_access_token(&hub_url)
                 .ok()
                 .flatten()
                 .is_some()
-            {
-                app.ui.portal_hub_auth_user = Some(format!("Authenticated @ {}", hub_url));
-            }
+        {
+            app.ui.portal_hub_auth_user = Some(format!("Authenticated @ {}", hub_url));
         }
 
         // Focus the search input on startup and check for offline local sync changes.
@@ -1334,7 +1334,7 @@ impl Portal {
         }
 
         if self.ui.portal_hub_auth_user.is_some() && self.prefs.portal_hub.sync_configured() {
-            let hub_url = self.prefs.portal_hub.effective_web_url();
+            let hub_url = Arc::<str>::from(self.prefs.portal_hub.effective_web_url());
             if !hub_url.is_empty() {
                 subscriptions.push(Subscription::run_with(
                     hub_url,
@@ -1360,8 +1360,8 @@ impl Portal {
     }
 }
 
-fn portal_hub_sync_event_stream(hub_url: &String) -> stream::BoxStream<'static, Message> {
-    crate::hub::sync::sync_revision_event_stream(hub_url.clone())
+fn portal_hub_sync_event_stream(hub_url: &Arc<str>) -> stream::BoxStream<'static, Message> {
+    crate::hub::sync::sync_revision_event_stream(hub_url.to_string())
         .map(|result| Message::Ui(UiMessage::PortalHubRemoteRevisions(result)))
         .boxed()
 }

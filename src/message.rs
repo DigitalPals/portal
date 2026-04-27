@@ -81,6 +81,7 @@ pub enum HostDialogField {
 }
 
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum VaultMessage {
     SearchChanged(String),
     AddKeyOpen,

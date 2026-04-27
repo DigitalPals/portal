@@ -247,6 +247,7 @@ impl ProxySession {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_web_terminal(
     settings: PortalHubSettings,
     target: ProxySessionTarget,

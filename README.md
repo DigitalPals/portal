@@ -282,8 +282,8 @@ Portal can route SSH terminal sessions through [Portal Hub](https://github.com/D
 To use it:
 
 1. Deploy Portal Hub and restrict access with Tailscale ACLs.
-2. Start the Portal Hub web server and create the first owner account with MFA.
-3. In Portal settings, enable Portal Hub and set the proxy host, SSH port (`2222` by default), username, optional identity file, and Web URL.
+2. Start the Portal Hub web server and create the first owner account.
+3. In Portal settings, enable Portal Hub and set the Hub host, web port (`8080` by default), and Web URL.
 4. Use **Sign in** on the Portal Hub settings tab to authenticate through the browser.
 5. Choose whether to upload this device's hosts/settings/snippets to Hub or pull Hub's profile to this device.
 6. Enable Portal Hub on individual SSH hosts that use SSH Agent or Public Key authentication.
