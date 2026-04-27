@@ -14,27 +14,37 @@ use iced::widget::{
 use iced::{Alignment, Color, Element, Fill, Length};
 
 use crate::message::{FileViewerMessage, Message, SessionId};
-use crate::theme::Theme;
+use crate::theme::{ScaledFonts, Theme};
 
 // Error color constant
 const ERROR_COLOR: Color = Color::from_rgb(0.9, 0.3, 0.3);
 
 /// Main file viewer view
-pub fn file_viewer_view(state: &FileViewerState, theme: Theme) -> Element<'_, Message> {
-    let toolbar = file_viewer_toolbar(state, theme);
+pub fn file_viewer_view(
+    state: &FileViewerState,
+    theme: Theme,
+    fonts: ScaledFonts,
+) -> Element<'_, Message> {
+    let toolbar = file_viewer_toolbar(state, theme, fonts);
 
     let content: Element<'_, Message> = match &state.content {
-        ViewerContent::Loading => container(text("Loading...").size(16).color(theme.text_muted))
-            .width(Fill)
-            .height(Fill)
-            .align_x(Alignment::Center)
-            .align_y(Alignment::Center)
-            .into(),
+        ViewerContent::Loading => container(
+            text("Loading...")
+                .size(fonts.section)
+                .color(theme.text_muted),
+        )
+        .width(Fill)
+        .height(Fill)
+        .align_x(Alignment::Center)
+        .align_y(Alignment::Center)
+        .into(),
         ViewerContent::Error(err) => container(
             column![
-                text("Error loading file").size(18).color(ERROR_COLOR),
+                text("Error loading file")
+                    .size(fonts.heading)
+                    .color(ERROR_COLOR),
                 Space::new().height(8),
-                text(err).size(14).color(theme.text_secondary),
+                text(err).size(fonts.body).color(theme.text_secondary),
             ]
             .align_x(Alignment::Center),
         )
@@ -50,7 +60,7 @@ pub fn file_viewer_view(state: &FileViewerState, theme: Theme) -> Element<'_, Me
             preview_mode,
         } => {
             if *preview_mode {
-                markdown_preview_view(raw_text, theme)
+                markdown_preview_view(raw_text, theme, fonts)
             } else {
                 text_editor_view(state.viewer_id, content, theme)
             }
@@ -69,6 +79,7 @@ pub fn file_viewer_view(state: &FileViewerState, theme: Theme) -> Element<'_, Me
             *is_svg,
             state.viewer_id,
             theme,
+            fonts,
         ),
         ViewerContent::Pdf {
             pages,
@@ -82,6 +93,7 @@ pub fn file_viewer_view(state: &FileViewerState, theme: Theme) -> Element<'_, Me
             *total_pages,
             state.viewer_id,
             theme,
+            fonts,
         ),
     };
 
@@ -98,7 +110,11 @@ pub fn file_viewer_view(state: &FileViewerState, theme: Theme) -> Element<'_, Me
 }
 
 /// File viewer toolbar with file name, save button, and controls
-fn file_viewer_toolbar(state: &FileViewerState, theme: Theme) -> Element<'_, Message> {
+fn file_viewer_toolbar(
+    state: &FileViewerState,
+    theme: Theme,
+    fonts: ScaledFonts,
+) -> Element<'_, Message> {
     let viewer_id = state.viewer_id;
 
     // File name with modified indicator
@@ -108,41 +124,51 @@ fn file_viewer_toolbar(state: &FileViewerState, theme: Theme) -> Element<'_, Mes
         state.file_name.clone()
     };
 
-    let file_name = text(file_name_text).size(14).color(theme.text_primary);
+    let file_name = text(file_name_text)
+        .size(fonts.body)
+        .color(theme.text_primary);
 
     // Save button (only for editable content)
     let save_btn = if state.file_type.is_editable() && state.is_modified {
-        button(text("Save").size(13).color(iced::Color::WHITE))
-            .style(move |_theme, status| {
-                let bg = match status {
-                    button::Status::Hovered => iced::Color::from_rgb8(0x00, 0x8B, 0xE8),
-                    _ => theme.accent,
-                };
-                button::Style {
-                    background: Some(bg.into()),
-                    text_color: iced::Color::WHITE,
-                    border: iced::Border {
-                        radius: 4.0.into(),
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                }
-            })
-            .padding([6, 16])
-            .on_press(Message::FileViewer(FileViewerMessage::Save(viewer_id)))
-    } else {
-        button(text("Save").size(13).color(theme.text_muted))
-            .style(move |_theme, _status| button::Style {
-                background: Some(theme.surface.into()),
-                text_color: theme.text_muted,
+        button(
+            text("Save")
+                .size(fonts.button_small)
+                .color(iced::Color::WHITE),
+        )
+        .style(move |_theme, status| {
+            let bg = match status {
+                button::Status::Hovered => iced::Color::from_rgb8(0x00, 0x8B, 0xE8),
+                _ => theme.accent,
+            };
+            button::Style {
+                background: Some(bg.into()),
+                text_color: iced::Color::WHITE,
                 border: iced::Border {
                     radius: 4.0.into(),
-                    color: theme.border,
-                    width: 1.0,
+                    ..Default::default()
                 },
                 ..Default::default()
-            })
-            .padding([6, 16])
+            }
+        })
+        .padding([6, 16])
+        .on_press(Message::FileViewer(FileViewerMessage::Save(viewer_id)))
+    } else {
+        button(
+            text("Save")
+                .size(fonts.button_small)
+                .color(theme.text_muted),
+        )
+        .style(move |_theme, _status| button::Style {
+            background: Some(theme.surface.into()),
+            text_color: theme.text_muted,
+            border: iced::Border {
+                radius: 4.0.into(),
+                color: theme.border,
+                width: 1.0,
+            },
+            ..Default::default()
+        })
+        .padding([6, 16])
     };
 
     // Preview toggle for markdown
@@ -156,28 +182,32 @@ fn file_viewer_toolbar(state: &FileViewerState, theme: Theme) -> Element<'_, Mes
         );
         let label = if is_preview { "Edit" } else { "Preview" };
 
-        button(text(label).size(13).color(theme.text_primary))
-            .style(move |_theme, status| {
-                let bg = match status {
-                    button::Status::Hovered => theme.hover,
-                    _ => theme.surface,
-                };
-                button::Style {
-                    background: Some(bg.into()),
-                    text_color: theme.text_primary,
-                    border: iced::Border {
-                        radius: 4.0.into(),
-                        color: theme.border,
-                        width: 1.0,
-                    },
-                    ..Default::default()
-                }
-            })
-            .padding([6, 12])
-            .on_press(Message::FileViewer(
-                FileViewerMessage::MarkdownTogglePreview(viewer_id),
-            ))
-            .into()
+        button(
+            text(label)
+                .size(fonts.button_small)
+                .color(theme.text_primary),
+        )
+        .style(move |_theme, status| {
+            let bg = match status {
+                button::Status::Hovered => theme.hover,
+                _ => theme.surface,
+            };
+            button::Style {
+                background: Some(bg.into()),
+                text_color: theme.text_primary,
+                border: iced::Border {
+                    radius: 4.0.into(),
+                    color: theme.border,
+                    width: 1.0,
+                },
+                ..Default::default()
+            }
+        })
+        .padding([6, 12])
+        .on_press(Message::FileViewer(
+            FileViewerMessage::MarkdownTogglePreview(viewer_id),
+        ))
+        .into()
     } else {
         Space::new().width(0).into()
     };
@@ -230,10 +260,10 @@ fn text_editor_view(
 }
 
 /// Markdown preview view (simple text display for now)
-fn markdown_preview_view(raw_text: &str, theme: Theme) -> Element<'_, Message> {
+fn markdown_preview_view(raw_text: &str, theme: Theme, fonts: ScaledFonts) -> Element<'_, Message> {
     // Simple text preview for markdown - could be enhanced with proper markdown rendering
     let preview_text = text(raw_text.to_string())
-        .size(14)
+        .size(fonts.body)
         .color(theme.text_primary);
 
     let content = scrollable(container(preview_text).padding(16))
@@ -252,16 +282,17 @@ fn image_viewer_view(
     is_svg: bool,
     viewer_id: SessionId,
     theme: Theme,
+    fonts: ScaledFonts,
 ) -> Element<'_, Message> {
     let zoom_controls = row![
-        button(text("-").size(16))
+        button(text("-").size(fonts.section))
             .padding([4, 12])
             .on_press(Message::FileViewer(FileViewerMessage::ImageZoom(
                 viewer_id,
                 zoom - 0.1
             ))),
         Space::new().width(8),
-        button(text("+").size(16))
+        button(text("+").size(fonts.section))
             .padding([4, 12])
             .on_press(Message::FileViewer(FileViewerMessage::ImageZoom(
                 viewer_id,
@@ -269,7 +300,7 @@ fn image_viewer_view(
             ))),
         Space::new().width(12),
         text(format!("Zoom: {:.0}%", zoom * 100.0))
-            .size(12)
+            .size(fonts.small)
             .color(theme.text_secondary),
     ]
     .align_y(Alignment::Center);
@@ -302,7 +333,9 @@ fn image_viewer_view(
 
     let layout = column![
         row![
-            text("Image Viewer").size(16).color(theme.text_primary),
+            text("Image Viewer")
+                .size(fonts.section)
+                .color(theme.text_primary),
             Space::new().width(Length::Fill),
             zoom_controls,
         ]
@@ -322,22 +355,25 @@ fn pdf_viewer_view<'a>(
     total_pages: usize,
     viewer_id: SessionId,
     theme: Theme,
+    fonts: ScaledFonts,
 ) -> Element<'a, Message> {
     let page_controls = row![
-        button(text("<").size(16))
+        button(text("<").size(fonts.section))
             .padding([4, 12])
             .on_press_maybe((current_page > 0).then_some(Message::FileViewer(
                 FileViewerMessage::PdfPageChange(viewer_id, current_page - 1)
             ))),
         Space::new().width(16),
-        button(text(">").size(16)).padding([4, 12]).on_press_maybe(
-            (current_page + 1 < total_pages).then_some(Message::FileViewer(
-                FileViewerMessage::PdfPageChange(viewer_id, current_page + 1)
-            ))
-        ),
+        button(text(">").size(fonts.section))
+            .padding([4, 12])
+            .on_press_maybe(
+                (current_page + 1 < total_pages).then_some(Message::FileViewer(
+                    FileViewerMessage::PdfPageChange(viewer_id, current_page + 1)
+                ))
+            ),
         Space::new().width(12),
         text(format!("Page {} of {}", current_page + 1, total_pages))
-            .size(12)
+            .size(fonts.small)
             .color(theme.text_secondary),
     ]
     .align_y(Alignment::Center);
@@ -357,7 +393,7 @@ fn pdf_viewer_view<'a>(
     } else if is_rendering {
         container(
             text("Rendering page...")
-                .size(14)
+                .size(fonts.body)
                 .color(theme.text_secondary),
         )
         .width(Fill)
@@ -366,7 +402,7 @@ fn pdf_viewer_view<'a>(
         .align_y(Alignment::Center)
         .into()
     } else {
-        let retry_button = button(text("Render page").size(12))
+        let retry_button = button(text("Render page").size(fonts.button_small))
             .padding([6, 12])
             .on_press(Message::FileViewer(FileViewerMessage::PdfRenderPage(
                 viewer_id,
@@ -374,7 +410,9 @@ fn pdf_viewer_view<'a>(
             )));
         container(
             column![
-                text("Page not rendered").size(14).color(theme.text_muted),
+                text("Page not rendered")
+                    .size(fonts.body)
+                    .color(theme.text_muted),
                 Space::new().height(8),
                 retry_button,
             ]
@@ -389,7 +427,9 @@ fn pdf_viewer_view<'a>(
 
     let layout = column![
         row![
-            text("PDF Viewer").size(16).color(theme.text_primary),
+            text("PDF Viewer")
+                .size(fonts.section)
+                .color(theme.text_primary),
             Space::new().width(Length::Fill),
             page_controls,
         ]

@@ -9,7 +9,7 @@ use crate::message::{DialogMessage, Message};
 use crate::ssh::host_key_verification::{
     HostKeyInfo, HostKeyVerificationRequest, HostKeyVerificationResponse,
 };
-use crate::theme::{BORDER_RADIUS, Theme};
+use crate::theme::{BORDER_RADIUS, ScaledFonts, Theme};
 
 use super::common::{dialog_backdrop, primary_button_style, secondary_button_style};
 
@@ -88,34 +88,44 @@ impl HostKeyDialogState {
 }
 
 /// Build the host key dialog view
-pub fn host_key_dialog_view(state: &HostKeyDialogState, theme: Theme) -> Element<'static, Message> {
+pub fn host_key_dialog_view(
+    state: &HostKeyDialogState,
+    theme: Theme,
+    fonts: ScaledFonts,
+) -> Element<'static, Message> {
     if state.is_changed_host {
-        changed_host_dialog_view(state, theme)
+        changed_host_dialog_view(state, theme, fonts)
     } else {
-        new_host_dialog_view(state, theme)
+        new_host_dialog_view(state, theme, fonts)
     }
 }
 
 /// Dialog for new unknown hosts
-fn new_host_dialog_view(state: &HostKeyDialogState, theme: Theme) -> Element<'static, Message> {
+fn new_host_dialog_view(
+    state: &HostKeyDialogState,
+    theme: Theme,
+    fonts: ScaledFonts,
+) -> Element<'static, Message> {
     let key_icon = icon_with_color(icons::ui::SERVER, 28, theme.accent);
 
-    let title = text("Unknown Host").size(20).color(theme.text_primary);
+    let title = text("Unknown Host")
+        .size(fonts.heading)
+        .color(theme.text_primary);
 
     let host_info = text(format!("{}:{}", state.host, state.port))
-        .size(14)
+        .size(fonts.body)
         .color(theme.text_secondary);
 
     let message = text("The authenticity of this host cannot be established.")
-        .size(14)
+        .size(fonts.body)
         .color(theme.text_secondary);
 
     let key_type_label = text(format!("{} key fingerprint:", state.key_type))
-        .size(12)
+        .size(fonts.label)
         .color(theme.text_muted);
 
     let fingerprint_text = text(state.fingerprint.clone())
-        .size(11)
+        .size(fonts.mono_tiny)
         .color(theme.text_primary);
 
     let fingerprint_box = container(fingerprint_text)
@@ -132,18 +142,26 @@ fn new_host_dialog_view(state: &HostKeyDialogState, theme: Theme) -> Element<'st
         });
 
     let question = text("Are you sure you want to continue connecting?")
-        .size(14)
+        .size(fonts.body)
         .color(theme.text_secondary);
 
-    let reject_button = button(text("Reject").size(14).color(theme.text_primary))
-        .padding([8, 16])
-        .style(secondary_button_style(theme))
-        .on_press(Message::Dialog(DialogMessage::HostKeyReject));
+    let reject_button = button(
+        text("Reject")
+            .size(fonts.button_small)
+            .color(theme.text_primary),
+    )
+    .padding([8, 16])
+    .style(secondary_button_style(theme))
+    .on_press(Message::Dialog(DialogMessage::HostKeyReject));
 
-    let accept_button = button(text("Accept").size(14).color(theme.text_primary))
-        .padding([8, 16])
-        .style(primary_button_style(theme))
-        .on_press(Message::Dialog(DialogMessage::HostKeyAccept));
+    let accept_button = button(
+        text("Accept")
+            .size(fonts.button_small)
+            .color(theme.text_primary),
+    )
+    .padding([8, 16])
+    .style(primary_button_style(theme))
+    .on_press(Message::Dialog(DialogMessage::HostKeyAccept));
 
     let button_row = row![
         Space::new().width(Length::Fill),
@@ -174,17 +192,21 @@ fn new_host_dialog_view(state: &HostKeyDialogState, theme: Theme) -> Element<'st
 }
 
 /// Dialog for hosts with changed keys (MITM warning)
-fn changed_host_dialog_view(state: &HostKeyDialogState, theme: Theme) -> Element<'static, Message> {
+fn changed_host_dialog_view(
+    state: &HostKeyDialogState,
+    theme: Theme,
+    fonts: ScaledFonts,
+) -> Element<'static, Message> {
     let warning_color = iced::Color::from_rgb8(220, 50, 50);
 
     let warning_icon = icon_with_color(icons::ui::ALERT_TRIANGLE, 32, warning_color);
 
     let title = text("WARNING: HOST KEY CHANGED!")
-        .size(20)
+        .size(fonts.heading)
         .color(warning_color);
 
     let host_info = text(format!("{}:{}", state.host, state.port))
-        .size(14)
+        .size(fonts.body)
         .color(theme.text_secondary);
 
     let mitm_warning = text(
@@ -192,24 +214,24 @@ fn changed_host_dialog_view(state: &HostKeyDialogState, theme: Theme) -> Element
         Someone could be eavesdropping on you right now (man-in-the-middle attack)!\n\
         It is also possible that a host key has just been changed.",
     )
-    .size(13)
+    .size(fonts.small)
     .color(theme.text_primary);
 
     let old_fp_label = text("Previous fingerprint:")
-        .size(12)
+        .size(fonts.label)
         .color(theme.text_muted);
 
     let old_fingerprint = state.old_fingerprint.as_deref().unwrap_or("unknown");
     let old_fp_text = text(old_fingerprint.to_string())
-        .size(11)
+        .size(fonts.mono_tiny)
         .color(theme.text_secondary);
 
     let new_fp_label = text(format!("New {} fingerprint:", state.key_type))
-        .size(12)
+        .size(fonts.label)
         .color(theme.text_muted);
 
     let new_fp_text = text(state.fingerprint.clone())
-        .size(11)
+        .size(fonts.mono_tiny)
         .color(theme.text_primary);
 
     let fingerprint_box = container(
@@ -235,29 +257,37 @@ fn changed_host_dialog_view(state: &HostKeyDialogState, theme: Theme) -> Element
     });
 
     // For changed host: "Accept Anyway" is dangerous (red), "Reject" is safe (primary)
-    let accept_button = button(text("Accept Anyway").size(14).color(theme.text_primary))
-        .padding([8, 16])
-        .style(move |_theme, status| {
-            let bg = match status {
-                button::Status::Hovered => iced::Color::from_rgb8(180, 40, 40),
-                _ => iced::Color::from_rgb8(140, 30, 30),
-            };
-            button::Style {
-                background: Some(bg.into()),
-                text_color: theme.text_primary,
-                border: iced::Border {
-                    radius: BORDER_RADIUS.into(),
-                    ..Default::default()
-                },
+    let accept_button = button(
+        text("Accept Anyway")
+            .size(fonts.button_small)
+            .color(theme.text_primary),
+    )
+    .padding([8, 16])
+    .style(move |_theme, status| {
+        let bg = match status {
+            button::Status::Hovered => iced::Color::from_rgb8(180, 40, 40),
+            _ => iced::Color::from_rgb8(140, 30, 30),
+        };
+        button::Style {
+            background: Some(bg.into()),
+            text_color: theme.text_primary,
+            border: iced::Border {
+                radius: BORDER_RADIUS.into(),
                 ..Default::default()
-            }
-        })
-        .on_press(Message::Dialog(DialogMessage::HostKeyAccept));
+            },
+            ..Default::default()
+        }
+    })
+    .on_press(Message::Dialog(DialogMessage::HostKeyAccept));
 
-    let reject_button = button(text("Reject").size(14).color(theme.text_primary))
-        .padding([8, 16])
-        .style(primary_button_style(theme))
-        .on_press(Message::Dialog(DialogMessage::HostKeyReject));
+    let reject_button = button(
+        text("Reject")
+            .size(fonts.button_small)
+            .color(theme.text_primary),
+    )
+    .padding([8, 16])
+    .style(primary_button_style(theme))
+    .on_press(Message::Dialog(DialogMessage::HostKeyReject));
 
     let button_row = row![
         Space::new().width(Length::Fill),

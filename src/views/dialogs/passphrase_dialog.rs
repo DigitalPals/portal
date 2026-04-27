@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use crate::icons::{self, icon_with_color};
 use crate::message::{DialogMessage, Message, PassphraseRequest, PassphraseSftpContext};
-use crate::theme::{BORDER_RADIUS, Theme};
+use crate::theme::{BORDER_RADIUS, ScaledFonts, Theme};
 
 use super::common::{
     dialog_backdrop, dialog_input_style, primary_button_style, secondary_button_style,
@@ -75,22 +75,23 @@ impl PassphraseDialogState {
 pub fn passphrase_dialog_view(
     state: &PassphraseDialogState,
     theme: Theme,
+    fonts: ScaledFonts,
 ) -> Element<'static, Message> {
     let key_icon = icon_with_color(icons::ui::SERVER, 28, theme.accent);
 
     let title = text("Passphrase Required")
-        .size(20)
+        .size(fonts.heading)
         .color(theme.text_primary);
 
     let connection_info = text(format!(
         "{}@{}:{}",
         state.username, state.hostname, state.port
     ))
-    .size(14)
+    .size(fonts.body)
     .color(theme.text_secondary);
 
     let host_name_text = text(format!("Connecting to {}", state.host_name))
-        .size(14)
+        .size(fonts.body)
         .color(theme.text_secondary);
 
     let key_label = state.key_path.to_string_lossy();
@@ -99,13 +100,13 @@ pub fn passphrase_dialog_view(
     } else {
         format!("Key: {}", state.key_path.display())
     })
-    .size(12)
+    .size(fonts.label)
     .color(theme.text_muted);
 
-    let passphrase_label = text("Passphrase").size(12).color(theme.text_muted);
+    let passphrase_label = text("Passphrase").size(fonts.label).color(theme.text_muted);
 
     let passphrase_input = text_input("Enter passphrase...", state.passphrase.expose_secret())
-        .size(14)
+        .size(fonts.body)
         .padding(10)
         .width(Length::Fill)
         .secure(true)
@@ -116,13 +117,13 @@ pub fn passphrase_dialog_view(
     let remember_checkbox = checkbox(state.remember_for_session)
         .label("Remember for session")
         .on_toggle(|v| Message::Dialog(DialogMessage::PassphraseRememberToggled(v)))
-        .size(13)
+        .size(fonts.small)
         .spacing(8);
 
     // Error message if present
     let error_element: Element<'static, Message> = if let Some(error) = &state.error {
         let error_color = iced::Color::from_rgb8(220, 80, 80);
-        container(text(error.clone()).size(12).color(error_color))
+        container(text(error.clone()).size(fonts.small).color(error_color))
             .padding([8, 12])
             .width(Length::Fill)
             .style(move |_theme| container::Style {
@@ -139,15 +140,23 @@ pub fn passphrase_dialog_view(
         Space::new().height(0).into()
     };
 
-    let cancel_button = button(text("Cancel").size(14).color(theme.text_primary))
-        .padding([8, 16])
-        .style(secondary_button_style(theme))
-        .on_press(Message::Dialog(DialogMessage::PassphraseCancel));
+    let cancel_button = button(
+        text("Cancel")
+            .size(fonts.button_small)
+            .color(theme.text_primary),
+    )
+    .padding([8, 16])
+    .style(secondary_button_style(theme))
+    .on_press(Message::Dialog(DialogMessage::PassphraseCancel));
 
-    let unlock_button = button(text("Unlock").size(14).color(theme.text_primary))
-        .padding([8, 16])
-        .style(primary_button_style(theme))
-        .on_press(Message::Dialog(DialogMessage::PassphraseSubmit));
+    let unlock_button = button(
+        text("Unlock")
+            .size(fonts.button_small)
+            .color(theme.text_primary),
+    )
+    .padding([8, 16])
+    .style(primary_button_style(theme))
+    .on_press(Message::Dialog(DialogMessage::PassphraseSubmit));
 
     let button_row = row![
         Space::new().width(Length::Fill),

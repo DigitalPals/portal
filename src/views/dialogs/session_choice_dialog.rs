@@ -9,7 +9,7 @@ use crate::app::managers::TerminalPreviewHandle;
 use crate::icons::{self, icon_with_color};
 use crate::message::{DialogMessage, HostMessage, Message, SessionId};
 use crate::proxy::ListedProxySession;
-use crate::theme::{BORDER_RADIUS, GRID_SPACING, Theme};
+use crate::theme::{BORDER_RADIUS, GRID_SPACING, ScaledFonts, Theme};
 use crate::views::proxy_sessions::{SESSION_CARD_WIDTH, terminal_thumbnail};
 use crate::views::terminal_view::TerminalSession;
 
@@ -102,25 +102,26 @@ impl SessionChoiceDialogState {
 pub fn session_choice_dialog_view(
     state: &SessionChoiceDialogState,
     theme: Theme,
+    fonts: ScaledFonts,
 ) -> Element<'static, Message> {
     let title = row![
         icon_with_color(icons::ui::TERMINAL, 24, theme.accent),
         text("Open Existing Session?")
-            .size(20)
+            .size(fonts.heading)
             .color(theme.text_primary),
     ]
     .spacing(12)
     .align_y(Alignment::Center);
 
     let subtitle = text(format!("{} already has active sessions", state.host_name))
-        .size(14)
+        .size(fonts.body)
         .color(theme.text_secondary);
 
     let new_button = button(
         row![
             icon_with_color(icons::ui::PLUS, 16, theme.text_primary),
             text("Create New Session")
-                .size(14)
+                .size(fonts.button_small)
                 .color(theme.text_primary),
         ]
         .spacing(8)
@@ -134,7 +135,7 @@ pub fn session_choice_dialog_view(
     let mut rows: Vec<Element<'static, Message>> = Vec::new();
 
     if !state.local_sessions.is_empty() {
-        rows.push(section_label("Open Portal tabs", theme));
+        rows.push(section_label("Open Portal tabs", theme, fonts));
         rows.push(session_grid(
             state
                 .local_sessions
@@ -147,6 +148,7 @@ pub fn session_choice_dialog_view(
                         session.thumbnail.clone(),
                         Message::Host(HostMessage::OpenExistingSession(session.session_id)),
                         theme,
+                        fonts,
                     )
                 })
                 .collect(),
@@ -154,7 +156,7 @@ pub fn session_choice_dialog_view(
     }
 
     if !state.proxy_sessions.is_empty() {
-        rows.push(section_label("Detached Portal Hub sessions", theme));
+        rows.push(section_label("Detached Portal Hub sessions", theme, fonts));
         rows.push(session_grid(
             state
                 .proxy_sessions
@@ -169,6 +171,7 @@ pub fn session_choice_dialog_view(
                             choice.session.session_id,
                         )),
                         theme,
+                        fonts,
                     )
                 })
                 .collect(),
@@ -176,25 +179,29 @@ pub fn session_choice_dialog_view(
     }
 
     if state.proxy_loading {
-        rows.push(status_row("Loading Portal Hub sessions...", theme));
+        rows.push(status_row("Loading Portal Hub sessions...", theme, fonts));
     }
 
     if let Some(error) = &state.proxy_error {
-        rows.push(error_row(error.clone(), theme));
+        rows.push(error_row(error.clone(), theme, fonts));
     }
 
     if rows.is_empty() {
-        rows.push(status_row("No existing sessions found", theme));
+        rows.push(status_row("No existing sessions found", theme, fonts));
     }
 
     let session_list = scrollable(column(rows).spacing(8))
         .height(Length::Fixed(260.0))
         .width(Length::Fill);
 
-    let cancel_button = button(text("Cancel").size(14).color(theme.text_primary))
-        .padding([8, 16])
-        .style(secondary_button_style(theme))
-        .on_press(Message::Dialog(DialogMessage::Close));
+    let cancel_button = button(
+        text("Cancel")
+            .size(fonts.button_small)
+            .color(theme.text_primary),
+    )
+    .padding([8, 16])
+    .style(secondary_button_style(theme))
+    .on_press(Message::Dialog(DialogMessage::Close));
 
     let content = column![
         title,
@@ -213,12 +220,16 @@ pub fn session_choice_dialog_view(
     dialog_backdrop(content, theme)
 }
 
-fn section_label(label: &'static str, theme: Theme) -> Element<'static, Message> {
-    text(label).size(12).color(theme.text_muted).into()
+fn section_label(
+    label: &'static str,
+    theme: Theme,
+    fonts: ScaledFonts,
+) -> Element<'static, Message> {
+    text(label).size(fonts.label).color(theme.text_muted).into()
 }
 
-fn status_row(label: &'static str, theme: Theme) -> Element<'static, Message> {
-    container(text(label).size(13).color(theme.text_secondary))
+fn status_row(label: &'static str, theme: Theme, fonts: ScaledFonts) -> Element<'static, Message> {
+    container(text(label).size(fonts.small).color(theme.text_secondary))
         .padding([10, 12])
         .width(Length::Fill)
         .style(move |_theme| container::Style {
@@ -233,9 +244,9 @@ fn status_row(label: &'static str, theme: Theme) -> Element<'static, Message> {
         .into()
 }
 
-fn error_row(error: String, _theme: Theme) -> Element<'static, Message> {
+fn error_row(error: String, _theme: Theme, fonts: ScaledFonts) -> Element<'static, Message> {
     let error_color = iced::Color::from_rgb8(220, 80, 80);
-    container(text(error).size(12).color(error_color))
+    container(text(error).size(fonts.small).color(error_color))
         .padding([10, 12])
         .width(Length::Fill)
         .style(move |_theme| container::Style {
@@ -257,14 +268,15 @@ fn session_card(
     thumbnail: SessionThumbnail,
     on_press: Message,
     theme: Theme,
+    fonts: ScaledFonts,
 ) -> Element<'static, Message> {
     let preview = terminal_thumbnail(thumbnail.term(), theme);
     let meta = row![
         row![
             icon_with_color(icon, 18, theme.accent),
             column![
-                text(title).size(14).color(theme.text_primary),
-                text(detail).size(12).color(theme.text_secondary),
+                text(title).size(fonts.body).color(theme.text_primary),
+                text(detail).size(fonts.small).color(theme.text_secondary),
             ]
             .spacing(2)
             .width(Fill),

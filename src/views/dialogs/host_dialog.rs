@@ -11,7 +11,7 @@ use crate::config::hosts::default_username;
 use crate::config::{AuthMethod, Host, PortForward, PortForwardKind, Protocol};
 use crate::hub::vault::{VaultKey, VaultSecret};
 use crate::message::{DialogMessage, HostDialogField, Message};
-use crate::theme::{BORDER_RADIUS, Theme};
+use crate::theme::{BORDER_RADIUS, ScaledFonts, Theme};
 use crate::validation::{validate_hostname, validate_port, validate_username};
 
 use super::common::{
@@ -551,6 +551,7 @@ impl HostDialogState {
 pub fn host_dialog_view(
     state: &HostDialogState,
     theme: Theme,
+    fonts: ScaledFonts,
     vault_keys: Vec<VaultKeyOption>,
     vault_vnc_passwords: Vec<VncPasswordOption>,
 ) -> Element<'static, Message> {
@@ -593,7 +594,7 @@ pub fn host_dialog_view(
     let name_input = {
         let has_error = name_error.is_some();
         let mut col = column![
-            text("Name").size(12).color(theme.text_secondary),
+            text("Name").size(fonts.label).color(theme.text_secondary),
             text_input("my-server", &name_value)
                 .id(host_dialog_field_id(0))
                 .on_input(|s| Message::Dialog(DialogMessage::FieldChanged(
@@ -607,7 +608,7 @@ pub fn host_dialog_view(
         ]
         .spacing(4);
         if let Some(err) = name_error {
-            col = col.push(text(err).size(11).color(ERROR_COLOR));
+            col = col.push(text(err).size(fonts.small).color(ERROR_COLOR));
         }
         col
     };
@@ -615,7 +616,9 @@ pub fn host_dialog_view(
     let hostname_input = {
         let has_error = hostname_error.is_some();
         let mut col = column![
-            text("Hostname / IP").size(12).color(theme.text_secondary),
+            text("Hostname / IP")
+                .size(fonts.label)
+                .color(theme.text_secondary),
             text_input("192.168.1.100", &hostname_value)
                 .id(host_dialog_field_id(1))
                 .on_input(|s| Message::Dialog(DialogMessage::FieldChanged(
@@ -629,7 +632,7 @@ pub fn host_dialog_view(
         ]
         .spacing(4);
         if let Some(err) = hostname_error {
-            col = col.push(text(err).size(11).color(ERROR_COLOR));
+            col = col.push(text(err).size(fonts.small).color(ERROR_COLOR));
         }
         col
     };
@@ -637,7 +640,7 @@ pub fn host_dialog_view(
     let port_input = {
         let has_error = port_error.is_some();
         let mut col = column![
-            text("Port").size(12).color(theme.text_secondary),
+            text("Port").size(fonts.label).color(theme.text_secondary),
             text_input("22", &port_value)
                 .id(host_dialog_field_id(2))
                 .on_input(|s| Message::Dialog(DialogMessage::FieldChanged(
@@ -651,7 +654,7 @@ pub fn host_dialog_view(
         ]
         .spacing(4);
         if let Some(err) = port_error {
-            col = col.push(text(err).size(11).color(ERROR_COLOR));
+            col = col.push(text(err).size(fonts.small).color(ERROR_COLOR));
         }
         col
     };
@@ -659,7 +662,9 @@ pub fn host_dialog_view(
     let username_input = {
         let has_error = username_error.is_some();
         let mut col = column![
-            text("Username").size(12).color(theme.text_secondary),
+            text("Username")
+                .size(fonts.label)
+                .color(theme.text_secondary),
             text_input(&username_placeholder, &username_value)
                 .id(host_dialog_field_id(3))
                 .on_input(|s| Message::Dialog(DialogMessage::FieldChanged(
@@ -673,14 +678,16 @@ pub fn host_dialog_view(
         ]
         .spacing(4);
         if let Some(err) = username_error {
-            col = col.push(text(err).size(11).color(ERROR_COLOR));
+            col = col.push(text(err).size(fonts.small).color(ERROR_COLOR));
         }
         col
     };
 
     // Auth method picker
     let auth_picker = column![
-        text("Authentication").size(12).color(theme.text_secondary),
+        text("Authentication")
+            .size(fonts.label)
+            .color(theme.text_secondary),
         pick_list(
             AuthMethodChoice::ALL.as_slice(),
             Some(auth_method),
@@ -718,9 +725,13 @@ pub fn host_dialog_view(
             let selected = selected_vault_key_id
                 .and_then(|id| vault_keys.iter().find(|key| key.id == id).cloned());
             let mut col = column![
-                text("Key Source").size(12).color(theme.text_secondary),
+                text("Key Source")
+                    .size(fonts.label)
+                    .color(theme.text_secondary),
                 source_picker,
-                text("Vault Key").size(12).color(theme.text_secondary),
+                text("Vault Key")
+                    .size(fonts.label)
+                    .color(theme.text_secondary),
                 pick_list(vault_keys, selected, |choice| {
                     Message::Dialog(DialogMessage::FieldChanged(
                         HostDialogField::VaultKeyId,
@@ -734,14 +745,18 @@ pub fn host_dialog_view(
             ]
             .spacing(4);
             if let Some(error) = vault_key_error {
-                col = col.push(text(error).size(11).color(ERROR_COLOR));
+                col = col.push(text(error).size(fonts.small).color(ERROR_COLOR));
             }
             col.into()
         } else {
             column![
-                text("Key Source").size(12).color(theme.text_secondary),
+                text("Key Source")
+                    .size(fonts.label)
+                    .color(theme.text_secondary),
                 source_picker,
-                text("Key Path").size(12).color(theme.text_secondary),
+                text("Key Path")
+                    .size(fonts.label)
+                    .color(theme.text_secondary),
                 text_input("~/.ssh/id_ed25519", &key_path_value)
                     .id(host_dialog_field_id(5))
                     .on_input(|s| Message::Dialog(DialogMessage::FieldChanged(
@@ -773,7 +788,7 @@ pub fn host_dialog_view(
 
         let tooltip_text =
             text("Forwards your local SSH agent to this host. Only enable for trusted systems.")
-                .size(11)
+                .size(fonts.small)
                 .color(theme.text_secondary);
 
         tooltip(checkbox_control, tooltip_text, tooltip::Position::Top)
@@ -795,9 +810,11 @@ pub fn host_dialog_view(
     let portal_hub_section: Element<'static, Message> = if !is_vnc {
         if auth_method == AuthMethodChoice::Password {
             column![
-                text("Portal Hub").size(12).color(theme.text_secondary),
+                text("Portal Hub")
+                    .size(fonts.label)
+                    .color(theme.text_secondary),
                 text("Portal Hub requires SSH Agent or Public Key authentication")
-                    .size(11)
+                    .size(fonts.small)
                     .color(theme.text_secondary)
             ]
             .spacing(4)
@@ -826,9 +843,9 @@ pub fn host_dialog_view(
             .unwrap_or_else(VncPasswordOption::ask_every_time);
 
         column![
-            section_heading("VNC", theme),
+            section_heading("VNC", theme, fonts),
             text("Default password")
-                .size(12)
+                .size(fonts.label)
                 .color(theme.text_secondary),
             pick_list(vnc_password_options, Some(selected), |choice| {
                 Message::Dialog(DialogMessage::FieldChanged(
@@ -846,7 +863,7 @@ pub fn host_dialog_view(
     };
 
     let tags_input = column![
-        text("Tags").size(12).color(theme.text_secondary),
+        text("Tags").size(fonts.label).color(theme.text_secondary),
         text_input("web, production", &tags_value)
             .id(host_dialog_field_id(6))
             .on_input(|s| Message::Dialog(DialogMessage::FieldChanged(HostDialogField::Tags, s)))
@@ -858,7 +875,7 @@ pub fn host_dialog_view(
     .spacing(4);
 
     let notes_input = column![
-        text("Notes").size(12).color(theme.text_secondary),
+        text("Notes").size(fonts.label).color(theme.text_secondary),
         text_input("Optional notes...", &notes_value)
             .id(host_dialog_field_id(7))
             .on_input(|s| Message::Dialog(DialogMessage::FieldChanged(HostDialogField::Notes, s)))
@@ -878,9 +895,11 @@ pub fn host_dialog_view(
         let expanded = port_forwards_expanded;
         let mut section = column![
             row![
-                text("Port Forwards").size(13).color(theme.text_primary),
+                text("Port Forwards")
+                    .size(fonts.section)
+                    .color(theme.text_primary),
                 Space::new().width(Length::Fill),
-                button(text(if expanded { "Hide" } else { "Show" }).size(12))
+                button(text(if expanded { "Hide" } else { "Show" }).size(fonts.label))
                     .padding([4, 10])
                     .style(secondary_button_style(theme))
                     .on_press(Message::Dialog(DialogMessage::PortForwardSectionToggled))
@@ -893,7 +912,7 @@ pub fn host_dialog_view(
             if port_forwards.is_empty() {
                 section = section.push(
                     text("No port forwards configured.")
-                        .size(11)
+                        .size(fonts.small)
                         .color(theme.text_secondary),
                 );
             } else {
@@ -917,13 +936,13 @@ pub fn host_dialog_view(
                                 ))
                             })
                             .spacing(8),
-                        text(summary).size(12).color(theme.text_primary),
+                        text(summary).size(fonts.label).color(theme.text_primary),
                         Space::new().width(Length::Fill),
-                        button(text("Edit").size(12))
+                        button(text("Edit").size(fonts.label))
                             .padding([4, 10])
                             .style(secondary_button_style(theme))
                             .on_press(Message::Dialog(DialogMessage::PortForwardEdit(forward_id))),
-                        button(text("Remove").size(12))
+                        button(text("Remove").size(fonts.label))
                             .padding([4, 10])
                             .style(secondary_button_style(theme))
                             .on_press(Message::Dialog(DialogMessage::PortForwardRemove(
@@ -936,7 +955,7 @@ pub fn host_dialog_view(
                     if let Some(description) = description_text {
                         row_content = row_content.push(
                             text(description)
-                                .size(11)
+                                .size(fonts.small)
                                 .color(theme.text_secondary)
                                 .width(Length::FillPortion(2)),
                         );
@@ -947,7 +966,7 @@ pub fn host_dialog_view(
             }
 
             section = section.push(
-                button(text("Add Forward").size(12))
+                button(text("Add Forward").size(fonts.label))
                     .padding([6, 12])
                     .style(secondary_button_style(theme))
                     .on_press(Message::Dialog(DialogMessage::PortForwardAdd)),
@@ -960,10 +979,12 @@ pub fn host_dialog_view(
                 let kind = editor.kind;
 
                 let mut editor_view = column![
-                    text("Edit Forward").size(12).color(theme.text_secondary),
+                    text("Edit Forward")
+                        .size(fonts.label)
+                        .color(theme.text_secondary),
                     row![
                         column![
-                            text("Type").size(11).color(theme.text_secondary),
+                            text("Type").size(fonts.small).color(theme.text_secondary),
                             pick_list(PortForwardKind::ALL.as_slice(), Some(kind), |choice| {
                                 Message::Dialog(DialogMessage::PortForwardFieldChanged(
                                     crate::message::PortForwardField::Kind,
@@ -977,7 +998,9 @@ pub fn host_dialog_view(
                         ]
                         .width(Length::FillPortion(1)),
                         column![
-                            text("Bind Host").size(11).color(theme.text_secondary),
+                            text("Bind Host")
+                                .size(fonts.small)
+                                .color(theme.text_secondary),
                             text_input("localhost", &bind_host_value)
                                 .on_input(|s| {
                                     Message::Dialog(DialogMessage::PortForwardFieldChanged(
@@ -991,7 +1014,9 @@ pub fn host_dialog_view(
                         ]
                         .width(Length::FillPortion(2)),
                         column![
-                            text("Bind Port").size(11).color(theme.text_secondary),
+                            text("Bind Port")
+                                .size(fonts.small)
+                                .color(theme.text_secondary),
                             text_input("8080", &bind_port_value)
                                 .on_input(|s| {
                                     Message::Dialog(DialogMessage::PortForwardFieldChanged(
@@ -1007,7 +1032,9 @@ pub fn host_dialog_view(
                     ]
                     .spacing(12),
                     column![
-                        text("Description").size(11).color(theme.text_secondary),
+                        text("Description")
+                            .size(fonts.small)
+                            .color(theme.text_secondary),
                         text_input("Optional description", &description_value)
                             .on_input(|s| {
                                 Message::Dialog(DialogMessage::PortForwardFieldChanged(
@@ -1035,7 +1062,7 @@ pub fn host_dialog_view(
                 if kind == PortForwardKind::Dynamic {
                     editor_view = editor_view.push(
                         text("Dynamic (-D) forwards create a local SOCKS5 proxy.")
-                            .size(11)
+                            .size(fonts.small)
                             .color(theme.text_secondary),
                     );
                 } else {
@@ -1044,7 +1071,9 @@ pub fn host_dialog_view(
                     editor_view = editor_view.push(
                         row![
                             column![
-                                text("Target Host").size(11).color(theme.text_secondary),
+                                text("Target Host")
+                                    .size(fonts.small)
+                                    .color(theme.text_secondary),
                                 text_input("127.0.0.1", &target_host_value)
                                     .on_input(|s| {
                                         Message::Dialog(DialogMessage::PortForwardFieldChanged(
@@ -1058,7 +1087,9 @@ pub fn host_dialog_view(
                             ]
                             .width(Length::FillPortion(3)),
                             column![
-                                text("Target Port").size(11).color(theme.text_secondary),
+                                text("Target Port")
+                                    .size(fonts.small)
+                                    .color(theme.text_secondary),
                                 text_input("80", &target_port_value)
                                     .on_input(|s| {
                                         Message::Dialog(DialogMessage::PortForwardFieldChanged(
@@ -1077,16 +1108,16 @@ pub fn host_dialog_view(
                 }
 
                 if let Some(err) = editor.validation_error.clone() {
-                    editor_view = editor_view.push(text(err).size(11).color(ERROR_COLOR));
+                    editor_view = editor_view.push(text(err).size(fonts.small).color(ERROR_COLOR));
                 }
 
                 let editor_view = editor_view.push(
                     row![
-                        button(text("Cancel").size(12))
+                        button(text("Cancel").size(fonts.label))
                             .padding([6, 12])
                             .style(secondary_button_style(theme))
                             .on_press(Message::Dialog(DialogMessage::PortForwardCancel)),
-                        button(text("Save").size(12))
+                        button(text("Save").size(fonts.label))
                             .padding([6, 12])
                             .style(primary_button_style(theme))
                             .on_press(Message::Dialog(DialogMessage::PortForwardSave)),
@@ -1106,26 +1137,34 @@ pub fn host_dialog_view(
     // Buttons
     let import_button = button(
         text("Import from SSH Config")
-            .size(14)
+            .size(fonts.button_small)
             .color(theme.text_primary),
     )
     .padding([8, 16])
     .style(secondary_button_style(theme))
     .on_press(Message::Dialog(DialogMessage::ImportFromSshConfig));
 
-    let cancel_button = button(text("Cancel").size(14).color(theme.text_primary))
-        .padding([8, 16])
-        .style(secondary_button_style(theme))
-        .on_press(Message::Dialog(DialogMessage::Close));
+    let cancel_button = button(
+        text("Cancel")
+            .size(fonts.button_small)
+            .color(theme.text_primary),
+    )
+    .padding([8, 16])
+    .style(secondary_button_style(theme))
+    .on_press(Message::Dialog(DialogMessage::Close));
 
-    let save_button = button(text("Save").size(14).color(theme.text_primary))
-        .padding([8, 16])
-        .style(primary_button_style(theme))
-        .on_press_maybe(if is_valid {
-            Some(Message::Dialog(DialogMessage::Submit))
-        } else {
-            None
-        });
+    let save_button = button(
+        text("Save")
+            .size(fonts.button_small)
+            .color(theme.text_primary),
+    )
+    .padding([8, 16])
+    .style(primary_button_style(theme))
+    .on_press_maybe(if is_valid {
+        Some(Message::Dialog(DialogMessage::Submit))
+    } else {
+        None
+    });
 
     let button_row = row![
         import_button,
@@ -1138,7 +1177,9 @@ pub fn host_dialog_view(
 
     // Protocol picker
     let protocol_picker = column![
-        text("Protocol").size(12).color(theme.text_secondary),
+        text("Protocol")
+            .size(fonts.label)
+            .color(theme.text_secondary),
         pick_list(ProtocolChoice::ALL.as_slice(), Some(protocol), |choice| {
             Message::Dialog(DialogMessage::FieldChanged(
                 HostDialogField::Protocol,
@@ -1153,7 +1194,7 @@ pub fn host_dialog_view(
     .spacing(4);
 
     let connection_section = column![
-        section_heading("Connection", theme),
+        section_heading("Connection", theme, fonts),
         name_input,
         row![
             column![protocol_picker].width(Length::FillPortion(1)),
@@ -1172,7 +1213,7 @@ pub fn host_dialog_view(
     .width(Length::FillPortion(1));
 
     let ssh_section = column![
-        section_heading("SSH", theme),
+        section_heading("SSH", theme, fonts),
         auth_picker,
         key_path_section,
         row![
@@ -1202,7 +1243,7 @@ pub fn host_dialog_view(
         body = body.push(port_forwards_section);
     }
 
-    let header = container(text(title).size(20).color(theme.text_primary))
+    let header = container(text(title).size(fonts.heading).color(theme.text_primary))
         .padding([18, 24])
         .width(Length::Fill);
 
@@ -1231,8 +1272,15 @@ pub fn host_dialog_view(
     host_dialog_backdrop(form, theme)
 }
 
-fn section_heading(label: &'static str, theme: Theme) -> Element<'static, Message> {
-    text(label).size(13).color(theme.text_primary).into()
+fn section_heading(
+    label: &'static str,
+    theme: Theme,
+    fonts: ScaledFonts,
+) -> Element<'static, Message> {
+    text(label)
+        .size(fonts.section)
+        .color(theme.text_primary)
+        .into()
 }
 
 fn host_dialog_backdrop(

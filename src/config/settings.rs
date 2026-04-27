@@ -612,7 +612,7 @@ pub struct SettingsConfig {
 }
 
 fn default_terminal_font_size() -> f32 {
-    9.0
+    12.0
 }
 
 fn default_terminal_scroll_speed() -> f32 {

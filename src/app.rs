@@ -743,7 +743,7 @@ impl Portal {
             }
             View::FileViewer(viewer_id) => {
                 if let Some(state) = self.file_viewers.get(*viewer_id) {
-                    file_viewer_view(state, theme)
+                    file_viewer_view(state, theme, fonts)
                 } else {
                     text("File viewer not found").into()
                 }
@@ -911,7 +911,7 @@ impl Portal {
         // Overlay dialog if open - host key dialog takes priority as it's connection-critical
         let with_dialog: Element<'_, Message> = match self.dialogs.active() {
             ActiveDialog::HostKey(host_key_state) => {
-                let dialog = host_key_dialog_view(host_key_state, theme);
+                let dialog = host_key_dialog_view(host_key_state, theme, fonts);
                 stack![main_layout, dialog].into()
             }
             ActiveDialog::Host(dialog_state) => {
@@ -930,7 +930,8 @@ impl Portal {
                     .filter(|secret| secret.kind == crate::hub::vault::VaultSecretKind::VncPassword)
                     .map(crate::views::dialogs::host_dialog::VncPasswordOption::from)
                     .collect();
-                let dialog = host_dialog_view(dialog_state, theme, vault_keys, vault_vnc_passwords);
+                let dialog =
+                    host_dialog_view(dialog_state, theme, fonts, vault_keys, vault_vnc_passwords);
                 stack![main_layout, dialog].into()
             }
             ActiveDialog::About(about_state) => {
@@ -938,11 +939,11 @@ impl Portal {
                 stack![main_layout, dialog].into()
             }
             ActiveDialog::PasswordPrompt(password_state) => {
-                let dialog = password_dialog_view(password_state, theme);
+                let dialog = password_dialog_view(password_state, theme, fonts);
                 stack![main_layout, dialog].into()
             }
             ActiveDialog::PassphrasePrompt(passphrase_state) => {
-                let dialog = passphrase_dialog_view(passphrase_state, theme);
+                let dialog = passphrase_dialog_view(passphrase_state, theme, fonts);
                 stack![main_layout, dialog].into()
             }
             ActiveDialog::PortalHubOnboarding => {
@@ -970,15 +971,15 @@ impl Portal {
                 stack![main_layout, dialog].into()
             }
             ActiveDialog::QuickConnect(quick_connect_state) => {
-                let dialog = quick_connect_dialog_view(quick_connect_state, theme);
+                let dialog = quick_connect_dialog_view(quick_connect_state, theme, fonts);
                 stack![main_layout, dialog].into()
             }
             ActiveDialog::Connecting(connecting_state) => {
-                let dialog = connecting_dialog_view(connecting_state, theme);
+                let dialog = connecting_dialog_view(connecting_state, theme, fonts);
                 stack![main_layout, dialog].into()
             }
             ActiveDialog::SessionChoice(session_choice_state) => {
-                let dialog = session_choice_dialog_view(session_choice_state, theme);
+                let dialog = session_choice_dialog_view(session_choice_state, theme, fonts);
                 stack![main_layout, dialog].into()
             }
             ActiveDialog::None => main_layout,

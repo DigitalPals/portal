@@ -614,7 +614,7 @@ fn font_tile(
 
     // Preview text showing the font
     let preview = text("Aa")
-        .size(20)
+        .size(fonts.heading)
         .font(iced_font)
         .color(theme.text_primary);
 
@@ -966,21 +966,18 @@ fn portal_hub_intro_setting(theme: Theme, fonts: ScaledFonts) -> Element<'static
             .color(theme.text_secondary),
         Space::new().height(8),
         portal_hub_benefit_row(
-            "😌",
             "Resumable SSH sessions",
             "Keep remote shells alive through sleep, crashes, and network drops.",
             theme,
             fonts,
         ),
         portal_hub_benefit_row(
-            "🔁",
             "Synced Portal profile",
             "Share hosts, settings, and snippets between your machines.",
             theme,
             fonts,
         ),
         portal_hub_benefit_row(
-            "🔐",
             "Encrypted key vault",
             "Store private-key vault items encrypted before they reach the hub.",
             theme,
@@ -996,42 +993,19 @@ fn portal_hub_intro_setting(theme: Theme, fonts: ScaledFonts) -> Element<'static
 }
 
 fn portal_hub_benefit_row(
-    emoji: &'static str,
     title: &'static str,
     description: &'static str,
     theme: Theme,
     fonts: ScaledFonts,
 ) -> Element<'static, Message> {
-    row![
-        container(
-            text(emoji)
-                .size(fonts.body + 2.0)
-                .width(Length::Fixed(28.0))
-        )
-        .width(Length::Fixed(34.0))
-        .height(Length::Fixed(34.0))
-        .align_x(Alignment::Center)
-        .align_y(Alignment::Center)
-        .style(move |_| container::Style {
-            background: Some(theme.background.into()),
-            border: iced::Border {
-                color: theme.border,
-                width: 1.0,
-                radius: 8.0.into(),
-            },
-            ..Default::default()
-        }),
-        column![
-            text(title).size(fonts.label).color(theme.text_primary),
-            text(description)
-                .size(fonts.label)
-                .color(theme.text_secondary),
-        ]
-        .spacing(2)
-        .width(Length::Fill),
+    column![
+        text(title).size(fonts.label).color(theme.text_primary),
+        text(description)
+            .size(fonts.label)
+            .color(theme.text_secondary),
     ]
-    .spacing(10)
-    .align_y(Alignment::Center)
+    .spacing(2)
+    .width(Length::Fill)
     .into()
 }
 

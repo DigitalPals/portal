@@ -442,7 +442,7 @@ pub const FONT_SIZE_BODY: f32 = 14.3;
 pub const FONT_SIZE_BUTTON_SMALL: f32 = 14.3;
 
 /// Secondary info, descriptions, form field labels
-pub const FONT_SIZE_LABEL: f32 = 9.9;
+pub const FONT_SIZE_LABEL: f32 = 12.0;
 
 /// Metadata, timestamps, status bar, keyboard shortcuts
 pub const FONT_SIZE_CAPTION: f32 = 13.2;

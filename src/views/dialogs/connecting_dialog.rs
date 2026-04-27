@@ -4,7 +4,7 @@ use iced::widget::{column, container, text};
 use iced::{Alignment, Element, Length};
 
 use crate::message::Message;
-use crate::theme::Theme;
+use crate::theme::{ScaledFonts, Theme};
 
 use super::common::dialog_backdrop;
 
@@ -28,13 +28,14 @@ impl ConnectingDialogState {
 pub fn connecting_dialog_view(
     state: &ConnectingDialogState,
     theme: Theme,
+    fonts: ScaledFonts,
 ) -> Element<'static, Message> {
     let content = column![
         text(format!("Connecting to {}...", state.host_name))
-            .size(16)
+            .size(fonts.section)
             .color(theme.text_primary),
         text(format!("Establishing {} connection", state.protocol))
-            .size(13)
+            .size(fonts.small)
             .color(theme.text_secondary),
     ]
     .spacing(8)

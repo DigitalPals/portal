@@ -136,7 +136,7 @@ pub fn tab_bar_view<'a>(
     }
 
     // Add "+" button for new connection
-    tab_elements.push(new_tab_button(theme));
+    tab_elements.push(new_tab_button(theme, fonts));
 
     let tabs_row = Row::with_children(tab_elements)
         .spacing(4)
@@ -224,7 +224,7 @@ fn tab_button<'a>(
     let close_button_width = 16.0;
     let close_button: Element<'_, Message> = if is_hovered {
         container(
-            button(text("×").size(16).color(text_icon_color))
+            button(text("×").size(fonts.section).color(text_icon_color))
                 .style(move |_theme, status| {
                     let text_color = match status {
                         iced::widget::button::Status::Hovered => Color::from_rgb8(0xCD, 0xD6, 0xF4),
@@ -248,12 +248,16 @@ fn tab_button<'a>(
     };
 
     let attention_dot: Element<'_, Message> = if tab.needs_attention {
-        container(text("●").size(10).color(Color::from_rgb8(0xf9, 0xc7, 0x4f)))
-            .width(Length::Fixed(10.0))
-            .align_x(Alignment::Center)
-            .into()
+        container(
+            text("●")
+                .size(fonts.label)
+                .color(Color::from_rgb8(0xf9, 0xc7, 0x4f)),
+        )
+        .width(Length::Fixed(fonts.label))
+        .align_x(Alignment::Center)
+        .into()
     } else {
-        container(text("")).width(Length::Fixed(10.0)).into()
+        container(text("")).width(Length::Fixed(fonts.label)).into()
     };
 
     let content = row![
@@ -316,9 +320,9 @@ fn tab_button<'a>(
 }
 
 /// New tab "+" button
-fn new_tab_button(theme: Theme) -> Element<'static, Message> {
+fn new_tab_button(theme: Theme, fonts: ScaledFonts) -> Element<'static, Message> {
     button(
-        container(text("+").size(18).color(theme.text_secondary))
+        container(text("+").size(fonts.heading).color(theme.text_secondary))
             .padding(Padding::new(7.0).left(12.0).right(12.0)),
     )
     .style(move |_theme, status| {

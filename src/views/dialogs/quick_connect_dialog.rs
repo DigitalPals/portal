@@ -5,7 +5,7 @@ use iced::{Alignment, Element, Length};
 
 use crate::config::hosts::default_username;
 use crate::message::{DialogMessage, Message, QuickConnectField};
-use crate::theme::Theme;
+use crate::theme::{ScaledFonts, Theme};
 use crate::validation::{validate_hostname, validate_port, validate_username};
 
 use super::common::{
@@ -96,6 +96,7 @@ impl QuickConnectDialogState {
 pub fn quick_connect_dialog_view(
     state: &QuickConnectDialogState,
     theme: Theme,
+    fonts: ScaledFonts,
 ) -> Element<'static, Message> {
     // Clone values to make them owned
     let hostname_value = state.hostname.clone();
@@ -114,7 +115,9 @@ pub fn quick_connect_dialog_view(
     let hostname_input = {
         let has_error = hostname_error.is_some();
         let mut col = column![
-            text("Hostname / IP").size(12).color(theme.text_secondary),
+            text("Hostname / IP")
+                .size(fonts.label)
+                .color(theme.text_secondary),
             text_input("192.168.1.100", &hostname_value)
                 .on_input(|s| Message::Dialog(DialogMessage::QuickConnectFieldChanged(
                     QuickConnectField::Hostname,
@@ -127,7 +130,7 @@ pub fn quick_connect_dialog_view(
         ]
         .spacing(4);
         if let Some(err) = hostname_error {
-            col = col.push(text(err).size(11).color(ERROR_COLOR));
+            col = col.push(text(err).size(fonts.small).color(ERROR_COLOR));
         }
         col
     };
@@ -136,7 +139,7 @@ pub fn quick_connect_dialog_view(
     let port_input = {
         let has_error = port_error.is_some();
         let mut col = column![
-            text("Port").size(12).color(theme.text_secondary),
+            text("Port").size(fonts.label).color(theme.text_secondary),
             text_input("22", &port_value)
                 .on_input(|s| Message::Dialog(DialogMessage::QuickConnectFieldChanged(
                     QuickConnectField::Port,
@@ -149,7 +152,7 @@ pub fn quick_connect_dialog_view(
         ]
         .spacing(4);
         if let Some(err) = port_error {
-            col = col.push(text(err).size(11).color(ERROR_COLOR));
+            col = col.push(text(err).size(fonts.small).color(ERROR_COLOR));
         }
         col
     };
@@ -158,7 +161,9 @@ pub fn quick_connect_dialog_view(
     let username_input = {
         let has_error = username_error.is_some();
         let mut col = column![
-            text("Username").size(12).color(theme.text_secondary),
+            text("Username")
+                .size(fonts.label)
+                .color(theme.text_secondary),
             text_input(&username_placeholder, &username_value)
                 .on_input(|s| Message::Dialog(DialogMessage::QuickConnectFieldChanged(
                     QuickConnectField::Username,
@@ -171,14 +176,16 @@ pub fn quick_connect_dialog_view(
         ]
         .spacing(4);
         if let Some(err) = username_error {
-            col = col.push(text(err).size(11).color(ERROR_COLOR));
+            col = col.push(text(err).size(fonts.small).color(ERROR_COLOR));
         }
         col
     };
 
     // Auth method picker
     let auth_picker = column![
-        text("Authentication").size(12).color(theme.text_secondary),
+        text("Authentication")
+            .size(fonts.label)
+            .color(theme.text_secondary),
         pick_list(
             AuthMethodChoice::ALL.as_slice(),
             Some(auth_method),
@@ -195,19 +202,27 @@ pub fn quick_connect_dialog_view(
     .spacing(4);
 
     // Buttons
-    let cancel_button = button(text("Cancel").size(14).color(theme.text_primary))
-        .padding([8, 16])
-        .style(secondary_button_style(theme))
-        .on_press(Message::Dialog(DialogMessage::Close));
+    let cancel_button = button(
+        text("Cancel")
+            .size(fonts.button_small)
+            .color(theme.text_primary),
+    )
+    .padding([8, 16])
+    .style(secondary_button_style(theme))
+    .on_press(Message::Dialog(DialogMessage::Close));
 
-    let connect_button = button(text("Connect").size(14).color(theme.text_primary))
-        .padding([8, 16])
-        .style(primary_button_style(theme))
-        .on_press_maybe(if is_valid {
-            Some(Message::Dialog(DialogMessage::QuickConnectSubmit))
-        } else {
-            None
-        });
+    let connect_button = button(
+        text("Connect")
+            .size(fonts.button_small)
+            .color(theme.text_primary),
+    )
+    .padding([8, 16])
+    .style(primary_button_style(theme))
+    .on_press_maybe(if is_valid {
+        Some(Message::Dialog(DialogMessage::QuickConnectSubmit))
+    } else {
+        None
+    });
 
     let button_row = row![
         Space::new().width(Length::Fill),
@@ -219,7 +234,9 @@ pub fn quick_connect_dialog_view(
 
     // Form layout
     let form = column![
-        text("Quick Connect").size(20).color(theme.text_primary),
+        text("Quick Connect")
+            .size(fonts.heading)
+            .color(theme.text_primary),
         Space::new().height(16),
         row![
             column![hostname_input].width(Length::FillPortion(3)),
