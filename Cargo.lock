@@ -4915,6 +4915,7 @@ dependencies = [
  "regex",
  "reqwest",
  "rfd",
+ "rsa 0.9.10",
  "russh",
  "russh-sftp",
  "secrecy",

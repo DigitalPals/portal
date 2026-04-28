@@ -101,6 +101,10 @@ pub enum VaultMessage {
     EditCancel,
     CopyPublicKey(Uuid),
     CopyFingerprint(Uuid),
+    EnrollmentRefresh,
+    EnrollmentRefreshDone(Result<Vec<crate::hub::vault_enrollment::VaultEnrollment>, String>),
+    EnrollmentApprove(String),
+    EnrollmentApproveDone(Result<crate::hub::vault_enrollment::VaultEnrollment, String>),
 }
 
 #[derive(Debug, Clone)]

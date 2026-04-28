@@ -212,6 +212,79 @@ pub fn handle_vault(portal: &mut Portal, msg: VaultMessage) -> Task<Message> {
                 return iced::clipboard::write(value);
             }
         }
+        VaultMessage::EnrollmentRefresh => {
+            portal.vault_ui.enrollment_loading = true;
+            portal.vault_ui.enrollment_status = None;
+            portal.vault_ui.operation_error = None;
+            let settings = portal.prefs.portal_hub.clone();
+            return Task::perform(
+                async move { crate::hub::vault_enrollment::list_pending(&settings).await },
+                |result| Message::Vault(VaultMessage::EnrollmentRefreshDone(result)),
+            );
+        }
+        VaultMessage::EnrollmentRefreshDone(result) => {
+            portal.vault_ui.enrollment_loading = false;
+            match result {
+                Ok(requests) => {
+                    let count = requests.len();
+                    portal.vault_ui.enrollment_requests = requests;
+                    portal.vault_ui.enrollment_status = Some(if count == 0 {
+                        "No pending Android vault access requests".to_string()
+                    } else {
+                        format!("{} pending Android vault access request(s)", count)
+                    });
+                }
+                Err(error) => {
+                    portal.vault_ui.operation_error = Some(error);
+                }
+            }
+        }
+        VaultMessage::EnrollmentApprove(id) => {
+            let Some(enrollment) = portal
+                .vault_ui
+                .enrollment_requests
+                .iter()
+                .find(|request| request.id == id)
+                .cloned()
+            else {
+                portal.vault_ui.operation_error =
+                    Some("Vault enrollment request was not found".to_string());
+                return Task::none();
+            };
+            portal.vault_ui.enrollment_loading = true;
+            portal.vault_ui.enrollment_status = None;
+            portal.vault_ui.operation_error = None;
+            let settings = portal.prefs.portal_hub.clone();
+            return Task::perform(
+                async move { crate::hub::vault_enrollment::approve(settings, enrollment).await },
+                |result| Message::Vault(VaultMessage::EnrollmentApproveDone(result)),
+            );
+        }
+        VaultMessage::EnrollmentApproveDone(result) => {
+            portal.vault_ui.enrollment_loading = false;
+            match result {
+                Ok(enrollment) => {
+                    portal
+                        .vault_ui
+                        .enrollment_requests
+                        .retain(|request| request.id != enrollment.id);
+                    portal.vault_ui.enrollment_status = Some(format!(
+                        "Approved vault access for {}",
+                        enrollment.device_name
+                    ));
+                    portal.toast_manager.push(Toast::success(format!(
+                        "Approved vault access for {}",
+                        enrollment.device_name
+                    )));
+                }
+                Err(error) => {
+                    portal.vault_ui.operation_error = Some(error.clone());
+                    portal
+                        .toast_manager
+                        .push(Toast::error(format!("Vault enrollment failed: {}", error)));
+                }
+            }
+        }
     }
 
     Task::none()

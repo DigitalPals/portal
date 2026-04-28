@@ -97,6 +97,9 @@ pub fn vault_page_view(ctx: VaultPageContext<'_>) -> Element<'static, Message> {
     if let Some(error) = &ctx.state.operation_error {
         content = content.push(error_banner(error.clone(), ctx.theme, ctx.fonts));
     }
+    if ctx.portal_hub_configured && ctx.portal_hub_vault_enabled {
+        content = content.push(enrollment_panel(ctx.state, ctx.theme, ctx.fonts));
+    }
 
     let keys = filtered_keys(ctx.vault, &ctx.state.search_query);
     let vnc_passwords = filtered_vnc_passwords(ctx.vault, &ctx.state.search_query);
@@ -117,6 +120,89 @@ pub fn vault_page_view(ctx: VaultPageContext<'_>) -> Element<'static, Message> {
 
     scrollable(container(content).width(Fill))
         .height(Fill)
+        .into()
+}
+
+fn enrollment_panel(
+    state: &VaultUiState,
+    theme: Theme,
+    fonts: ScaledFonts,
+) -> Element<'static, Message> {
+    let mut body = column![
+        row![
+            column![
+                text("Android vault access")
+                    .size(fonts.body)
+                    .color(theme.text_primary),
+                text("Approve Android devices that requested this vault unlock key.")
+                    .size(fonts.label)
+                    .color(theme.text_muted),
+            ]
+            .spacing(4),
+            Space::new().width(Fill),
+            small_button(
+                if state.enrollment_loading {
+                    "Checking..."
+                } else {
+                    "Check requests"
+                },
+                theme,
+                fonts,
+            )
+            .on_press_maybe(
+                (!state.enrollment_loading)
+                    .then_some(Message::Vault(VaultMessage::EnrollmentRefresh,))
+            ),
+        ]
+        .align_y(Alignment::Center)
+        .spacing(12),
+    ]
+    .spacing(10);
+
+    if let Some(status) = &state.enrollment_status {
+        body = body.push(
+            text(status.clone())
+                .size(fonts.label)
+                .color(theme.text_secondary),
+        );
+    }
+
+    for request in &state.enrollment_requests {
+        let id = request.id.clone();
+        body = body.push(
+            row![
+                column![
+                    text(request.device_name.clone())
+                        .size(fonts.label)
+                        .color(theme.text_primary),
+                    text(format!("Requested {}", request.created_at))
+                        .size(fonts.label)
+                        .color(theme.text_muted),
+                ]
+                .spacing(3),
+                Space::new().width(Fill),
+                small_button("Approve", theme, fonts).on_press_maybe(
+                    (!state.enrollment_loading)
+                        .then_some(Message::Vault(VaultMessage::EnrollmentApprove(id))),
+                ),
+            ]
+            .align_y(Alignment::Center)
+            .spacing(12),
+        );
+    }
+
+    container(body)
+        .padding(16)
+        .width(Fill)
+        .style(move |_| container::Style {
+            background: Some(theme.surface.into()),
+            border: iced::Border {
+                color: theme.border,
+                width: 1.0,
+                radius: CARD_BORDER_RADIUS.into(),
+            },
+            ..Default::default()
+        })
         .into()
 }
 
