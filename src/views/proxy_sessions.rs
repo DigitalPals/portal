@@ -1,5 +1,6 @@
 use iced::widget::{Column, Row, Space, button, column, container, row, scrollable, text};
 use iced::{Alignment, Element, Fill, Length, Padding};
+use uuid::Uuid;
 
 use crate::app::managers::{ProxySessionsState, TerminalPreviewHandle};
 use crate::app::{SidebarState, managers::ProxySessionCard};
@@ -97,7 +98,13 @@ pub fn proxy_sessions_view<'a>(
     } else if state.sessions.is_empty() {
         content = content.push(text("No active Portal Hub sessions").color(theme.text_muted));
     } else {
-        content = content.push(session_grid(&state.sessions, column_count, theme, fonts));
+        content = content.push(session_grid(
+            &state.sessions,
+            state.kill_requested,
+            column_count,
+            theme,
+            fonts,
+        ));
     }
 
     scrollable(container(content).width(Fill))
@@ -107,6 +114,7 @@ pub fn proxy_sessions_view<'a>(
 
 fn session_grid<'a>(
     sessions: &'a [ProxySessionCard],
+    kill_requested: Option<Uuid>,
     column_count: usize,
     theme: Theme,
     fonts: ScaledFonts,
@@ -115,7 +123,12 @@ fn session_grid<'a>(
     let mut current_row: Vec<Element<'a, Message>> = Vec::new();
 
     for session in sessions {
-        current_row.push(session_card(session, theme, fonts));
+        current_row.push(session_card(
+            session,
+            kill_requested == Some(session.session_id),
+            theme,
+            fonts,
+        ));
 
         if current_row.len() >= column_count {
             rows.push(
@@ -138,6 +151,7 @@ fn session_grid<'a>(
 
 fn session_card<'a>(
     session: &'a ProxySessionCard,
+    kill_requested: bool,
     theme: Theme,
     fonts: ScaledFonts,
 ) -> Element<'a, Message> {
@@ -168,14 +182,79 @@ fn session_card<'a>(
     ]
     .align_y(Alignment::Center);
 
-    let card = column![preview, meta].spacing(10);
-    button(container(card).padding(12).width(Fill))
+    let resume_card = column![preview, meta].spacing(10);
+    let resume_area = button(container(resume_card).padding(12).width(Fill))
         .padding(0)
-        .width(Length::Fixed(SESSION_CARD_WIDTH))
+        .width(Fill)
         .style(move |_theme, status| {
             let background = match status {
                 iced::widget::button::Status::Hovered => Some(theme.hover.into()),
-                _ => Some(theme.surface.into()),
+                _ => Some(iced::Color::TRANSPARENT.into()),
+            };
+            iced::widget::button::Style {
+                background,
+                text_color: theme.text_primary,
+                border: iced::Border {
+                    color: iced::Color::TRANSPARENT,
+                    width: 0.0,
+                    radius: BORDER_RADIUS.into(),
+                },
+                ..Default::default()
+            }
+        })
+        .on_press(Message::ProxySessions(ProxySessionsMessage::Resume(
+            session.session_id,
+        )));
+
+    let actions = if kill_requested {
+        row![
+            Space::new().width(Fill),
+            small_session_button("Cancel", theme, fonts)
+                .on_press(Message::ProxySessions(ProxySessionsMessage::KillCanceled,)),
+            destructive_session_button("Kill session", theme, fonts).on_press(
+                Message::ProxySessions(ProxySessionsMessage::KillConfirmed(session.session_id)),
+            ),
+        ]
+    } else {
+        row![
+            Space::new().width(Fill),
+            small_session_button("Kill", theme, fonts).on_press(Message::ProxySessions(
+                ProxySessionsMessage::KillRequested(session.session_id),
+            )),
+        ]
+    }
+    .spacing(8)
+    .align_y(Alignment::Center);
+    let actions = container(actions)
+        .padding(Padding::new(12.0).top(0.0))
+        .width(Fill);
+
+    let card = column![resume_area, actions].spacing(0);
+    container(card)
+        .width(Length::Fixed(SESSION_CARD_WIDTH))
+        .style(move |_theme| container::Style {
+            background: Some(theme.surface.into()),
+            border: iced::Border {
+                color: theme.border,
+                width: 1.0,
+                radius: BORDER_RADIUS.into(),
+            },
+            ..Default::default()
+        })
+        .into()
+}
+
+fn small_session_button<'a>(
+    label: &'static str,
+    theme: Theme,
+    fonts: ScaledFonts,
+) -> iced::widget::Button<'a, Message> {
+    button(text(label).size(fonts.label).color(theme.text_primary))
+        .padding([6, 10])
+        .style(move |_theme, status| {
+            let background = match status {
+                iced::widget::button::Status::Hovered => Some(theme.hover.into()),
+                _ => Some(theme.background.into()),
             };
             iced::widget::button::Style {
                 background,
@@ -188,10 +267,31 @@ fn session_card<'a>(
                 ..Default::default()
             }
         })
-        .on_press(Message::ProxySessions(ProxySessionsMessage::Resume(
-            session.session_id,
-        )))
-        .into()
+}
+
+fn destructive_session_button<'a>(
+    label: &'static str,
+    theme: Theme,
+    fonts: ScaledFonts,
+) -> iced::widget::Button<'a, Message> {
+    let danger = iced::Color::from_rgb(0.86, 0.31, 0.31);
+    button(text(label).size(fonts.label))
+        .padding([6, 10])
+        .style(move |_theme, status| {
+            let background = match status {
+                iced::widget::button::Status::Hovered => iced::Color::from_rgb8(0xf3, 0x8b, 0xa8),
+                _ => danger,
+            };
+            iced::widget::button::Style {
+                background: Some(background.into()),
+                text_color: theme.text_on(background),
+                border: iced::Border {
+                    radius: BORDER_RADIUS.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+        })
 }
 
 pub fn terminal_thumbnail(term: TerminalPreviewHandle, theme: Theme) -> Element<'static, Message> {

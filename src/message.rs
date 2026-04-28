@@ -764,6 +764,10 @@ pub enum ProxySessionsMessage {
     RefreshDue(u64),
     Loaded(Result<Vec<ListedProxySession>, String>),
     Resume(SessionId),
+    KillRequested(SessionId),
+    KillCanceled,
+    KillConfirmed(SessionId),
+    KillFinished(SessionId, Result<(), String>),
 }
 
 // ============================================================================

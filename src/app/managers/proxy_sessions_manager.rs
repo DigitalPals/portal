@@ -25,6 +25,7 @@ pub struct ProxySessionsState {
     pub error: Option<String>,
     pub last_loaded_at: Option<DateTime<Utc>>,
     pub refresh_generation: u64,
+    pub kill_requested: Option<Uuid>,
 }
 
 impl ProxySessionsState {
@@ -35,6 +36,7 @@ impl ProxySessionsState {
             error: None,
             last_loaded_at: None,
             refresh_generation: 0,
+            kill_requested: None,
         }
     }
 
@@ -47,6 +49,7 @@ impl ProxySessionsState {
     pub fn set_error(&mut self, error: String) {
         self.loading = false;
         self.error = Some(error);
+        self.kill_requested = None;
         self.last_loaded_at = Some(Utc::now());
     }
 
@@ -57,6 +60,12 @@ impl ProxySessionsState {
             .collect();
         self.loading = false;
         self.error = None;
+        if self
+            .kill_requested
+            .is_some_and(|session_id| self.get(session_id).is_none())
+        {
+            self.kill_requested = None;
+        }
         self.last_loaded_at = Some(Utc::now());
     }
 
@@ -64,6 +73,16 @@ impl ProxySessionsState {
         self.sessions
             .iter()
             .find(|session| session.session_id == session_id)
+    }
+
+    pub fn start_action(&mut self) {
+        self.loading = true;
+        self.error = None;
+    }
+
+    pub fn finish_action(&mut self) {
+        self.loading = false;
+        self.kill_requested = None;
     }
 }
 

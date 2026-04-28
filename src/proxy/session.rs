@@ -484,6 +484,22 @@ pub async fn list_active_sessions(
     raw_sessions_to_listed(raw)
 }
 
+pub async fn kill_session(settings: &PortalHubSettings, session_id: Uuid) -> Result<(), String> {
+    let hub_url = settings.effective_web_url();
+    let token = crate::hub::auth::load_access_token(&hub_url)?
+        .ok_or_else(|| "Portal Hub is not authenticated".to_string())?;
+    reqwest::Client::new()
+        .delete(format!("{}/api/sessions/{}", hub_url, session_id))
+        .bearer_auth(token)
+        .send()
+        .await
+        .map_err(|error| format!("failed to kill Portal Hub session: {}", error))?
+        .error_for_status()
+        .map_err(|error| format!("Portal Hub session kill failed: {}", error))?;
+
+    Ok(())
+}
+
 pub async fn check_proxy_status(settings: &PortalHubSettings) -> Result<ProxyStatus, String> {
     let hub_url = settings.effective_web_url();
     let raw: RawProxyVersion = reqwest::Client::new()
