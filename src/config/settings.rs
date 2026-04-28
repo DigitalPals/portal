@@ -1027,27 +1027,27 @@ web_url = "https://hub.example.test"
     fn portal_hub_full_tailscale_url_in_host_field_uses_https_origin() {
         let mut settings = PortalHubSettings::default();
 
-        settings.apply_host_input("https://portal-hub.risk-bull.ts.net/".to_string());
+        settings.apply_host_input("https://portal-hub.example.ts.net/".to_string());
 
-        assert_eq!(settings.host, "portal-hub.risk-bull.ts.net");
+        assert_eq!(settings.host, "portal-hub.example.ts.net");
         assert_eq!(
             settings.effective_web_url(),
-            "https://portal-hub.risk-bull.ts.net"
+            "https://portal-hub.example.ts.net"
         );
     }
 
     #[test]
     fn portal_hub_full_tailscale_url_in_web_url_field_is_canonicalized() {
         let mut settings = PortalHubSettings {
-            host: "portal-hub.risk-bull.ts.net".to_string(),
+            host: "portal-hub.example.ts.net".to_string(),
             ..Default::default()
         };
 
-        settings.apply_web_url_input("https://portal-hub.risk-bull.ts.net/".to_string());
+        settings.apply_web_url_input("https://portal-hub.example.ts.net/".to_string());
 
         assert_eq!(
             settings.effective_web_url(),
-            "https://portal-hub.risk-bull.ts.net"
+            "https://portal-hub.example.ts.net"
         );
     }
 
@@ -1055,22 +1055,22 @@ web_url = "https://hub.example.test"
     fn portal_hub_explicit_https_port_is_preserved() {
         let mut settings = PortalHubSettings::default();
 
-        settings.apply_host_input("https://portal-hub.risk-bull.ts.net:8443".to_string());
+        settings.apply_host_input("https://portal-hub.example.ts.net:8443".to_string());
 
-        assert_eq!(settings.host, "portal-hub.risk-bull.ts.net");
+        assert_eq!(settings.host, "portal-hub.example.ts.net");
         assert_eq!(
             settings.effective_web_url(),
-            "https://portal-hub.risk-bull.ts.net:8443"
+            "https://portal-hub.example.ts.net:8443"
         );
     }
 
     #[test]
     fn portal_hub_bare_hosts_keep_existing_derived_url_behavior() {
         let mut settings = PortalHubSettings::default();
-        settings.apply_host_input("portal-hub.risk-bull.ts.net".to_string());
+        settings.apply_host_input("portal-hub.example.ts.net".to_string());
         assert_eq!(
             settings.effective_web_url(),
-            "https://portal-hub.risk-bull.ts.net:8080"
+            "https://portal-hub.example.ts.net:8080"
         );
 
         settings.apply_host_input("localhost".to_string());
@@ -1081,7 +1081,7 @@ web_url = "https://hub.example.test"
     fn portal_hub_can_be_configured_with_web_url_only() {
         let mut settings = PortalHubSettings {
             enabled: true,
-            web_url: "https://portal-hub.risk-bull.ts.net".to_string(),
+            web_url: "https://portal-hub.example.ts.net".to_string(),
             ..PortalHubSettings::default()
         };
 

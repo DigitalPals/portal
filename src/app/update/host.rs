@@ -223,7 +223,7 @@ mod tests {
         Host {
             id: Uuid::new_v4(),
             name: "Pulse".to_string(),
-            hostname: "10.10.0.6".to_string(),
+            hostname: "192.0.2.6".to_string(),
             port: 22,
             username: "root".to_string(),
             auth: AuthMethod::Agent,
@@ -263,19 +263,19 @@ mod tests {
         let host = ssh_host();
 
         assert!(proxy_session_matches_host(
-            &proxy_session("10.10.0.6", 22, "root"),
+            &proxy_session("192.0.2.6", 22, "root"),
             &host
         ));
         assert!(!proxy_session_matches_host(
-            &proxy_session("10.10.0.7", 22, "root"),
+            &proxy_session("192.0.2.7", 22, "root"),
             &host
         ));
         assert!(!proxy_session_matches_host(
-            &proxy_session("10.10.0.6", 2222, "root"),
+            &proxy_session("192.0.2.6", 2222, "root"),
             &host
         ));
         assert!(!proxy_session_matches_host(
-            &proxy_session("10.10.0.6", 22, "john"),
+            &proxy_session("192.0.2.6", 22, "john"),
             &host
         ));
     }

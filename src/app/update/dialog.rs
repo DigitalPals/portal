@@ -719,7 +719,7 @@ mod tests {
         Host {
             id: Uuid::new_v4(),
             name: "Pulse".to_string(),
-            hostname: "10.10.0.6".to_string(),
+            hostname: "192.0.2.6".to_string(),
             port: 22,
             username: "root".to_string(),
             protocol: Protocol::Ssh,

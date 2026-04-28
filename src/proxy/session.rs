@@ -7,6 +7,7 @@
 use chrono::{DateTime, Utc};
 use data_encoding::BASE64;
 use futures::{SinkExt, StreamExt};
+use reqwest::StatusCode;
 use secrecy::ExposeSecret;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -263,8 +264,7 @@ async fn run_web_terminal(
         if hub_url.is_empty() {
             return Err("Portal Hub host and web port are not configured".to_string());
         }
-        let token = crate::hub::auth::load_access_token(&hub_url)?
-            .ok_or_else(|| "Portal Hub is not authenticated".to_string())?;
+        let token = refreshed_portal_hub_access_token(&hub_url).await?;
         let mut request = terminal_ws_url(&hub_url)?
             .into_client_request()
             .map_err(|error| format!("failed to build Portal Hub terminal request: {}", error))?;
@@ -449,17 +449,26 @@ pub async fn list_active_sessions(
     settings: &PortalHubSettings,
 ) -> Result<Vec<ListedProxySession>, String> {
     let hub_url = settings.effective_web_url();
-    let token = crate::hub::auth::load_access_token(&hub_url)?
-        .ok_or_else(|| "Portal Hub is not authenticated".to_string())?;
-    let response: RawListResponse = reqwest::Client::new()
-        .get(format!(
-            "{}/api/sessions?active=true&include_preview=true&preview_bytes=524288",
-            hub_url
-        ))
-        .bearer_auth(token)
+    let client = reqwest::Client::new();
+    let url = format!(
+        "{}/api/sessions?active=true&include_preview=true&preview_bytes=524288",
+        hub_url
+    );
+    let mut response = client
+        .get(&url)
+        .bearer_auth(portal_hub_access_token(&hub_url)?)
         .send()
         .await
-        .map_err(|error| format!("failed to list Portal Hub sessions: {}", error))?
+        .map_err(|error| format!("failed to list Portal Hub sessions: {}", error))?;
+    if response.status() == StatusCode::UNAUTHORIZED {
+        response = client
+            .get(&url)
+            .bearer_auth(refreshed_portal_hub_access_token(&hub_url).await?)
+            .send()
+            .await
+            .map_err(|error| format!("failed to list Portal Hub sessions: {}", error))?;
+    }
+    let response: RawListResponse = response
         .error_for_status()
         .map_err(|error| format!("Portal Hub session list failed: {}", error))?
         .json()
@@ -486,14 +495,23 @@ pub async fn list_active_sessions(
 
 pub async fn kill_session(settings: &PortalHubSettings, session_id: Uuid) -> Result<(), String> {
     let hub_url = settings.effective_web_url();
-    let token = crate::hub::auth::load_access_token(&hub_url)?
-        .ok_or_else(|| "Portal Hub is not authenticated".to_string())?;
-    reqwest::Client::new()
-        .delete(format!("{}/api/sessions/{}", hub_url, session_id))
-        .bearer_auth(token)
+    let client = reqwest::Client::new();
+    let url = format!("{}/api/sessions/{}", hub_url, session_id);
+    let mut response = client
+        .delete(&url)
+        .bearer_auth(portal_hub_access_token(&hub_url)?)
         .send()
         .await
-        .map_err(|error| format!("failed to kill Portal Hub session: {}", error))?
+        .map_err(|error| format!("failed to kill Portal Hub session: {}", error))?;
+    if response.status() == StatusCode::UNAUTHORIZED {
+        response = client
+            .delete(&url)
+            .bearer_auth(refreshed_portal_hub_access_token(&hub_url).await?)
+            .send()
+            .await
+            .map_err(|error| format!("failed to kill Portal Hub session: {}", error))?;
+    }
+    response
         .error_for_status()
         .map_err(|error| format!("Portal Hub session kill failed: {}", error))?;
 
@@ -555,6 +573,17 @@ fn raw_sessions_to_listed(
             })
         })
         .collect()
+}
+
+fn portal_hub_access_token(hub_url: &str) -> Result<String, String> {
+    crate::hub::auth::load_access_token(hub_url)?
+        .ok_or_else(|| "Portal Hub is not authenticated".to_string())
+}
+
+async fn refreshed_portal_hub_access_token(hub_url: &str) -> Result<String, String> {
+    crate::hub::auth::refresh_access_token(hub_url)
+        .await?
+        .ok_or_else(|| "Portal Hub is not authenticated".to_string())
 }
 
 impl Drop for ProxySession {
@@ -627,8 +656,8 @@ mod tests {
     #[test]
     fn terminal_ws_url_uses_wss_for_tailscale_https() {
         assert_eq!(
-            terminal_ws_url("https://portal-hub.risk-bull.ts.net").unwrap(),
-            "wss://portal-hub.risk-bull.ts.net/api/sessions/terminal"
+            terminal_ws_url("https://portal-hub.example.ts.net").unwrap(),
+            "wss://portal-hub.example.ts.net/api/sessions/terminal"
         );
     }
 }

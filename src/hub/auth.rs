@@ -159,12 +159,45 @@ pub async fn fetch_hub_info(settings: &PortalHubSettings) -> Result<HubInfo, Str
 }
 
 pub fn load_access_token(hub_url: &str) -> Result<Option<String>, String> {
+    load_tokens(hub_url).map(|tokens| tokens.map(|tokens| tokens.access_token))
+}
+
+pub async fn refresh_access_token(hub_url: &str) -> Result<Option<String>, String> {
+    let Some(tokens) = load_tokens(hub_url)? else {
+        return Ok(None);
+    };
+    let token: TokenResponse = reqwest::Client::new()
+        .post(format!("{}/oauth/token", hub_url))
+        .form(&[
+            ("grant_type", "refresh_token"),
+            ("refresh_token", tokens.refresh_token.as_str()),
+            ("client_id", CLIENT_ID),
+        ])
+        .send()
+        .await
+        .map_err(|error| format!("failed to refresh Portal Hub token: {}", error))?
+        .error_for_status()
+        .map_err(|error| format!("Portal Hub token refresh failed: {}", error))?
+        .json()
+        .await
+        .map_err(|error| {
+            format!(
+                "failed to parse Portal Hub token refresh response: {}",
+                error
+            )
+        })?;
+
+    store_tokens(hub_url, &token.access_token, &token.refresh_token)?;
+    Ok(Some(token.access_token))
+}
+
+fn load_tokens(hub_url: &str) -> Result<Option<StoredTokens>, String> {
     let entry = keyring_entry(hub_url)?;
     match entry.get_password() {
         Ok(raw) => {
             let tokens: StoredTokens = serde_json::from_str(&raw)
                 .map_err(|error| format!("failed to parse stored Portal Hub tokens: {}", error))?;
-            Ok(Some(tokens.access_token))
+            Ok(Some(tokens))
         }
         Err(keyring::Error::NoEntry) => Ok(None),
         Err(error) => Err(format!(

@@ -193,12 +193,12 @@ mod tests {
 
     #[test]
     fn session_card_uses_matching_host_name() {
-        let host = ssh_host("Hermes", "10.10.0.206", 22, "john");
+        let host = ssh_host("Hermes", "192.0.2.206", 22, "john");
         let hosts = HostsConfig {
             hosts: vec![host.clone()],
             groups: Vec::new(),
         };
-        let session = listed_session("10.10.0.206", 22, "john");
+        let session = listed_session("192.0.2.206", 22, "john");
 
         let card = ProxySessionCard::from_listed(session, &hosts);
 
@@ -209,11 +209,11 @@ mod tests {
     #[test]
     fn session_card_falls_back_to_target_label_without_host_match() {
         let hosts = HostsConfig::default();
-        let session = listed_session("10.10.0.206", 22, "john");
+        let session = listed_session("192.0.2.206", 22, "john");
 
         let card = ProxySessionCard::from_listed(session, &hosts);
 
-        assert_eq!(card.display_name, "john@10.10.0.206:22");
+        assert_eq!(card.display_name, "john@192.0.2.206:22");
         assert_eq!(card.host_id, None);
     }
 }
