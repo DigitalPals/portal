@@ -869,14 +869,74 @@ mod tests {
 
     #[test]
     fn parses_sync_revision_sse_event() {
-        let event = parse_sync_revision_event(
-            "event: sync\ndata: {\"api_version\":2,\"services\":{\"hosts\":\"rev-1\"}}\n",
-        )
-        .unwrap()
-        .unwrap();
+        let payload = json!({
+            "api_version": 2,
+            "generated_at": "2026-04-29T12:00:01Z",
+            "services": {
+                "hosts": "rev-1"
+            }
+        });
+        crate::contract_test_support::assert_portal_hub_contract("sync-event", &payload);
+
+        let event = parse_sync_revision_event(&format!("event: sync\ndata: {}\n", payload))
+            .unwrap()
+            .unwrap();
 
         assert_eq!(event.api_version, 2);
         assert_eq!(event.services.get("hosts"), Some(&"rev-1".to_string()));
+    }
+
+    #[test]
+    fn portal_hub_sync_v2_response_matches_contract() {
+        let instance = json!({
+            "api_version": 2,
+            "generated_at": "2026-04-29T12:00:00Z",
+            "services": {
+                "hosts": {
+                    "revision": "rev-hosts",
+                    "payload": { "hosts": [], "groups": [] },
+                    "tombstones": []
+                },
+                "settings": {
+                    "revision": "rev-settings",
+                    "payload": {},
+                    "tombstones": []
+                },
+                "snippets": {
+                    "revision": "rev-snippets",
+                    "payload": { "snippets": [] },
+                    "tombstones": []
+                },
+                "vault": {
+                    "revision": "rev-vault",
+                    "payload": { "keys": [], "secrets": [] },
+                    "tombstones": []
+                }
+            }
+        });
+
+        crate::contract_test_support::assert_portal_hub_contract("sync-v2-response", &instance);
+        let response: HubSyncV2Response = serde_json::from_value(instance).unwrap();
+
+        assert_eq!(response.api_version, 2);
+        assert_eq!(response.services.len(), 4);
+        assert!(response.services.contains_key("hosts"));
+        assert!(response.services.contains_key("vault"));
+    }
+
+    #[test]
+    fn portal_hub_sync_v2_put_request_matches_contract() {
+        let instance = json!({
+            "services": {
+                "hosts": {
+                    "expected_revision": "rev-hosts",
+                    "payload": { "hosts": [], "groups": [] },
+                    "tombstones": []
+                }
+            }
+        });
+
+        crate::contract_test_support::assert_portal_hub_contract("sync-v2-put-request", &instance);
     }
 
     #[test]

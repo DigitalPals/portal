@@ -602,6 +602,7 @@ impl Drop for ProxySession {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn raw_sessions_to_listed_decodes_preview_and_filters_inactive() {
@@ -642,15 +643,88 @@ mod tests {
 
     #[test]
     fn raw_proxy_version_deserializes() {
-        let raw: RawProxyVersion = serde_json::from_slice(
-            br#"{"version":"0.5.0","api_version":2,"metadata_schema_version":1,"capabilities":{"web_proxy":true}}"#,
-        )
-        .unwrap();
+        let instance = json!({
+            "api_version": 2,
+            "version": "0.5.0",
+            "public_url": "https://portal-hub.example.ts.net",
+            "capabilities": {
+                "sync_v2": true,
+                "sync_events": true,
+                "web_proxy": true,
+                "key_vault": true,
+                "vault_enrollment": true
+            },
+            "ssh_port": 2222,
+            "ssh_username": "portal-hub",
+            "metadata_schema_version": 1
+        });
+        crate::contract_test_support::assert_portal_hub_contract("api-info-response", &instance);
+        let raw: RawProxyVersion = serde_json::from_value(instance).unwrap();
 
         assert_eq!(raw.version, "0.5.0");
         assert_eq!(raw.api_version, 2);
         assert_eq!(raw.metadata_schema_version, 1);
         assert!(raw.capabilities.web_proxy);
+    }
+
+    #[test]
+    fn portal_hub_sessions_response_matches_contract_and_deserializes() {
+        let session_id = Uuid::new_v4();
+        let instance = json!({
+            "api_version": 2,
+            "generated_at": "2026-04-29T12:00:00Z",
+            "sessions": [{
+                "schema_version": 1,
+                "session_id": session_id,
+                "session_name": format!("portal-{session_id}"),
+                "target_host": "example.internal",
+                "target_port": 22,
+                "target_user": "john",
+                "created_at": "2026-04-29T11:00:00Z",
+                "updated_at": "2026-04-29T11:30:00Z",
+                "ended_at": null,
+                "active": true,
+                "last_output_at": "2026-04-29T11:29:59Z",
+                "preview_base64": BASE64.encode(b"screen"),
+                "preview_truncated": false
+            }]
+        });
+
+        crate::contract_test_support::assert_portal_hub_contract("sessions-response", &instance);
+        let raw: RawListResponse = serde_json::from_value(instance).unwrap();
+
+        match raw {
+            RawListResponse::V1 {
+                api_version,
+                sessions,
+            } => {
+                assert_eq!(api_version, 2);
+                let listed = raw_sessions_to_listed(sessions).unwrap();
+                assert_eq!(listed.len(), 1);
+                assert_eq!(listed[0].session_id, session_id);
+                assert_eq!(listed[0].preview, b"screen");
+            }
+            RawListResponse::Legacy(_) => panic!("expected v1 sessions response"),
+        }
+    }
+
+    #[test]
+    fn portal_hub_terminal_start_request_matches_contract() {
+        let start = WebTerminalStart {
+            session_id: Uuid::new_v4(),
+            target_host: "example.internal".to_string(),
+            target_port: 22,
+            target_user: "john".to_string(),
+            cols: 120,
+            rows: 30,
+            private_key: Some("-----BEGIN OPENSSH PRIVATE KEY-----\n...\n".to_string()),
+        };
+        let instance = serde_json::to_value(start).unwrap();
+
+        crate::contract_test_support::assert_portal_hub_contract(
+            "terminal-start-request",
+            &instance,
+        );
     }
 
     #[test]

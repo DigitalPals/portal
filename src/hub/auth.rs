@@ -314,11 +314,41 @@ fn random_url_token(len: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn parse_query_decodes_callback_params() {
         let params = parse_query("code=abc%20123&state=xyz");
         assert_eq!(params.get("code"), Some(&"abc 123".to_string()));
         assert_eq!(params.get("state"), Some(&"xyz".to_string()));
+    }
+
+    #[test]
+    fn portal_hub_info_matches_v2_contract() {
+        let instance = json!({
+            "api_version": 2,
+            "version": "0.5.0-beta.13",
+            "public_url": "https://portal-hub.example.ts.net",
+            "capabilities": {
+                "sync_v2": true,
+                "sync_events": true,
+                "web_proxy": true,
+                "key_vault": true,
+                "vault_enrollment": true
+            },
+            "ssh_port": 2222,
+            "ssh_username": "portal-hub"
+        });
+
+        crate::contract_test_support::assert_portal_hub_contract("api-info-response", &instance);
+        let info: HubInfo = serde_json::from_value(instance).unwrap();
+
+        assert_eq!(info.api_version, 2);
+        assert!(info.capabilities.sync_v2);
+        assert!(info.capabilities.sync_events);
+        assert!(info.capabilities.web_proxy);
+        assert!(info.capabilities.key_vault);
+        assert_eq!(info.ssh_port, Some(2222));
+        assert_eq!(info.ssh_username.as_deref(), Some("portal-hub"));
     }
 }

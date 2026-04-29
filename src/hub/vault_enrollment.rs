@@ -104,3 +104,48 @@ pub async fn approve(
         .await
         .map_err(|error| format!("failed to parse vault enrollment approval: {}", error))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn portal_hub_vault_enrollment_response_matches_contract() {
+        let instance = json!({
+            "id": "00000000-0000-0000-0000-000000000001",
+            "device_name": "Pixel",
+            "public_key_algorithm": "RSA-OAEP-SHA256",
+            "public_key_der_base64": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8A",
+            "status": "pending",
+            "encrypted_secret_base64": null,
+            "created_at": "2026-04-29T12:00:00Z",
+            "updated_at": "2026-04-29T12:00:00Z",
+            "approved_at": null
+        });
+
+        crate::contract_test_support::assert_portal_hub_contract(
+            "vault-enrollment-response",
+            &instance,
+        );
+        let enrollment: VaultEnrollment = serde_json::from_value(instance).unwrap();
+
+        assert_eq!(enrollment.id, "00000000-0000-0000-0000-000000000001");
+        assert_eq!(enrollment.public_key_algorithm, "RSA-OAEP-SHA256");
+        assert_eq!(enrollment.status, "pending");
+        assert!(enrollment.encrypted_secret_base64.is_none());
+    }
+
+    #[test]
+    fn portal_hub_vault_enrollment_approve_request_matches_contract() {
+        let instance = serde_json::to_value(VaultEnrollmentApproveRequest {
+            encrypted_secret_base64: "c2VjcmV0".to_string(),
+        })
+        .unwrap();
+
+        crate::contract_test_support::assert_portal_hub_contract(
+            "vault-enrollment-approve-request",
+            &instance,
+        );
+    }
+}
