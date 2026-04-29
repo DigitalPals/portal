@@ -9,12 +9,15 @@ Portal is a cross-platform SSH and VNC client with GUI built in Rust using the I
 ## Build Commands
 
 ```bash
+nix develop    # enter the project shell if direnv is not active
 ./run.sh build   # Build release binary
 ./run.sh run     # Build and run release (default, uses nix-shell for Wayland)
 ./run.sh dev     # Build and run debug
 ./run.sh check   # Run cargo check and clippy
 cargo test       # Run tests
 ```
+
+`direnv` is configured through `.envrc`, so an allowed checkout should enter the Nix shell automatically. Add project-specific tools and native libraries to `flake.nix` instead of installing them globally.
 
 ## Architecture
 
