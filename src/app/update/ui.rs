@@ -160,6 +160,18 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
             portal.toast_manager.dismiss(id);
             Task::none()
         }
+        UiMessage::ToastAction(id, action) => {
+            portal.toast_manager.dismiss(id);
+            match action {
+                crate::views::toast::ToastAction::OpenVaultApprovals => {
+                    let open_vault = handle_sidebar_item_select(portal, SidebarMenuItem::Vault);
+                    let refresh = Task::done(Message::Vault(
+                        crate::message::VaultMessage::EnrollmentRefresh,
+                    ));
+                    Task::batch([open_vault, refresh])
+                }
+            }
+        }
         UiMessage::ToastTick => {
             portal.toast_manager.cleanup_expired();
             Task::none()

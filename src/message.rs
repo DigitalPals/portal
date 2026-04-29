@@ -750,6 +750,8 @@ pub enum UiMessage {
     WindowFocused,
     /// Dismiss toast notification
     ToastDismiss(Uuid),
+    /// Run a toast action and dismiss the toast.
+    ToastAction(Uuid, crate::views::toast::ToastAction),
     /// Toast timer tick
     ToastTick,
     /// Keyboard event

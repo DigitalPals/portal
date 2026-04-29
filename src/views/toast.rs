@@ -10,6 +10,11 @@ use crate::icons::{icon_with_color, ui};
 use crate::message::{Message, UiMessage};
 use crate::theme::{BORDER_RADIUS, ScaledFonts, Theme};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToastAction {
+    OpenVaultApprovals,
+}
+
 /// Type of toast notification (determines color and icon)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToastType {
@@ -45,7 +50,8 @@ pub struct Toast {
     pub message: String,
     pub toast_type: ToastType,
     pub created_at: Instant,
-    pub duration: Duration,
+    pub duration: Option<Duration>,
+    pub action: Option<ToastAction>,
 }
 
 impl Toast {
@@ -56,7 +62,8 @@ impl Toast {
             message: message.into(),
             toast_type,
             created_at: Instant::now(),
-            duration: Duration::from_secs(5),
+            duration: Some(Duration::from_secs(5)),
+            action: None,
         }
     }
 
@@ -75,9 +82,20 @@ impl Toast {
         Self::new(message, ToastType::Success)
     }
 
+    pub fn persistent(mut self) -> Self {
+        self.duration = None;
+        self
+    }
+
+    pub fn action(mut self, action: ToastAction) -> Self {
+        self.action = Some(action);
+        self
+    }
+
     /// Check if this toast has expired
     pub fn is_expired(&self) -> bool {
-        self.created_at.elapsed() >= self.duration
+        self.duration
+            .is_some_and(|duration| self.created_at.elapsed() >= duration)
     }
 }
 
@@ -111,9 +129,15 @@ impl ToastManager {
             .find(|t| t.message == toast.message && t.toast_type == toast.toast_type)
         {
             existing.created_at = Instant::now();
+            existing.duration = toast.duration;
+            existing.action = toast.action;
             return;
         }
         self.push(toast);
+    }
+
+    pub fn dismiss_action(&mut self, action: ToastAction) {
+        self.toasts.retain(|toast| toast.action != Some(action));
     }
 
     /// Remove a toast by ID (for manual dismissal)
@@ -176,6 +200,7 @@ fn toast_item_view(toast: &Toast, theme: Theme, fonts: ScaledFonts) -> Element<'
     let toast_id = toast.id;
     let accent_color = toast.toast_type.color();
     let message = toast.message.clone();
+    let action = toast.action;
 
     // Type icon
     let type_icon = icon_with_color(toast.toast_type.icon(), 16, accent_color);
@@ -199,11 +224,40 @@ fn toast_item_view(toast: &Toast, theme: Theme, fonts: ScaledFonts) -> Element<'
         })
         .on_press(Message::Ui(UiMessage::ToastDismiss(toast_id)));
 
-    let content = row![
+    let message_content = row![
         container(type_icon).padding(Padding::from([0, 8])),
         text(message)
             .size(fonts.button_small)
             .color(theme.text_primary),
+    ]
+    .align_y(Alignment::Center);
+
+    let message_element: Element<'static, Message> = if let Some(action) = action {
+        button(message_content)
+            .padding(0)
+            .width(Length::Fill)
+            .style(move |_theme, status| {
+                let bg = match status {
+                    button::Status::Hovered => Some(theme.hover.into()),
+                    _ => None,
+                };
+                button::Style {
+                    background: bg,
+                    border: iced::Border {
+                        radius: 4.0.into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }
+            })
+            .on_press(Message::Ui(UiMessage::ToastAction(toast_id, action)))
+            .into()
+    } else {
+        container(message_content).width(Length::Fill).into()
+    };
+
+    let content = row![
+        message_element,
         Space::new().width(Length::Fill),
         dismiss_btn,
     ]

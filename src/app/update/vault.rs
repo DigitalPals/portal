@@ -5,7 +5,7 @@ use crate::app::{Portal, VaultModal};
 use crate::config::paths;
 use crate::hub::vault::{HubVaultConfig, encrypt_private_key, load_or_create_vault_secret};
 use crate::message::{Message, VaultMessage};
-use crate::views::toast::Toast;
+use crate::views::toast::{Toast, ToastAction};
 
 pub fn handle_vault(portal: &mut Portal, msg: VaultMessage) -> Task<Message> {
     match msg {
@@ -234,10 +234,19 @@ pub fn handle_vault(portal: &mut Portal, msg: VaultMessage) -> Task<Message> {
                         format!("{} pending Android vault access request(s)", count)
                     });
                     if count > 0 {
+                        portal
+                            .toast_manager
+                            .dismiss_action(ToastAction::OpenVaultApprovals);
                         portal.toast_manager.push_or_refresh(Toast::warning(format!(
-                            "{} Android vault access request(s) need approval",
+                            "{} Android vault access request(s) need approval. Click to review.",
                             count
-                        )));
+                        ))
+                        .persistent()
+                        .action(ToastAction::OpenVaultApprovals));
+                    } else {
+                        portal
+                            .toast_manager
+                            .dismiss_action(ToastAction::OpenVaultApprovals);
                     }
                 }
                 Err(error) => {
@@ -278,6 +287,11 @@ pub fn handle_vault(portal: &mut Portal, msg: VaultMessage) -> Task<Message> {
                         "Approved vault access for {}",
                         enrollment.device_name
                     ));
+                    if portal.vault_ui.enrollment_requests.is_empty() {
+                        portal
+                            .toast_manager
+                            .dismiss_action(ToastAction::OpenVaultApprovals);
+                    }
                     portal.toast_manager.push(Toast::success(format!(
                         "Approved vault access for {}",
                         enrollment.device_name
