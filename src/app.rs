@@ -280,6 +280,7 @@ pub struct VaultUiState {
     pub edit_delete_requested: bool,
     pub operation_error: Option<String>,
     pub enrollment_requests: Vec<crate::hub::vault_enrollment::VaultEnrollment>,
+    pub enrollment_audit_events: Vec<crate::hub::vault_enrollment::VaultAuditEvent>,
     pub enrollment_loading: bool,
     pub enrollment_status: Option<String>,
 }
@@ -306,6 +307,7 @@ impl Default for VaultUiState {
             edit_delete_requested: false,
             operation_error: None,
             enrollment_requests: Vec::new(),
+            enrollment_audit_events: Vec::new(),
             enrollment_loading: false,
             enrollment_status: None,
         }

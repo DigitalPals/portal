@@ -218,16 +218,26 @@ pub fn handle_vault(portal: &mut Portal, msg: VaultMessage) -> Task<Message> {
             portal.vault_ui.operation_error = None;
             let settings = portal.prefs.portal_hub.clone();
             return Task::perform(
-                async move { crate::hub::vault_enrollment::list_pending(&settings).await },
+                async move {
+                    let enrollments = crate::hub::vault_enrollment::list_all(&settings).await?;
+                    let audit = crate::hub::vault_enrollment::list_audit(&settings)
+                        .await
+                        .unwrap_or_default();
+                    Ok((enrollments, audit))
+                },
                 |result| Message::Vault(VaultMessage::EnrollmentRefreshDone(result)),
             );
         }
         VaultMessage::EnrollmentRefreshDone(result) => {
             portal.vault_ui.enrollment_loading = false;
             match result {
-                Ok(requests) => {
-                    let count = requests.len();
+                Ok((requests, audit_events)) => {
+                    let count = requests
+                        .iter()
+                        .filter(|request| request.status == "pending")
+                        .count();
                     portal.vault_ui.enrollment_requests = requests;
+                    portal.vault_ui.enrollment_audit_events = audit_events;
                     portal.vault_ui.enrollment_status = Some(if count == 0 {
                         "No pending Android vault access requests".to_string()
                     } else {
@@ -302,6 +312,54 @@ pub fn handle_vault(portal: &mut Portal, msg: VaultMessage) -> Task<Message> {
                     portal
                         .toast_manager
                         .push(Toast::error(format!("Vault enrollment failed: {}", error)));
+                }
+            }
+        }
+        VaultMessage::EnrollmentRevoke(id) => {
+            let Some(enrollment) = portal
+                .vault_ui
+                .enrollment_requests
+                .iter()
+                .find(|request| request.id == id)
+                .cloned()
+            else {
+                portal.vault_ui.operation_error =
+                    Some("Vault enrollment request was not found".to_string());
+                return Task::none();
+            };
+            portal.vault_ui.enrollment_loading = true;
+            portal.vault_ui.enrollment_status = None;
+            portal.vault_ui.operation_error = None;
+            let settings = portal.prefs.portal_hub.clone();
+            return Task::perform(
+                async move { crate::hub::vault_enrollment::revoke(settings, enrollment).await },
+                |result| Message::Vault(VaultMessage::EnrollmentRevokeDone(result)),
+            );
+        }
+        VaultMessage::EnrollmentRevokeDone(result) => {
+            portal.vault_ui.enrollment_loading = false;
+            match result {
+                Ok(enrollment) => {
+                    for request in &mut portal.vault_ui.enrollment_requests {
+                        if request.id == enrollment.id {
+                            *request = enrollment.clone();
+                        }
+                    }
+                    portal.vault_ui.enrollment_status = Some(format!(
+                        "Revoked vault access for {}",
+                        enrollment.device_name
+                    ));
+                    portal.toast_manager.push(Toast::warning(format!(
+                        "Revoked vault access for {}",
+                        enrollment.device_name
+                    )));
+                    return Task::done(Message::Vault(VaultMessage::EnrollmentRefresh));
+                }
+                Err(error) => {
+                    portal.vault_ui.operation_error = Some(error.clone());
+                    portal
+                        .toast_manager
+                        .push(Toast::error(format!("Vault revocation failed: {}", error)));
                 }
             }
         }

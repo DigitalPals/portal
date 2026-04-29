@@ -102,9 +102,19 @@ pub enum VaultMessage {
     CopyPublicKey(Uuid),
     CopyFingerprint(Uuid),
     EnrollmentRefresh,
-    EnrollmentRefreshDone(Result<Vec<crate::hub::vault_enrollment::VaultEnrollment>, String>),
+    EnrollmentRefreshDone(
+        Result<
+            (
+                Vec<crate::hub::vault_enrollment::VaultEnrollment>,
+                Vec<crate::hub::vault_enrollment::VaultAuditEvent>,
+            ),
+            String,
+        >,
+    ),
     EnrollmentApprove(String),
     EnrollmentApproveDone(Result<crate::hub::vault_enrollment::VaultEnrollment, String>),
+    EnrollmentRevoke(String),
+    EnrollmentRevokeDone(Result<crate::hub::vault_enrollment::VaultEnrollment, String>),
 }
 
 #[derive(Debug, Clone)]

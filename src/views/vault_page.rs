@@ -2,6 +2,7 @@ use iced::widget::{
     Column, Space, button, column, container, row, scrollable, text, text_editor, text_input,
 };
 use iced::{Alignment, Element, Fill, Length, Padding};
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::app::VaultUiState;
@@ -167,28 +168,118 @@ fn enrollment_panel(
         );
     }
 
+    let pending_count = state
+        .enrollment_requests
+        .iter()
+        .filter(|request| request.status == "pending")
+        .count();
+    let trusted_count = state
+        .enrollment_requests
+        .iter()
+        .filter(|request| request.status == "approved")
+        .count();
+    body = body.push(
+        text(format!(
+            "{} pending, {} trusted Android device(s)",
+            pending_count, trusted_count
+        ))
+        .size(fonts.label)
+        .color(theme.text_muted),
+    );
+
     for request in &state.enrollment_requests {
         let id = request.id.clone();
-        body = body.push(
+        let revoke_id = request.id.clone();
+        let mut actions = row![].spacing(8);
+        if request.status == "pending" {
+            actions = actions.push(
+                small_button("Approve", theme, fonts).on_press_maybe(
+                    (!state.enrollment_loading)
+                        .then_some(Message::Vault(VaultMessage::EnrollmentApprove(id))),
+                ),
+            );
+        }
+        if request.status == "approved" {
+            actions = actions.push(
+                small_button("Revoke", theme, fonts).on_press_maybe(
+                    (!state.enrollment_loading)
+                        .then_some(Message::Vault(VaultMessage::EnrollmentRevoke(revoke_id))),
+                ),
+            );
+        }
+
+        let mut request_details = column![
             row![
                 column![
-                    text(request.device_name.clone())
-                        .size(fonts.label)
-                        .color(theme.text_primary),
+                    row![
+                        text(request.device_name.clone())
+                            .size(fonts.label)
+                            .color(theme.text_primary),
+                        status_badge(
+                            &request.status,
+                            enrollment_tone(&request.status),
+                            theme,
+                            fonts
+                        ),
+                    ]
+                    .spacing(8)
+                    .align_y(Alignment::Center),
                     text(format!("Requested {}", request.created_at))
                         .size(fonts.label)
                         .color(theme.text_muted),
                 ]
                 .spacing(3),
                 Space::new().width(Fill),
-                small_button("Approve", theme, fonts).on_press_maybe(
-                    (!state.enrollment_loading)
-                        .then_some(Message::Vault(VaultMessage::EnrollmentApprove(id))),
-                ),
+                actions,
             ]
             .align_y(Alignment::Center)
             .spacing(12),
+            text(format!(
+                "Public key {}",
+                enrollment_public_key_fingerprint(&request.public_key_der_base64)
+            ))
+            .size(fonts.label)
+            .color(theme.text_muted),
+            lifecycle_line(request, fonts, theme),
+        ]
+        .spacing(6);
+        if let Some(pairing) = &request.pairing_id {
+            request_details = request_details.push(
+                text(format!("Pairing {}", pairing))
+                    .size(fonts.label)
+                    .color(theme.text_muted),
+            );
+        }
+
+        body = body.push(
+            container(request_details)
+                .padding(12)
+                .width(Fill)
+                .style(move |_| container::Style {
+                    background: Some(theme.background.into()),
+                    border: iced::Border {
+                        color: theme.border,
+                        width: 1.0,
+                        radius: BORDER_RADIUS.into(),
+                    },
+                    ..Default::default()
+                }),
         );
+    }
+
+    if !state.enrollment_audit_events.is_empty() {
+        body = body.push(
+            text("Recent vault access history")
+                .size(fonts.label)
+                .color(theme.text_secondary),
+        );
+        for event in state.enrollment_audit_events.iter().take(6) {
+            body = body.push(
+                text(format!("{} {}", event.timestamp, event.event))
+                    .size(fonts.label)
+                    .color(theme.text_muted),
+            );
+        }
     }
 
     container(body)
@@ -203,6 +294,44 @@ fn enrollment_panel(
             },
             ..Default::default()
         })
+        .into()
+}
+
+fn enrollment_tone(status: &str) -> BadgeTone {
+    match status {
+        "approved" => BadgeTone::Success,
+        "pending" => BadgeTone::Warning,
+        "revoked" => BadgeTone::Neutral,
+        _ => BadgeTone::Neutral,
+    }
+}
+
+fn enrollment_public_key_fingerprint(public_key_der_base64: &str) -> String {
+    let Ok(bytes) = data_encoding::BASE64.decode(public_key_der_base64.as_bytes()) else {
+        return "unavailable".to_string();
+    };
+    let digest = Sha256::digest(bytes);
+    format!(
+        "SHA256:{}",
+        data_encoding::BASE64URL_NOPAD.encode(&digest[..])
+    )
+}
+
+fn lifecycle_line(
+    request: &crate::hub::vault_enrollment::VaultEnrollment,
+    fonts: ScaledFonts,
+    theme: Theme,
+) -> Element<'static, Message> {
+    let text_value = if let Some(revoked_at) = &request.revoked_at {
+        format!("Revoked {}", revoked_at)
+    } else if let Some(approved_at) = &request.approved_at {
+        format!("Approved {}", approved_at)
+    } else {
+        format!("Updated {}", request.updated_at)
+    };
+    text(text_value)
+        .size(fonts.label)
+        .color(theme.text_muted)
         .into()
 }
 
