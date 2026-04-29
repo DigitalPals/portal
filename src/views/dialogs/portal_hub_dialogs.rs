@@ -14,6 +14,7 @@ use super::common::{
     alert_dialog, dialog_backdrop, dialog_input_style, primary_button_style, secondary_button_style,
 };
 
+#[allow(clippy::too_many_arguments)]
 pub fn portal_hub_onboarding_dialog_view(
     settings: &PortalHubSettings,
     status: Option<ProxyStatus>,

@@ -211,6 +211,57 @@ mod tests {
     }
 
     #[test]
+    fn portal_hub_vault_enrollment_revoked_response_deserializes() {
+        let instance = json!({
+            "id": "00000000-0000-0000-0000-000000000001",
+            "device_name": "Pixel",
+            "public_key_algorithm": "RSA-OAEP-SHA256",
+            "public_key_der_base64": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8A",
+            "status": "revoked",
+            "encrypted_secret_base64": null,
+            "pairing_id": "00000000-0000-0000-0000-000000000010",
+            "created_at": "2026-04-29T12:00:00Z",
+            "updated_at": "2026-04-29T12:05:00Z",
+            "approved_at": "2026-04-29T12:01:00Z",
+            "revoked_at": "2026-04-29T12:05:00Z"
+        });
+
+        crate::contract_test_support::assert_portal_hub_contract(
+            "vault-enrollment-response",
+            &instance,
+        );
+        let enrollment: VaultEnrollment = serde_json::from_value(instance).unwrap();
+
+        assert_eq!(enrollment.status, "revoked");
+        assert_eq!(
+            enrollment.pairing_id.as_deref(),
+            Some("00000000-0000-0000-0000-000000000010")
+        );
+        assert!(enrollment.revoked_at.is_some());
+    }
+
+    #[test]
+    fn portal_hub_vault_audit_response_deserializes() {
+        let response: VaultAuditResponse = serde_json::from_value(json!({
+            "events": [{
+                "timestamp": "2026-04-29T12:05:00Z",
+                "event": "vault_enrollment_revoke",
+                "detail": {
+                    "enrollment_id": "00000000-0000-0000-0000-000000000001"
+                }
+            }]
+        }))
+        .unwrap();
+
+        assert_eq!(response.events.len(), 1);
+        assert_eq!(response.events[0].event, "vault_enrollment_revoke");
+        assert_eq!(
+            response.events[0].detail["enrollment_id"],
+            "00000000-0000-0000-0000-000000000001"
+        );
+    }
+
+    #[test]
     fn portal_hub_vault_enrollment_approve_request_matches_contract() {
         let instance = serde_json::to_value(VaultEnrollmentApproveRequest {
             encrypted_secret_base64: "c2VjcmV0".to_string(),
