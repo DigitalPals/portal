@@ -10,7 +10,7 @@ use crate::hub::sync::{
     SyncRunResult,
 };
 use crate::hub::vault::HubVaultConfig;
-use crate::message::{Message, UiMessage};
+use crate::message::{Message, UiMessage, VaultMessage};
 use crate::views::toast::Toast;
 
 pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
@@ -551,6 +551,15 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
             {
                 portal.ui.portal_hub_remote_sync_pending = false;
                 return portal_hub_sync_task(portal, SyncRunOrigin::RemoteEvent, true);
+            }
+            if portal.ui.portal_hub_sync_error.is_none()
+                && portal.ui.portal_hub_conflicts.is_empty()
+                && matches!(
+                    origin,
+                    SyncRunOrigin::Login | SyncRunOrigin::Startup | SyncRunOrigin::RemoteEvent
+                )
+            {
+                return Task::done(Message::Vault(VaultMessage::EnrollmentRefresh));
             }
         }
         UiMessage::PortalHubConflictChoiceChanged(index, choice) => {

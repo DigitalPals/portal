@@ -233,6 +233,12 @@ pub fn handle_vault(portal: &mut Portal, msg: VaultMessage) -> Task<Message> {
                     } else {
                         format!("{} pending Android vault access request(s)", count)
                     });
+                    if count > 0 {
+                        portal.toast_manager.push_or_refresh(Toast::warning(format!(
+                            "{} Android vault access request(s) need approval",
+                            count
+                        )));
+                    }
                 }
                 Err(error) => {
                     portal.vault_ui.operation_error = Some(error);
