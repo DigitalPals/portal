@@ -272,6 +272,10 @@ impl PortalHubSettings {
         self.enabled && !self.effective_web_url().is_empty()
     }
 
+    pub fn web_configured(&self) -> bool {
+        !self.effective_web_url().is_empty()
+    }
+
     pub fn sync_configured(&self) -> bool {
         !self.effective_web_url().is_empty()
             && (self.hosts_sync_enabled
@@ -320,6 +324,23 @@ impl PortalHubSettings {
     pub fn apply_web_url_input(&mut self, url: String) {
         self.web_url =
             canonicalize_portal_hub_web_url(&url).unwrap_or_else(|| url.trim().to_string());
+    }
+
+    pub fn apply_discovered_web_url(&mut self, url: &str) {
+        let Some(canonical) = canonicalize_portal_hub_web_url(url) else {
+            return;
+        };
+        self.web_url = canonical.clone();
+        if let Ok(parsed) = Url::parse(&canonical) {
+            if let Some(host) = parsed.host_str() {
+                self.host = host.to_string();
+            }
+            self.web_port = parsed.port().unwrap_or_else(|| match parsed.scheme() {
+                "http" => 80,
+                "https" => 443,
+                _ => self.web_port,
+            });
+        }
     }
 }
 
@@ -1089,6 +1110,25 @@ web_url = "https://hub.example.test"
 
         settings.web_url.clear();
         assert!(!settings.is_configured());
+    }
+
+    #[test]
+    fn portal_hub_discovered_web_url_updates_host_and_display_port() {
+        let mut settings = PortalHubSettings::default();
+
+        settings.apply_discovered_web_url("https://portal-hub.example.ts.net/");
+
+        assert_eq!(settings.host, "portal-hub.example.ts.net");
+        assert_eq!(settings.web_port, 443);
+        assert_eq!(
+            settings.effective_web_url(),
+            "https://portal-hub.example.ts.net"
+        );
+
+        settings.apply_discovered_web_url("http://localhost:8080");
+        assert_eq!(settings.host, "localhost");
+        assert_eq!(settings.web_port, 8080);
+        assert_eq!(settings.effective_web_url(), "http://localhost:8080");
     }
 
     #[test]

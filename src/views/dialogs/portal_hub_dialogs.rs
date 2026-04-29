@@ -7,6 +7,7 @@ use iced::{Alignment, Element, Length};
 use crate::config::settings::PortalHubSettings;
 use crate::hub::sync::{ConflictChoice, PortalHubSyncService, SyncConflict};
 use crate::message::{DialogMessage, Message, UiMessage};
+use crate::proxy::ProxyStatus;
 use crate::theme::{STATUS_FAILURE, ScaledFonts, Theme};
 
 use super::common::{
@@ -15,6 +16,9 @@ use super::common::{
 
 pub fn portal_hub_onboarding_dialog_view(
     settings: &PortalHubSettings,
+    status: Option<ProxyStatus>,
+    status_error: Option<&str>,
+    status_loading: bool,
     auth_user: Option<&str>,
     auth_error: Option<&str>,
     auth_loading: bool,
@@ -43,17 +47,52 @@ pub fn portal_hub_onboarding_dialog_view(
             .color(theme.text_muted)
     };
 
-    let auth_button = button(
-        text(if auth_loading {
-            "Waiting"
+    let setup_status = if status_loading {
+        text("Checking Portal Hub...")
+            .size(fonts.label)
+            .color(theme.text_muted)
+    } else if let Some(status) = status {
+        text(format!(
+            "Ready: v{} · API {} · proxy {} · sync {}",
+            status.version,
+            status.api_version,
+            capability_label(status.web_proxy),
+            capability_label(status.sync_v2)
+        ))
+        .size(fonts.label)
+        .color(theme.text_secondary)
+    } else if let Some(error) = status_error {
+        text(format!("Blocked: {}", error))
+            .size(fonts.label)
+            .color(STATUS_FAILURE)
+    } else {
+        text("Enter your Hub URL, then check setup.")
+            .size(fonts.label)
+            .color(theme.text_muted)
+    };
+
+    let check_button = button(
+        text(if status_loading {
+            "Checking"
         } else {
-            "Authenticate"
+            "Check setup"
         })
         .size(fonts.body),
     )
     .padding([8, 16])
-    .style(primary_button_style(theme))
-    .on_press_maybe((!auth_loading).then_some(Message::Ui(UiMessage::PortalHubAuthenticate)));
+    .style(secondary_button_style(theme))
+    .on_press_maybe(
+        (!status_loading && !auth_loading).then_some(Message::Ui(UiMessage::PortalHubCheckStatus)),
+    );
+
+    let auth_button =
+        button(text(if auth_loading { "Waiting" } else { "Sign in" }).size(fonts.body))
+            .padding([8, 16])
+            .style(primary_button_style(theme))
+            .on_press_maybe(
+                (!auth_loading && !status_loading)
+                    .then_some(Message::Ui(UiMessage::PortalHubAuthenticate)),
+            );
 
     let finish_section = if auth_user.is_some() {
         column![
@@ -88,8 +127,16 @@ pub fn portal_hub_onboarding_dialog_view(
         Space::new().height(8),
         section_title("Connection", theme, fonts),
         labeled_input(
+            PortalHubOnboardingField::WebUrl,
+            "Hub URL",
+            web_url.clone(),
+            UiMessage::PortalHubWebUrlChanged,
+            theme,
+            fonts
+        ),
+        labeled_input(
             PortalHubOnboardingField::Host,
-            "Host / IP",
+            "Detected host / fallback host",
             host,
             UiMessage::PortalHubHostChanged,
             theme,
@@ -97,24 +144,21 @@ pub fn portal_hub_onboarding_dialog_view(
         ),
         labeled_input(
             PortalHubOnboardingField::WebPort,
-            "Web port",
+            "Fallback web port",
             web_port,
             UiMessage::PortalHubWebPortChanged,
-            theme,
-            fonts
-        ),
-        labeled_input(
-            PortalHubOnboardingField::WebUrl,
-            "Web URL",
-            web_url.clone(),
-            UiMessage::PortalHubWebUrlChanged,
             theme,
             fonts
         ),
         text(format!("Portal will authenticate through {}", web_url))
             .size(fonts.label)
             .color(theme.text_muted),
-        row![auth_status, Space::new().width(Length::Fill), auth_button].align_y(Alignment::Center),
+        row![setup_status, Space::new().width(Length::Fill), check_button]
+            .spacing(10)
+            .align_y(Alignment::Center),
+        row![auth_status, Space::new().width(Length::Fill), auth_button]
+            .spacing(10)
+            .align_y(Alignment::Center),
         Space::new().height(6),
         finish_section,
     ]
@@ -257,6 +301,10 @@ fn section_title(
         .size(fonts.section)
         .color(theme.text_primary)
         .into()
+}
+
+fn capability_label(enabled: bool) -> &'static str {
+    if enabled { "on" } else { "off" }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

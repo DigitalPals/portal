@@ -294,10 +294,10 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
             save_settings_and_queue_sync(portal);
         }
         UiMessage::PortalHubCheckStatus => {
-            if !portal.prefs.portal_hub.is_configured() {
+            if !portal.prefs.portal_hub.web_configured() {
                 portal.ui.portal_hub_status = None;
                 portal.ui.portal_hub_status_error =
-                    Some("Portal Hub is not fully configured".to_string());
+                    Some("Enter a Portal Hub URL or host first".to_string());
                 portal.ui.portal_hub_status_loading = false;
                 return Task::none();
             }
@@ -315,8 +315,13 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
             portal.ui.portal_hub_status_loading = false;
             match result {
                 Ok(status) => {
+                    apply_portal_hub_discovery(&mut portal.prefs.portal_hub, &status);
+                    save_settings_and_queue_sync(portal);
                     portal.ui.portal_hub_status = Some(status);
                     portal.ui.portal_hub_status_error = None;
+                    portal
+                        .toast_manager
+                        .push(Toast::success("Portal Hub settings detected"));
                 }
                 Err(error) => {
                     portal.ui.portal_hub_status = None;
@@ -343,6 +348,7 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
             return Task::perform(
                 async move {
                     let info = crate::hub::auth::fetch_hub_info(&settings).await?;
+                    validate_portal_hub_info(&info)?;
                     let summary = crate::hub::auth::authenticate(settings).await?;
                     Ok((info, summary))
                 },
@@ -352,12 +358,8 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
         UiMessage::PortalHubAuthenticated(result) => {
             portal.ui.portal_hub_auth_loading = false;
             match result {
-                Ok((_info, summary)) => {
-                    portal.prefs.portal_hub.enabled = true;
-                    portal.prefs.portal_hub.hosts_sync_enabled = true;
-                    portal.prefs.portal_hub.settings_sync_enabled = true;
-                    portal.prefs.portal_hub.snippets_sync_enabled = true;
-                    portal.prefs.portal_hub.key_vault_enabled = true;
+                Ok((info, summary)) => {
+                    apply_portal_hub_info(&mut portal.prefs.portal_hub, &info);
                     save_settings_and_queue_sync(portal);
                     portal.ui.portal_hub_auth_user =
                         Some(format!("{} @ {}", summary.username, summary.hub_url));
@@ -788,4 +790,58 @@ fn clear_portal_hub_status(portal: &mut Portal) {
     portal.ui.portal_hub_status = None;
     portal.ui.portal_hub_status_error = None;
     portal.ui.portal_hub_status_loading = false;
+}
+
+fn apply_portal_hub_discovery(
+    settings: &mut crate::config::settings::PortalHubSettings,
+    status: &crate::proxy::ProxyStatus,
+) {
+    settings.enabled = status.web_proxy;
+    settings.hosts_sync_enabled = status.sync_v2;
+    settings.settings_sync_enabled = status.sync_v2;
+    settings.snippets_sync_enabled = status.sync_v2;
+    settings.key_vault_enabled = status.key_vault;
+    settings.port = status.ssh_port.unwrap_or(2222);
+    settings.username = status
+        .ssh_username
+        .clone()
+        .unwrap_or_else(|| "portal-hub".to_string());
+    if !status.public_url.trim().is_empty() {
+        settings.apply_discovered_web_url(&status.public_url);
+    }
+}
+
+fn apply_portal_hub_info(
+    settings: &mut crate::config::settings::PortalHubSettings,
+    info: &crate::hub::auth::HubInfo,
+) {
+    settings.enabled = info.capabilities.web_proxy;
+    settings.hosts_sync_enabled = info.capabilities.sync_v2;
+    settings.settings_sync_enabled = info.capabilities.sync_v2;
+    settings.snippets_sync_enabled = info.capabilities.sync_v2;
+    settings.key_vault_enabled = info.capabilities.key_vault;
+    settings.port = info.ssh_port.unwrap_or(2222);
+    settings.username = info
+        .ssh_username
+        .clone()
+        .unwrap_or_else(|| "portal-hub".to_string());
+    if !info.public_url.trim().is_empty() {
+        settings.apply_discovered_web_url(&info.public_url);
+    }
+}
+
+fn validate_portal_hub_info(info: &crate::hub::auth::HubInfo) -> Result<(), String> {
+    if info.api_version < 2 {
+        return Err(format!(
+            "Portal Hub API version {} is too old; Portal requires 2",
+            info.api_version
+        ));
+    }
+    if !info.capabilities.web_proxy {
+        return Err("Portal Hub does not advertise persistent session proxy support".to_string());
+    }
+    if !info.capabilities.sync_v2 {
+        return Err("Portal Hub does not advertise sync v2 support".to_string());
+    }
+    Ok(())
 }

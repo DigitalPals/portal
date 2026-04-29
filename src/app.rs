@@ -1010,6 +1010,9 @@ impl Portal {
             ActiveDialog::PortalHubOnboarding => {
                 let dialog = portal_hub_onboarding_dialog_view(
                     &self.prefs.portal_hub,
+                    self.ui.portal_hub_status.clone(),
+                    self.ui.portal_hub_status_error.as_deref(),
+                    self.ui.portal_hub_status_loading,
                     self.ui.portal_hub_auth_user.as_deref(),
                     self.ui.portal_hub_auth_error.as_deref(),
                     self.ui.portal_hub_auth_loading,

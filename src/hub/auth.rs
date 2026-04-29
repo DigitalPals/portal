@@ -44,6 +44,8 @@ pub struct HubCapabilities {
     pub key_vault: bool,
     #[serde(default)]
     pub web_proxy: bool,
+    #[serde(default)]
+    pub vault_enrollment: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -348,6 +350,7 @@ mod tests {
         assert!(info.capabilities.sync_events);
         assert!(info.capabilities.web_proxy);
         assert!(info.capabilities.key_vault);
+        assert!(info.capabilities.vault_enrollment);
         assert_eq!(info.ssh_port, Some(2222));
         assert_eq!(info.ssh_username.as_deref(), Some("portal-hub"));
     }

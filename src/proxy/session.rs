@@ -57,6 +57,14 @@ pub struct ProxyStatus {
     pub version: String,
     pub api_version: u16,
     pub metadata_schema_version: u16,
+    pub public_url: String,
+    pub ssh_port: Option<u16>,
+    pub ssh_username: Option<String>,
+    pub sync_v2: bool,
+    pub sync_events: bool,
+    pub web_proxy: bool,
+    pub key_vault: bool,
+    pub vault_enrollment: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -64,7 +72,13 @@ struct RawProxyVersion {
     version: String,
     api_version: u16,
     #[serde(default)]
+    public_url: String,
+    #[serde(default)]
     metadata_schema_version: u16,
+    #[serde(default)]
+    ssh_port: Option<u16>,
+    #[serde(default)]
+    ssh_username: Option<String>,
     #[serde(default)]
     capabilities: ProxyCapabilities,
 }
@@ -73,6 +87,14 @@ struct RawProxyVersion {
 struct ProxyCapabilities {
     #[serde(default)]
     web_proxy: bool,
+    #[serde(default)]
+    sync_v2: bool,
+    #[serde(default)]
+    sync_events: bool,
+    #[serde(default)]
+    key_vault: bool,
+    #[serde(default)]
+    vault_enrollment: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -539,11 +561,22 @@ pub async fn check_proxy_status(settings: &PortalHubSettings) -> Result<ProxySta
     if !raw.capabilities.web_proxy {
         return Err("Portal Hub does not advertise web proxy support".to_string());
     }
+    if !raw.capabilities.sync_v2 {
+        return Err("Portal Hub does not advertise sync v2 support".to_string());
+    }
 
     Ok(ProxyStatus {
         version: raw.version,
         api_version: raw.api_version,
         metadata_schema_version: raw.metadata_schema_version,
+        public_url: raw.public_url,
+        ssh_port: raw.ssh_port,
+        ssh_username: raw.ssh_username,
+        sync_v2: raw.capabilities.sync_v2,
+        sync_events: raw.capabilities.sync_events,
+        web_proxy: raw.capabilities.web_proxy,
+        key_vault: raw.capabilities.key_vault,
+        vault_enrollment: raw.capabilities.vault_enrollment,
     })
 }
 
@@ -664,7 +697,14 @@ mod tests {
         assert_eq!(raw.version, "0.5.0");
         assert_eq!(raw.api_version, 2);
         assert_eq!(raw.metadata_schema_version, 1);
+        assert_eq!(raw.public_url, "https://portal-hub.example.ts.net");
+        assert_eq!(raw.ssh_port, Some(2222));
+        assert_eq!(raw.ssh_username.as_deref(), Some("portal-hub"));
         assert!(raw.capabilities.web_proxy);
+        assert!(raw.capabilities.sync_v2);
+        assert!(raw.capabilities.sync_events);
+        assert!(raw.capabilities.key_vault);
+        assert!(raw.capabilities.vault_enrollment);
     }
 
     #[test]

@@ -905,15 +905,18 @@ fn portal_hub_status_setting(
         (
             "Checking",
             BadgeTone::Warning,
-            "Checking Portal Hub...".to_string(),
+            "Fetching /api/info...".to_string(),
         )
     } else if let Some(status) = status {
         (
             "Ready",
             BadgeTone::Success,
             format!(
-                "v{} · API {} · schema {}",
-                status.version, status.api_version, status.metadata_schema_version
+                "v{} · API {} · proxy {} · sync {}",
+                status.version,
+                status.api_version,
+                capability_label(status.web_proxy),
+                capability_label(status.sync_v2)
             ),
         )
     } else if let Some(error) = error.as_ref() {
@@ -926,7 +929,7 @@ fn portal_hub_status_setting(
         .on_press_maybe((!loading).then_some(Message::Ui(UiMessage::PortalHubCheckStatus)));
     let check_button = help_tooltip(
         check_button,
-        "Check Portal Hub API compatibility",
+        "Fetch Portal Hub info and apply detected settings",
         theme,
         fonts,
         iced::widget::tooltip::Position::Top,
@@ -942,11 +945,15 @@ fn portal_hub_status_setting(
 
     field(
         "Status",
-        "Check proxy version and API compatibility",
+        "Fetch /api/info, verify compatibility, and auto-fill Hub settings",
         control,
         theme,
         fonts,
     )
+}
+
+fn capability_label(enabled: bool) -> &'static str {
+    if enabled { "on" } else { "off" }
 }
 
 fn portal_hub_sections(
