@@ -48,8 +48,11 @@ impl ResolvedAuth {
                 vault_key_id,
             } => {
                 if let Some(vault_key_id) = vault_key_id {
-                    let private_key = crate::hub::vault::load_decrypted_private_key(*vault_key_id)
-                        .map_err(SshError::KeyFile)?;
+                    let private_key = crate::hub::vault::load_decrypted_private_key_or_local_file(
+                        *vault_key_id,
+                        key_path.as_deref(),
+                    )
+                    .map_err(SshError::KeyFile)?;
                     let passphrase = passphrase.as_ref().map(|p| p.expose_secret());
                     return load_key_text(
                         private_key.expose_secret(),

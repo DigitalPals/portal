@@ -452,11 +452,15 @@ fn terminal_ws_url(hub_url: &str) -> Result<String, String> {
 fn proxy_private_key(auth: &AuthMethod) -> Result<Option<String>, LocalError> {
     match auth {
         AuthMethod::PublicKey {
+            key_path,
             vault_key_id: Some(vault_key_id),
             ..
-        } => crate::hub::vault::load_decrypted_private_key(*vault_key_id)
-            .map(|key| Some(key.expose_secret().to_string()))
-            .map_err(LocalError::SpawnFailed),
+        } => crate::hub::vault::load_decrypted_private_key_or_local_file(
+            *vault_key_id,
+            key_path.as_deref(),
+        )
+        .map(|key| Some(key.expose_secret().to_string()))
+        .map_err(LocalError::SpawnFailed),
         AuthMethod::PublicKey {
             key_path: Some(key_path),
             ..

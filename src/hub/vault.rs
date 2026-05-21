@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use argon2::{Algorithm, Argon2, Params, Version};
 use chacha20poly1305::aead::{Aead, OsRng, rand_core::RngCore};
@@ -315,6 +315,7 @@ fn decrypt_encryption(
     Ok(SecretString::from(text))
 }
 
+#[allow(dead_code)]
 pub fn load_decrypted_private_key(id: Uuid) -> Result<SecretString, String> {
     let vault = HubVaultConfig::load()?;
     let key = vault
@@ -323,6 +324,25 @@ pub fn load_decrypted_private_key(id: Uuid) -> Result<SecretString, String> {
     let vault_secret =
         load_stored_vault_secret()?.ok_or_else(|| "Portal Hub vault is locked".to_string())?;
     decrypt_private_key(key, &vault_secret)
+}
+
+pub fn load_decrypted_private_key_or_local_file(
+    id: Uuid,
+    key_path: Option<&Path>,
+) -> Result<SecretString, String> {
+    let vault = HubVaultConfig::load()?;
+    let key = vault
+        .find_key(id)
+        .ok_or_else(|| format!("vault key {} was not found", id))?;
+    match load_stored_vault_secret()? {
+        Some(vault_secret) => decrypt_private_key(key, &vault_secret),
+        None => {
+            if let Some(private_key) = load_matching_local_private_key(key, key_path)? {
+                return Ok(SecretString::from(private_key));
+            }
+            Err("Portal Hub vault is locked".to_string())
+        }
+    }
 }
 
 pub fn load_decrypted_secret(id: Uuid) -> Result<SecretString, String> {
@@ -373,6 +393,70 @@ pub fn load_stored_vault_secret() -> Result<Option<SecretString>, String> {
             error
         )),
     }
+}
+
+fn load_matching_local_private_key(
+    vault_key: &VaultKey,
+    key_path: Option<&Path>,
+) -> Result<Option<String>, String> {
+    let mut candidates = Vec::new();
+    if let Some(path) = key_path {
+        candidates.push(paths::expand_tilde(&path.to_string_lossy()));
+    }
+    for path in paths::default_identity_files() {
+        if !candidates
+            .iter()
+            .any(|candidate: &PathBuf| candidate == &path)
+        {
+            candidates.push(path);
+        }
+    }
+
+    for path in candidates.into_iter().filter(|path| path.exists()) {
+        let private_key = match std::fs::read_to_string(&path) {
+            Ok(private_key) => private_key,
+            Err(error) => {
+                tracing::debug!(
+                    "Skipping local vault key fallback {}: {}",
+                    path.display(),
+                    error
+                );
+                continue;
+            }
+        };
+        let metadata = match private_key_metadata(private_key.as_bytes(), None) {
+            Ok(Some(metadata)) => metadata,
+            Ok(None) => continue,
+            Err(error) => {
+                tracing::debug!(
+                    "Skipping local vault key fallback {}: {}",
+                    path.display(),
+                    error
+                );
+                continue;
+            }
+        };
+        if vault_key_matches_metadata(vault_key, &metadata) {
+            tracing::info!(
+                "Using matching local SSH key {} because Portal Hub vault is locked",
+                path.display()
+            );
+            return Ok(Some(private_key));
+        }
+    }
+
+    Ok(None)
+}
+
+fn vault_key_matches_metadata(vault_key: &VaultKey, metadata: &VaultKeyMetadata) -> bool {
+    vault_key
+        .fingerprint
+        .as_deref()
+        .is_some_and(|fingerprint| fingerprint == metadata.fingerprint)
+        || vault_key
+            .public_key
+            .as_deref()
+            .is_some_and(|public_key| public_key == metadata.public_key)
 }
 
 fn default_kdf() -> VaultKdf {
@@ -481,5 +565,37 @@ mod tests {
         assert!(metadata.public_key.starts_with("ssh-ed25519 "));
         assert!(metadata.fingerprint.starts_with("SHA256:"));
         assert!(metadata.algorithm.contains("ssh-ed25519"));
+    }
+
+    #[test]
+    fn local_private_key_fallback_requires_matching_metadata() {
+        let key_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/docker/test_keys/id_ed25519");
+        if !key_path.exists() {
+            eprintln!("Skipping test: test key not found at {:?}", key_path);
+            return;
+        }
+
+        let private_key = std::fs::read(&key_path).unwrap();
+        let mut key = encrypt_private_key(
+            "default".to_string(),
+            &private_key,
+            &SecretString::from("vault secret"),
+        )
+        .unwrap();
+
+        assert!(
+            load_matching_local_private_key(&key, Some(&key_path))
+                .unwrap()
+                .is_some()
+        );
+
+        key.fingerprint = Some("SHA256:not-the-same-key".to_string());
+        key.public_key = Some("ssh-ed25519 not-the-same-key".to_string());
+        assert!(
+            load_matching_local_private_key(&key, Some(&key_path))
+                .unwrap()
+                .is_none()
+        );
     }
 }
