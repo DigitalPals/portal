@@ -425,7 +425,7 @@ impl<'a, Message> TerminalWidget<'a, Message> {
         };
 
         let display_offset = content.display_offset as i32;
-        let cursor_shape = content.cursor.shape;
+        let cursor = content.cursor;
         let rows = term.screen_lines();
         let cols = term.columns();
 
@@ -444,7 +444,7 @@ impl<'a, Message> TerminalWidget<'a, Message> {
                 continue;
             }
 
-            if selection.contains_cell(&indexed, indexed.point, cursor_shape) {
+            if selection.contains_cell(&indexed, cursor.point, cursor.shape) {
                 match active_span {
                     Some((line, start_col, end_col))
                         if line == screen_line && col == end_col + 1 =>
@@ -1551,6 +1551,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::terminal::backend::{TerminalBackend, TerminalSize};
 
     #[test]
     fn cell_metrics_round_to_integer_pixels() {
@@ -1585,6 +1586,41 @@ mod tests {
         assert_eq!(selection_side(f32::NAN, 0, 10.0), None);
         assert_eq!(selection_side(4.0, 0, f32::INFINITY), None);
         assert_eq!(selection_side(4.0, 0, 0.0), None);
+    }
+
+    #[test]
+    fn semantic_selection_rect_includes_word_endpoints() {
+        let (backend, _events) = TerminalBackend::new(TerminalSize::new(10, 3));
+        backend.process_input(b"test");
+
+        let term = backend.term();
+        {
+            let mut term = term.lock();
+            term.selection = Some(Selection::new(
+                SelectionType::Semantic,
+                Point::new(Line(0), Column(1)),
+                Side::Left,
+            ));
+        }
+
+        let widget = TerminalWidget::<()>::new(term, |_| ());
+        let metrics = widget.cell_metrics();
+        let rects = widget.selection_rects(
+            Rectangle {
+                x: 0.0,
+                y: 0.0,
+                width: 200.0,
+                height: 100.0,
+            },
+            metrics,
+        );
+
+        assert_eq!(widget.selected_text(), Some("test".to_string()));
+        assert_eq!(rects.len(), 1);
+        assert_eq!(rects[0].x, TERMINAL_PADDING_LEFT);
+        assert_eq!(rects[0].y, 0.0);
+        assert_eq!(rects[0].width, metrics.cell_width * 4.0);
+        assert_eq!(rects[0].height, metrics.cell_height);
     }
 
     #[test]
