@@ -394,7 +394,7 @@ pub struct Portal {
     file_viewers: FileViewerManager,
     proxy_sessions: ProxySessionsState,
     dialogs: DialogManager,
-    pending_connect: Option<iced::task::Handle>,
+    pending_connect: Option<PendingConnect>,
 
     // VNC sessions (separate from terminal sessions)
     pub(crate) vnc_sessions: std::collections::HashMap<SessionId, VncActiveSession>,
@@ -411,6 +411,21 @@ pub struct Portal {
 
     // Vault page state
     vault_ui: VaultUiState,
+}
+
+pub(crate) struct PendingConnect {
+    session_id: SessionId,
+    handle: iced::task::Handle,
+}
+
+impl PendingConnect {
+    fn new(session_id: SessionId, handle: iced::task::Handle) -> Self {
+        Self { session_id, handle }
+    }
+
+    fn is_for(&self, session_id: SessionId) -> bool {
+        self.session_id == session_id
+    }
 }
 
 fn scaled_vnc_dimension(logical_size: f32, scale: f32, min: f32, max: f32) -> u16 {

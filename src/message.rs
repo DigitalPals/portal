@@ -572,6 +572,11 @@ pub enum VncMessage {
     RenderTick,
     /// VNC session disconnected
     Disconnected(SessionId),
+    /// VNC connection failed before the session was established
+    ConnectFailed {
+        session_id: SessionId,
+        error: String,
+    },
     /// VNC connection error
     Error(String),
     /// Key event to forward to VNC server

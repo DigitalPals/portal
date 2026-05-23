@@ -1,5 +1,6 @@
 //! SFTP session for file operations
 
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -7,9 +8,10 @@ use chrono::{TimeZone, Utc};
 use russh_sftp::client::SftpSession as RusshSftpSession;
 use russh_sftp::protocol::OpenFlags;
 use tokio::fs::OpenOptions;
-use tokio::io;
+use tokio::io::{self, AsyncWriteExt};
 
 use tokio::sync::Mutex;
+use uuid::Uuid;
 
 use crate::error::SftpError;
 use crate::ssh::SshConnection;
@@ -241,6 +243,8 @@ impl SftpSession {
 
     /// Download a file from remote to local
     pub async fn download(&self, remote_path: &Path, local_path: &Path) -> Result<u64, SftpError> {
+        ensure_local_target_is_not_symlink(local_path).await?;
+
         if let Some(parent) = local_path.parent() {
             tokio::fs::create_dir_all(parent).await.map_err(|e| {
                 SftpError::LocalIo(format!(
@@ -251,6 +255,7 @@ impl SftpSession {
             })?;
         }
 
+        let partial_path = local_staging_path(local_path, STAGING_PARTIAL_MARKER)?;
         let sftp = self.sftp.lock().await;
         let remote_str = remote_path.to_string_lossy().to_string();
 
@@ -260,28 +265,67 @@ impl SftpSession {
 
         let mut local = {
             let mut options = OpenOptions::new();
-            options.create(true).write(true).truncate(true);
+            options.create_new(true).write(true);
             #[cfg(unix)]
             {
                 options.mode(0o600);
             }
-            options.open(local_path).await.map_err(|e| {
+            options.open(&partial_path).await.map_err(|e| {
                 SftpError::LocalIo(format!(
-                    "Failed to write local file {}: {}",
-                    local_path.display(),
+                    "Failed to open local staging file {}: {}",
+                    partial_path.display(),
                     e
                 ))
             })?
         };
 
-        let bytes = io::copy(&mut remote, &mut local).await.map_err(|e| {
-            SftpError::Transfer(format!(
-                "Failed to download {} to {}: {}",
-                remote_str,
+        let bytes = match io::copy(&mut remote, &mut local).await {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                drop(local);
+                cleanup_local_staging(&partial_path).await;
+                return Err(SftpError::Transfer(format!(
+                    "Failed to download {} to {}: {}",
+                    remote_str,
+                    local_path.display(),
+                    e
+                )));
+            }
+        };
+
+        if let Err(e) = local.flush().await {
+            drop(local);
+            cleanup_local_staging(&partial_path).await;
+            return Err(SftpError::LocalIo(format!(
+                "Failed to flush local staging file {}: {}",
+                partial_path.display(),
+                e
+            )));
+        }
+
+        if let Err(e) = local.sync_all().await {
+            drop(local);
+            cleanup_local_staging(&partial_path).await;
+            return Err(SftpError::LocalIo(format!(
+                "Failed to sync local staging file {}: {}",
+                partial_path.display(),
+                e
+            )));
+        }
+
+        drop(local);
+
+        if let Err(e) = tokio::fs::rename(&partial_path, local_path).await {
+            cleanup_local_staging(&partial_path).await;
+            return Err(SftpError::LocalIo(format!(
+                "Failed to promote local staging file {} to {}: {}",
+                partial_path.display(),
                 local_path.display(),
                 e
-            ))
-        })?;
+            )));
+        }
+
+        sync_local_parent_dir(local_path).await;
 
         Ok(bytes)
     }
@@ -298,25 +342,75 @@ impl SftpSession {
 
         let sftp = self.sftp.lock().await;
         let remote_str = remote_path.to_string_lossy().to_string();
+        let partial_path = remote_staging_path(remote_path, STAGING_PARTIAL_MARKER)?;
+        let backup_path = remote_staging_path(remote_path, STAGING_BACKUP_MARKER)?;
+        let partial_str = partial_path.to_string_lossy().to_string();
+        let backup_str = backup_path.to_string_lossy().to_string();
 
         let mut remote = sftp
             .open_with_flags(
-                remote_str.clone(),
-                OpenFlags::WRITE | OpenFlags::CREATE | OpenFlags::TRUNCATE,
+                partial_str.clone(),
+                OpenFlags::WRITE | OpenFlags::CREATE | OpenFlags::EXCLUDE,
             )
             .await
             .map_err(|e| {
-                SftpError::Transfer(format!("Failed to open remote file {}: {}", remote_str, e))
+                SftpError::Transfer(format!(
+                    "Failed to open remote staging file {}: {}",
+                    partial_str, e
+                ))
             })?;
 
-        let bytes = io::copy(&mut local, &mut remote).await.map_err(|e| {
-            SftpError::Transfer(format!(
-                "Failed to upload {} to {}: {}",
-                local_path.display(),
-                remote_str,
-                e
-            ))
-        })?;
+        let bytes = match io::copy(&mut local, &mut remote).await {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                let _ = remote.shutdown().await;
+                drop(remote);
+                cleanup_remote_staging(&sftp, &partial_str).await;
+                return Err(SftpError::Transfer(format!(
+                    "Failed to upload {} to {}: {}",
+                    local_path.display(),
+                    remote_str,
+                    e
+                )));
+            }
+        };
+
+        if let Err(e) = remote.flush().await {
+            let _ = remote.shutdown().await;
+            drop(remote);
+            cleanup_remote_staging(&sftp, &partial_str).await;
+            return Err(SftpError::Transfer(format!(
+                "Failed to flush remote staging file {}: {}",
+                partial_str, e
+            )));
+        }
+
+        if let Err(e) = remote.sync_all().await {
+            let _ = remote.shutdown().await;
+            drop(remote);
+            cleanup_remote_staging(&sftp, &partial_str).await;
+            return Err(SftpError::Transfer(format!(
+                "Failed to sync remote staging file {}: {}",
+                partial_str, e
+            )));
+        }
+
+        if let Err(e) = remote.shutdown().await {
+            drop(remote);
+            cleanup_remote_staging(&sftp, &partial_str).await;
+            return Err(SftpError::Transfer(format!(
+                "Failed to close remote staging file {}: {}",
+                partial_str, e
+            )));
+        }
+
+        drop(remote);
+
+        if let Err(e) = promote_remote_staging(&sftp, &partial_str, &remote_str, &backup_str).await
+        {
+            cleanup_remote_staging(&sftp, &partial_str).await;
+            return Err(e);
+        }
 
         Ok(bytes)
     }
@@ -437,6 +531,154 @@ fn is_safe_sftp_entry_name(name: &str) -> bool {
         && !name.contains('/')
         && !name.contains('\\')
         && !Path::new(name).is_absolute()
+}
+
+const STAGING_PARTIAL_MARKER: &str = ".portal-part-";
+const STAGING_BACKUP_MARKER: &str = ".portal-backup-";
+
+async fn ensure_local_target_is_not_symlink(local_path: &Path) -> Result<(), SftpError> {
+    match tokio::fs::symlink_metadata(local_path).await {
+        Ok(metadata) if metadata.file_type().is_symlink() => Err(SftpError::LocalIo(format!(
+            "Refusing to overwrite local symbolic link {}",
+            local_path.display()
+        ))),
+        Ok(_) => Ok(()),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(SftpError::LocalIo(format!(
+            "Failed to inspect local file {}: {}",
+            local_path.display(),
+            e
+        ))),
+    }
+}
+
+fn local_staging_path(path: &Path, marker: &str) -> Result<PathBuf, SftpError> {
+    sibling_staging_path(path, marker).map_err(SftpError::LocalIo)
+}
+
+fn remote_staging_path(path: &Path, marker: &str) -> Result<PathBuf, SftpError> {
+    sibling_staging_path(path, marker).map_err(SftpError::Transfer)
+}
+
+fn sibling_staging_path(path: &Path, marker: &str) -> Result<PathBuf, String> {
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| format!("Cannot create staging path for {}", path.display()))?
+        .to_string_lossy();
+
+    Ok(path.with_file_name(staging_file_name(&file_name, marker, Uuid::new_v4())))
+}
+
+fn staging_file_name(final_name: &str, marker: &str, id: Uuid) -> String {
+    format!(".{}{}{}", final_name, marker, id)
+}
+
+async fn cleanup_local_staging(path: &Path) {
+    match tokio::fs::remove_file(path).await {
+        Ok(()) => {}
+        Err(e) if e.kind() == ErrorKind::NotFound => {}
+        Err(e) => {
+            tracing::debug!(
+                "Failed to remove local staging file {}: {}",
+                path.display(),
+                e
+            );
+        }
+    }
+}
+
+async fn sync_local_parent_dir(path: &Path) {
+    let Some(parent) = path.parent() else {
+        return;
+    };
+
+    let parent = if parent.as_os_str().is_empty() {
+        PathBuf::from(".")
+    } else {
+        parent.to_path_buf()
+    };
+
+    match tokio::task::spawn_blocking(move || {
+        let dir = std::fs::File::open(&parent)?;
+        dir.sync_all()
+    })
+    .await
+    {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => {
+            tracing::debug!("Failed to sync local parent directory: {}", e);
+        }
+        Err(e) => {
+            tracing::debug!("Failed to join local parent directory sync task: {}", e);
+        }
+    }
+}
+
+async fn cleanup_remote_staging(sftp: &RusshSftpSession, path: &str) {
+    if let Err(e) = sftp.remove_file(path.to_string()).await {
+        tracing::debug!("Failed to remove remote staging file {}: {}", path, e);
+    }
+}
+
+async fn promote_remote_staging(
+    sftp: &RusshSftpSession,
+    partial_path: &str,
+    final_path: &str,
+    backup_path: &str,
+) -> Result<(), SftpError> {
+    match sftp
+        .rename(partial_path.to_string(), final_path.to_string())
+        .await
+    {
+        Ok(()) => Ok(()),
+        Err(first_error) => match sftp.try_exists(final_path.to_string()).await {
+            Ok(true) => {
+                sftp.rename(final_path.to_string(), backup_path.to_string())
+                    .await
+                    .map_err(|backup_error| {
+                        SftpError::Transfer(format!(
+                            "Failed to stage replacement for remote file {} after upload to {}: initial promote failed: {}; backup rename failed: {}",
+                            final_path, partial_path, first_error, backup_error
+                        ))
+                    })?;
+
+                match sftp
+                    .rename(partial_path.to_string(), final_path.to_string())
+                    .await
+                {
+                    Ok(()) => {
+                        cleanup_remote_staging(sftp, backup_path).await;
+                        Ok(())
+                    }
+                    Err(promote_error) => {
+                        let rollback = sftp
+                            .rename(backup_path.to_string(), final_path.to_string())
+                            .await;
+                        let rollback_message = match rollback {
+                            Ok(()) => "original remote file was restored".to_string(),
+                            Err(rollback_error) => format!(
+                                "rollback failed; original remote file remains at {}: {}",
+                                backup_path, rollback_error
+                            ),
+                        };
+
+                        Err(SftpError::Transfer(format!(
+                            "Failed to promote remote staging file {} to {}: {}; {}",
+                            partial_path, final_path, promote_error, rollback_message
+                        )))
+                    }
+                }
+            }
+            Ok(false) => Err(SftpError::Transfer(format!(
+                "Failed to promote remote staging file {} to {}: {}",
+                partial_path, final_path, first_error
+            ))),
+            Err(check_error) => Err(SftpError::Transfer(format!(
+                "Failed to promote remote staging file {} to {}: {}; target existence check failed: {}",
+                partial_path, final_path, first_error, check_error
+            ))),
+        },
+    }
 }
 
 impl Drop for SftpSession {
@@ -761,6 +1003,34 @@ mod tests {
 
         assert!(is_safe_sftp_entry_name("notes.txt"));
         assert!(is_safe_sftp_entry_name(".profile"));
+    }
+
+    #[test]
+    fn staging_file_name_uses_hidden_sibling_prefix() {
+        let name = staging_file_name("notes.txt", STAGING_PARTIAL_MARKER, Uuid::nil());
+
+        assert_eq!(
+            name,
+            ".notes.txt.portal-part-00000000-0000-0000-0000-000000000000"
+        );
+    }
+
+    #[test]
+    fn sibling_staging_path_stays_in_same_directory() {
+        let staging = sibling_staging_path(Path::new("/tmp/notes.txt"), STAGING_PARTIAL_MARKER)
+            .expect("staging path should be created");
+
+        assert_eq!(staging.parent(), Some(Path::new("/tmp")));
+        let file_name = staging.file_name().unwrap().to_string_lossy();
+        assert!(file_name.starts_with(".notes.txt.portal-part-"));
+    }
+
+    #[test]
+    fn sibling_staging_path_rejects_paths_without_file_names() {
+        let error = sibling_staging_path(Path::new("/"), STAGING_PARTIAL_MARKER)
+            .expect_err("root cannot have a sibling staging file");
+
+        assert!(error.contains("Cannot create staging path"));
     }
 
     // === Error message formatting patterns ===

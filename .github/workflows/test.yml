@@ -9,6 +9,7 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUST_BACKTRACE: 1
+  RUST_VERSION: "1.88"
 
 jobs:
   unit-tests-linux:
@@ -20,7 +21,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.88"
+          toolchain: ${{ env.RUST_VERSION }}
 
       - name: Install Linux dependencies
         run: |
@@ -42,7 +43,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.88"
+          toolchain: ${{ env.RUST_VERSION }}
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
@@ -59,7 +60,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.88"
+          toolchain: ${{ env.RUST_VERSION }}
 
       - name: Install Linux dependencies
         run: |
@@ -123,13 +124,44 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.88"
+          toolchain: ${{ env.RUST_VERSION }}
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
 
       - name: Run SSH integration tests (skips if Docker unavailable)
         run: cargo test --test ssh_integration -- --test-threads=1
+
+  portal-hub-contracts:
+    name: Portal Hub Contracts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Portal
+        uses: actions/checkout@v4
+
+      - name: Checkout Portal Hub contracts
+        uses: actions/checkout@v4
+        with:
+          repository: DigitalPals/portal-hub
+          path: portal-hub
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libxkbcommon-dev libwayland-dev libvulkan-dev libglib2.0-dev libdbus-1-dev
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run contract-backed unit tests
+        run: cargo test --lib
+        env:
+          PORTAL_HUB_CONTRACT_DIR: ${{ github.workspace }}/portal-hub/contracts/portal-hub/v2
 
   clippy:
     name: Clippy
@@ -140,7 +172,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.88"
+          toolchain: ${{ env.RUST_VERSION }}
           components: clippy
 
       - name: Install Linux dependencies
@@ -163,8 +195,31 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: "1.88"
+          toolchain: ${{ env.RUST_VERSION }}
           components: rustfmt
 
       - name: Check formatting
         run: cargo fmt -- --check
+
+  security-audit:
+    name: Security Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Run cargo audit
+        run: |
+          # RUSTSEC-2023-0071 has no fixed rsa release. Keep this explicit so any
+          # new non-ignored vulnerability still fails CI.
+          cargo audit --ignore RUSTSEC-2023-0071

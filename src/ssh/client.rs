@@ -8,7 +8,7 @@ use russh::client::{self, Config};
 use russh::keys::HashAlg;
 use tokio::net::TcpStream;
 use tokio::sync::{Mutex, mpsc};
-use tokio::time::timeout;
+use tokio::time::{sleep, timeout};
 
 use crate::config::Host;
 use crate::error::SshError;
@@ -28,6 +28,8 @@ use super::session::SshSession;
 use super::shared_connection_pool;
 
 const SSH_TERMINAL_TYPE: &str = "xterm-256color";
+const NEW_CONNECTION_TRANSPORT_ATTEMPTS: usize = 3;
+const NEW_CONNECTION_TRANSPORT_RETRY_DELAY: Duration = Duration::from_millis(250);
 
 fn default_pty_modes() -> &'static [(Pty, u32)] {
     &[
@@ -84,6 +86,21 @@ fn default_pty_modes() -> &'static [(Pty, u32)] {
         (Pty::TTY_OP_ISPEED, 38400),
         (Pty::TTY_OP_OSPEED, 38400),
     ]
+}
+
+fn is_transient_transport_error(reason: &str) -> bool {
+    let lower = reason.to_ascii_lowercase();
+    [
+        "connection reset",
+        "reset by peer",
+        "connection aborted",
+        "connection refused",
+        "broken pipe",
+        "unexpected eof",
+        "early eof",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
 }
 
 /// SSH client for establishing connections
@@ -200,49 +217,86 @@ impl SshClient {
                 created_new_connection = true;
                 let addr = format!("{}:{}", host.hostname, host.port);
 
-                // Connect with timeout
-                let stream = timeout(connection_timeout, TcpStream::connect(&addr))
-                    .await
-                    .map_err(|_| SshError::Timeout(addr.clone()))?
-                    .map_err(|e| SshError::ConnectionFailed {
+                let mut last_transport_error = None;
+                for transport_attempt in 0..NEW_CONNECTION_TRANSPORT_ATTEMPTS {
+                    let stream = match timeout(connection_timeout, TcpStream::connect(&addr)).await
+                    {
+                        Ok(Ok(stream)) => stream,
+                        Ok(Err(error)) => {
+                            let reason = error.to_string();
+                            if transport_attempt + 1 < NEW_CONNECTION_TRANSPORT_ATTEMPTS
+                                && is_transient_transport_error(&reason)
+                            {
+                                last_transport_error = Some(reason);
+                                sleep(NEW_CONNECTION_TRANSPORT_RETRY_DELAY).await;
+                                continue;
+                            }
+                            return Err(SshError::ConnectionFailed {
+                                host: host.hostname.clone(),
+                                port: host.port,
+                                reason,
+                            });
+                        }
+                        Err(_) => return Err(SshError::Timeout(addr.clone())),
+                    };
+
+                    let agent_forwarding_enabled_flag = Arc::new(AtomicBool::new(false));
+                    // Create shared remote forwards registry for this connection
+                    let remote_forwards = Arc::new(Mutex::new(HashMap::new()));
+                    let handler = ClientHandler::new(
+                        host.hostname.clone(),
+                        host.port,
+                        self.known_hosts.clone(),
+                        event_tx.clone(),
+                        agent_forwarding_enabled_flag.clone(),
+                        remote_forwards.clone(),
+                    );
+
+                    let mut handle =
+                        match client::connect_stream(self.config.clone(), stream, handler).await {
+                            Ok(handle) => handle,
+                            Err(error) => {
+                                let reason = error.to_string();
+                                if transport_attempt + 1 < NEW_CONNECTION_TRANSPORT_ATTEMPTS
+                                    && is_transient_transport_error(&reason)
+                                {
+                                    last_transport_error = Some(reason);
+                                    sleep(NEW_CONNECTION_TRANSPORT_RETRY_DELAY).await;
+                                    continue;
+                                }
+                                return Err(SshError::ConnectionFailed {
+                                    host: host.hostname.clone(),
+                                    port: host.port,
+                                    reason,
+                                });
+                            }
+                        };
+
+                    // Authenticate
+                    let auth =
+                        ResolvedAuth::resolve(&host.auth, password.clone(), passphrase.clone())
+                            .await?;
+                    self.authenticate(&mut handle, &host.username, auth, &host.hostname, host.port)
+                        .await?;
+
+                    connection = Some(SshConnection::new(
+                        handle,
+                        remote_forwards,
+                        agent_forwarding_enabled_flag,
+                        Arc::from(host.hostname.clone()),
+                        host.port,
+                    ));
+                    break;
+                }
+
+                if connection.is_none() {
+                    return Err(SshError::ConnectionFailed {
                         host: host.hostname.clone(),
                         port: host.port,
-                        reason: e.to_string(),
-                    })?;
-
-                let agent_forwarding_enabled_flag = Arc::new(AtomicBool::new(false));
-                // Create shared remote forwards registry for this connection
-                let remote_forwards = Arc::new(Mutex::new(HashMap::new()));
-                let handler = ClientHandler::new(
-                    host.hostname.clone(),
-                    host.port,
-                    self.known_hosts.clone(),
-                    event_tx.clone(),
-                    agent_forwarding_enabled_flag.clone(),
-                    remote_forwards.clone(),
-                );
-
-                let mut handle = client::connect_stream(self.config.clone(), stream, handler)
-                    .await
-                    .map_err(|e| SshError::ConnectionFailed {
-                        host: host.hostname.clone(),
-                        port: host.port,
-                        reason: e.to_string(),
-                    })?;
-
-                // Authenticate
-                let auth =
-                    ResolvedAuth::resolve(&host.auth, password.clone(), passphrase.clone()).await?;
-                self.authenticate(&mut handle, &host.username, auth, &host.hostname, host.port)
-                    .await?;
-
-                connection = Some(SshConnection::new(
-                    handle,
-                    remote_forwards,
-                    agent_forwarding_enabled_flag,
-                    Arc::from(host.hostname.clone()),
-                    host.port,
-                ));
+                        reason: last_transport_error
+                            .unwrap_or_else(|| "Failed to establish SSH transport".to_string()),
+                    });
+                }
                 if let Some(conn) = connection.as_ref() {
                     pool.put(key.clone(), conn.clone()).await;
                 }
@@ -502,14 +556,15 @@ impl SshClient {
 
         // Try each identity with SHA-512 for RSA keys
         for identity in identities {
-            let hash_alg = if identity.algorithm().is_rsa() {
+            let public_key = identity.public_key().into_owned();
+            let hash_alg = if public_key.algorithm().is_rsa() {
                 Some(HashAlg::Sha512)
             } else {
                 None
             };
 
             match handle
-                .authenticate_publickey_with(username, identity, hash_alg, &mut agent)
+                .authenticate_publickey_with(username, public_key, hash_alg, &mut agent)
                 .await
             {
                 Ok(result) if result.success() => return Ok(result),
@@ -536,6 +591,17 @@ impl Default for SshClient {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn transient_transport_errors_are_retryable() {
+        assert!(is_transient_transport_error("Connection reset by peer"));
+        assert!(is_transient_transport_error("broken pipe"));
+        assert!(is_transient_transport_error("unexpected EOF"));
+        assert!(!is_transient_transport_error("Authentication failed"));
+        assert!(!is_transient_transport_error(
+            "Host key verification failed"
+        ));
+    }
 
     #[test]
     fn new_creates_client_with_custom_settings() {

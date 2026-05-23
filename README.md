@@ -7,7 +7,7 @@
 **A modern, fast SSH and VNC client for macOS and Linux**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Rust](https://img.shields.io/badge/rust-1.85%2B-orange.svg)](https://www.rust-lang.org/)
+[![Rust](https://img.shields.io/badge/rust-1.88%2B-orange.svg)](https://www.rust-lang.org/)
 [![macOS](https://img.shields.io/badge/macOS-000000?logo=apple&logoColor=white)](https://github.com/DigitalPals/portal/releases)
 [![AppImage](https://img.shields.io/badge/AppImage-x86__64-blue)](https://github.com/DigitalPals/portal/releases)
 [![DEB](https://img.shields.io/badge/DEB-Debian%2FUbuntu-A81D33)](https://github.com/DigitalPals/portal/releases)
@@ -174,7 +174,7 @@ Portal is built for Wayland. If it does not start, install your distro's Wayland
 
 ### Build from Source
 
-Requires Rust 1.85 or later.
+Requires Rust 1.88 or later.
 
 ```bash
 git clone https://github.com/DigitalPals/portal.git

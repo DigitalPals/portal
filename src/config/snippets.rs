@@ -94,12 +94,7 @@ impl SnippetsConfig {
             return Ok(Self::default());
         }
 
-        let content = std::fs::read_to_string(&path).map_err(|e| ConfigError::ReadFile {
-            path: path.clone(),
-            source: e,
-        })?;
-
-        toml::from_str(&content).map_err(ConfigError::Parse)
+        super::load_toml_or_recover(&path, "snippets")
     }
 
     /// Save to file

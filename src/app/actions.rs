@@ -36,19 +36,24 @@ impl Portal {
         &mut self,
         host_name: String,
         protocol: &str,
+        session_id: SessionId,
         task: Task<Message>,
     ) -> Task<Message> {
         self.dialogs.open_connecting(host_name, protocol);
-        self.track_pending_connect(task)
+        self.track_pending_connect(session_id, task)
     }
 
-    pub(super) fn track_pending_connect(&mut self, task: Task<Message>) -> Task<Message> {
-        if let Some(handle) = self.pending_connect.take() {
-            handle.abort();
+    pub(super) fn track_pending_connect(
+        &mut self,
+        session_id: SessionId,
+        task: Task<Message>,
+    ) -> Task<Message> {
+        if let Some(pending) = self.pending_connect.take() {
+            pending.handle.abort();
         }
 
         let (task, handle) = task.abortable();
-        self.pending_connect = Some(handle);
+        self.pending_connect = Some(crate::app::PendingConnect::new(session_id, handle));
         task
     }
 
@@ -57,9 +62,22 @@ impl Portal {
         self.dialogs.close_connecting();
     }
 
+    pub(super) fn finish_pending_connect_for(&mut self, session_id: SessionId) -> bool {
+        if self
+            .pending_connect
+            .as_ref()
+            .is_some_and(|pending| pending.is_for(session_id))
+        {
+            self.pending_connect = None;
+            self.dialogs.close_connecting();
+            return true;
+        }
+        false
+    }
+
     pub(super) fn cancel_pending_connect(&mut self) {
-        if let Some(handle) = self.pending_connect.take() {
-            handle.abort();
+        if let Some(pending) = self.pending_connect.take() {
+            pending.handle.abort();
             self.toast_manager
                 .push(Toast::warning("Connection cancelled"));
         }
@@ -398,7 +416,12 @@ impl Portal {
                         }
                     }
                     Err(e) => {
-                        let _ = msg_tx.send(Message::Vnc(VncMessage::Error(e))).await;
+                        let _ = msg_tx
+                            .send(Message::Vnc(VncMessage::ConnectFailed {
+                                session_id,
+                                error: e,
+                            }))
+                            .await;
                     }
                 }
             },
@@ -415,6 +438,7 @@ impl Portal {
         self.begin_connecting(
             dialog_host_name,
             "VNC",
+            session_id,
             Task::batch([connect_task, event_listener]),
         )
     }
@@ -450,7 +474,7 @@ impl Portal {
                 terminal_size,
             );
 
-            return self.begin_connecting(dialog_host_name, "Portal Hub", task);
+            return self.begin_connecting(dialog_host_name, "Portal Hub", session_id, task);
         }
 
         // Check if password authentication is configured
@@ -485,7 +509,7 @@ impl Portal {
             self.prefs.allow_agent_forwarding,
         );
 
-        self.begin_connecting(dialog_host_name, "SSH", task)
+        self.begin_connecting(dialog_host_name, "SSH", session_id, task)
     }
 
     /// Spawn a local terminal session
@@ -1254,6 +1278,20 @@ fn delete_local_path(path: &std::path::Path, listed_is_dir: bool) -> std::io::Re
 #[cfg(test)]
 mod tests {
     use super::delete_local_path;
+    use crate::app::PendingConnect;
+    use crate::message::Message;
+    use iced::Task;
+    use uuid::Uuid;
+
+    #[test]
+    fn pending_connect_matches_only_its_session() {
+        let session_id = Uuid::new_v4();
+        let (_task, handle) = Task::<Message>::none().abortable();
+        let pending = PendingConnect::new(session_id, handle);
+
+        assert!(pending.is_for(session_id));
+        assert!(!pending.is_for(Uuid::new_v4()));
+    }
 
     #[cfg(unix)]
     #[test]

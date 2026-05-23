@@ -374,14 +374,15 @@ impl SftpClient {
         }
 
         for identity in identities {
-            let hash_alg = if identity.algorithm().is_rsa() {
+            let public_key = identity.public_key().into_owned();
+            let hash_alg = if public_key.algorithm().is_rsa() {
                 Some(HashAlg::Sha512)
             } else {
                 None
             };
 
             match handle
-                .authenticate_publickey_with(username, identity, hash_alg, &mut agent)
+                .authenticate_publickey_with(username, public_key, hash_alg, &mut agent)
                 .await
             {
                 Ok(result) if result.success() => return Ok(result),

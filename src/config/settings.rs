@@ -921,12 +921,7 @@ impl SettingsConfig {
             return Ok(Self::default());
         }
 
-        let content = std::fs::read_to_string(&path).map_err(|e| ConfigError::ReadFile {
-            path: path.clone(),
-            source: e,
-        })?;
-
-        let mut config: Self = toml::from_str(&content).map_err(ConfigError::Parse)?;
+        let mut config: Self = super::load_toml_or_recover(&path, "settings")?;
         let mut needs_save = false;
 
         // Migration: convert old dark_mode to new theme field

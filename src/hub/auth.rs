@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::config::settings::PortalHubSettings;
+use crate::hub::http;
 
 const CLIENT_ID: &str = "portal-desktop";
 const KEYCHAIN_SERVICE: &str = "com.digitalpals.portal";
@@ -99,7 +100,7 @@ pub async fn authenticate(settings: PortalHubSettings) -> Result<HubAuthSummary,
         .await
         .map_err(|error| format!("OAuth callback task failed: {}", error))??;
 
-    let client = reqwest::Client::new();
+    let client = http::client();
     let token: TokenResponse = client
         .post(format!("{}/oauth/token", hub_url))
         .form(&[
@@ -148,16 +149,14 @@ pub async fn fetch_hub_info(settings: &PortalHubSettings) -> Result<HubInfo, Str
     if hub_url.is_empty() {
         return Err("Portal Hub host and web port are not configured".to_string());
     }
-    reqwest::Client::new()
-        .get(format!("{}/api/info", hub_url))
-        .send()
-        .await
-        .map_err(|error| format!("failed to read Portal Hub info: {}", error))?
-        .error_for_status()
-        .map_err(|error| format!("Portal Hub info check failed: {}", error))?
-        .json()
-        .await
-        .map_err(|error| format!("failed to parse Portal Hub info: {}", error))
+    http::json(
+        true,
+        |client| client.get(format!("{}/api/info", hub_url)),
+        "failed to read Portal Hub info",
+        "Portal Hub info check failed",
+        "failed to parse Portal Hub info",
+    )
+    .await
 }
 
 pub fn load_access_token(hub_url: &str) -> Result<Option<String>, String> {
@@ -168,7 +167,7 @@ pub async fn refresh_access_token(hub_url: &str) -> Result<Option<String>, Strin
     let Some(tokens) = load_tokens(hub_url)? else {
         return Ok(None);
     };
-    let token: TokenResponse = reqwest::Client::new()
+    let token: TokenResponse = http::client()
         .post(format!("{}/oauth/token", hub_url))
         .form(&[
             ("grant_type", "refresh_token"),

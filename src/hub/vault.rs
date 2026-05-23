@@ -87,10 +87,39 @@ impl HubVaultConfig {
         if !path.exists() {
             return Ok(Self::default());
         }
-        let content = std::fs::read_to_string(&path)
-            .map_err(|error| format!("failed to read {}: {}", path.display(), error))?;
-        serde_json::from_str(&content)
-            .map_err(|error| format!("failed to parse {}: {}", path.display(), error))
+        let content = match std::fs::read_to_string(&path) {
+            Ok(content) => content,
+            Err(error) if error.kind() == std::io::ErrorKind::InvalidData => {
+                config::recover_corrupt_config(&path, "Hub vault", &error.to_string()).map_err(
+                    |backup_error| {
+                        format!(
+                            "failed to recover corrupt vault {}: {}",
+                            path.display(),
+                            backup_error
+                        )
+                    },
+                )?;
+                return Ok(Self::default());
+            }
+            Err(error) => {
+                return Err(format!("failed to read {}: {}", path.display(), error));
+            }
+        };
+        match serde_json::from_str(&content) {
+            Ok(config) => Ok(config),
+            Err(error) => {
+                config::recover_corrupt_config(&path, "Hub vault", &error.to_string()).map_err(
+                    |backup_error| {
+                        format!(
+                            "failed to recover corrupt vault {}: {}",
+                            path.display(),
+                            backup_error
+                        )
+                    },
+                )?;
+                Ok(Self::default())
+            }
+        }
     }
 
     pub fn save(&self) -> Result<(), String> {

@@ -20,7 +20,19 @@ pub fn handle_vnc(portal: &mut Portal, msg: VncMessage) -> Task<Message> {
             detected_os,
         } => {
             tracing::info!("VNC connected to {}", host_name);
-            portal.finish_pending_connect();
+            if portal.vnc_sessions.contains_key(&session_id) {
+                tracing::warn!(
+                    "Ignoring duplicate VNC connection for session {}",
+                    session_id
+                );
+                vnc_session.disconnect();
+                return Task::none();
+            }
+            if !portal.finish_pending_connect_for(session_id) {
+                tracing::warn!("Ignoring stale VNC connection for session {}", session_id);
+                vnc_session.disconnect();
+                return Task::none();
+            }
 
             // Update host with detected OS and last_connected
             if let Some(host) = portal.config.hosts.find_host_mut(host_id) {
@@ -146,14 +158,16 @@ pub fn handle_vnc(portal: &mut Portal, msg: VncMessage) -> Task<Message> {
         }
         VncMessage::Disconnected(session_id) => {
             tracing::info!("VNC disconnected: {}", session_id);
-            if let Some(vnc) = portal.vnc_sessions.remove(&session_id) {
-                portal
-                    .config
-                    .history
-                    .mark_disconnected(vnc.history_entry_id);
-                if let Err(e) = portal.config.history.save() {
-                    tracing::error!("Failed to save history config: {}", e);
-                }
+            let Some(vnc) = portal.vnc_sessions.remove(&session_id) else {
+                tracing::debug!("Ignoring stale VNC disconnect for session {}", session_id);
+                return Task::none();
+            };
+            portal
+                .config
+                .history
+                .mark_disconnected(vnc.history_entry_id);
+            if let Err(e) = portal.config.history.save() {
+                tracing::error!("Failed to save history config: {}", e);
             }
             portal.close_tab(session_id);
             portal
@@ -161,9 +175,23 @@ pub fn handle_vnc(portal: &mut Portal, msg: VncMessage) -> Task<Message> {
                 .push(Toast::success("VNC session disconnected"));
             Task::none()
         }
+        VncMessage::ConnectFailed { session_id, error } => {
+            tracing::error!("VNC connection failed: {}", error);
+            if !portal.finish_pending_connect_for(session_id) {
+                tracing::warn!(
+                    "Ignoring stale VNC connection failure for session {}: {}",
+                    session_id,
+                    error
+                );
+                return Task::none();
+            }
+            portal
+                .toast_manager
+                .push(Toast::error(format!("VNC: {}", error)));
+            Task::none()
+        }
         VncMessage::Error(err) => {
             tracing::error!("VNC error: {}", err);
-            portal.finish_pending_connect();
             portal
                 .toast_manager
                 .push(Toast::error(format!("VNC: {}", err)));

@@ -17,6 +17,7 @@ Thumbs.db
 # Environment
 .env
 .env.local
+.direnv/
 
 # Leftover from previous project
 .svelte-kit/

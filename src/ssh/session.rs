@@ -477,7 +477,7 @@ impl SshSession {
         }
 
         let assigned_port = {
-            let mut handle_guard = self.handle.lock().await;
+            let handle_guard = self.handle.lock().await;
             handle_guard
                 .tcpip_forward(forward.bind_host.clone(), forward.bind_port as u32)
                 .await

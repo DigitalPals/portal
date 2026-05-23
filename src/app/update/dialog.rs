@@ -402,7 +402,12 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                                 portal.prefs.allow_agent_forwarding,
                                 password,
                             );
-                            return portal.begin_connecting(dialog_host_name, "SSH", task);
+                            return portal.begin_connecting(
+                                dialog_host_name,
+                                "SSH",
+                                session_id,
+                                task,
+                            );
                         }
                         PasswordConnectionKind::Sftp => {
                             if let Some(ctx) = sftp_context {
@@ -489,6 +494,7 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                                 return portal.begin_connecting(
                                     request.host_name.clone(),
                                     "SSH",
+                                    session_id,
                                     task,
                                 );
                             }
@@ -569,7 +575,12 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                                 portal.prefs.allow_agent_forwarding,
                                 passphrase,
                             );
-                            return portal.begin_connecting(dialog_host_name, "SSH", task);
+                            return portal.begin_connecting(
+                                dialog_host_name,
+                                "SSH",
+                                session_id,
+                                task,
+                            );
                         }
                     } else if let Some(ctx) = sftp_context {
                         return connection::sftp_connect_tasks_with_passphrase(

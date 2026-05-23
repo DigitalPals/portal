@@ -54,6 +54,9 @@ pub fn handle_proxy_sessions(portal: &mut Portal, msg: ProxySessionsMessage) -> 
                 return Task::none();
             };
 
+            let display_name = session.display_name.clone();
+            let host_id = session.host_id;
+            let session_id = session.session_id;
             let listed_session = crate::proxy::ListedProxySession {
                 session_id: session.session_id,
                 target_host: session.target_host.clone(),
@@ -66,13 +69,14 @@ pub fn handle_proxy_sessions(portal: &mut Portal, msg: ProxySessionsMessage) -> 
                 preview_truncated: session.preview_truncated,
             };
 
-            connection::proxy_resume_tasks(
+            let task = connection::proxy_resume_tasks(
                 portal.prefs.portal_hub.clone(),
                 listed_session,
-                session.host_id,
-                session.display_name.clone(),
+                host_id,
+                display_name.clone(),
                 portal.terminal_initial_size(),
-            )
+            );
+            portal.begin_connecting(display_name, "Portal Hub", session_id, task)
         }
         ProxySessionsMessage::KillRequested(session_id) => {
             if portal.proxy_sessions.get(session_id).is_none() {

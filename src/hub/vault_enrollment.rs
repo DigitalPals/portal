@@ -8,6 +8,7 @@ use sha1::Sha1;
 use sha2::Sha256;
 
 use crate::config::settings::PortalHubSettings;
+use crate::hub::http;
 use crate::hub::vault::load_stored_vault_secret;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -59,23 +60,23 @@ async fn list_with_status(
     if hub_url.is_empty() {
         return Err("Portal Hub web URL is not configured".to_string());
     }
-    let token = crate::hub::auth::load_access_token(&hub_url)?
-        .ok_or_else(|| "Portal Hub is not authenticated".to_string())?;
-    reqwest::Client::new()
-        .get(format!(
-            "{}/api/vault/enrollments?status={}",
-            hub_url, status
-        ))
-        .bearer_auth(token)
-        .send()
-        .await
-        .map_err(|error| format!("failed to list vault enrollment requests: {}", error))?
-        .error_for_status()
-        .map_err(|error| format!("Portal Hub vault enrollment request failed: {}", error))?
-        .json::<VaultEnrollmentListResponse>()
-        .await
-        .map(|response| response.enrollments)
-        .map_err(|error| format!("failed to parse vault enrollment requests: {}", error))
+    http::authenticated_json(
+        &hub_url,
+        true,
+        |client, token| {
+            client
+                .get(format!(
+                    "{}/api/vault/enrollments?status={}",
+                    hub_url, status
+                ))
+                .bearer_auth(token)
+        },
+        "failed to list vault enrollment requests",
+        "Portal Hub vault enrollment request failed",
+        "failed to parse vault enrollment requests",
+    )
+    .await
+    .map(|response: VaultEnrollmentListResponse| response.enrollments)
 }
 
 pub async fn list_audit(settings: &PortalHubSettings) -> Result<Vec<VaultAuditEvent>, String> {
@@ -83,20 +84,20 @@ pub async fn list_audit(settings: &PortalHubSettings) -> Result<Vec<VaultAuditEv
     if hub_url.is_empty() {
         return Err("Portal Hub web URL is not configured".to_string());
     }
-    let token = crate::hub::auth::load_access_token(&hub_url)?
-        .ok_or_else(|| "Portal Hub is not authenticated".to_string())?;
-    reqwest::Client::new()
-        .get(format!("{}/api/vault/enrollments/audit?limit=20", hub_url))
-        .bearer_auth(token)
-        .send()
-        .await
-        .map_err(|error| format!("failed to list vault enrollment audit events: {}", error))?
-        .error_for_status()
-        .map_err(|error| format!("Portal Hub vault audit request failed: {}", error))?
-        .json::<VaultAuditResponse>()
-        .await
-        .map(|response| response.events)
-        .map_err(|error| format!("failed to parse vault audit events: {}", error))
+    http::authenticated_json(
+        &hub_url,
+        true,
+        |client, token| {
+            client
+                .get(format!("{}/api/vault/enrollments/audit?limit=20", hub_url))
+                .bearer_auth(token)
+        },
+        "failed to list vault enrollment audit events",
+        "Portal Hub vault audit request failed",
+        "failed to parse vault audit events",
+    )
+    .await
+    .map(|response: VaultAuditResponse| response.events)
 }
 
 pub async fn approve(
@@ -129,25 +130,26 @@ pub async fn approve(
     if hub_url.is_empty() {
         return Err("Portal Hub web URL is not configured".to_string());
     }
-    let token = crate::hub::auth::load_access_token(&hub_url)?
-        .ok_or_else(|| "Portal Hub is not authenticated".to_string())?;
-    reqwest::Client::new()
-        .post(format!(
-            "{}/api/vault/enrollments/{}/approve",
-            hub_url, enrollment.id
-        ))
-        .bearer_auth(token)
-        .json(&VaultEnrollmentApproveRequest {
-            encrypted_secret_base64: BASE64.encode(&ciphertext),
-        })
-        .send()
-        .await
-        .map_err(|error| format!("failed to approve vault enrollment: {}", error))?
-        .error_for_status()
-        .map_err(|error| format!("Portal Hub vault enrollment approval failed: {}", error))?
-        .json::<VaultEnrollment>()
-        .await
-        .map_err(|error| format!("failed to parse vault enrollment approval: {}", error))
+    let request = VaultEnrollmentApproveRequest {
+        encrypted_secret_base64: BASE64.encode(&ciphertext),
+    };
+    http::authenticated_json(
+        &hub_url,
+        false,
+        |client, token| {
+            client
+                .post(format!(
+                    "{}/api/vault/enrollments/{}/approve",
+                    hub_url, enrollment.id
+                ))
+                .bearer_auth(token)
+                .json(&request)
+        },
+        "failed to approve vault enrollment",
+        "Portal Hub vault enrollment approval failed",
+        "failed to parse vault enrollment approval",
+    )
+    .await
 }
 
 pub async fn revoke(
@@ -158,22 +160,22 @@ pub async fn revoke(
     if hub_url.is_empty() {
         return Err("Portal Hub web URL is not configured".to_string());
     }
-    let token = crate::hub::auth::load_access_token(&hub_url)?
-        .ok_or_else(|| "Portal Hub is not authenticated".to_string())?;
-    reqwest::Client::new()
-        .post(format!(
-            "{}/api/vault/enrollments/{}/revoke",
-            hub_url, enrollment.id
-        ))
-        .bearer_auth(token)
-        .send()
-        .await
-        .map_err(|error| format!("failed to revoke vault enrollment: {}", error))?
-        .error_for_status()
-        .map_err(|error| format!("Portal Hub vault enrollment revocation failed: {}", error))?
-        .json::<VaultEnrollment>()
-        .await
-        .map_err(|error| format!("failed to parse vault enrollment revocation: {}", error))
+    http::authenticated_json(
+        &hub_url,
+        false,
+        |client, token| {
+            client
+                .post(format!(
+                    "{}/api/vault/enrollments/{}/revoke",
+                    hub_url, enrollment.id
+                ))
+                .bearer_auth(token)
+        },
+        "failed to revoke vault enrollment",
+        "Portal Hub vault enrollment revocation failed",
+        "failed to parse vault enrollment revocation",
+    )
+    .await
 }
 
 #[cfg(test)]

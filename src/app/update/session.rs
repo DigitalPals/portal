@@ -420,7 +420,11 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
             detected_os,
         } => {
             tracing::info!("SSH connected");
-            portal.finish_pending_connect();
+            let existing_session = portal.sessions.contains(session_id);
+            if !existing_session && !portal.finish_pending_connect_for(session_id) {
+                tracing::warn!("Ignoring stale SSH connection for session {}", session_id);
+                return Task::none();
+            }
 
             if let Some(session) = portal.sessions.get_mut(session_id) {
                 if let Some(os) = detected_os {
@@ -531,7 +535,14 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
             session_started_at,
         } => {
             tracing::info!("Portal Hub connected");
-            portal.finish_pending_connect();
+            let existing_session = portal.sessions.contains(session_id);
+            if !existing_session && !portal.finish_pending_connect_for(session_id) {
+                tracing::warn!(
+                    "Ignoring stale Portal Hub connection for session {}",
+                    session_id
+                );
+                return Task::none();
+            }
             let has_proxy_started_at = session_started_at.is_some();
             let proxy_session_start = session_start_from_proxy_created_at(session_started_at);
 
@@ -674,6 +685,13 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
         }
         SessionMessage::Disconnected { session_id, clean } => {
             tracing::info!("Terminal session disconnected (clean: {})", clean);
+            if !portal.sessions.contains(session_id) {
+                tracing::debug!(
+                    "Ignoring stale terminal disconnect for closed session {}",
+                    session_id
+                );
+                return Task::none();
+            }
             let close_task = close_session_logger(portal, session_id);
             if let Some(session) = portal.sessions.get(session_id) {
                 if matches!(session.backend, SessionBackend::Proxy(_)) {
@@ -790,30 +808,53 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
         }
         SessionMessage::ConnectFailed { session_id, error } => {
             tracing::error!("Session connection failed: {}", error);
-            portal.finish_pending_connect();
             if portal.sessions.contains(session_id) {
                 return schedule_reconnect(portal, session_id);
+            }
+            if !portal.finish_pending_connect_for(session_id) {
+                tracing::warn!(
+                    "Ignoring stale connection failure for session {}: {}",
+                    session_id,
+                    error
+                );
+                return Task::none();
             }
             portal.toast_manager.push(Toast::error(error));
             Task::none()
         }
         SessionMessage::TerminalEvent(session_id, event) => match event {
             TerminalEvent::Title(title) => {
+                if !portal.sessions.contains(session_id) {
+                    return Task::none();
+                }
                 if let Some(tab) = portal.tabs.iter_mut().find(|tab| tab.id == session_id) {
                     tab.title = title;
                 }
                 Task::none()
             }
             TerminalEvent::Bell => {
+                if !portal.sessions.contains(session_id) {
+                    return Task::none();
+                }
                 portal
                     .toast_manager
                     .push_or_refresh(Toast::warning("Terminal bell"));
                 Task::none()
             }
-            TerminalEvent::ClipboardStore(contents) => clipboard::write::<Message>(contents),
-            TerminalEvent::ClipboardLoad => clipboard::read().map(move |contents| {
-                Message::Session(SessionMessage::ClipboardLoaded(session_id, contents))
-            }),
+            TerminalEvent::ClipboardStore(contents) => {
+                if !portal.sessions.contains(session_id) {
+                    return Task::none();
+                }
+                clipboard::write::<Message>(contents)
+            }
+            TerminalEvent::ClipboardLoad => {
+                if !portal.sessions.contains(session_id) {
+                    return Task::none();
+                }
+                clipboard::read().map(move |contents| {
+                    Message::Session(SessionMessage::ClipboardLoaded(session_id, contents))
+                })
+            }
             TerminalEvent::PtyWrite(bytes) => {
                 handle_session(portal, SessionMessage::Input(session_id, bytes))
             }
@@ -837,6 +878,9 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
         }
         SessionMessage::Input(session_id, bytes) => {
             tracing::debug!("Terminal input ({} bytes)", bytes.len());
+            if !portal.sessions.contains(session_id) {
+                return Task::none();
+            }
             if !bytes.is_empty() {
                 portal.clear_terminal_attention(session_id);
             }

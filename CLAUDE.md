@@ -145,7 +145,7 @@ The VNC widget uses a custom wgpu shader (`src/vnc/widget.rs`) with a `FrameBuff
 
 ## Technical Details
 
-- **Rust Edition**: 2024, MSRV 1.85
+- **Rust Edition**: 2024, MSRV 1.88
 - **GUI**: Iced 0.14
 - **Terminal**: alacritty_terminal 0.25
 - **SSH**: russh 0.56, russh-sftp 2.1

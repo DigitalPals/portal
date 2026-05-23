@@ -7,6 +7,7 @@ use serde_json::{Value, json};
 
 use crate::config::settings::PortalHubSettings;
 use crate::config::{HostsConfig, SettingsConfig, SnippetsConfig, paths};
+use crate::hub::http;
 use crate::hub::vault::HubVaultConfig;
 use crate::proxy::{HubSyncPutRequest, HubSyncResponse};
 
@@ -203,19 +204,19 @@ pub async fn http_sync_get(
     settings: &crate::config::settings::PortalHubSettings,
 ) -> Result<HubSyncResponse, String> {
     let hub_url = web_url(settings)?;
-    let token = crate::hub::auth::load_access_token(&hub_url)?
-        .ok_or_else(|| "Portal Hub is not authenticated".to_string())?;
-    let response: HubSyncResponse = reqwest::Client::new()
-        .get(format!("{}/api/sync", hub_url))
-        .bearer_auth(token)
-        .send()
-        .await
-        .map_err(|error| format!("failed to read Portal Hub sync profile: {}", error))?
-        .error_for_status()
-        .map_err(|error| format!("Portal Hub sync get failed: {}", error))?
-        .json()
-        .await
-        .map_err(|error| format!("failed to parse Portal Hub sync profile: {}", error))?;
+    let response: HubSyncResponse = http::authenticated_json(
+        &hub_url,
+        true,
+        |client, token| {
+            client
+                .get(format!("{}/api/sync", hub_url))
+                .bearer_auth(token)
+        },
+        "failed to read Portal Hub sync profile",
+        "Portal Hub sync get failed",
+        "failed to parse Portal Hub sync profile",
+    )
+    .await?;
     validate_legacy_sync_response(&response)?;
     Ok(response)
 }
@@ -226,25 +227,25 @@ pub async fn http_sync_put(
     request: HubSyncPutRequest,
 ) -> Result<HubSyncResponse, String> {
     let hub_url = web_url(settings)?;
-    let token = crate::hub::auth::load_access_token(&hub_url)?
-        .ok_or_else(|| "Portal Hub is not authenticated".to_string())?;
     let body = serde_json::json!({
         "expected_revision": expected_revision,
         "profile": request.profile,
         "vault": request.vault,
     });
-    let response: HubSyncResponse = reqwest::Client::new()
-        .put(format!("{}/api/sync", hub_url))
-        .bearer_auth(token)
-        .json(&body)
-        .send()
-        .await
-        .map_err(|error| format!("failed to upload Portal Hub sync profile: {}", error))?
-        .error_for_status()
-        .map_err(|error| format!("Portal Hub sync put failed: {}", error))?
-        .json()
-        .await
-        .map_err(|error| format!("failed to parse Portal Hub sync response: {}", error))?;
+    let response: HubSyncResponse = http::authenticated_json(
+        &hub_url,
+        false,
+        |client, token| {
+            client
+                .put(format!("{}/api/sync", hub_url))
+                .bearer_auth(token)
+                .json(&body)
+        },
+        "failed to upload Portal Hub sync profile",
+        "Portal Hub sync put failed",
+        "failed to parse Portal Hub sync response",
+    )
+    .await?;
     validate_legacy_sync_response(&response)?;
     Ok(response)
 }
@@ -510,19 +511,19 @@ pub async fn clear_remote_service(
 
 pub async fn http_sync_v2_get(settings: &PortalHubSettings) -> Result<HubSyncV2Response, String> {
     let hub_url = web_url(settings)?;
-    let token = crate::hub::auth::load_access_token(&hub_url)?
-        .ok_or_else(|| "Portal Hub is not authenticated".to_string())?;
-    reqwest::Client::new()
-        .get(format!("{}/api/sync/v2", hub_url))
-        .bearer_auth(token)
-        .send()
-        .await
-        .map_err(|error| format!("failed to read Portal Hub sync state: {}", error))?
-        .error_for_status()
-        .map_err(|error| format!("Portal Hub sync get failed: {}", error))?
-        .json()
-        .await
-        .map_err(|error| format!("failed to parse Portal Hub sync state: {}", error))
+    http::authenticated_json(
+        &hub_url,
+        true,
+        |client, token| {
+            client
+                .get(format!("{}/api/sync/v2", hub_url))
+                .bearer_auth(token)
+        },
+        "failed to read Portal Hub sync state",
+        "Portal Hub sync get failed",
+        "failed to parse Portal Hub sync state",
+    )
+    .await
 }
 
 pub fn sync_revision_event_stream(
@@ -568,14 +569,19 @@ pub fn sync_revision_event_stream(
 }
 
 async fn connect_sync_revision_events(hub_url: &str) -> Result<reqwest::Response, String> {
-    let token = crate::hub::auth::load_access_token(hub_url)?
-        .ok_or_else(|| "Portal Hub is not authenticated".to_string())?;
-    reqwest::Client::new()
-        .get(format!("{}/api/sync/v2/events", hub_url))
-        .bearer_auth(token)
-        .send()
-        .await
-        .map_err(|error| format!("failed to connect Portal Hub sync events: {}", error))?
+    let response = http::authenticated_streaming_response(
+        hub_url,
+        true,
+        |client, token| {
+            client
+                .get(format!("{}/api/sync/v2/events", hub_url))
+                .bearer_auth(token)
+        },
+        "failed to connect Portal Hub sync events",
+    )
+    .await?;
+
+    response
         .error_for_status()
         .map_err(|error| format!("Portal Hub sync events failed: {}", error))
 }
@@ -585,23 +591,22 @@ async fn http_sync_v2_put_values(
     services: HashMap<String, Value>,
 ) -> Result<HubSyncV2Response, String> {
     let hub_url = web_url(settings)?;
-    let token = crate::hub::auth::load_access_token(&hub_url)?
-        .ok_or_else(|| "Portal Hub is not authenticated".to_string())?;
     let body = json!({ "services": services });
-    reqwest::Client::new()
-        .put(format!("{}/api/sync/v2", hub_url))
-        .bearer_auth(token)
-        .json(&body)
-        .send()
-        .await
-        .map_err(|error| format!("failed to update Portal Hub sync state: {}", error))?
-        .error_for_status()
-        .map_err(|error| format!("Portal Hub sync update failed: {}", error))?
-        .json()
-        .await
-        .map_err(|error| format!("failed to parse Portal Hub sync response: {}", error))
+    http::authenticated_json(
+        &hub_url,
+        false,
+        |client, token| {
+            client
+                .put(format!("{}/api/sync/v2", hub_url))
+                .bearer_auth(token)
+                .json(&body)
+        },
+        "failed to update Portal Hub sync state",
+        "Portal Hub sync update failed",
+        "failed to parse Portal Hub sync response",
+    )
+    .await
 }
-
 fn enabled_service_payloads(
     settings: &PortalHubSettings,
     profile: &LocalSyncProfile,

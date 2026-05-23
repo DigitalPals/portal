@@ -59,14 +59,17 @@ pub fn handle_host(portal: &mut Portal, msg: HostMessage) -> Task<Message> {
 
             let host_id = portal.dialogs.session_choice().map(|state| state.host_id);
             let terminal_size = portal.terminal_initial_size();
+            let display_name = choice.display_name;
+            let session_id = choice.session.session_id;
             portal.dialogs.close();
-            connection::proxy_resume_tasks(
+            let task = connection::proxy_resume_tasks(
                 portal.prefs.portal_hub.clone(),
                 choice.session,
                 host_id,
-                choice.display_name,
+                display_name.clone(),
                 terminal_size,
-            )
+            );
+            portal.begin_connecting(display_name, "Portal Hub", session_id, task)
         }
         HostMessage::DetachedProxySessionsLoaded { host_id, result } => {
             handle_detached_proxy_sessions_loaded(portal, host_id, result)
