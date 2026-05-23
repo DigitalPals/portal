@@ -7,6 +7,8 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use alacritty_terminal::grid::{Dimensions, Scroll};
+use alacritty_terminal::index::{Boundary, Column, Line, Point, Side};
+use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::term::cell::Flags as CellFlags;
 use alacritty_terminal::term::{Term, TermMode};
 use alacritty_terminal::vte::ansi::CursorShape;
@@ -184,6 +186,22 @@ fn draw_text_decorations<Renderer>(
             color,
         );
     }
+}
+
+fn push_selection_span(
+    rects: &mut Vec<Rectangle>,
+    bounds: Rectangle,
+    metrics: TerminalMetrics,
+    line: usize,
+    start_col: usize,
+    end_col: usize,
+) {
+    rects.push(Rectangle {
+        x: bounds.x + TERMINAL_PADDING_LEFT + start_col as f32 * metrics.cell_width,
+        y: bounds.y + line as f32 * metrics.cell_height,
+        width: (end_col - start_col + 1) as f32 * metrics.cell_width,
+        height: metrics.cell_height,
+    });
 }
 
 /// Terminal widget for iced
@@ -398,6 +416,59 @@ impl<'a, Message> TerminalWidget<'a, Message> {
         })
     }
 
+    fn selection_rects(&self, bounds: Rectangle, metrics: TerminalMetrics) -> Vec<Rectangle> {
+        let term = self.term.lock();
+        let content = term.renderable_content();
+        let selection = match content.selection {
+            Some(selection) => selection,
+            None => return Vec::new(),
+        };
+
+        let display_offset = content.display_offset as i32;
+        let cursor_shape = content.cursor.shape;
+        let rows = term.screen_lines();
+        let cols = term.columns();
+
+        let mut rects = Vec::new();
+        let mut active_span: Option<(usize, usize, usize)> = None;
+
+        for indexed in content.display_iter {
+            let screen_line = indexed.point.line.0 + display_offset;
+            if screen_line < 0 {
+                continue;
+            }
+
+            let screen_line = screen_line as usize;
+            let col = indexed.point.column.0;
+            if screen_line >= rows || col >= cols {
+                continue;
+            }
+
+            if selection.contains_cell(&indexed, indexed.point, cursor_shape) {
+                match active_span {
+                    Some((line, start_col, end_col))
+                        if line == screen_line && col == end_col + 1 =>
+                    {
+                        active_span = Some((line, start_col, col));
+                    }
+                    Some((line, start_col, end_col)) => {
+                        push_selection_span(&mut rects, bounds, metrics, line, start_col, end_col);
+                        active_span = Some((screen_line, col, col));
+                    }
+                    None => active_span = Some((screen_line, col, col)),
+                }
+            } else if let Some((line, start_col, end_col)) = active_span.take() {
+                push_selection_span(&mut rects, bounds, metrics, line, start_col, end_col);
+            }
+        }
+
+        if let Some((line, start_col, end_col)) = active_span {
+            push_selection_span(&mut rects, bounds, metrics, line, start_col, end_col);
+        }
+
+        rects
+    }
+
     /// Convert pixel coordinates to terminal cell coordinates (screen-relative)
     fn pixel_to_cell(&self, bounds: &Rectangle, position: iced::Point) -> Option<(usize, usize)> {
         if !bounds.contains(position)
@@ -417,177 +488,88 @@ impl<'a, Message> TerminalWidget<'a, Message> {
         Some((col, row))
     }
 
-    /// Convert screen coordinates to buffer-absolute coordinates
-    fn screen_to_buffer(&self, screen_col: usize, screen_line: usize) -> (usize, i32) {
+    fn selection_anchor_at_position(
+        &self,
+        bounds: &Rectangle,
+        position: iced::Point,
+    ) -> Option<(Point, Side, (usize, usize))> {
+        let (screen_col, screen_line) = self.pixel_to_cell(bounds, position)?;
+        let side = selection_side(
+            position.x - bounds.x - TERMINAL_PADDING_LEFT,
+            screen_col,
+            self.cell_width(),
+        )?;
+
         let term = self.term.lock();
-        let content = term.renderable_content();
-        let display_offset = content.display_offset;
-
-        // Buffer line = screen line - display_offset
-        // When scrolled back (display_offset > 0), screen line 0 maps to negative buffer line
-        let buffer_line = screen_line as i32 - display_offset as i32;
-
-        (screen_col, buffer_line)
-    }
-
-    /// Check if a character is a word boundary
-    fn is_word_boundary(c: char) -> bool {
-        c.is_whitespace()
-            || matches!(
-                c,
-                '(' | ')'
-                    | '['
-                    | ']'
-                    | '{'
-                    | '}'
-                    | '"'
-                    | '\''
-                    | '<'
-                    | '>'
-                    | ','
-                    | '.'
-                    | ';'
-                    | ':'
-                    | '!'
-                    | '?'
-                    | '`'
-                    | '|'
-                    | '&'
-                    | '='
-                    | '+'
-                    | '-'
-                    | '*'
-                    | '/'
-                    | '\\'
-                    | '@'
-                    | '#'
-                    | '$'
-                    | '%'
-                    | '^'
-            )
-    }
-
-    /// Get line content as a vector of characters for a specific screen line
-    fn get_line_chars(&self, line: usize, cols: usize) -> Vec<char> {
-        let term = self.term.lock();
-        let content = term.renderable_content();
-        let display_offset = content.display_offset;
-
-        let mut chars = vec![' '; cols];
-
-        for indexed in content.display_iter {
-            let screen_line = indexed.point.line.0 + display_offset as i32;
-            if screen_line < 0 {
-                continue;
-            }
-            let cell_line = screen_line as usize;
-            let col = indexed.point.column.0;
-
-            if cell_line == line && col < cols {
-                chars[col] = indexed.cell.c;
-            }
-        }
-
-        chars
-    }
-
-    /// Find word boundaries at a given position
-    /// Returns (start_col, end_col) of the word at the position
-    fn find_word_at(&self, col: usize, line: usize, cols: usize) -> (usize, usize) {
-        let chars = self.get_line_chars(line, cols);
-
-        if col >= chars.len() {
-            return (col, col);
-        }
-
-        // If clicking on a boundary character, select just that character
-        if Self::is_word_boundary(chars[col]) {
-            return (col, col);
-        }
-
-        // Scan left to find word start
-        let mut start = col;
-        while start > 0 && !Self::is_word_boundary(chars[start - 1]) {
-            start -= 1;
-        }
-
-        // Scan right to find word end
-        let mut end = col;
-        while end < chars.len() - 1 && !Self::is_word_boundary(chars[end + 1]) {
-            end += 1;
-        }
-
-        (start, end)
-    }
-
-    /// Get selected text from the terminal using buffer-absolute coordinates
-    /// This uses direct grid access (like Alacritty) instead of display_iter
-    fn get_selected_text(&self, start: (usize, i32), end: (usize, i32), _cols: usize) -> String {
-        use alacritty_terminal::index::{Column, Line};
-        use alacritty_terminal::term::cell::Flags;
-
-        // Normalize selection (ensure start comes before end)
-        let (start, end) = if start.1 < end.1 || (start.1 == end.1 && start.0 <= end.0) {
-            (start, end)
+        let display_offset = term.grid().display_offset() as i32;
+        let raw_point = Point::new(
+            Line(screen_line as i32 - display_offset),
+            Column(screen_col),
+        );
+        let point = raw_point.grid_clamp(&*term, Boundary::Grid);
+        let side = if screen_col > point.column.0 {
+            Side::Right
         } else {
-            (end, start)
+            side
         };
 
-        let term = self.term.lock();
-        let grid = term.grid(); // Direct grid access - includes all scrollback!
-        let cols = grid.columns(); // Use actual grid columns, not display-calculated
+        Some((point, side, (screen_col, screen_line)))
+    }
 
-        let mut result = String::new();
-
-        // Iterate through buffer lines (can be negative for scrollback)
-        for buffer_line in start.1..=end.1 {
-            let max_col = cols.saturating_sub(1);
-            let start_col = if buffer_line == start.1 {
-                start.0.min(max_col)
-            } else {
-                0
-            };
-            let end_col = if buffer_line == end.1 {
-                end.0.min(max_col)
-            } else {
-                max_col
-            };
-
-            // Extract text from this line using Line type for proper grid indexing
-            let line = Line(buffer_line);
-            let grid_line = &grid[line];
-
-            let mut line_text = String::new();
-
-            // Extract characters from the line
-            for col_idx in start_col..=end_col {
-                let cell = &grid_line[Column(col_idx)];
-
-                // Skip wide character spacers (they're placeholders for 2nd column of wide chars)
-                if cell.flags.contains(Flags::WIDE_CHAR_SPACER) {
-                    continue;
-                }
-
-                line_text.push(cell.c);
-
-                // Include zero-width characters if present (combining marks, etc.)
-                if let Some(zerowidth) = cell.zerowidth() {
-                    for c in zerowidth {
-                        line_text.push(*c);
-                    }
-                }
-            }
-
-            // Trim trailing whitespace from each line
-            result.push_str(line_text.trim_end());
-
-            // Add newline between lines (but not after the last line)
-            if buffer_line < end.1 {
-                result.push('\n');
-            }
+    fn clamped_selection_anchor_at_position(
+        &self,
+        bounds: &Rectangle,
+        position: iced::Point,
+    ) -> Option<(Point, Side, (usize, usize))> {
+        if !bounds.width.is_finite() || !bounds.height.is_finite() {
+            return None;
         }
 
-        result
+        let max_x = (bounds.x + bounds.width - 1.0).max(bounds.x);
+        let max_y = (bounds.y + bounds.height - 1.0).max(bounds.y);
+        let position = iced::Point::new(
+            position.x.clamp(bounds.x, max_x),
+            position.y.clamp(bounds.y, max_y),
+        );
+
+        self.selection_anchor_at_position(bounds, position)
+    }
+
+    fn begin_selection(&self, ty: SelectionType, point: Point, side: Side) {
+        let mut term = self.term.lock();
+        term.selection = Some(Selection::new(ty, point, side));
+    }
+
+    fn update_selection(&self, point: Point, side: Side) {
+        let mut term = self.term.lock();
+        if let Some(selection) = term.selection.as_mut() {
+            selection.update(point, side);
+        }
+    }
+
+    fn clear_selection(&self) {
+        let mut term = self.term.lock();
+        term.selection = None;
+    }
+
+    fn select_visible_content(&self) {
+        let mut term = self.term.lock();
+        let display_offset = term.grid().display_offset() as i32;
+        let start = Point::new(Line(-display_offset), Column(0)).grid_clamp(&*term, Boundary::Grid);
+        let end = Point::new(
+            Line(term.screen_lines().saturating_sub(1) as i32 - display_offset),
+            term.last_column(),
+        )
+        .grid_clamp(&*term, Boundary::Grid);
+
+        let mut selection = Selection::new(SelectionType::Simple, start, Side::Left);
+        selection.update(end, Side::Right);
+        term.selection = Some(selection);
+    }
+
+    fn selected_text(&self) -> Option<String> {
+        let term = self.term.lock();
+        term.selection_to_string()
     }
 }
 
@@ -603,6 +585,19 @@ fn terminal_cell_index(offset: f32, cell_size: f32) -> Option<usize> {
     )
 }
 
+fn selection_side(offset: f32, column: usize, cell_width: f32) -> Option<Side> {
+    if !offset.is_finite() || !cell_width.is_finite() || cell_width <= 0.0 {
+        return None;
+    }
+
+    let cell_left = column as f32 * cell_width;
+    if offset - cell_left >= cell_width / 2.0 {
+        Some(Side::Right)
+    } else {
+        Some(Side::Left)
+    }
+}
+
 /// Widget state stored in the tree
 #[derive(Debug)]
 struct TerminalState {
@@ -613,29 +608,16 @@ struct TerminalState {
     scroll_lines: f32,  // Accumulated fractional line scroll for mouse wheels
     // Cached render data (updated only when terminal content changes)
     render_cache: RefCell<RenderCache>,
-    // Selection state (stored in buffer-absolute coordinates)
-    selection_start: Option<(usize, i32)>, // (column, buffer_line) - buffer-absolute coords
-    selection_end: Option<(usize, i32)>,   // buffer_line can be negative (scrollback)
-    is_selecting: bool,                    // Mouse button held during drag
-    last_drag_cell: Option<(usize, usize)>,
+    is_selecting: bool,
+    last_drag_anchor: Option<(Point, Side)>,
     last_drag_update: Option<std::time::Instant>,
     // Click tracking for double/triple click
     last_click_time: Option<std::time::Instant>,
     last_click_position: Option<(usize, usize)>,
     click_count: u8, // 1 = single, 2 = double, 3 = triple
-    selection_mode: SelectionMode,
     // Auto-scroll during selection
     last_auto_scroll: Option<std::time::Instant>,
     last_focus_token: u64,
-}
-
-/// Selection granularity mode
-#[derive(Debug, Clone, Copy, Default, PartialEq)]
-enum SelectionMode {
-    #[default]
-    Character, // Normal character-by-character selection
-    Word, // Double-click: select by word
-    Line, // Triple-click: select by line
 }
 
 #[derive(Debug, Default)]
@@ -658,15 +640,12 @@ impl Default for TerminalState {
                 needs_refresh: true,
                 ..RenderCache::default()
             }),
-            selection_start: None,
-            selection_end: None,
             is_selecting: false,
-            last_drag_cell: None,
+            last_drag_anchor: None,
             last_drag_update: None,
             last_click_time: None,
             last_click_position: None,
             click_count: 0,
-            selection_mode: SelectionMode::Character,
             last_auto_scroll: None,
             last_focus_token: 0,
         }
@@ -711,15 +690,12 @@ where
                 needs_refresh: true,
                 ..RenderCache::default()
             }),
-            selection_start: None,
-            selection_end: None,
             is_selecting: false,
-            last_drag_cell: None,
+            last_drag_anchor: None,
             last_drag_update: None,
             last_click_time: None,
             last_click_position: None,
             click_count: 0,
-            selection_mode: SelectionMode::Character,
             last_auto_scroll: None,
             last_focus_token: 0,
         })
@@ -737,7 +713,6 @@ where
     ) {
         let bounds = layout.bounds();
         let state = tree.state.downcast_ref::<TerminalState>();
-        let selection = (state.selection_start, state.selection_end);
         let is_focused = state.is_focused || state.last_focus_token != self.focus_token;
         let cursor_visible = state.cursor_visible;
 
@@ -826,6 +801,18 @@ where
                     Background::Color(bg_color),
                 );
             }
+        }
+
+        for rect in self.selection_rects(bounds, metrics) {
+            renderer.fill_quad(
+                Quad {
+                    bounds: rect,
+                    border: Border::default(),
+                    shadow: Shadow::default(),
+                    snap: true,
+                },
+                Background::Color(Color::from_rgba(0.3, 0.5, 0.8, 0.45)),
+            );
         }
 
         // Draw glyphs after all backgrounds so non-standard terminal glyphs are
@@ -981,69 +968,6 @@ where
             );
         }
 
-        // Draw selection highlight (convert buffer coords to screen coords for rendering)
-        if let (Some(start_buf), Some(end_buf)) = selection {
-            // Normalize selection (ensure start comes before end)
-            let (start_buf, end_buf) = if start_buf.1 < end_buf.1
-                || (start_buf.1 == end_buf.1 && start_buf.0 <= end_buf.0)
-            {
-                (start_buf, end_buf)
-            } else {
-                (end_buf, start_buf)
-            };
-
-            let cols = metrics.columns_for_bounds(bounds);
-            let selection_color = Color::from_rgba(0.3, 0.5, 0.8, 0.4);
-
-            // Convert buffer range to screen range for rendering
-            let term = self.term.lock();
-            let content = term.renderable_content();
-            let display_offset = content.display_offset as i32;
-            drop(term);
-
-            // Iterate through buffer lines in selection
-            for buffer_line in start_buf.1..=end_buf.1 {
-                // Convert buffer line to screen line
-                let screen_line = buffer_line + display_offset;
-
-                // Skip if not visible in current viewport
-                if screen_line < 0 {
-                    continue;
-                }
-                let screen_line = screen_line as usize;
-
-                let start_col = if buffer_line == start_buf.1 {
-                    start_buf.0
-                } else {
-                    0
-                };
-                let end_col = if buffer_line == end_buf.1 {
-                    end_buf.0
-                } else {
-                    cols.saturating_sub(1)
-                };
-
-                let x = bounds.x + TERMINAL_PADDING_LEFT + start_col as f32 * cell_width;
-                let y = bounds.y + screen_line as f32 * cell_height;
-                let width = (end_col - start_col + 1) as f32 * cell_width;
-
-                renderer.fill_quad(
-                    Quad {
-                        bounds: Rectangle {
-                            x,
-                            y,
-                            width,
-                            height: cell_height,
-                        },
-                        border: Border::default(),
-                        shadow: Shadow::default(),
-                        snap: true,
-                    },
-                    Background::Color(selection_color),
-                );
-            }
-        }
-
         // Draw cursor (only if visible and in valid position)
         if is_focused && cursor_visible {
             if let Some(cursor_info) = cached_cursor {
@@ -1191,9 +1115,10 @@ where
                 state.is_focused = true;
 
                 if let Some(position) = cursor.position() {
-                    if let Some(cell) = self.pixel_to_cell(&bounds, position) {
+                    if let Some((point, side, cell)) =
+                        self.selection_anchor_at_position(&bounds, position)
+                    {
                         let now = std::time::Instant::now();
-                        let cols = metrics.columns_for_bounds(bounds);
 
                         // Check for multi-click (same position, within time threshold)
                         let is_multi_click = state
@@ -1215,54 +1140,26 @@ where
                         state.last_click_time = Some(now);
                         state.last_click_position = Some(cell);
 
-                        // Convert screen cell to buffer coordinates
-                        let (buf_col, buf_line) = self.screen_to_buffer(cell.0, cell.1);
-
-                        match state.click_count {
-                            2 => {
-                                // Double-click: select word
-                                state.selection_mode = SelectionMode::Word;
-                                let (word_start, word_end) =
-                                    self.find_word_at(cell.0, cell.1, cols);
-                                let (word_start_buf, _) = self.screen_to_buffer(word_start, cell.1);
-                                let (word_end_buf, _) = self.screen_to_buffer(word_end, cell.1);
-                                state.selection_start = Some((word_start_buf, buf_line));
-                                state.selection_end = Some((word_end_buf, buf_line));
-                                state.is_selecting = true;
-                                state.last_drag_cell = Some(cell);
-                                shell.request_redraw();
-                            }
-                            3 => {
-                                // Triple-click: select line
-                                state.selection_mode = SelectionMode::Line;
-                                state.selection_start = Some((0, buf_line));
-                                state.selection_end = Some((cols.saturating_sub(1), buf_line));
-                                state.is_selecting = true;
-                                state.last_drag_cell = Some(cell);
-                                shell.request_redraw();
-                            }
-                            _ => {
-                                // Single click: character selection
-                                state.selection_mode = SelectionMode::Character;
-                                state.selection_start = Some((buf_col, buf_line));
-                                state.selection_end = Some((buf_col, buf_line));
-                                state.is_selecting = true;
-                                state.last_drag_cell = Some(cell);
-                                shell.request_redraw();
-                            }
-                        }
+                        let selection_type = match state.click_count {
+                            2 => SelectionType::Semantic,
+                            3 => SelectionType::Lines,
+                            _ => SelectionType::Simple,
+                        };
+                        self.begin_selection(selection_type, point, side);
+                        state.is_selecting = true;
+                        state.last_drag_anchor = Some((point, side));
+                        state.last_drag_update = None;
+                        state.last_auto_scroll = None;
+                        shell.request_redraw();
                     }
                 }
             }
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 state.is_focused = false;
-                // Clear selection when clicking outside
-                state.selection_start = None;
-                state.selection_end = None;
+                self.clear_selection();
                 state.is_selecting = false;
                 state.click_count = 0;
-                state.selection_mode = SelectionMode::Character;
-                state.last_drag_cell = None;
+                state.last_drag_anchor = None;
                 state.last_auto_scroll = None;
                 shell.request_redraw();
             }
@@ -1327,58 +1224,11 @@ where
                                 state.last_auto_scroll = Some(std::time::Instant::now());
                                 shell.request_redraw();
 
-                                // NO coordinate compensation needed - selection is in buffer coordinates!
-                                // Buffer coords don't change when viewport scrolls.
-
-                                // After scrolling, update the selection endpoint
-                                // Convert current mouse position to cell (clamped to viewport)
-                                let clamped_y =
-                                    position.y.clamp(bounds.y, bounds.y + bounds.height - 1.0);
-                                let clamped_pos = iced::Point::new(position.x, clamped_y);
-                                if let Some(cell) = self.pixel_to_cell(&bounds, clamped_pos) {
-                                    let cols = metrics.columns_for_bounds(bounds);
-                                    let (buf_col, buf_line) = self.screen_to_buffer(cell.0, cell.1);
-
-                                    match state.selection_mode {
-                                        SelectionMode::Word => {
-                                            let (word_start, word_end) =
-                                                self.find_word_at(cell.0, cell.1, cols);
-                                            let (word_start_buf, _) =
-                                                self.screen_to_buffer(word_start, cell.1);
-                                            let (word_end_buf, _) =
-                                                self.screen_to_buffer(word_end, cell.1);
-                                            if let Some((start_col, start_line)) =
-                                                state.selection_start
-                                            {
-                                                if buf_line < start_line
-                                                    || (buf_line == start_line
-                                                        && word_start_buf < start_col)
-                                                {
-                                                    state.selection_end =
-                                                        Some((word_start_buf, buf_line));
-                                                } else {
-                                                    state.selection_end =
-                                                        Some((word_end_buf, buf_line));
-                                                }
-                                            }
-                                        }
-                                        SelectionMode::Line => {
-                                            if let Some((_, start_line)) = state.selection_start {
-                                                if buf_line < start_line {
-                                                    state.selection_start = Some((0, buf_line));
-                                                    state.selection_end =
-                                                        Some((cols.saturating_sub(1), start_line));
-                                                } else {
-                                                    state.selection_start = Some((0, start_line));
-                                                    state.selection_end =
-                                                        Some((cols.saturating_sub(1), buf_line));
-                                                }
-                                            }
-                                        }
-                                        SelectionMode::Character => {
-                                            state.selection_end = Some((buf_col, buf_line));
-                                        }
-                                    }
+                                if let Some((point, side, _)) =
+                                    self.clamped_selection_anchor_at_position(&bounds, *position)
+                                {
+                                    self.update_selection(point, side);
+                                    state.last_drag_anchor = Some((point, side));
                                 }
                             }
                         }
@@ -1386,61 +1236,21 @@ where
 
                     // Normal selection update when cursor is over bounds
                     if cursor.is_over(bounds) {
-                        if let Some(cell) = self.pixel_to_cell(&bounds, *position) {
+                        if let Some((point, side, _)) =
+                            self.selection_anchor_at_position(&bounds, *position)
+                        {
                             // Throttle selection updates to avoid excessive redraws.
                             if let Some(last) = state.last_drag_update {
                                 if last.elapsed() < std::time::Duration::from_millis(8) {
                                     return;
                                 }
                             }
-                            if state.last_drag_cell == Some(cell) {
+                            if state.last_drag_anchor == Some((point, side)) {
                                 return;
                             }
-                            state.last_drag_cell = Some(cell);
+                            state.last_drag_anchor = Some((point, side));
                             state.last_drag_update = Some(std::time::Instant::now());
-                            let cols = metrics.columns_for_bounds(bounds);
-
-                            // Convert screen cell to buffer coordinates
-                            let (buf_col, buf_line) = self.screen_to_buffer(cell.0, cell.1);
-
-                            match state.selection_mode {
-                                SelectionMode::Word => {
-                                    // Extend selection by word
-                                    let (word_start, word_end) =
-                                        self.find_word_at(cell.0, cell.1, cols);
-                                    let (word_start_buf, _) =
-                                        self.screen_to_buffer(word_start, cell.1);
-                                    let (word_end_buf, _) = self.screen_to_buffer(word_end, cell.1);
-                                    if let Some((start_col, start_line)) = state.selection_start {
-                                        // Determine direction and extend appropriately
-                                        if buf_line < start_line
-                                            || (buf_line == start_line
-                                                && word_start_buf < start_col)
-                                        {
-                                            state.selection_end = Some((word_start_buf, buf_line));
-                                        } else {
-                                            state.selection_end = Some((word_end_buf, buf_line));
-                                        }
-                                    }
-                                }
-                                SelectionMode::Line => {
-                                    // Extend selection by line
-                                    if let Some((_, start_line)) = state.selection_start {
-                                        if buf_line < start_line {
-                                            state.selection_start = Some((0, buf_line));
-                                            state.selection_end =
-                                                Some((cols.saturating_sub(1), start_line));
-                                        } else {
-                                            state.selection_start = Some((0, start_line));
-                                            state.selection_end =
-                                                Some((cols.saturating_sub(1), buf_line));
-                                        }
-                                    }
-                                }
-                                SelectionMode::Character => {
-                                    state.selection_end = Some((buf_col, buf_line));
-                                }
-                            }
+                            self.update_selection(point, side);
                             shell.request_redraw();
                         }
                     }
@@ -1450,7 +1260,7 @@ where
                 if state.is_selecting =>
             {
                 state.is_selecting = false;
-                state.last_drag_cell = None;
+                state.last_drag_anchor = None;
                 state.last_drag_update = None;
                 state.last_auto_scroll = None;
                 shell.request_redraw();
@@ -1547,11 +1357,7 @@ where
 
                     if is_copy_shortcut {
                         // Copy selected text to clipboard
-                        if let (Some(start), Some(end)) =
-                            (state.selection_start, state.selection_end)
-                        {
-                            let cols = metrics.columns_for_bounds(bounds);
-                            let text_content = self.get_selected_text(start, end, cols);
+                        if let Some(text_content) = self.selected_text() {
                             if !text_content.is_empty() {
                                 clipboard
                                     .write(iced::advanced::clipboard::Kind::Standard, text_content);
@@ -1574,17 +1380,7 @@ where
                     }
 
                     if is_select_all {
-                        // Select all visible content (in buffer coordinates)
-                        let cols = metrics.columns_for_bounds(bounds);
-                        let rows = metrics.rows_for_bounds(bounds);
-
-                        // Convert screen coordinates to buffer coordinates
-                        let (start_col, start_line) = self.screen_to_buffer(0, 0);
-                        let (end_col, end_line) =
-                            self.screen_to_buffer(cols.saturating_sub(1), rows.saturating_sub(1));
-
-                        state.selection_start = Some((start_col, start_line));
-                        state.selection_end = Some((end_col, end_line));
+                        self.select_visible_content();
                         shell.request_redraw();
                         return;
                     }
@@ -1596,7 +1392,11 @@ where
                     }
 
                     // Clear selection on any other key press (typing)
-                    if !modifiers.control() && state.selection_start.is_some() {
+                    let has_selection = {
+                        let term = self.term.lock();
+                        term.selection.is_some()
+                    };
+                    if !modifiers.control() && has_selection {
                         // Don't clear on modifier-only or navigation keys
                         let is_nav_key = matches!(
                             key,
@@ -1608,8 +1408,7 @@ where
                             )
                         );
                         if !is_nav_key {
-                            state.selection_start = None;
-                            state.selection_end = None;
+                            self.clear_selection();
                         }
                     }
 
@@ -1771,6 +1570,21 @@ mod tests {
     #[test]
     fn terminal_cell_index_clamps_large_values() {
         assert_eq!(terminal_cell_index(f32::MAX, 1.0), Some(u16::MAX as usize));
+    }
+
+    #[test]
+    fn selection_side_uses_cell_midpoint() {
+        assert_eq!(selection_side(4.9, 0, 10.0), Some(Side::Left));
+        assert_eq!(selection_side(5.0, 0, 10.0), Some(Side::Right));
+        assert_eq!(selection_side(14.9, 1, 10.0), Some(Side::Left));
+        assert_eq!(selection_side(15.0, 1, 10.0), Some(Side::Right));
+    }
+
+    #[test]
+    fn selection_side_rejects_invalid_values() {
+        assert_eq!(selection_side(f32::NAN, 0, 10.0), None);
+        assert_eq!(selection_side(4.0, 0, f32::INFINITY), None);
+        assert_eq!(selection_side(4.0, 0, 0.0), None);
     }
 
     #[test]
