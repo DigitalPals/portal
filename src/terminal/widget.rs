@@ -709,7 +709,7 @@ where
         _style: &renderer::Style,
         layout: Layout<'_>,
         _cursor: Cursor,
-        _viewport: &Rectangle,
+        viewport: &Rectangle,
     ) {
         let bounds = layout.bounds();
         let state = tree.state.downcast_ref::<TerminalState>();
@@ -725,340 +725,350 @@ where
         };
         let colors = self.terminal_colors.as_ref().unwrap_or(&default_colors);
 
-        // Draw background
-        renderer.fill_quad(
-            Quad {
-                bounds,
-                border: Border::default(),
-                shadow: Shadow::default(),
-                snap: true,
-            },
-            Background::Color(colors.background),
-        );
+        let Some(widget_clip) = bounds.intersection(viewport) else {
+            return;
+        };
 
-        let metrics = self.cell_metrics();
-        let cell_width = metrics.cell_width;
-        let cell_height = metrics.cell_height;
-
-        // Refresh cached render data if terminal content changed.
-        let mut cache = state.render_cache.borrow_mut();
-        let mut needs_refresh = cache.needs_refresh;
-        if let Some(epoch) = self.render_epoch.as_ref() {
-            let current = epoch.load(Ordering::Relaxed);
-            if current != cache.epoch {
-                cache.epoch = current;
-                needs_refresh = true;
-            }
-        } else {
-            needs_refresh = true;
-        }
-
-        if needs_refresh {
-            cache.cells = self.get_cells();
-            cache.cursor = self.get_cursor();
-            cache.needs_refresh = false;
-        }
-
-        let cached_cursor = cache.cursor.clone();
-        drop(cache);
-
-        let render_cache = state.render_cache.borrow();
-
-        // Draw cell backgrounds first. Some terminal glyphs (Powerline
-        // separators, Nerd Font icons) intentionally overhang their cell.
-        // Painting backgrounds in the same pass can cover those overhangs.
-        for cell in &render_cache.cells {
-            let x = bounds.x + TERMINAL_PADDING_LEFT + cell.column as f32 * cell_width;
-            let y = bounds.y + cell.line as f32 * cell_height;
-
-            let mut fg_color = cell_fg_to_iced(cell.fg, cell.flags, colors);
-            let mut bg_color = ansi_to_iced_themed(cell.bg, colors);
-
-            if cell.flags.contains(CellFlags::INVERSE) {
-                std::mem::swap(&mut fg_color, &mut bg_color);
-            }
-
-            // Draw cell background if not default (after inverse swap)
-            if bg_color != colors.background {
-                let bg_width = if cell.flags.contains(CellFlags::WIDE_CHAR) {
-                    cell_width * 2.0
-                } else {
-                    cell_width
-                };
-
-                renderer.fill_quad(
-                    Quad {
-                        bounds: Rectangle {
-                            x,
-                            y,
-                            width: bg_width,
-                            height: cell_height,
-                        },
-                        border: Border::default(),
-                        shadow: Shadow::default(),
-                        snap: true,
-                    },
-                    Background::Color(bg_color),
-                );
-            }
-        }
-
-        for rect in self.selection_rects(bounds, metrics) {
+        renderer.with_layer(widget_clip, |renderer| {
+            // Draw background
             renderer.fill_quad(
                 Quad {
-                    bounds: rect,
+                    bounds,
                     border: Border::default(),
                     shadow: Shadow::default(),
                     snap: true,
                 },
-                Background::Color(Color::from_rgba(0.3, 0.5, 0.8, 0.45)),
+                Background::Color(colors.background),
             );
-        }
 
-        // Draw glyphs after all backgrounds so non-standard terminal glyphs are
-        // not clipped by the next cell's background.
-        for cell in &render_cache.cells {
-            let x = bounds.x + TERMINAL_PADDING_LEFT + cell.column as f32 * cell_width;
-            let y = bounds.y + cell.line as f32 * cell_height;
+            let metrics = self.cell_metrics();
+            let cell_width = metrics.cell_width;
+            let cell_height = metrics.cell_height;
 
-            let mut fg_color = cell_fg_to_iced(cell.fg, cell.flags, colors);
-            let mut bg_color = ansi_to_iced_themed(cell.bg, colors);
-
-            if cell.flags.contains(CellFlags::INVERSE) {
-                std::mem::swap(&mut fg_color, &mut bg_color);
+            // Refresh cached render data if terminal content changed.
+            let mut cache = state.render_cache.borrow_mut();
+            let mut needs_refresh = cache.needs_refresh;
+            if let Some(epoch) = self.render_epoch.as_ref() {
+                let current = epoch.load(Ordering::Relaxed);
+                if current != cache.epoch {
+                    cache.epoch = current;
+                    needs_refresh = true;
+                }
+            } else {
+                needs_refresh = true;
             }
 
-            // Draw character
-            if cell.character != ' ' && !cell.flags.contains(CellFlags::HIDDEN) {
-                // Wide characters (e.g. CJK, emoji) occupy 2 cells
-                let char_width = if cell.flags.contains(CellFlags::WIDE_CHAR) {
+            if needs_refresh {
+                cache.cells = self.get_cells();
+                cache.cursor = self.get_cursor();
+                cache.needs_refresh = false;
+            }
+
+            let cached_cursor = cache.cursor.clone();
+            drop(cache);
+
+            let render_cache = state.render_cache.borrow();
+
+            // Draw cell backgrounds first. Some terminal glyphs (Powerline
+            // separators, Nerd Font icons) intentionally overhang their cell.
+            // Painting backgrounds in the same pass can cover those overhangs.
+            for cell in &render_cache.cells {
+                let x = bounds.x + TERMINAL_PADDING_LEFT + cell.column as f32 * cell_width;
+                let y = bounds.y + cell.line as f32 * cell_height;
+
+                let mut fg_color = cell_fg_to_iced(cell.fg, cell.flags, colors);
+                let mut bg_color = ansi_to_iced_themed(cell.bg, colors);
+
+                if cell.flags.contains(CellFlags::INVERSE) {
+                    std::mem::swap(&mut fg_color, &mut bg_color);
+                }
+
+                // Draw cell background if not default (after inverse swap)
+                if bg_color != colors.background {
+                    let bg_width = if cell.flags.contains(CellFlags::WIDE_CHAR) {
+                        cell_width * 2.0
+                    } else {
+                        cell_width
+                    };
+
+                    renderer.fill_quad(
+                        Quad {
+                            bounds: Rectangle {
+                                x,
+                                y,
+                                width: bg_width,
+                                height: cell_height,
+                            },
+                            border: Border::default(),
+                            shadow: Shadow::default(),
+                            snap: true,
+                        },
+                        Background::Color(bg_color),
+                    );
+                }
+            }
+
+            for rect in self.selection_rects(bounds, metrics) {
+                renderer.fill_quad(
+                    Quad {
+                        bounds: rect,
+                        border: Border::default(),
+                        shadow: Shadow::default(),
+                        snap: true,
+                    },
+                    Background::Color(Color::from_rgba(0.3, 0.5, 0.8, 0.45)),
+                );
+            }
+
+            // Draw glyphs after all backgrounds so non-standard terminal glyphs are
+            // not clipped by the next cell's background.
+            for cell in &render_cache.cells {
+                let x = bounds.x + TERMINAL_PADDING_LEFT + cell.column as f32 * cell_width;
+                let y = bounds.y + cell.line as f32 * cell_height;
+
+                let mut fg_color = cell_fg_to_iced(cell.fg, cell.flags, colors);
+                let mut bg_color = ansi_to_iced_themed(cell.bg, colors);
+
+                if cell.flags.contains(CellFlags::INVERSE) {
+                    std::mem::swap(&mut fg_color, &mut bg_color);
+                }
+
+                // Draw character
+                if cell.character != ' ' && !cell.flags.contains(CellFlags::HIDDEN) {
+                    // Wide characters (e.g. CJK, emoji) occupy 2 cells
+                    let char_width = if cell.flags.contains(CellFlags::WIDE_CHAR) {
+                        cell_width * 2.0
+                    } else {
+                        cell_width
+                    };
+
+                    // Try to render terminal graphics as rectangles for pixel-perfect rendering
+                    if render_terminal_graphic(
+                        renderer,
+                        cell.character,
+                        TerminalGraphicCell {
+                            rect: Rectangle {
+                                x,
+                                y,
+                                width: cell_width,
+                                height: cell_height,
+                            },
+                            box_thickness: metrics.box_thickness,
+                        },
+                        fg_color,
+                    ) {
+                        // Block element was rendered as rectangles
+                    } else {
+                        let bold = cell.flags.contains(CellFlags::BOLD);
+                        let italic = cell.flags.contains(CellFlags::ITALIC);
+                        let font = self.terminal_font.variant(bold, italic);
+
+                        let mut text_x = x;
+                        let mut text_y = y;
+                        let mut text_size = self.font_size;
+                        let mut text_width = char_width;
+                        let mut glyph_clip_width = char_width;
+
+                        if let Some(constraint) =
+                            nerd_font_attributes::constraint_for(cell.character)
+                        {
+                            let constraint_width = cell.constraint_width.max(1);
+                            glyph_clip_width = cell_width * constraint_width as f32;
+                            text_width = glyph_clip_width;
+
+                            let glyph = GlyphSize {
+                                width: metrics.face_width,
+                                height: metrics.face_height,
+                                x: 0.0,
+                                y: metrics.face_y,
+                            };
+                            let constrained =
+                                constraint.constrain(glyph, metrics, constraint_width);
+                            let scale = (constrained.height / glyph.height).clamp(0.25, 4.0);
+                            text_size *= scale;
+                            text_x += constrained.x;
+                            text_y += constrained.y;
+                        }
+
+                        // Draw the character using text renderer.
+                        let text = iced::advanced::Text {
+                            content: {
+                                let mut content = cell.character.to_string();
+                                content.push_str(&cell.zerowidth);
+                                content
+                            },
+                            bounds: Size::new(text_width, cell_height),
+                            size: iced::Pixels(text_size),
+                            line_height: iced::advanced::text::LineHeight::Absolute(iced::Pixels(
+                                cell_height,
+                            )),
+                            font,
+                            align_x: iced::alignment::Horizontal::Left.into(),
+                            align_y: iced::alignment::Vertical::Top,
+                            shaping: iced::advanced::text::Shaping::Advanced,
+                            wrapping: iced::advanced::text::Wrapping::None,
+                        };
+
+                        let clip_bounds = if is_powerline_separator(cell.character) {
+                            Rectangle {
+                                x: bounds.x,
+                                y,
+                                width: bounds.width,
+                                height: cell_height,
+                            }
+                        } else if nerd_font_attributes::is_symbol(cell.character) {
+                            Rectangle {
+                                x,
+                                y,
+                                width: glyph_clip_width,
+                                height: cell_height,
+                            }
+                        } else {
+                            bounds
+                        };
+
+                        renderer.fill_text(
+                            text,
+                            iced::Point::new(text_x, text_y),
+                            fg_color,
+                            clip_bounds,
+                        );
+                    }
+                }
+            }
+
+            // Draw line decorations as metric sprites so underline styles line up
+            // across adjacent cells independent of the selected font face.
+            for cell in &render_cache.cells {
+                if !cell
+                    .flags
+                    .intersects(CellFlags::ALL_UNDERLINES | CellFlags::STRIKEOUT)
+                {
+                    continue;
+                }
+
+                let x = bounds.x + TERMINAL_PADDING_LEFT + cell.column as f32 * cell_width;
+                let y = bounds.y + cell.line as f32 * cell_height;
+                let mut fg_color = cell_fg_to_iced(cell.fg, cell.flags, colors);
+                let mut bg_color = ansi_to_iced_themed(cell.bg, colors);
+
+                if cell.flags.contains(CellFlags::INVERSE) {
+                    std::mem::swap(&mut fg_color, &mut bg_color);
+                }
+
+                let decoration_width = if cell.flags.contains(CellFlags::WIDE_CHAR) {
                     cell_width * 2.0
                 } else {
                     cell_width
                 };
 
-                // Try to render terminal graphics as rectangles for pixel-perfect rendering
-                if render_terminal_graphic(
+                draw_text_decorations(
                     renderer,
-                    cell.character,
-                    TerminalGraphicCell {
-                        rect: Rectangle {
-                            x,
-                            y,
-                            width: cell_width,
-                            height: cell_height,
-                        },
-                        box_thickness: metrics.box_thickness,
+                    cell.flags,
+                    Rectangle {
+                        x,
+                        y,
+                        width: decoration_width,
+                        height: cell_height,
                     },
+                    metrics,
                     fg_color,
-                ) {
-                    // Block element was rendered as rectangles
-                } else {
-                    let bold = cell.flags.contains(CellFlags::BOLD);
-                    let italic = cell.flags.contains(CellFlags::ITALIC);
-                    let font = self.terminal_font.variant(bold, italic);
-
-                    let mut text_x = x;
-                    let mut text_y = y;
-                    let mut text_size = self.font_size;
-                    let mut text_width = char_width;
-                    let mut glyph_clip_width = char_width;
-
-                    if let Some(constraint) = nerd_font_attributes::constraint_for(cell.character) {
-                        let constraint_width = cell.constraint_width.max(1);
-                        glyph_clip_width = cell_width * constraint_width as f32;
-                        text_width = glyph_clip_width;
-
-                        let glyph = GlyphSize {
-                            width: metrics.face_width,
-                            height: metrics.face_height,
-                            x: 0.0,
-                            y: metrics.face_y,
-                        };
-                        let constrained = constraint.constrain(glyph, metrics, constraint_width);
-                        let scale = (constrained.height / glyph.height).clamp(0.25, 4.0);
-                        text_size *= scale;
-                        text_x += constrained.x;
-                        text_y += constrained.y;
-                    }
-
-                    // Draw the character using text renderer.
-                    let text = iced::advanced::Text {
-                        content: {
-                            let mut content = cell.character.to_string();
-                            content.push_str(&cell.zerowidth);
-                            content
-                        },
-                        bounds: Size::new(text_width, cell_height),
-                        size: iced::Pixels(text_size),
-                        line_height: iced::advanced::text::LineHeight::Absolute(iced::Pixels(
-                            cell_height,
-                        )),
-                        font,
-                        align_x: iced::alignment::Horizontal::Left.into(),
-                        align_y: iced::alignment::Vertical::Top,
-                        shaping: iced::advanced::text::Shaping::Advanced,
-                        wrapping: iced::advanced::text::Wrapping::None,
-                    };
-
-                    let clip_bounds = if is_powerline_separator(cell.character) {
-                        Rectangle {
-                            x: bounds.x,
-                            y,
-                            width: bounds.width,
-                            height: cell_height,
-                        }
-                    } else if nerd_font_attributes::is_symbol(cell.character) {
-                        Rectangle {
-                            x,
-                            y,
-                            width: glyph_clip_width,
-                            height: cell_height,
-                        }
-                    } else {
-                        bounds
-                    };
-
-                    renderer.fill_text(
-                        text,
-                        iced::Point::new(text_x, text_y),
-                        fg_color,
-                        clip_bounds,
-                    );
-                }
-            }
-        }
-
-        // Draw line decorations as metric sprites so underline styles line up
-        // across adjacent cells independent of the selected font face.
-        for cell in &render_cache.cells {
-            if !cell
-                .flags
-                .intersects(CellFlags::ALL_UNDERLINES | CellFlags::STRIKEOUT)
-            {
-                continue;
+                );
             }
 
-            let x = bounds.x + TERMINAL_PADDING_LEFT + cell.column as f32 * cell_width;
-            let y = bounds.y + cell.line as f32 * cell_height;
-            let mut fg_color = cell_fg_to_iced(cell.fg, cell.flags, colors);
-            let mut bg_color = ansi_to_iced_themed(cell.bg, colors);
+            // Draw cursor (only if visible and in valid position)
+            if is_focused && cursor_visible {
+                if let Some(cursor_info) = cached_cursor {
+                    if cursor_info.visible {
+                        let cursor_x = bounds.x
+                            + TERMINAL_PADDING_LEFT
+                            + cursor_info.column as f32 * cell_width;
+                        let cursor_y = bounds.y + cursor_info.line as f32 * cell_height;
 
-            if cell.flags.contains(CellFlags::INVERSE) {
-                std::mem::swap(&mut fg_color, &mut bg_color);
-            }
+                        let cursor_color = colors.cursor;
 
-            let decoration_width = if cell.flags.contains(CellFlags::WIDE_CHAR) {
-                cell_width * 2.0
-            } else {
-                cell_width
-            };
-
-            draw_text_decorations(
-                renderer,
-                cell.flags,
-                Rectangle {
-                    x,
-                    y,
-                    width: decoration_width,
-                    height: cell_height,
-                },
-                metrics,
-                fg_color,
-            );
-        }
-
-        // Draw cursor (only if visible and in valid position)
-        if is_focused && cursor_visible {
-            if let Some(cursor_info) = cached_cursor {
-                if cursor_info.visible {
-                    let cursor_x =
-                        bounds.x + TERMINAL_PADDING_LEFT + cursor_info.column as f32 * cell_width;
-                    let cursor_y = bounds.y + cursor_info.line as f32 * cell_height;
-
-                    let cursor_color = colors.cursor;
-
-                    match cursor_info.shape {
-                        CursorShape::Block => {
-                            renderer.fill_quad(
-                                Quad {
-                                    bounds: Rectangle {
-                                        x: cursor_x,
-                                        y: cursor_y,
-                                        width: cell_width,
-                                        height: cell_height,
+                        match cursor_info.shape {
+                            CursorShape::Block => {
+                                renderer.fill_quad(
+                                    Quad {
+                                        bounds: Rectangle {
+                                            x: cursor_x,
+                                            y: cursor_y,
+                                            width: cell_width,
+                                            height: cell_height,
+                                        },
+                                        border: Border::default(),
+                                        shadow: Shadow::default(),
+                                        snap: true,
                                     },
-                                    border: Border::default(),
-                                    shadow: Shadow::default(),
-                                    snap: true,
-                                },
-                                Background::Color(Color::from_rgba(
-                                    cursor_color.r,
-                                    cursor_color.g,
-                                    cursor_color.b,
-                                    0.7,
-                                )),
-                            );
-                        }
-                        CursorShape::Underline => {
-                            let thickness = metrics.cursor_thickness.max(1.0);
-                            renderer.fill_quad(
-                                Quad {
-                                    bounds: Rectangle {
-                                        x: cursor_x,
-                                        y: cursor_y + cell_height - thickness,
-                                        width: cell_width,
-                                        height: thickness,
+                                    Background::Color(Color::from_rgba(
+                                        cursor_color.r,
+                                        cursor_color.g,
+                                        cursor_color.b,
+                                        0.7,
+                                    )),
+                                );
+                            }
+                            CursorShape::Underline => {
+                                let thickness = metrics.cursor_thickness.max(1.0);
+                                renderer.fill_quad(
+                                    Quad {
+                                        bounds: Rectangle {
+                                            x: cursor_x,
+                                            y: cursor_y + cell_height - thickness,
+                                            width: cell_width,
+                                            height: thickness,
+                                        },
+                                        border: Border::default(),
+                                        shadow: Shadow::default(),
+                                        snap: true,
                                     },
-                                    border: Border::default(),
-                                    shadow: Shadow::default(),
-                                    snap: true,
-                                },
-                                Background::Color(cursor_color),
-                            );
-                        }
-                        CursorShape::Beam => {
-                            let thickness = metrics.cursor_thickness.max(1.0);
-                            renderer.fill_quad(
-                                Quad {
-                                    bounds: Rectangle {
-                                        x: cursor_x,
-                                        y: cursor_y,
-                                        width: thickness,
-                                        height: metrics.cursor_height.min(cell_height),
+                                    Background::Color(cursor_color),
+                                );
+                            }
+                            CursorShape::Beam => {
+                                let thickness = metrics.cursor_thickness.max(1.0);
+                                renderer.fill_quad(
+                                    Quad {
+                                        bounds: Rectangle {
+                                            x: cursor_x,
+                                            y: cursor_y,
+                                            width: thickness,
+                                            height: metrics.cursor_height.min(cell_height),
+                                        },
+                                        border: Border::default(),
+                                        shadow: Shadow::default(),
+                                        snap: true,
                                     },
-                                    border: Border::default(),
-                                    shadow: Shadow::default(),
-                                    snap: true,
-                                },
-                                Background::Color(cursor_color),
-                            );
-                        }
-                        _ => {
-                            // Default to block for hidden/other
-                            renderer.fill_quad(
-                                Quad {
-                                    bounds: Rectangle {
-                                        x: cursor_x,
-                                        y: cursor_y,
-                                        width: cell_width,
-                                        height: cell_height,
+                                    Background::Color(cursor_color),
+                                );
+                            }
+                            _ => {
+                                // Default to block for hidden/other
+                                renderer.fill_quad(
+                                    Quad {
+                                        bounds: Rectangle {
+                                            x: cursor_x,
+                                            y: cursor_y,
+                                            width: cell_width,
+                                            height: cell_height,
+                                        },
+                                        border: Border {
+                                            color: cursor_color,
+                                            width: 1.0,
+                                            radius: 0.0.into(),
+                                        },
+                                        shadow: Shadow::default(),
+                                        snap: true,
                                     },
-                                    border: Border {
-                                        color: cursor_color,
-                                        width: 1.0,
-                                        radius: 0.0.into(),
-                                    },
-                                    shadow: Shadow::default(),
-                                    snap: true,
-                                },
-                                Background::Color(Color::TRANSPARENT),
-                            );
+                                    Background::Color(Color::TRANSPARENT),
+                                );
+                            }
                         }
                     }
                 }
             }
-        }
+        });
     }
 
     fn update(
