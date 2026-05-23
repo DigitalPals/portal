@@ -10,8 +10,8 @@ use crate::app::ActiveDialog;
 use crate::app::{FocusSection, Portal, VaultModal, View};
 use crate::keybindings::AppAction;
 use crate::message::{
-    DialogMessage, HistoryMessage, HostMessage, Message, SessionMessage, SftpMessage,
-    SidebarMenuItem, TabMessage, UiMessage, VncMessage,
+    AgentNotificationMessage, DialogMessage, HistoryMessage, HostMessage, Message, SessionMessage,
+    SftpMessage, SidebarMenuItem, TabMessage, UiMessage, VncMessage,
 };
 use crate::ssh::host_key_verification::HostKeyVerificationResponse;
 use crate::views::dialogs::host_dialog::host_dialog_field_id;
@@ -246,9 +246,12 @@ pub(super) fn handle_keyboard_event(
                 return Task::none();
             }
         }
-        // Ctrl+Shift+K installs SSH key - allow this through to global shortcuts
+        // Ctrl+Shift+K installs SSH key and Ctrl+Shift+U jumps to unread agent
+        // notifications - allow these through to global shortcuts.
         if let Key::Character(c) = &key {
-            if modifiers.control() && modifiers.shift() && (c.as_str() == "k" || c.as_str() == "K")
+            if modifiers.control()
+                && modifiers.shift()
+                && matches!(c.as_str(), "k" | "K" | "u" | "U")
             {
                 // Fall through to global shortcuts below
             } else {
@@ -297,6 +300,12 @@ pub(super) fn handle_keyboard_event(
                 }
             }
             return Task::none();
+        }
+        // Ctrl+Shift+U - jump to newest unread agent notification
+        (Key::Character(c), true, true) if c.as_str() == "u" || c.as_str() == "U" => {
+            return portal.update(Message::AgentNotification(
+                AgentNotificationMessage::JumpLatestUnread,
+            ));
         }
         _ => {}
     }
@@ -594,6 +603,7 @@ fn visible_sidebar_items(show_sessions: bool) -> Vec<SidebarMenuItem> {
     if show_sessions {
         items.push(SidebarMenuItem::Sessions);
     }
+    items.push(SidebarMenuItem::Notifications);
     items.extend([
         SidebarMenuItem::Vault,
         SidebarMenuItem::Snippets,
@@ -704,6 +714,7 @@ fn handle_content_keyboard(
             SidebarMenuItem::Hosts
             | SidebarMenuItem::Sftp
             | SidebarMenuItem::Sessions
+            | SidebarMenuItem::Notifications
             | SidebarMenuItem::Vault
             | SidebarMenuItem::Snippets
             | SidebarMenuItem::Settings
@@ -711,6 +722,12 @@ fn handle_content_keyboard(
             SidebarMenuItem::History => handle_history_keyboard(portal, key, modifiers),
         },
         View::ProxySessions => {
+            if let Key::Named(keyboard::key::Named::ArrowLeft) = key {
+                portal.ui.focus_section = FocusSection::Sidebar;
+            }
+            Task::none()
+        }
+        View::Notifications => {
             if let Key::Named(keyboard::key::Named::ArrowLeft) = key {
                 portal.ui.focus_section = FocusSection::Sidebar;
             }

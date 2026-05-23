@@ -140,6 +140,9 @@ impl Portal {
         if let Some(session) = self.sessions.get_mut(tab_id) {
             session.attention_since = None;
         }
+        if self.config.agent_notifications.mark_session_read(tab_id) {
+            self.save_agent_notifications();
+        }
     }
 
     pub(super) fn close_tab(&mut self, tab_id: Uuid) {

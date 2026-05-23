@@ -192,6 +192,9 @@ fn run_command_action(portal: &mut Portal, action: CommandAction) -> Task<Messag
     match action {
         CommandAction::Hosts => handle_sidebar_item_select(portal, SidebarMenuItem::Hosts),
         CommandAction::Sftp => handle_sidebar_item_select(portal, SidebarMenuItem::Sftp),
+        CommandAction::Notifications => {
+            handle_sidebar_item_select(portal, SidebarMenuItem::Notifications)
+        }
         CommandAction::Snippets => handle_sidebar_item_select(portal, SidebarMenuItem::Snippets),
         CommandAction::Vault => handle_sidebar_item_select(portal, SidebarMenuItem::Vault),
         CommandAction::History => handle_sidebar_item_select(portal, SidebarMenuItem::History),
@@ -199,6 +202,9 @@ fn run_command_action(portal: &mut Portal, action: CommandAction) -> Task<Messag
         CommandAction::QuickConnect => portal.update(Message::Host(HostMessage::QuickConnect)),
         CommandAction::NewHost => portal.update(Message::Host(HostMessage::Add)),
         CommandAction::LocalTerminal => portal.update(Message::Host(HostMessage::LocalTerminal)),
+        CommandAction::JumpLatestUnreadNotification => portal.update(Message::AgentNotification(
+            crate::message::AgentNotificationMessage::JumpLatestUnread,
+        )),
         CommandAction::ConnectHost(id) => portal.update(Message::Host(HostMessage::Connect(id))),
         CommandAction::RunSnippet(id) => portal.update(Message::Snippet(SnippetMessage::Run(id))),
         CommandAction::PortalHubSync => portal.update(Message::Ui(UiMessage::PortalHubSyncNow)),
@@ -244,6 +250,11 @@ fn handle_sidebar_item_select(portal: &mut Portal, item: SidebarMenuItem) -> Tas
             portal.restore_sidebar_after_session();
             portal.ui.active_view = View::ProxySessions;
             portal.update(Message::ProxySessions(ProxySessionsMessage::Refresh))
+        }
+        SidebarMenuItem::Notifications => {
+            portal.restore_sidebar_after_session();
+            portal.ui.active_view = View::Notifications;
+            Task::none()
         }
         SidebarMenuItem::Vault => {
             portal.restore_sidebar_after_session();

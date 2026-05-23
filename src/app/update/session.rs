@@ -596,16 +596,11 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
             let now = Instant::now();
             let mut mark_attention = false;
             let mut notification = None;
+            let mut notification_records = Vec::new();
 
             if let Some(session) = portal.sessions.get_mut(session_id) {
-                let attention_signals = if matches!(
-                    session.backend,
-                    SessionBackend::Ssh(_) | SessionBackend::Proxy(_)
-                ) {
-                    session.attention_parser.advance(&data)
-                } else {
-                    Vec::new()
-                };
+                let attention_signals = session.attention_parser.advance(&data);
+                let auto_read = window_focused && active_tab == Some(session_id);
 
                 if !data.is_empty() {
                     if let Some(logger) = session.logger.as_ref() {
@@ -614,9 +609,22 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                     queue_terminal_output(session, data, now);
                 }
 
+                for signal in &attention_signals {
+                    let (title, body) = attention_notification_text(signal, &session.host_name);
+                    notification_records.push((
+                        session.host_id,
+                        session.host_name.clone(),
+                        title,
+                        body,
+                        auto_read,
+                    ));
+                }
+
                 if let Some(signal) = attention_signals.last() {
-                    session.attention_since = Some(now);
-                    mark_attention = true;
+                    if !auto_read {
+                        session.attention_since = Some(now);
+                        mark_attention = true;
+                    }
 
                     if should_show_desktop_attention(
                         active_tab,
@@ -630,6 +638,20 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                             Some(attention_notification_text(signal, &session.host_name));
                     }
                 }
+            }
+
+            if !notification_records.is_empty() {
+                for (host_id, host_name, title, body, read) in notification_records {
+                    portal.config.agent_notifications.add_attention(
+                        session_id,
+                        host_id,
+                        host_name,
+                        Some(title),
+                        body,
+                        read,
+                    );
+                }
+                portal.save_agent_notifications();
             }
 
             if mark_attention {

@@ -30,6 +30,11 @@ const MENU_ITEMS: &[MenuItem] = &[
         label: "Sessions",
     },
     MenuItem {
+        item: SidebarMenuItem::Notifications,
+        icon: icons::ui::ALERT_TRIANGLE,
+        label: "Alerts",
+    },
+    MenuItem {
         item: SidebarMenuItem::Vault,
         icon: icons::ui::KEY,
         label: "Vault",
@@ -57,6 +62,7 @@ const MENU_ITEMS: &[MenuItem] = &[
 ];
 
 /// Build the sidebar view
+#[allow(clippy::too_many_arguments)]
 pub fn sidebar_view(
     theme: Theme,
     fonts: ScaledFonts,
@@ -65,6 +71,7 @@ pub fn sidebar_view(
     focus_section: FocusSection,
     focus_index: usize,
     show_sessions: bool,
+    notification_unread_count: usize,
 ) -> Element<'static, Message> {
     // Completely hide sidebar when hidden
     if state == SidebarState::Hidden {
@@ -91,8 +98,19 @@ pub fn sidebar_view(
     {
         let is_selected = selected == menu_item.item;
         let is_focused = focus_section == FocusSection::Sidebar && idx == focus_index;
-        let item_element =
-            menu_item_button(menu_item, is_selected, is_focused, icons_only, theme, fonts);
+        let item_element = menu_item_button(
+            menu_item,
+            is_selected,
+            is_focused,
+            icons_only,
+            theme,
+            fonts,
+            if menu_item.item == SidebarMenuItem::Notifications {
+                notification_unread_count
+            } else {
+                0
+            },
+        );
         menu_items = menu_items.push(item_element);
     }
 
@@ -130,26 +148,43 @@ fn menu_item_button(
     collapsed: bool,
     theme: Theme,
     fonts: ScaledFonts,
+    badge_count: usize,
 ) -> Element<'static, Message> {
     let icon_widget = icon_with_color(menu_item.icon, 18, iced::Color::WHITE);
 
     let content: Element<'static, Message> = if collapsed {
         // Collapsed: just icon, centered
-        container(icon_widget)
-            .width(Length::Fill)
+        if badge_count > 0 {
+            column![
+                container(icon_widget)
+                    .width(Length::Fill)
+                    .align_x(Alignment::Center),
+                badge(badge_count, theme, fonts),
+            ]
+            .spacing(3)
             .align_x(Alignment::Center)
             .into()
+        } else {
+            container(icon_widget)
+                .width(Length::Fill)
+                .align_x(Alignment::Center)
+                .into()
+        }
     } else {
         // Expanded: icon + label
-        row![
+        let mut row = row![
             container(icon_widget).width(32).align_x(Alignment::Center),
             text(menu_item.label)
                 .size(fonts.body)
                 .color(iced::Color::WHITE),
         ]
         .spacing(8)
-        .align_y(Alignment::Center)
-        .into()
+        .align_y(Alignment::Center);
+        if badge_count > 0 {
+            row = row.push(iced::widget::Space::new().width(Length::Fill));
+            row = row.push(badge(badge_count, theme, fonts));
+        }
+        row.into()
     };
 
     let bg_color = if is_selected {
@@ -211,4 +246,27 @@ fn menu_item_button(
     } else {
         btn.into()
     }
+}
+
+fn badge(count: usize, theme: Theme, fonts: ScaledFonts) -> Element<'static, Message> {
+    let label = if count > 99 {
+        "99+".to_string()
+    } else {
+        count.to_string()
+    };
+    container(
+        text(label)
+            .size(fonts.mono_tiny)
+            .color(theme.text_on_accent()),
+    )
+    .padding([2, 6])
+    .style(move |_theme| container::Style {
+        background: Some(theme.accent.into()),
+        border: iced::Border {
+            radius: 6.0.into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    })
+    .into()
 }

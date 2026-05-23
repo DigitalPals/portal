@@ -37,6 +37,18 @@ pub fn available_commands(
             icons::ui::HARD_DRIVE,
         ),
         command(
+            "Agent Notifications",
+            "Open unread agent notification queue",
+            CommandAction::Notifications,
+            icons::ui::ALERT_TRIANGLE,
+        ),
+        command(
+            "Jump Latest Notification",
+            "Open the newest unread agent session",
+            CommandAction::JumpLatestUnreadNotification,
+            icons::ui::ZAP,
+        ),
+        command(
             "Snippets",
             "Open command snippets",
             CommandAction::Snippets,
