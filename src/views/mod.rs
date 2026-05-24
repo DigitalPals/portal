@@ -5,7 +5,6 @@ pub mod file_viewer;
 pub mod history_view;
 pub mod host_details_sheet;
 pub mod host_grid;
-pub mod notification_center;
 pub mod proxy_sessions;
 pub mod settings_page;
 pub mod sftp;

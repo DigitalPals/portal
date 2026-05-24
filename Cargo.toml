@@ -66,7 +66,6 @@ urlencoding = "2.1"
 parking_lot = "0.12"
 rfd = "0.15"  # Native file dialogs
 open = "5"    # Open files with default application
-notify-rust = "4"  # Desktop notifications
 
 # Local terminal
 portable-pty = "0.8"

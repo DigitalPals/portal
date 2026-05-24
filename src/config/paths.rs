@@ -48,11 +48,6 @@ pub fn history_file() -> Option<PathBuf> {
     config_dir().map(|dir| dir.join("history.toml"))
 }
 
-/// Get the path to the agent notification history file
-pub fn agent_notifications_file() -> Option<PathBuf> {
-    config_dir().map(|dir| dir.join("agent_notifications.toml"))
-}
-
 /// Get the path to the settings config file
 pub fn settings_file() -> Option<PathBuf> {
     config_dir().map(|dir| dir.join("settings.toml"))

@@ -28,7 +28,6 @@ pub enum SidebarMenuItem {
     Hosts,
     Sftp,
     Sessions,
-    Notifications,
     Vault,
     Snippets,
     History,
@@ -51,7 +50,6 @@ pub enum SettingsTab {
 pub enum CommandAction {
     Hosts,
     Sftp,
-    Notifications,
     Snippets,
     Vault,
     History,
@@ -59,7 +57,6 @@ pub enum CommandAction {
     QuickConnect,
     NewHost,
     LocalTerminal,
-    JumpLatestUnreadNotification,
     ConnectHost(Uuid),
     RunSnippet(Uuid),
     PortalHubSync,
@@ -450,27 +447,6 @@ pub enum HistoryMessage {
     Reconnect(Uuid),
 }
 
-/// Agent notification center messages
-#[derive(Debug, Clone)]
-pub enum AgentNotificationMessage {
-    /// Jump to the terminal session for a notification and mark it read
-    Jump(Uuid),
-    /// Jump to the newest unread notification
-    JumpLatestUnread,
-    /// Mark one notification read
-    MarkRead(Uuid),
-    /// Mark one notification unread
-    MarkUnread(Uuid),
-    /// Mark all notifications read
-    MarkAllRead,
-    /// Clear one notification from the active queue
-    Clear(Uuid),
-    /// Clear all read notifications from the active queue
-    ClearRead,
-    /// Clear all notifications from the active queue
-    ClearAll,
-}
-
 /// Result of executing a snippet command on a single host
 #[derive(Debug, Clone)]
 pub struct HostExecutionResult {
@@ -832,8 +808,6 @@ pub enum Message {
     Host(HostMessage),
     /// History messages
     History(HistoryMessage),
-    /// Agent notification center messages
-    AgentNotification(AgentNotificationMessage),
     /// Snippet messages
     Snippet(SnippetMessage),
     /// VNC session messages
@@ -885,12 +859,6 @@ impl From<HostMessage> for Message {
 impl From<HistoryMessage> for Message {
     fn from(msg: HistoryMessage) -> Self {
         Message::History(msg)
-    }
-}
-
-impl From<AgentNotificationMessage> for Message {
-    fn from(msg: AgentNotificationMessage) -> Self {
-        Message::AgentNotification(msg)
     }
 }
 

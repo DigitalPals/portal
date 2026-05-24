@@ -333,7 +333,6 @@ Configuration files:
 - `snippet_history.toml` — Snippet execution history (`enabled`, `store_command`, `store_output`, `redact_output`)
 - `settings.toml` — Theme, terminal font and scroll preferences, VNC settings, and Portal Hub settings
 - `history.toml` — Connection history
-- `agent_notifications.toml` — Persistent terminal attention notifications and read/clear state
 - `known_hosts` — SSH host key storage
 
 ## License

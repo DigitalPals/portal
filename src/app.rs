@@ -14,8 +14,7 @@ use futures::{StreamExt, stream};
 use iced::keyboard;
 
 use crate::config::{
-    AgentNotificationsConfig, HistoryConfig, HostsConfig, SettingsConfig, SnippetHistoryConfig,
-    SnippetsConfig,
+    HistoryConfig, HostsConfig, SettingsConfig, SnippetHistoryConfig, SnippetsConfig,
 };
 use crate::hub::sync::{ConflictChoice, SyncConflict};
 use crate::hub::vault::HubVaultConfig;
@@ -43,7 +42,6 @@ use crate::views::file_viewer::file_viewer_view;
 use crate::views::history_view::history_view;
 use crate::views::host_details_sheet::host_details_sheet_view;
 use crate::views::host_grid::{calculate_columns, host_grid_view, search_input_id};
-use crate::views::notification_center::notification_center_view;
 use crate::views::proxy_sessions::proxy_sessions_view;
 use crate::views::settings_page::{SettingsPageContext, settings_page_view};
 use crate::views::sftp::{
@@ -83,7 +81,6 @@ pub enum View {
     Settings,              // Full-page settings view
     Snippets,              // Snippets page with execution
     ProxySessions,         // Portal Hub sessions dashboard
-    Notifications,         // Agent notification center
     Vault,                 // Encrypted key vault
 }
 
@@ -266,7 +263,6 @@ pub struct ConfigState {
     pub snippets: SnippetsConfig,
     pub history: HistoryConfig,
     pub snippet_history: SnippetHistoryConfig,
-    pub agent_notifications: AgentNotificationsConfig,
     pub vault: HubVaultConfig,
 }
 
@@ -500,20 +496,6 @@ impl Portal {
             }
         };
 
-        let agent_notifications = match AgentNotificationsConfig::load() {
-            Ok(config) => {
-                tracing::info!("Loaded {} agent notification entries", config.entries.len());
-                config
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "Failed to load agent notifications: {}, using empty history",
-                    e
-                );
-                AgentNotificationsConfig::default()
-            }
-        };
-
         // Load settings from config file
         let settings_config = match SettingsConfig::load() {
             Ok(config) => {
@@ -623,7 +605,6 @@ impl Portal {
                 snippets: snippets_config,
                 history: history_config,
                 snippet_history,
-                agent_notifications,
                 vault: vault_config,
             },
             toast_manager: ToastManager::new(),
@@ -685,7 +666,6 @@ impl Portal {
             Message::Tab(msg) => update::handle_tab(self, msg),
             Message::Host(msg) => update::handle_host(self, msg),
             Message::History(msg) => update::handle_history(self, msg),
-            Message::AgentNotification(msg) => update::handle_notification(self, msg),
             Message::Snippet(msg) => update::handle_snippet(self, msg),
             Message::Vnc(msg) => update::handle_vnc(self, msg),
             Message::ProxySessions(msg) => update::handle_proxy_sessions(self, msg),
@@ -716,7 +696,6 @@ impl Portal {
             self.ui.focus_section,
             self.ui.sidebar_focus_index,
             self.prefs.portal_hub.is_configured(),
-            self.config.agent_notifications.unread_count(),
         );
 
         // Main content - prioritize active sessions over sidebar selection
@@ -910,9 +889,6 @@ impl Portal {
                 );
                 proxy_sessions_view(&self.proxy_sessions, column_count, theme, fonts)
             }
-            View::Notifications => {
-                notification_center_view(&self.config.agent_notifications, theme, fonts)
-            }
             View::Vault => vault_page_view(VaultPageContext {
                 vault: &self.config.vault,
                 hosts: &self.config.hosts,
@@ -932,7 +908,6 @@ impl Portal {
                     SidebarMenuItem::Hosts
                     | SidebarMenuItem::Sftp
                     | SidebarMenuItem::Sessions
-                    | SidebarMenuItem::Notifications
                     | SidebarMenuItem::Vault => {
                         // SFTP now opens directly into dual-pane view, so show hosts grid as fallback
                         host_grid_view(
@@ -1356,27 +1331,6 @@ impl Portal {
     pub(crate) fn save_snippet_history(&self) {
         if let Err(e) = self.config.snippet_history.save() {
             tracing::error!("Failed to save snippet history: {}", e);
-        }
-    }
-
-    pub(crate) fn save_agent_notifications(&self) {
-        if let Err(e) = self.config.agent_notifications.save() {
-            tracing::error!("Failed to save agent notifications: {}", e);
-        }
-    }
-
-    pub(crate) fn sync_tab_attention_from_notifications(&mut self, session_id: SessionId) {
-        let has_unread = self
-            .config
-            .agent_notifications
-            .entries
-            .iter()
-            .any(|entry| entry.session_id == session_id && entry.is_unread());
-        if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == session_id) {
-            tab.needs_attention = has_unread;
-        }
-        if !has_unread && let Some(session) = self.sessions.get_mut(session_id) {
-            session.attention_since = None;
         }
     }
 

@@ -30,11 +30,6 @@ const MENU_ITEMS: &[MenuItem] = &[
         label: "Sessions",
     },
     MenuItem {
-        item: SidebarMenuItem::Notifications,
-        icon: icons::ui::ALERT_TRIANGLE,
-        label: "Alerts",
-    },
-    MenuItem {
         item: SidebarMenuItem::Vault,
         icon: icons::ui::KEY,
         label: "Vault",
@@ -71,7 +66,6 @@ pub fn sidebar_view(
     focus_section: FocusSection,
     focus_index: usize,
     show_sessions: bool,
-    notification_unread_count: usize,
 ) -> Element<'static, Message> {
     // Completely hide sidebar when hidden
     if state == SidebarState::Hidden {
@@ -105,11 +99,7 @@ pub fn sidebar_view(
             icons_only,
             theme,
             fonts,
-            if menu_item.item == SidebarMenuItem::Notifications {
-                notification_unread_count
-            } else {
-                0
-            },
+            0,
         );
         menu_items = menu_items.push(item_element);
     }

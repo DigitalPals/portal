@@ -1,4 +1,3 @@
-pub mod agent_notifications;
 pub mod history;
 pub mod hosts;
 pub mod paths;
@@ -13,7 +12,6 @@ use uuid::Uuid;
 
 use crate::error::ConfigError;
 
-pub use agent_notifications::{AgentNotificationEntry, AgentNotificationsConfig};
 pub use history::{HistoryConfig, HistoryEntry, SessionType};
 pub use hosts::{
     AuthMethod, DetectedOs, Host, HostsConfig, PortForward, PortForwardKind, Protocol,

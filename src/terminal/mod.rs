@@ -2,7 +2,6 @@
 //!
 //! This module provides a custom iced widget for terminal emulation.
 
-pub mod attention;
 pub mod backend;
 mod block_elements;
 mod colors;
