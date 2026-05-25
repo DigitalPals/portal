@@ -1,7 +1,6 @@
-use iced::widget::{
-    Column, Row, Space, button, column, container, mouse_area, row, text, text_input, tooltip,
-};
+use iced::widget::{Column, Row, Space, button, column, container, row, text, text_input, tooltip};
 use iced::{Alignment, Element, Fill, Length, Padding};
+use std::collections::HashMap;
 use uuid::Uuid;
 
 /// Search input ID for auto-focus
@@ -246,7 +245,6 @@ pub fn host_grid_view(
     fonts: ScaledFonts,
     focus_section: FocusSection,
     focus_index: Option<usize>,
-    hovered_host: Option<Uuid>,
 ) -> Element<'static, Message> {
     // Main scrollable content
     let mut content = Column::new()
@@ -259,15 +257,17 @@ pub fn host_grid_view(
     if hosts_empty && groups_empty {
         content = content.push(empty_state(theme, fonts));
     } else {
+        let mut hosts_by_group: HashMap<Option<Uuid>, Vec<&HostCard>> = HashMap::new();
+        for host in &hosts {
+            hosts_by_group.entry(host.group_id).or_default().push(host);
+        }
+
         // Track global focus index across all hosts
         let mut global_idx: usize = 0;
 
         // Render each group with its hosts inline
         for group in &groups {
-            let group_hosts: Vec<&HostCard> = hosts
-                .iter()
-                .filter(|h| h.group_id == Some(group.id))
-                .collect();
+            let group_hosts = hosts_by_group.remove(&Some(group.id)).unwrap_or_default();
 
             // Group section header
             let header = build_group_header(group, group_hosts.len(), theme, fonts);
@@ -282,7 +282,6 @@ pub fn host_grid_view(
                     fonts,
                     focus_section,
                     focus_index,
-                    hovered_host,
                     global_idx,
                 );
                 content = content.push(section);
@@ -291,7 +290,7 @@ pub fn host_grid_view(
         }
 
         // Ungrouped hosts
-        let ungrouped: Vec<&HostCard> = hosts.iter().filter(|h| h.group_id.is_none()).collect();
+        let ungrouped = hosts_by_group.remove(&None).unwrap_or_default();
         if !ungrouped.is_empty() {
             if !groups_empty {
                 let header_text = format!("Ungrouped  ({} hosts)", ungrouped.len());
@@ -307,7 +306,6 @@ pub fn host_grid_view(
                 fonts,
                 focus_section,
                 focus_index,
-                hovered_host,
                 global_idx,
             );
             content = content.push(section);
@@ -453,7 +451,6 @@ fn build_host_cards_grid(
     fonts: ScaledFonts,
     focus_section: FocusSection,
     focus_index: Option<usize>,
-    hovered_host: Option<Uuid>,
     global_offset: usize,
 ) -> Element<'static, Message> {
     let mut rows: Vec<Element<'static, Message>> = Vec::new();
@@ -462,14 +459,7 @@ fn build_host_cards_grid(
     for (idx, host) in hosts.iter().enumerate() {
         let global_idx = global_offset + idx;
         let is_focused = focus_section == FocusSection::Content && focus_index == Some(global_idx);
-        let is_hovered = hovered_host == Some(host.id);
-        current_row.push(host_card(
-            (*host).clone(),
-            theme,
-            fonts,
-            is_focused,
-            is_hovered,
-        ));
+        current_row.push(host_card(host, theme, fonts, is_focused));
 
         if current_row.len() >= column_count {
             rows.push(
@@ -538,11 +528,10 @@ fn os_icon_color(os: &Option<DetectedOs>) -> iced::Color {
 
 /// Single host card
 fn host_card(
-    host: HostCard,
+    host: &HostCard,
     theme: Theme,
     fonts: ScaledFonts,
     is_focused: bool,
-    is_hovered: bool,
 ) -> Element<'static, Message> {
     let host_id = host.id;
 
@@ -568,11 +557,11 @@ fn host_card(
         });
 
     // Host info
-    let protocol_label = match host.protocol {
+    let protocol_label = match &host.protocol {
         Protocol::Ssh => "SSH",
         Protocol::Vnc => "VNC",
     };
-    let badge_color = match host.protocol {
+    let badge_color = match &host.protocol {
         Protocol::Ssh => iced::Color::from_rgb8(59, 130, 246),
         Protocol::Vnc => iced::Color::from_rgb8(139, 92, 246),
     };
@@ -646,21 +635,14 @@ fn host_card(
             .on_press(message)
     };
 
-    let details_button: Element<'static, Message> = if is_hovered {
-        icon_button(
-            icons::ui::INFO,
-            Message::Host(HostMessage::DetailsOpen(host_id)),
-        )
-        .into()
-    } else {
-        Space::new().width(32).height(32).into()
-    };
+    let details_button: Element<'static, Message> = icon_button(
+        icons::ui::INFO,
+        Message::Host(HostMessage::DetailsOpen(host_id)),
+    )
+    .into();
 
-    let edit_button: Element<'static, Message> = if is_hovered {
-        icon_button(icons::ui::PENCIL, Message::Host(HostMessage::Edit(host_id))).into()
-    } else {
-        Space::new().width(32).height(32).into()
-    };
+    let edit_button: Element<'static, Message> =
+        icon_button(icons::ui::PENCIL, Message::Host(HostMessage::Edit(host_id))).into();
 
     // Right side: badge at top, edit button below
     let right_side: Element<'static, Message> =
@@ -682,10 +664,9 @@ fn host_card(
     )
     .style(move |_theme, status| {
         let card_bg = theme.surface;
-        let (bg, shadow_alpha) = match (status, is_focused, is_hovered) {
-            (_, true, _) => (theme.hover, 0.25),
-            (_, _, true) => (theme.hover, 0.25),
-            (button::Status::Hovered, _, _) => (theme.hover, 0.25),
+        let (bg, shadow_alpha) = match (status, is_focused) {
+            (_, true) => (theme.hover, 0.25),
+            (button::Status::Hovered, _) => (theme.hover, 0.25),
             _ => (card_bg, 0.15),
         };
         let border = if is_focused {
@@ -725,7 +706,7 @@ fn host_card(
             text(format!(
                 "{}://{}",
                 protocol_label.to_lowercase(),
-                host.hostname
+                &host.hostname
             ))
             .size(fonts.label)
             .color(theme.text_muted),
@@ -738,25 +719,18 @@ fn host_card(
     .padding(8)
     .width(Length::Fixed(260.0));
 
-    let card_element: Element<'static, Message> =
-        tooltip(card_button, hover_content, tooltip::Position::Top)
-            .delay(std::time::Duration::from_millis(650))
-            .style(move |_theme| container::Style {
-                background: Some(theme.surface.into()),
-                border: iced::Border {
-                    color: theme.border,
-                    width: 1.0,
-                    radius: 6.0.into(),
-                },
-                ..Default::default()
-            })
-            .padding(6)
-            .into();
-
-    // Wrap in mouse_area for hover detection
-    mouse_area(card_element)
-        .on_enter(Message::Host(HostMessage::Hover(Some(host_id))))
-        .on_exit(Message::Host(HostMessage::Hover(None)))
+    tooltip(card_button, hover_content, tooltip::Position::Top)
+        .delay(std::time::Duration::from_millis(650))
+        .style(move |_theme| container::Style {
+            background: Some(theme.surface.into()),
+            border: iced::Border {
+                color: theme.border,
+                width: 1.0,
+                radius: 6.0.into(),
+            },
+            ..Default::default()
+        })
+        .padding(6)
         .into()
 }
 

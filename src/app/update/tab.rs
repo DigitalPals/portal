@@ -27,10 +27,6 @@ pub fn handle_tab(portal: &mut Portal, msg: TabMessage) -> Task<Message> {
             portal.enter_host_grid();
             Task::none()
         }
-        TabMessage::Hover(id) => {
-            portal.ui.hovered_tab = id;
-            Task::none()
-        }
         TabMessage::ShowContextMenu(tab_id, x, y) => {
             if portal.sessions.contains(tab_id) {
                 portal.ui.tab_context_menu.show(tab_id, x, y);

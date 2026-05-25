@@ -389,8 +389,6 @@ pub enum TabMessage {
     Close(Uuid),
     /// Open new tab (go to host grid)
     New,
-    /// Track which tab is being hovered (for showing close button)
-    Hover(Option<Uuid>),
     /// Show terminal tab context menu at position
     ShowContextMenu(Uuid, f32, f32),
     /// Hide terminal tab context menu
@@ -426,8 +424,6 @@ pub enum HostMessage {
     Add,
     /// Open edit host dialog for existing host
     Edit(Uuid),
-    /// Track which host is being hovered (for showing edit button)
-    Hover(Option<Uuid>),
     /// Open the host details sheet
     DetailsOpen(Uuid),
     /// Close the host details sheet

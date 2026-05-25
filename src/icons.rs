@@ -6,6 +6,8 @@
 
 use iced::widget::svg::{Handle, Svg};
 use iced::{Color, Length};
+use std::cell::RefCell;
+use std::collections::HashMap;
 
 /// UI icons for sidebar and general interface
 pub mod ui {
@@ -77,8 +79,33 @@ pub mod os {
 
 /// Create an SVG icon widget with specified size and color
 pub fn icon_with_color(data: &'static [u8], size: u16, color: Color) -> Svg<'static> {
-    Svg::new(Handle::from_memory(data))
+    Svg::new(cached_svg_handle(data))
         .width(Length::Fixed(size as f32))
         .height(Length::Fixed(size as f32))
         .style(move |_theme, _status| iced::widget::svg::Style { color: Some(color) })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct IconKey {
+    ptr: usize,
+    len: usize,
+}
+
+thread_local! {
+    static SVG_HANDLES: RefCell<HashMap<IconKey, Handle>> = RefCell::new(HashMap::new());
+}
+
+fn cached_svg_handle(data: &'static [u8]) -> Handle {
+    let key = IconKey {
+        ptr: data.as_ptr() as usize,
+        len: data.len(),
+    };
+
+    SVG_HANDLES.with(|handles| {
+        let mut handles = handles.borrow_mut();
+        handles
+            .entry(key)
+            .or_insert_with(|| Handle::from_memory(data))
+            .clone()
+    })
 }

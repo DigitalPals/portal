@@ -88,10 +88,6 @@ pub fn handle_host(portal: &mut Portal, msg: HostMessage) -> Task<Message> {
             }
             Task::none()
         }
-        HostMessage::Hover(id) => {
-            portal.ui.hovered_host = id;
-            Task::none()
-        }
         HostMessage::DetailsOpen(id) => {
             portal.ui.host_details_sheet = Some(id);
             Task::none()

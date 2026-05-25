@@ -1,6 +1,6 @@
 //! Tab bar component for managing multiple sessions
 
-use iced::widget::{Row, button, container, mouse_area, row, text};
+use iced::widget::{Row, button, container, row, text};
 use iced::{Alignment, Color, Element, Length, Padding};
 use uuid::Uuid;
 
@@ -81,7 +81,6 @@ pub fn tab_bar_view<'a>(
     focus_index: usize,
     active_view: &View,
     hosts_config: &'a HostsConfig,
-    hovered_tab: Option<Uuid>,
 ) -> Element<'a, Message> {
     // Determine if we should use terminal background (seamless look)
     let use_terminal_bg = matches!(
@@ -117,12 +116,10 @@ pub fn tab_bar_view<'a>(
     for (idx, tab) in tabs.iter().enumerate() {
         let is_active = active_tab == Some(tab.id);
         let is_focused = focus_section == FocusSection::TabBar && idx == focus_index;
-        let is_hovered = hovered_tab == Some(tab.id);
         tab_elements.push(tab_button(
             tab,
             is_active,
             is_focused,
-            is_hovered,
             theme,
             fonts,
             hosts_config,
@@ -170,7 +167,6 @@ fn tab_button<'a>(
     tab: &'a Tab,
     is_active: bool,
     is_focused: bool,
-    is_hovered: bool,
     theme: Theme,
     fonts: ScaledFonts,
     hosts_config: &'a HostsConfig,
@@ -214,32 +210,27 @@ fn tab_button<'a>(
         tab.title.clone()
     };
 
-    // Close button - only show when hovered (always reserve space to prevent resize)
+    // Close button - always uses the reserved space, avoiding app-level hover updates.
     let close_button_width = 16.0;
-    let close_button: Element<'_, Message> = if is_hovered {
-        container(
-            button(text("×").size(fonts.section).color(text_icon_color))
-                .style(move |_theme, status| {
-                    let text_color = match status {
-                        iced::widget::button::Status::Hovered => Color::from_rgb8(0xCD, 0xD6, 0xF4),
-                        _ => text_icon_color,
-                    };
-                    iced::widget::button::Style {
-                        background: None,
-                        text_color,
-                        ..Default::default()
-                    }
-                })
-                .padding(0)
-                .on_press(Message::Tab(TabMessage::Close(tab_id))),
-        )
-        .width(close_button_width)
-        .align_x(Alignment::Center)
-        .into()
-    } else {
-        // Empty spacer with same width to prevent resize on hover
-        container(text("")).width(close_button_width).into()
-    };
+    let close_button: Element<'_, Message> = container(
+        button(text("×").size(fonts.section).color(text_icon_color))
+            .style(move |_theme, status| {
+                let text_color = match status {
+                    iced::widget::button::Status::Hovered => Color::from_rgb8(0xCD, 0xD6, 0xF4),
+                    _ => text_icon_color,
+                };
+                iced::widget::button::Style {
+                    background: None,
+                    text_color,
+                    ..Default::default()
+                }
+            })
+            .padding(0)
+            .on_press(Message::Tab(TabMessage::Close(tab_id))),
+    )
+    .width(close_button_width)
+    .align_x(Alignment::Center)
+    .into();
 
     let content = row![
         icon,
@@ -285,17 +276,12 @@ fn tab_button<'a>(
         .padding(0)
         .on_press(Message::Tab(TabMessage::Select(tab_id)));
 
-    // Wrap in mouse_area for hover and right-click detection
-    let area = mouse_area(tab_button)
-        .on_enter(Message::Tab(TabMessage::Hover(Some(tab_id))))
-        .on_exit(Message::Tab(TabMessage::Hover(None)));
-
     if tab.tab_type == TabType::Terminal {
-        capture_mouse_area(area)
+        capture_mouse_area(tab_button)
             .on_right_press(move |x, y| Message::Tab(TabMessage::ShowContextMenu(tab_id, x, y)))
             .into()
     } else {
-        area.into()
+        tab_button.into()
     }
 }
 

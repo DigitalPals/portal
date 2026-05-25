@@ -64,7 +64,7 @@ use self::managers::{
     ActiveDialog, DialogManager, FileViewerManager, ProxySessionsState, SessionManager,
     SftpManager, SnippetExecutionManager, VncActiveSession,
 };
-use self::view_model::{filter_group_cards, filter_host_cards, group_cards, host_cards};
+use self::view_model::{filtered_group_cards, filtered_host_cards};
 
 /// Threshold for auto-collapsing sidebar (in pixels)
 pub const SIDEBAR_AUTO_COLLAPSE_THRESHOLD: f32 = 800.0;
@@ -195,9 +195,7 @@ pub struct UiState {
     pub search_query: String,
     pub command_palette_open: bool,
     pub command_palette_query: String,
-    pub hovered_host: Option<Uuid>,
     pub host_details_sheet: Option<Uuid>,
-    pub hovered_tab: Option<Uuid>,
     pub sidebar_state: SidebarState,
     pub sidebar_state_before_session: Option<SidebarState>, // Saved state before hiding for terminal
     pub sidebar_selection: SidebarMenuItem,
@@ -533,9 +531,7 @@ impl Portal {
                 search_query: String::new(),
                 command_palette_open: false,
                 command_palette_query: String::new(),
-                hovered_host: None,
                 host_details_sheet: None,
-                hovered_tab: None,
                 sidebar_state: SidebarState::Expanded,
                 sidebar_state_before_session: None,
                 sidebar_selection: SidebarMenuItem::Hosts,
@@ -677,13 +673,6 @@ impl Portal {
 
     /// Build the view
     pub fn view(&self) -> Element<'_, Message> {
-        let all_cards = host_cards(&self.config.hosts);
-        let all_groups = group_cards(&self.config.hosts);
-
-        // Filter based on search
-        let filtered_cards = filter_host_cards(&self.ui.search_query, all_cards);
-        let filtered_groups = filter_group_cards(&self.ui.search_query, all_groups);
-
         let theme = get_theme(self.prefs.theme_id);
         let fonts = ScaledFonts::new(self.effective_ui_scale());
 
@@ -899,6 +888,10 @@ impl Portal {
                 fonts,
             }),
             View::HostGrid => {
+                let filtered_cards = filtered_host_cards(&self.ui.search_query, &self.config.hosts);
+                let filtered_groups =
+                    filtered_group_cards(&self.ui.search_query, &self.config.hosts);
+
                 // Calculate responsive column count
                 let column_count =
                     calculate_columns(self.ui.window_size.width, self.ui.sidebar_state);
@@ -919,7 +912,6 @@ impl Portal {
                             fonts,
                             self.ui.focus_section,
                             self.ui.host_grid_focus_index,
-                            self.ui.hovered_host,
                         )
                     }
                     SidebarMenuItem::History => history_view(
@@ -943,7 +935,6 @@ impl Portal {
                             fonts,
                             self.ui.focus_section,
                             self.ui.host_grid_focus_index,
-                            self.ui.hovered_host,
                         )
                     }
                 }
@@ -972,7 +963,6 @@ impl Portal {
             self.ui.tab_focus_index,
             &self.ui.active_view,
             &self.config.hosts,
-            self.ui.hovered_tab,
         );
 
         // In VNC fullscreen mode, skip sidebar and tab bar
