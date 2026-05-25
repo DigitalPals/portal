@@ -6,6 +6,7 @@ use iced::widget::text_editor;
 use secrecy::SecretString;
 use uuid::Uuid;
 
+use crate::app::managers::TransferProgress;
 use crate::config::DetectedOs;
 use crate::local::LocalSession;
 use crate::proxy::{ListedProxySession, ProxySession, ProxyStatus};
@@ -263,6 +264,19 @@ pub enum SftpMessage {
     CopyToTarget(SessionId),
     /// Result of copy operation (count copied, target pane)
     CopyResult(SessionId, PaneId, Result<usize, String>),
+    /// Transfer progress update for a long-running SFTP copy/upload/download.
+    TransferProgress(TransferProgress),
+    /// Long-running SFTP transfer finished.
+    TransferFinished {
+        transfer_id: Uuid,
+        tab_id: SessionId,
+        target_pane_id: PaneId,
+        result: Result<usize, String>,
+    },
+    /// Request cancellation of a long-running SFTP transfer.
+    TransferCancel(Uuid),
+    /// Clear finished transfer rows.
+    TransferClearFinished,
     /// Toggle hidden files visibility
     ToggleShowHidden(SessionId, PaneId),
     /// Toggle actions menu visibility

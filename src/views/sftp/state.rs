@@ -4,7 +4,7 @@
 
 use std::collections::HashSet;
 use std::path::PathBuf;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use iced::widget::Id;
 
@@ -16,12 +16,16 @@ use super::types::{
     SftpDialogType,
 };
 
+const SFTP_VISIBLE_REBUILD_LOG_ENTRY_THRESHOLD: usize = 1_000;
+const SFTP_VISIBLE_REBUILD_LOG_DURATION_THRESHOLD: Duration = Duration::from_millis(8);
+
 /// State for a single file browser pane (can be local or remote)
 #[derive(Debug, Clone)]
 pub struct FilePaneState {
     pub source: PaneSource,
     pub current_path: PathBuf,
     pub entries: Vec<FileEntry>,
+    visible_entry_indices: Vec<usize>,
     pub selected_indices: HashSet<usize>,
     pub last_selected_index: Option<usize>, // For shift-click range selection
     pub sort_order: SortOrder,
@@ -43,6 +47,7 @@ impl FilePaneState {
             source: PaneSource::Local,
             current_path: home_dir,
             entries: Vec::new(),
+            visible_entry_indices: Vec::new(),
             selected_indices: HashSet::new(),
             last_selected_index: None,
             sort_order: SortOrder::default(),
@@ -64,6 +69,7 @@ impl FilePaneState {
             source: PaneSource::Local,
             current_path: home_dir,
             entries: Vec::new(),
+            visible_entry_indices: Vec::new(),
             selected_indices: HashSet::new(),
             last_selected_index: None,
             sort_order: SortOrder::default(),
@@ -80,17 +86,21 @@ impl FilePaneState {
     pub fn set_entries(&mut self, mut entries: Vec<FileEntry>) {
         self.sort_order.sort(&mut entries);
         self.entries = entries;
-        self.selected_indices.clear();
-        self.last_selected_index = None;
+        self.rebuild_visible_entries();
+        self.clear_selection();
         self.loading = false;
         self.error = None;
     }
 
+    pub fn clear_entries(&mut self) {
+        self.entries.clear();
+        self.visible_entry_indices.clear();
+        self.clear_selection();
+    }
+
     pub fn set_error(&mut self, error: String) {
         self.error = Some(error);
-        self.entries.clear();
-        self.selected_indices.clear();
-        self.last_selected_index = None;
+        self.clear_entries();
         self.loading = false;
     }
 
@@ -118,29 +128,89 @@ impl FilePaneState {
             .collect()
     }
 
-    /// Get filtered entries with their original indices
-    /// Respects show_hidden and filter_text settings
-    pub fn visible_entries(&self) -> Vec<(usize, &FileEntry)> {
-        let filter_text = self.filter_text.trim().to_lowercase();
-        self.entries
+    pub fn set_filter_text(&mut self, filter_text: String) {
+        if self.filter_text == filter_text {
+            return;
+        }
+        self.filter_text = filter_text;
+        self.rebuild_visible_entries();
+        self.clear_selection();
+    }
+
+    pub fn toggle_show_hidden(&mut self) {
+        self.show_hidden = !self.show_hidden;
+        self.rebuild_visible_entries();
+        self.clear_selection();
+    }
+
+    pub fn sort_by_column(&mut self, column: SftpColumn) {
+        self.sort_order = self.sort_order.for_column_next(column);
+        self.sort_order.sort(&mut self.entries);
+        self.rebuild_visible_entries();
+        self.clear_selection();
+    }
+
+    pub fn visible_entry_count(&self) -> usize {
+        self.visible_entry_indices.len()
+    }
+
+    pub fn visible_entries_iter(&self) -> impl Iterator<Item = (usize, &FileEntry)> + '_ {
+        self.visible_entry_indices
             .iter()
-            .enumerate()
-            .filter(|(_, entry)| {
-                // Always show parent directory (..)
-                if entry.is_parent() {
-                    return true;
-                }
-                // Filter hidden files (starting with .)
-                if !self.show_hidden && entry.name.starts_with('.') {
-                    return false;
-                }
-                // Filter by search text (case-insensitive)
-                if !filter_text.is_empty() {
-                    return entry.name.to_lowercase().contains(&filter_text);
-                }
-                true
-            })
-            .collect()
+            .filter_map(|&index| self.entries.get(index).map(|entry| (index, entry)))
+    }
+
+    /// Get cached filtered entries with their original indices.
+    pub fn visible_entries(&self) -> Vec<(usize, &FileEntry)> {
+        self.visible_entries_iter().collect()
+    }
+
+    fn rebuild_visible_entries(&mut self) {
+        let started = Instant::now();
+        let filter_text = self.filter_text.trim().to_lowercase();
+        let show_hidden = self.show_hidden;
+        self.visible_entry_indices.clear();
+        self.visible_entry_indices
+            .extend(
+                self.entries
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(index, entry)| {
+                        if Self::entry_is_visible(entry, show_hidden, &filter_text) {
+                            Some(index)
+                        } else {
+                            None
+                        }
+                    }),
+            );
+        let elapsed = started.elapsed();
+        if self.entries.len() >= SFTP_VISIBLE_REBUILD_LOG_ENTRY_THRESHOLD
+            || elapsed >= SFTP_VISIBLE_REBUILD_LOG_DURATION_THRESHOLD
+        {
+            tracing::debug!(
+                entries = self.entries.len(),
+                visible = self.visible_entry_indices.len(),
+                show_hidden,
+                filter_len = filter_text.len(),
+                elapsed_ms = elapsed.as_millis(),
+                "rebuilt SFTP visible-entry cache"
+            );
+        }
+    }
+
+    fn entry_is_visible(entry: &FileEntry, show_hidden: bool, filter_text: &str) -> bool {
+        if entry.is_parent() {
+            return true;
+        }
+        if !show_hidden && entry.name.starts_with('.') {
+            return false;
+        }
+        filter_text.is_empty() || entry.name.to_lowercase().contains(filter_text)
+    }
+
+    fn clear_selection(&mut self) {
+        self.selected_indices.clear();
+        self.last_selected_index = None;
     }
 }
 
@@ -393,8 +463,7 @@ mod tests {
     #[test]
     fn visible_entries_keeps_parent_and_filters_hidden() {
         let mut state = FilePaneState::new_local();
-        state.entries = vec![entry(".."), entry(".secret"), entry("notes.txt")];
-        state.show_hidden = false;
+        state.set_entries(vec![entry(".."), entry(".secret"), entry("notes.txt")]);
 
         let visible: Vec<_> = state
             .visible_entries()
@@ -408,8 +477,12 @@ mod tests {
     #[test]
     fn visible_entries_filters_by_text_case_insensitive() {
         let mut state = FilePaneState::new_local();
-        state.entries = vec![entry("alpha.txt"), entry("Beta.md"), entry("gamma.log")];
-        state.filter_text = " BE ".to_string();
+        state.set_entries(vec![
+            entry("alpha.txt"),
+            entry("Beta.md"),
+            entry("gamma.log"),
+        ]);
+        state.set_filter_text(" BE ".to_string());
 
         let visible: Vec<_> = state
             .visible_entries()
@@ -421,14 +494,27 @@ mod tests {
     }
 
     #[test]
+    fn visible_entry_cache_updates_when_hidden_toggle_changes() {
+        let mut state = FilePaneState::new_local();
+        state.set_entries(vec![entry(".secret"), entry("notes.txt")]);
+
+        assert_eq!(state.visible_entry_count(), 1);
+
+        state.toggle_show_hidden();
+
+        assert_eq!(state.visible_entry_count(), 2);
+    }
+
+    #[test]
     fn set_error_clears_stale_entries_and_selection() {
         let mut state = FilePaneState::new_local();
-        state.entries = vec![entry("one"), entry("two")];
+        state.set_entries(vec![entry("one"), entry("two")]);
         state.select(1);
 
         state.set_error("failed".to_string());
 
         assert!(state.entries.is_empty());
+        assert_eq!(state.visible_entry_count(), 0);
         assert!(state.selected_indices.is_empty());
         assert_eq!(state.last_selected_index, None);
         assert!(!state.loading);
@@ -437,7 +523,7 @@ mod tests {
     #[test]
     fn select_replaces_previous_selection() {
         let mut state = FilePaneState::new_local();
-        state.entries = vec![entry("one"), entry("two"), entry("three")];
+        state.set_entries(vec![entry("one"), entry("two"), entry("three")]);
         state.select(0);
         state.select(2);
 
@@ -449,7 +535,7 @@ mod tests {
     #[test]
     fn select_ignores_out_of_range_index() {
         let mut state = FilePaneState::new_local();
-        state.entries = vec![entry("one")];
+        state.set_entries(vec![entry("one")]);
 
         state.select(9);
 

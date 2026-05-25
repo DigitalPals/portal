@@ -58,7 +58,7 @@ pub fn handle_sftp(portal: &mut Portal, msg: SftpMessage) -> Task<Message> {
                 pane.source = new_source;
                 pane.current_path = new_path;
                 pane.loading = true;
-                pane.entries.clear();
+                pane.clear_entries();
                 return portal.load_dual_pane_directory(tab_id, pane_id);
             }
             Task::none()
@@ -144,8 +144,28 @@ pub fn handle_sftp(portal: &mut Portal, msg: SftpMessage) -> Task<Message> {
             sftp_session,
         } => {
             tracing::info!("SFTP connected for pane {:?}", pane_id);
+            if !portal
+                .sftp
+                .finish_pending_connection_for(tab_id, pane_id, host_id)
+            {
+                tracing::warn!(
+                    "Ignoring stale SFTP connection for tab {} pane {:?} host {}",
+                    tab_id,
+                    pane_id,
+                    host_id
+                );
+                return Task::none();
+            }
             portal.dialogs.close_connecting();
-            portal.sftp.clear_pending_connection();
+
+            if !portal.sftp.contains_tab(tab_id) {
+                tracing::warn!(
+                    "Ignoring SFTP connection for closed tab {} pane {:?}",
+                    tab_id,
+                    pane_id
+                );
+                return Task::none();
+            }
 
             if let Some(host) = portal.config.hosts.find_host(host_id) {
                 let entry = crate::config::HistoryEntry::new(
@@ -174,7 +194,7 @@ pub fn handle_sftp(portal: &mut Portal, msg: SftpMessage) -> Task<Message> {
                 };
                 pane.current_path = home_dir;
                 pane.loading = true;
-                pane.entries.clear();
+                pane.clear_entries();
                 return portal.load_dual_pane_directory(tab_id, pane_id);
             }
             Task::none()
@@ -346,14 +366,69 @@ pub fn handle_sftp(portal: &mut Portal, msg: SftpMessage) -> Task<Message> {
             }
             Task::none()
         }
+        SftpMessage::TransferProgress(progress) => {
+            portal.transfers.progress(progress);
+            Task::none()
+        }
+        SftpMessage::TransferFinished {
+            transfer_id,
+            tab_id,
+            target_pane_id,
+            result,
+        } => {
+            let status = match &result {
+                Ok(_) => crate::app::managers::TransferStatus::Completed,
+                Err(error) if error == "Transfer cancelled" => {
+                    crate::app::managers::TransferStatus::Cancelled
+                }
+                Err(error) => crate::app::managers::TransferStatus::Failed(error.clone()),
+            };
+            portal.transfers.finish(transfer_id, status);
+
+            if let Some(tab_state) = portal.sftp.get_tab_mut(tab_id) {
+                match result {
+                    Ok(count) => {
+                        let msg = if count == 1 {
+                            "Transferred 1 item".to_string()
+                        } else {
+                            format!("Transferred {} items", count)
+                        };
+                        portal.toast_manager.push(Toast::success(msg));
+                        tab_state.pane_mut(target_pane_id).loading = true;
+                        return portal.load_dual_pane_directory(tab_id, target_pane_id);
+                    }
+                    Err(error) if error == "Transfer cancelled" => {
+                        portal
+                            .toast_manager
+                            .push(Toast::warning("Transfer cancelled"));
+                    }
+                    Err(error) => {
+                        tracing::error!("Transfer failed: {}", error);
+                        portal
+                            .toast_manager
+                            .push(Toast::error(format!("Transfer failed: {}", error)));
+                    }
+                }
+            }
+            Task::none()
+        }
+        SftpMessage::TransferCancel(transfer_id) => {
+            if portal.transfers.cancel(transfer_id) {
+                portal
+                    .toast_manager
+                    .push_or_refresh(Toast::warning("Cancelling transfer..."));
+            }
+            Task::none()
+        }
+        SftpMessage::TransferClearFinished => {
+            portal.transfers.clear_finished();
+            Task::none()
+        }
         SftpMessage::ToggleShowHidden(tab_id, pane_id) => {
             if let Some(tab_state) = portal.sftp.get_tab_mut(tab_id) {
                 let pane = tab_state.pane_mut(pane_id);
-                pane.show_hidden = !pane.show_hidden;
+                pane.toggle_show_hidden();
                 pane.actions_menu_open = false;
-                // Clear selection since indices may change
-                pane.selected_indices.clear();
-                pane.last_selected_index = None;
             }
             Task::none()
         }
@@ -376,10 +451,7 @@ pub fn handle_sftp(portal: &mut Portal, msg: SftpMessage) -> Task<Message> {
             if let Some(tab_state) = portal.sftp.get_tab_mut(tab_id) {
                 tab_state.close_actions_menus();
                 let pane = tab_state.pane_mut(pane_id);
-                pane.filter_text = text;
-                // Clear selection since filtered indices may change
-                pane.selected_indices.clear();
-                pane.last_selected_index = None;
+                pane.set_filter_text(text);
             }
             Task::none()
         }
@@ -387,10 +459,7 @@ pub fn handle_sftp(portal: &mut Portal, msg: SftpMessage) -> Task<Message> {
             if let Some(tab_state) = portal.sftp.get_tab_mut(tab_id) {
                 tab_state.close_actions_menus();
                 let pane = tab_state.pane_mut(pane_id);
-                pane.sort_order = pane.sort_order.for_column_next(column);
-                pane.sort_order.sort(&mut pane.entries);
-                pane.selected_indices.clear();
-                pane.last_selected_index = None;
+                pane.sort_by_column(column);
             }
             Task::none()
         }

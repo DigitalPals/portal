@@ -6,6 +6,7 @@ mod view_model;
 
 use iced::widget::{column, row, stack, text, text_editor};
 use iced::{Element, Fill, Subscription, Task, Theme as IcedTheme, event, time, window};
+use std::cell::RefCell;
 use std::sync::Arc;
 use std::time::Duration;
 use uuid::Uuid;
@@ -62,9 +63,9 @@ use crate::views::vnc_view::vnc_viewer_view;
 pub use self::managers::ActiveSession;
 use self::managers::{
     ActiveDialog, DialogManager, FileViewerManager, ProxySessionsState, SessionManager,
-    SftpManager, SnippetExecutionManager, VncActiveSession,
+    SftpManager, SnippetExecutionManager, TransferManager, VncActiveSession,
 };
-use self::view_model::{filtered_group_cards, filtered_host_cards};
+use self::view_model::HostGridCache;
 
 /// Threshold for auto-collapsing sidebar (in pixels)
 pub const SIDEBAR_AUTO_COLLAPSE_THRESHOLD: f32 = 800.0;
@@ -193,6 +194,7 @@ mod tests {
 pub struct UiState {
     pub active_view: View,
     pub search_query: String,
+    host_grid_cache: RefCell<HostGridCache>,
     pub command_palette_open: bool,
     pub command_palette_query: String,
     pub host_details_sheet: Option<Uuid>,
@@ -385,6 +387,7 @@ pub struct Portal {
     // Domain managers
     sessions: SessionManager,
     sftp: SftpManager,
+    transfers: TransferManager,
     file_viewers: FileViewerManager,
     proxy_sessions: ProxySessionsState,
     dialogs: DialogManager,
@@ -529,6 +532,7 @@ impl Portal {
             ui: UiState {
                 active_view: View::HostGrid,
                 search_query: String::new(),
+                host_grid_cache: RefCell::new(HostGridCache::default()),
                 command_palette_open: false,
                 command_palette_query: String::new(),
                 host_details_sheet: None,
@@ -567,6 +571,7 @@ impl Portal {
             active_tab: None,
             sessions: SessionManager::new(),
             sftp: SftpManager::new(),
+            transfers: TransferManager::new(),
             file_viewers: FileViewerManager::new(),
             proxy_sessions: ProxySessionsState::new(),
             dialogs: DialogManager::new(),
@@ -803,7 +808,8 @@ impl Portal {
                         .iter()
                         .map(|h| (h.id, h.name.clone()))
                         .collect();
-                    dual_pane_sftp_view(state, available_hosts, theme, fonts)
+                    let transfers = self.transfers.for_tab(*tab_id);
+                    dual_pane_sftp_view(state, available_hosts, transfers, theme, fonts)
                 } else {
                     text("File browser not found").into()
                 }
@@ -888,9 +894,9 @@ impl Portal {
                 fonts,
             }),
             View::HostGrid => {
-                let filtered_cards = filtered_host_cards(&self.ui.search_query, &self.config.hosts);
-                let filtered_groups =
-                    filtered_group_cards(&self.ui.search_query, &self.config.hosts);
+                let mut host_grid_cache = self.ui.host_grid_cache.borrow_mut();
+                let host_grid_cards =
+                    host_grid_cache.cards(&self.ui.search_query, &self.config.hosts);
 
                 // Calculate responsive column count
                 let column_count =
@@ -905,8 +911,8 @@ impl Portal {
                         // SFTP now opens directly into dual-pane view, so show hosts grid as fallback
                         host_grid_view(
                             &self.ui.search_query,
-                            filtered_groups,
-                            filtered_cards,
+                            &host_grid_cards.groups,
+                            &host_grid_cards.hosts,
                             column_count,
                             theme,
                             fonts,
@@ -928,8 +934,8 @@ impl Portal {
                         // These open dialogs or pages, show hosts grid as fallback
                         host_grid_view(
                             &self.ui.search_query,
-                            filtered_groups,
-                            filtered_cards,
+                            &host_grid_cards.groups,
+                            &host_grid_cards.hosts,
                             column_count,
                             theme,
                             fonts,

@@ -238,8 +238,8 @@ fn build_action_bar(
 #[allow(clippy::too_many_arguments)]
 pub fn host_grid_view(
     search_query: &str,
-    groups: Vec<GroupCard>,
-    hosts: Vec<HostCard>,
+    groups: &[GroupCard],
+    hosts: &[HostCard],
     column_count: usize,
     theme: Theme,
     fonts: ScaledFonts,
@@ -258,7 +258,7 @@ pub fn host_grid_view(
         content = content.push(empty_state(theme, fonts));
     } else {
         let mut hosts_by_group: HashMap<Option<Uuid>, Vec<&HostCard>> = HashMap::new();
-        for host in &hosts {
+        for host in hosts {
             hosts_by_group.entry(host.group_id).or_default().push(host);
         }
 
@@ -266,7 +266,7 @@ pub fn host_grid_view(
         let mut global_idx: usize = 0;
 
         // Render each group with its hosts inline
-        for group in &groups {
+        for group in groups {
             let group_hosts = hosts_by_group.remove(&Some(group.id)).unwrap_or_default();
 
             // Group section header

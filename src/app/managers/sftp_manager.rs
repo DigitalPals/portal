@@ -136,6 +136,30 @@ impl SftpManager {
     pub fn clear_pending_connection(&mut self) {
         self.pending_connection = None;
     }
+
+    /// Check whether the pending connection still belongs to this pane and host.
+    pub fn pending_connection_matches(
+        &self,
+        tab_id: SessionId,
+        pane_id: PaneId,
+        host_id: Uuid,
+    ) -> bool {
+        self.pending_connection == Some((tab_id, pane_id, host_id))
+    }
+
+    /// Clear the pending connection only when it matches the completed attempt.
+    pub fn finish_pending_connection_for(
+        &mut self,
+        tab_id: SessionId,
+        pane_id: PaneId,
+        host_id: Uuid,
+    ) -> bool {
+        if self.pending_connection_matches(tab_id, pane_id, host_id) {
+            self.pending_connection = None;
+            return true;
+        }
+        false
+    }
 }
 
 impl Default for SftpManager {
@@ -658,6 +682,25 @@ mod tests {
         manager.set_pending_connection(Some((tab_id, PaneId::Left, host_id)));
         manager.set_pending_connection(None);
 
+        assert!(manager.pending_connection.is_none());
+    }
+
+    #[test]
+    fn finish_pending_connection_only_clears_matching_attempt() {
+        let mut manager = SftpManager::new();
+        let tab_id = Uuid::new_v4();
+        let first_host = Uuid::new_v4();
+        let second_host = Uuid::new_v4();
+
+        manager.set_pending_connection(Some((tab_id, PaneId::Left, second_host)));
+
+        assert!(!manager.finish_pending_connection_for(tab_id, PaneId::Left, first_host));
+        assert_eq!(
+            manager.pending_connection,
+            Some((tab_id, PaneId::Left, second_host))
+        );
+
+        assert!(manager.finish_pending_connection_for(tab_id, PaneId::Left, second_host));
         assert!(manager.pending_connection.is_none());
     }
 

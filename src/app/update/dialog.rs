@@ -412,6 +412,11 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                         PasswordConnectionKind::Sftp => {
                             if let Some(ctx) = sftp_context {
                                 let sftp_session_id = uuid::Uuid::new_v4();
+                                portal.sftp.set_pending_connection(Some((
+                                    ctx.tab_id,
+                                    ctx.pane_id,
+                                    host_id,
+                                )));
                                 portal.dialogs.open_connecting(host.name.clone(), "SFTP");
                                 return connection::sftp_connect_tasks_with_password(
                                     host,
@@ -460,6 +465,11 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
         }
         DialogMessage::PasswordCancel => {
             if let Some(dialog) = portal.dialogs.password_mut() {
+                if dialog.connection_kind
+                    == crate::views::dialogs::password_dialog::PasswordConnectionKind::Sftp
+                {
+                    portal.sftp.clear_pending_connection();
+                }
                 // Clear password for security
                 dialog.clear_password();
             }
@@ -598,6 +608,9 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
         }
         DialogMessage::PassphraseCancel => {
             if let Some(dialog) = portal.dialogs.passphrase_mut() {
+                if dialog.sftp_context.is_some() {
+                    portal.sftp.clear_pending_connection();
+                }
                 // Clear passphrase for security
                 dialog.clear_passphrase();
             }

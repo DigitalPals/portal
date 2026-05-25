@@ -8,7 +8,7 @@ use chrono::{TimeZone, Utc};
 use russh_sftp::client::SftpSession as RusshSftpSession;
 use russh_sftp::protocol::OpenFlags;
 use tokio::fs::OpenOptions;
-use tokio::io::{self, AsyncWriteExt};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use tokio::sync::Mutex;
 use uuid::Uuid;
@@ -17,6 +17,8 @@ use crate::error::SftpError;
 use crate::ssh::SshConnection;
 
 use super::types::FileEntry;
+
+const TRANSFER_BUFFER_SIZE: usize = 64 * 1024;
 
 /// SFTP session wrapper for file operations
 pub struct SftpSession {
@@ -243,6 +245,22 @@ impl SftpSession {
 
     /// Download a file from remote to local
     pub async fn download(&self, remote_path: &Path, local_path: &Path) -> Result<u64, SftpError> {
+        self.download_with_progress(remote_path, local_path, |_| {}, || false)
+            .await
+    }
+
+    /// Download a file and report cumulative bytes written.
+    pub async fn download_with_progress<F, C>(
+        &self,
+        remote_path: &Path,
+        local_path: &Path,
+        mut on_progress: F,
+        is_cancelled: C,
+    ) -> Result<u64, SftpError>
+    where
+        F: FnMut(u64),
+        C: Fn() -> bool,
+    {
         ensure_local_target_is_not_symlink(local_path).await?;
 
         if let Some(parent) = local_path.parent() {
@@ -279,19 +297,42 @@ impl SftpSession {
             })?
         };
 
-        let bytes = match io::copy(&mut remote, &mut local).await {
-            Ok(bytes) => bytes,
-            Err(e) => {
+        let mut bytes = 0u64;
+        let mut buffer = vec![0u8; TRANSFER_BUFFER_SIZE];
+        loop {
+            if is_cancelled() {
                 drop(local);
                 cleanup_local_staging(&partial_path).await;
-                return Err(SftpError::Transfer(format!(
-                    "Failed to download {} to {}: {}",
-                    remote_str,
-                    local_path.display(),
+                return Err(SftpError::Transfer("Transfer cancelled".to_string()));
+            }
+
+            let read = match remote.read(&mut buffer).await {
+                Ok(0) => break,
+                Ok(read) => read,
+                Err(e) => {
+                    drop(local);
+                    cleanup_local_staging(&partial_path).await;
+                    return Err(SftpError::Transfer(format!(
+                        "Failed to download {} to {}: {}",
+                        remote_str,
+                        local_path.display(),
+                        e
+                    )));
+                }
+            };
+
+            if let Err(e) = local.write_all(&buffer[..read]).await {
+                drop(local);
+                cleanup_local_staging(&partial_path).await;
+                return Err(SftpError::LocalIo(format!(
+                    "Failed to write local staging file {}: {}",
+                    partial_path.display(),
                     e
                 )));
             }
-        };
+            bytes = bytes.saturating_add(read as u64);
+            on_progress(bytes);
+        }
 
         if let Err(e) = local.flush().await {
             drop(local);
@@ -332,6 +373,22 @@ impl SftpSession {
 
     /// Upload a file from local to remote
     pub async fn upload(&self, local_path: &Path, remote_path: &Path) -> Result<u64, SftpError> {
+        self.upload_with_progress(local_path, remote_path, |_| {}, || false)
+            .await
+    }
+
+    /// Upload a file and report cumulative bytes written.
+    pub async fn upload_with_progress<F, C>(
+        &self,
+        local_path: &Path,
+        remote_path: &Path,
+        mut on_progress: F,
+        is_cancelled: C,
+    ) -> Result<u64, SftpError>
+    where
+        F: FnMut(u64),
+        C: Fn() -> bool,
+    {
         let mut local = tokio::fs::File::open(local_path).await.map_err(|e| {
             SftpError::LocalIo(format!(
                 "Failed to read local file {}: {}",
@@ -360,9 +417,32 @@ impl SftpSession {
                 ))
             })?;
 
-        let bytes = match io::copy(&mut local, &mut remote).await {
-            Ok(bytes) => bytes,
-            Err(e) => {
+        let mut bytes = 0u64;
+        let mut buffer = vec![0u8; TRANSFER_BUFFER_SIZE];
+        loop {
+            if is_cancelled() {
+                let _ = remote.shutdown().await;
+                drop(remote);
+                cleanup_remote_staging(&sftp, &partial_str).await;
+                return Err(SftpError::Transfer("Transfer cancelled".to_string()));
+            }
+
+            let read = match local.read(&mut buffer).await {
+                Ok(0) => break,
+                Ok(read) => read,
+                Err(e) => {
+                    let _ = remote.shutdown().await;
+                    drop(remote);
+                    cleanup_remote_staging(&sftp, &partial_str).await;
+                    return Err(SftpError::LocalIo(format!(
+                        "Failed to read local file {}: {}",
+                        local_path.display(),
+                        e
+                    )));
+                }
+            };
+
+            if let Err(e) = remote.write_all(&buffer[..read]).await {
                 let _ = remote.shutdown().await;
                 drop(remote);
                 cleanup_remote_staging(&sftp, &partial_str).await;
@@ -373,7 +453,9 @@ impl SftpSession {
                     e
                 )));
             }
-        };
+            bytes = bytes.saturating_add(read as u64);
+            on_progress(bytes);
+        }
 
         if let Err(e) = remote.flush().await {
             let _ = remote.shutdown().await;

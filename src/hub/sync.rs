@@ -334,12 +334,31 @@ pub async fn run_bidirectional_sync(
                     }),
                 );
             }
-            (true, true) => conflicts.push(SyncConflict {
-                service: service.to_string(),
-                local: local_payload,
-                hub: hub_service.payload,
-                expected_revision: hub_service.revision,
-            }),
+            (true, true) => {
+                if service == HOSTS
+                    && let Some(merged) =
+                        merge_hosts_payloads(&baseline, &local_payload, &hub_service.payload)
+                {
+                    uploaded_local = true;
+                    applied_remote = true;
+                    final_payloads.insert(service.to_string(), merged.clone());
+                    updates.insert(
+                        service.to_string(),
+                        json!({
+                            "expected_revision": hub_service.revision,
+                            "payload": merged,
+                            "tombstones": hub_service.tombstones,
+                        }),
+                    );
+                } else {
+                    conflicts.push(SyncConflict {
+                        service: service.to_string(),
+                        local: local_payload,
+                        hub: hub_service.payload,
+                        expected_revision: hub_service.revision,
+                    });
+                }
+            }
             (false, false) => {
                 final_payloads.insert(service.to_string(), local_payload.clone());
             }
@@ -748,6 +767,87 @@ fn canonical_hosts_payload(hosts: &HostsConfig) -> Result<Value, String> {
     Ok(value)
 }
 
+fn merge_hosts_payloads(baseline: &Value, local: &Value, hub: &Value) -> Option<Value> {
+    let mut merged = local.clone();
+    let merged_object = merged.as_object_mut()?;
+    merged_object.insert(
+        "hosts".to_string(),
+        Value::Array(merge_payload_array_by_id(baseline, local, hub, "hosts")?),
+    );
+    merged_object.insert(
+        "groups".to_string(),
+        Value::Array(merge_payload_array_by_id(baseline, local, hub, "groups")?),
+    );
+    Some(merged)
+}
+
+fn merge_payload_array_by_id(
+    baseline: &Value,
+    local: &Value,
+    hub: &Value,
+    field: &str,
+) -> Option<Vec<Value>> {
+    let (baseline_order, baseline_items) = payload_array_by_id(baseline, field)?;
+    let (local_order, local_items) = payload_array_by_id(local, field)?;
+    let (hub_order, hub_items) = payload_array_by_id(hub, field)?;
+    let mut ids = Vec::new();
+
+    for id in local_order
+        .iter()
+        .chain(hub_order.iter())
+        .chain(baseline_order.iter())
+    {
+        if !ids.contains(id) {
+            ids.push(id.clone());
+        }
+    }
+
+    let mut merged = Vec::new();
+    for id in ids {
+        let baseline_item = baseline_items.get(&id);
+        let local_item = local_items.get(&id);
+        let hub_item = hub_items.get(&id);
+        let local_changed = local_item != baseline_item;
+        let hub_changed = hub_item != baseline_item;
+
+        let chosen = match (local_changed, hub_changed) {
+            (false, false) => local_item.or(hub_item).or(baseline_item),
+            (true, false) => local_item,
+            (false, true) => hub_item,
+            (true, true) if local_item == hub_item => local_item,
+            (true, true) => return None,
+        };
+
+        if let Some(value) = chosen {
+            merged.push(value.clone());
+        }
+    }
+
+    Some(merged)
+}
+
+fn payload_array_by_id(
+    value: &Value,
+    field: &str,
+) -> Option<(Vec<String>, HashMap<String, Value>)> {
+    let Some(array) = value.get(field) else {
+        return Some((Vec::new(), HashMap::new()));
+    };
+    let array = array.as_array()?;
+    let mut order = Vec::with_capacity(array.len());
+    let mut items = HashMap::with_capacity(array.len());
+
+    for item in array {
+        let id = item.get("id")?.as_str()?.to_string();
+        if items.insert(id.clone(), item.clone()).is_some() {
+            return None;
+        }
+        order.push(id);
+    }
+
+    Some((order, items))
+}
+
 fn preserve_runtime_host_metadata(remote: &mut HostsConfig, local: &HostsConfig) {
     for host in &mut remote.hosts {
         if let Some(local_host) = local.find_host(host.id) {
@@ -870,6 +970,57 @@ mod tests {
         assert!(!host.contains_key("last_connected"));
         assert!(!host.contains_key("detected_os"));
         assert_eq!(host.get("updated_at"), host.get("created_at"));
+    }
+
+    #[test]
+    fn merge_hosts_payloads_combines_disjoint_host_changes() {
+        let host_a = "00000000-0000-0000-0000-000000000001";
+        let host_b = "00000000-0000-0000-0000-000000000002";
+        let baseline = json!({
+            "hosts": [
+                {"id": host_a, "name": "A", "hostname": "a.example.com"},
+                {"id": host_b, "name": "B", "hostname": "b.example.com"}
+            ],
+            "groups": []
+        });
+        let local = json!({
+            "hosts": [
+                {"id": host_a, "name": "A local", "hostname": "a.example.com"},
+                {"id": host_b, "name": "B", "hostname": "b.example.com"}
+            ],
+            "groups": []
+        });
+        let hub = json!({
+            "hosts": [
+                {"id": host_a, "name": "A", "hostname": "a.example.com"},
+                {"id": host_b, "name": "B hub", "hostname": "b.example.com"}
+            ],
+            "groups": []
+        });
+
+        let merged = merge_hosts_payloads(&baseline, &local, &hub).unwrap();
+
+        assert_eq!(merged["hosts"][0]["name"], "A local");
+        assert_eq!(merged["hosts"][1]["name"], "B hub");
+    }
+
+    #[test]
+    fn merge_hosts_payloads_rejects_same_host_conflicts() {
+        let host_id = "00000000-0000-0000-0000-000000000001";
+        let baseline = json!({
+            "hosts": [{"id": host_id, "name": "A", "hostname": "a.example.com"}],
+            "groups": []
+        });
+        let local = json!({
+            "hosts": [{"id": host_id, "name": "A local", "hostname": "a.example.com"}],
+            "groups": []
+        });
+        let hub = json!({
+            "hosts": [{"id": host_id, "name": "A hub", "hostname": "a.example.com"}],
+            "groups": []
+        });
+
+        assert!(merge_hosts_payloads(&baseline, &local, &hub).is_none());
     }
 
     #[test]

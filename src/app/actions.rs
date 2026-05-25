@@ -1,8 +1,11 @@
-use std::sync::Arc;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
+use std::time::{Duration, Instant};
 
 use futures::stream;
 use iced::Task;
-use std::time::Instant;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
@@ -15,20 +18,361 @@ use crate::keybindings::AppAction;
 use crate::local::{LocalEvent, LocalSession};
 use crate::local_fs::list_local_dir;
 use crate::message::{Message, SessionId, SessionMessage, SftpMessage, VncMessage};
+use crate::sftp::SharedSftpSession;
 use crate::views::dialogs::password_dialog::PasswordDialogState;
 use crate::views::file_viewer::{FileSource, FileType};
 use crate::views::sftp::{ContextMenuAction, PaneId, PaneSource, PermissionBits, SftpDialogType};
 use crate::views::tabs::Tab;
 use crate::views::toast::Toast;
 
-use super::managers::SessionBackend;
+use super::managers::{
+    SessionBackend, TransferDirection, TransferItem, TransferItemInit, TransferProgress,
+};
 use super::services::{connection, file_viewer, history};
 use super::{FocusSection, Portal, View};
+
+const TRANSFER_PROGRESS_EMIT_INTERVAL: Duration = Duration::from_millis(100);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ConnectionLaunchMode {
     Default,
     FreshSession,
+}
+
+#[derive(Debug, Clone)]
+struct SftpTransferEntry {
+    name: String,
+    path: std::path::PathBuf,
+    is_dir: bool,
+    is_symlink: bool,
+    size: u64,
+}
+
+#[derive(Debug, Clone)]
+enum SftpTransferEndpoint {
+    Local,
+    Remote(SharedSftpSession),
+}
+
+#[derive(Debug, Clone)]
+struct SftpTransferRequest {
+    tab_id: SessionId,
+    target_pane_id: PaneId,
+    target_dir: std::path::PathBuf,
+    source: SftpTransferEndpoint,
+    target: SftpTransferEndpoint,
+    entries: Vec<SftpTransferEntry>,
+}
+
+impl SftpTransferRequest {
+    fn direction(&self) -> TransferDirection {
+        match (&self.source, &self.target) {
+            (SftpTransferEndpoint::Local, SftpTransferEndpoint::Local) => {
+                TransferDirection::LocalToLocal
+            }
+            (SftpTransferEndpoint::Local, SftpTransferEndpoint::Remote(_)) => {
+                TransferDirection::LocalToRemote
+            }
+            (SftpTransferEndpoint::Remote(_), SftpTransferEndpoint::Local) => {
+                TransferDirection::RemoteToLocal
+            }
+            (SftpTransferEndpoint::Remote(_), SftpTransferEndpoint::Remote(_)) => {
+                TransferDirection::RemoteToRemote
+            }
+        }
+    }
+
+    fn total_bytes(&self) -> Option<u64> {
+        let total = self
+            .entries
+            .iter()
+            .filter(|entry| !entry.is_dir)
+            .map(|entry| entry.size)
+            .sum::<u64>();
+        (total > 0).then_some(total)
+    }
+
+    fn label(&self) -> String {
+        match self.entries.as_slice() {
+            [entry] => entry.name.clone(),
+            entries => format!("{} items", entries.len()),
+        }
+    }
+}
+
+fn sftp_transfer_task(
+    transfer_id: Uuid,
+    request: SftpTransferRequest,
+    cancel_requested: Arc<AtomicBool>,
+) -> Task<Message> {
+    let total_files = request.entries.len();
+    let total_bytes = request.total_bytes();
+    let tab_id = request.tab_id;
+    let target_pane_id = request.target_pane_id;
+
+    Task::run(
+        async_stream::stream! {
+            let mut completed_files = 0usize;
+            let mut completed_bytes = 0u64;
+            let mut copied_items = 0usize;
+            let mut result: Result<usize, String> = Ok(0);
+            let temp_dir = if matches!(
+                (&request.source, &request.target),
+                (SftpTransferEndpoint::Remote(_), SftpTransferEndpoint::Remote(_))
+            ) {
+                let path = std::env::temp_dir()
+                    .join(format!("portal_copy_{}", uuid::Uuid::new_v4()));
+                match tokio::fs::create_dir_all(&path).await {
+                    Ok(()) => Some(path),
+                    Err(error) => {
+                        yield Message::Sftp(SftpMessage::TransferFinished {
+                            transfer_id,
+                            tab_id,
+                            target_pane_id,
+                            result: Err(format!("Failed to create temp directory: {}", error)),
+                        });
+                        return;
+                    }
+                }
+            } else {
+                None
+            };
+
+            yield Message::Sftp(SftpMessage::TransferProgress(TransferProgress {
+                transfer_id,
+                current_item: None,
+                completed_files,
+                total_files,
+                completed_bytes,
+                total_bytes,
+            }));
+
+            for entry in request.entries.iter().cloned() {
+                if cancel_requested.load(Ordering::Relaxed) {
+                    result = Err("Transfer cancelled".to_string());
+                    break;
+                }
+
+                yield Message::Sftp(SftpMessage::TransferProgress(TransferProgress {
+                    transfer_id,
+                    current_item: Some(entry.name.clone()),
+                    completed_files,
+                    total_files,
+                    completed_bytes,
+                    total_bytes,
+                }));
+
+                let target_path = request.target_dir.join(&entry.name);
+                let (progress_tx, mut progress_rx) = mpsc::unbounded_channel::<u64>();
+                let source = request.source.clone();
+                let target = request.target.clone();
+                let temp_dir_for_task = temp_dir.clone();
+                let entry_for_task = entry.clone();
+                let target_path_for_task = target_path.clone();
+                let cancel_for_task = cancel_requested.clone();
+                let mut item_task = tokio::spawn(async move {
+                    transfer_one_sftp_entry(
+                        source,
+                        target,
+                        temp_dir_for_task,
+                        entry_for_task,
+                        target_path_for_task,
+                        cancel_for_task,
+                        move |bytes| {
+                            let _ = progress_tx.send(bytes);
+                        },
+                    )
+                    .await
+                });
+
+                let mut progress_open = true;
+                let mut last_progress_emit = Instant::now()
+                    .checked_sub(TRANSFER_PROGRESS_EMIT_INTERVAL)
+                    .unwrap_or_else(Instant::now);
+                let item_result = loop {
+                    tokio::select! {
+                        progress = progress_rx.recv(), if progress_open => {
+                            if let Some(item_bytes) = progress {
+                                let item_bytes = item_bytes.min(entry.size);
+                                let now = Instant::now();
+                                if now.duration_since(last_progress_emit) >= TRANSFER_PROGRESS_EMIT_INTERVAL
+                                    || item_bytes >= entry.size
+                                {
+                                    last_progress_emit = now;
+                                    yield Message::Sftp(SftpMessage::TransferProgress(TransferProgress {
+                                        transfer_id,
+                                        current_item: Some(entry.name.clone()),
+                                        completed_files,
+                                        total_files,
+                                        completed_bytes: completed_bytes.saturating_add(item_bytes),
+                                        total_bytes,
+                                    }));
+                                }
+                            } else {
+                                progress_open = false;
+                            }
+                        }
+                        result = &mut item_task => {
+                            break match result {
+                                Ok(item_result) => item_result,
+                                Err(error) => Err(error.to_string()),
+                            };
+                        }
+                    }
+                };
+
+                match item_result {
+                    Ok(count) => {
+                        copied_items = copied_items.saturating_add(count);
+                        completed_files = completed_files.saturating_add(1);
+                        if !entry.is_dir {
+                            completed_bytes = completed_bytes.saturating_add(entry.size);
+                        }
+                        yield Message::Sftp(SftpMessage::TransferProgress(TransferProgress {
+                            transfer_id,
+                            current_item: Some(entry.name),
+                            completed_files,
+                            total_files,
+                            completed_bytes,
+                            total_bytes,
+                        }));
+                    }
+                    Err(error) => {
+                        result = Err(error);
+                        break;
+                    }
+                }
+            }
+
+            if let Some(temp_dir) = temp_dir {
+                let _ = cleanup_temp_dir(&temp_dir).await;
+            }
+
+            if result.is_ok() {
+                result = Ok(copied_items);
+            }
+
+            yield Message::Sftp(SftpMessage::TransferFinished {
+                transfer_id,
+                tab_id,
+                target_pane_id,
+                result,
+            });
+        },
+        |message| message,
+    )
+}
+
+async fn transfer_one_sftp_entry<P>(
+    source: SftpTransferEndpoint,
+    target: SftpTransferEndpoint,
+    temp_dir: Option<std::path::PathBuf>,
+    entry: SftpTransferEntry,
+    target_path: std::path::PathBuf,
+    cancel_requested: Arc<AtomicBool>,
+    mut on_progress: P,
+) -> Result<usize, String>
+where
+    P: FnMut(u64) + Send + 'static,
+{
+    reject_symlink_copy(&entry.name, entry.is_symlink)?;
+
+    if cancel_requested.load(Ordering::Relaxed) {
+        return Err("Transfer cancelled".to_string());
+    }
+
+    match (source, target) {
+        (SftpTransferEndpoint::Local, SftpTransferEndpoint::Local) => {
+            let source_path = entry.path.clone();
+            let is_dir = entry.is_dir;
+            tokio::task::spawn_blocking(move || {
+                if is_dir {
+                    copy_dir_recursive(&source_path, &target_path)?;
+                    count_items_in_dir(&source_path)
+                } else {
+                    ensure_not_symlink(&source_path)?;
+                    ensure_not_same_path(&source_path, &target_path)?;
+                    std::fs::copy(&source_path, &target_path)
+                        .map_err(|error| {
+                            format!("Failed to copy {}: {}", source_path.display(), error)
+                        })
+                        .map(|_| 1)
+                }
+            })
+            .await
+            .map_err(|error| error.to_string())?
+        }
+        (SftpTransferEndpoint::Local, SftpTransferEndpoint::Remote(target_sftp)) => {
+            if entry.is_dir {
+                target_sftp
+                    .upload_recursive(&entry.path, &target_path)
+                    .await
+                    .map_err(|error| error.to_string())
+            } else {
+                target_sftp
+                    .upload_with_progress(&entry.path, &target_path, &mut on_progress, || {
+                        cancel_requested.load(Ordering::Relaxed)
+                    })
+                    .await
+                    .map_err(|error| error.to_string())
+                    .map(|_| 1)
+            }
+        }
+        (SftpTransferEndpoint::Remote(source_sftp), SftpTransferEndpoint::Local) => {
+            if entry.is_dir {
+                source_sftp
+                    .download_recursive(&entry.path, &target_path)
+                    .await
+                    .map_err(|error| error.to_string())
+            } else {
+                source_sftp
+                    .download_with_progress(&entry.path, &target_path, &mut on_progress, || {
+                        cancel_requested.load(Ordering::Relaxed)
+                    })
+                    .await
+                    .map_err(|error| error.to_string())
+                    .map(|_| 1)
+            }
+        }
+        (SftpTransferEndpoint::Remote(source_sftp), SftpTransferEndpoint::Remote(target_sftp)) => {
+            let temp_dir =
+                temp_dir.ok_or_else(|| "Remote copy temp directory is unavailable".to_string())?;
+            let temp_path = temp_dir.join(&entry.name);
+            if entry.is_dir {
+                source_sftp
+                    .download_recursive(&entry.path, &temp_path)
+                    .await
+                    .map_err(|error| error.to_string())?;
+                target_sftp
+                    .upload_recursive(&temp_path, &target_path)
+                    .await
+                    .map_err(|error| error.to_string())
+            } else {
+                let first_phase_bytes = entry.size / 2;
+                source_sftp
+                    .download_with_progress(
+                        &entry.path,
+                        &temp_path,
+                        |bytes| on_progress(bytes.min(entry.size) / 2),
+                        || cancel_requested.load(Ordering::Relaxed),
+                    )
+                    .await
+                    .map_err(|error| error.to_string())?;
+                target_sftp
+                    .upload_with_progress(
+                        &temp_path,
+                        &target_path,
+                        |bytes| {
+                            on_progress(first_phase_bytes.saturating_add(bytes.min(entry.size) / 2))
+                        },
+                        || cancel_requested.load(Ordering::Relaxed),
+                    )
+                    .await
+                    .map_err(|error| error.to_string())
+                    .map(|_| 1)
+            }
+        }
+    }
 }
 
 impl Portal {
@@ -145,6 +489,7 @@ impl Portal {
     }
 
     pub(super) fn close_tab(&mut self, tab_id: Uuid) {
+        self.transfers.cancel_for_tab(tab_id);
         let sftp_sessions_to_close = self.sftp.remove_tab_and_collect_sessions(tab_id);
         let mut history_changed = false;
 
@@ -597,6 +942,8 @@ impl Portal {
     ) -> Task<Message> {
         // Check if password authentication is configured
         if matches!(host.auth, AuthMethod::Password) {
+            self.sftp
+                .set_pending_connection(Some((tab_id, pane_id, host.id)));
             // Show password dialog for SFTP
             let password_dialog = PasswordDialogState::new_sftp(
                 host.name.clone(),
@@ -1031,210 +1378,63 @@ impl Portal {
             .selected_entries()
             .into_iter()
             .filter(|e| !e.is_parent())
-            .map(|e| (e.name.clone(), e.path.clone(), e.is_dir, e.is_symlink))
+            .map(|e| SftpTransferEntry {
+                name: e.name.clone(),
+                path: e.path.clone(),
+                is_dir: e.is_dir,
+                is_symlink: e.is_symlink,
+                size: e.size,
+            })
             .collect();
 
         if entries_to_copy.is_empty() {
             return Task::none();
         }
 
-        let target_dir = target_pane.current_path.clone();
-        match (&source_pane.source, &target_pane.source) {
-            (PaneSource::Local, PaneSource::Local) => {
-                // Local to Local copy
-                Task::perform(
-                    async move {
-                        tokio::task::spawn_blocking(move || {
-                            let mut count = 0;
-                            for (name, source_path, is_dir, is_symlink) in entries_to_copy {
-                                reject_symlink_copy(&name, is_symlink)?;
-                                let target_path = target_dir.join(&name);
-                                if is_dir {
-                                    copy_dir_recursive(&source_path, &target_path)?;
-                                    count += count_items_in_dir(&source_path)?;
-                                } else {
-                                    ensure_not_symlink(&source_path)?;
-                                    ensure_not_same_path(&source_path, &target_path)?;
-                                    std::fs::copy(&source_path, &target_path).map_err(|e| {
-                                        format!("Failed to copy {}: {}", source_path.display(), e)
-                                    })?;
-                                    count += 1;
-                                }
-                            }
-                            Ok(count)
-                        })
-                        .await
-                        .map_err(|e| e.to_string())?
-                    },
-                    move |result| {
-                        Message::Sftp(SftpMessage::CopyResult(tab_id, target_pane_id, result))
-                    },
-                )
+        let source = match &source_pane.source {
+            PaneSource::Local => SftpTransferEndpoint::Local,
+            PaneSource::Remote { session_id, .. } => {
+                let Some(sftp) = self.sftp.get_connection(*session_id).cloned() else {
+                    return Task::none();
+                };
+                SftpTransferEndpoint::Remote(sftp)
             }
-            (PaneSource::Local, PaneSource::Remote { session_id, .. }) => {
-                // Local to Remote upload
-                let sftp_session_id = *session_id;
-                if let Some(sftp) = self.sftp.get_connection(sftp_session_id) {
-                    let sftp = sftp.clone();
-                    Task::perform(
-                        async move {
-                            let start = Instant::now();
-                            let mut count = 0;
-                            for (name, source_path, is_dir, is_symlink) in entries_to_copy {
-                                reject_symlink_copy(&name, is_symlink)?;
-                                let target_path = target_dir.join(&name);
-                                if is_dir {
-                                    count += sftp
-                                        .upload_recursive(&source_path, &target_path)
-                                        .await
-                                        .map_err(|e| e.to_string())?;
-                                } else {
-                                    sftp.upload(&source_path, &target_path)
-                                        .await
-                                        .map_err(|e| e.to_string())?;
-                                    count += 1;
-                                }
-                            }
-                            tracing::info!(
-                                "SFTP upload completed: {} item(s) in {:?}",
-                                count,
-                                start.elapsed()
-                            );
-                            Ok(count)
-                        },
-                        move |result| {
-                            Message::Sftp(SftpMessage::CopyResult(tab_id, target_pane_id, result))
-                        },
-                    )
-                } else {
-                    Task::none()
-                }
+        };
+        let target = match &target_pane.source {
+            PaneSource::Local => SftpTransferEndpoint::Local,
+            PaneSource::Remote { session_id, .. } => {
+                let Some(sftp) = self.sftp.get_connection(*session_id).cloned() else {
+                    return Task::none();
+                };
+                SftpTransferEndpoint::Remote(sftp)
             }
-            (PaneSource::Remote { session_id, .. }, PaneSource::Local) => {
-                // Remote to Local download
-                let sftp_session_id = *session_id;
-                if let Some(sftp) = self.sftp.get_connection(sftp_session_id) {
-                    let sftp = sftp.clone();
-                    Task::perform(
-                        async move {
-                            let start = Instant::now();
-                            let mut count = 0;
-                            for (name, source_path, is_dir, is_symlink) in entries_to_copy {
-                                reject_symlink_copy(&name, is_symlink)?;
-                                let target_path = target_dir.join(&name);
-                                if is_dir {
-                                    count += sftp
-                                        .download_recursive(&source_path, &target_path)
-                                        .await
-                                        .map_err(|e| e.to_string())?;
-                                } else {
-                                    sftp.download(&source_path, &target_path)
-                                        .await
-                                        .map_err(|e| e.to_string())?;
-                                    count += 1;
-                                }
-                            }
-                            tracing::info!(
-                                "SFTP download completed: {} item(s) in {:?}",
-                                count,
-                                start.elapsed()
-                            );
-                            Ok(count)
-                        },
-                        move |result| {
-                            Message::Sftp(SftpMessage::CopyResult(tab_id, target_pane_id, result))
-                        },
-                    )
-                } else {
-                    Task::none()
-                }
-            }
-            (
-                PaneSource::Remote {
-                    session_id: source_session_id,
-                    ..
-                },
-                PaneSource::Remote {
-                    session_id: target_session_id,
-                    ..
-                },
-            ) => {
-                // Remote to Remote copy (via local temp)
-                let source_sftp_id = *source_session_id;
-                let target_sftp_id = *target_session_id;
+        };
 
-                let source_sftp = self.sftp.get_connection(source_sftp_id).cloned();
-                let target_sftp = self.sftp.get_connection(target_sftp_id).cloned();
+        let request = SftpTransferRequest {
+            tab_id,
+            target_pane_id,
+            target_dir: target_pane.current_path.clone(),
+            source,
+            target,
+            entries: entries_to_copy,
+        };
+        let transfer_id = Uuid::new_v4();
+        let cancel_requested = Arc::new(AtomicBool::new(false));
+        let transfer = TransferItem::new(TransferItemInit {
+            id: transfer_id,
+            tab_id,
+            target_pane: target_pane_id,
+            direction: request.direction(),
+            label: request.label(),
+            total_files: request.entries.len(),
+            total_bytes: request.total_bytes(),
+            cancel_requested: cancel_requested.clone(),
+        });
+        self.transfers.insert(transfer);
 
-                if let (Some(source_sftp), Some(target_sftp)) = (source_sftp, target_sftp) {
-                    Task::perform(
-                        async move {
-                            let start = Instant::now();
-                            let mut count = 0;
-                            let temp_dir = std::env::temp_dir()
-                                .join(format!("portal_copy_{}", uuid::Uuid::new_v4()));
-                            tokio::fs::create_dir_all(&temp_dir)
-                                .await
-                                .map_err(|e| format!("Failed to create temp directory: {}", e))?;
-
-                            let result = async {
-                                for (name, source_path, is_dir, is_symlink) in entries_to_copy {
-                                    reject_symlink_copy(&name, is_symlink)?;
-                                    let temp_path = temp_dir.join(&name);
-                                    let target_path = target_dir.join(&name);
-
-                                    // Download to temp
-                                    if is_dir {
-                                        source_sftp
-                                            .download_recursive(&source_path, &temp_path)
-                                            .await
-                                            .map_err(|e| e.to_string())?;
-                                    } else {
-                                        source_sftp
-                                            .download(&source_path, &temp_path)
-                                            .await
-                                            .map_err(|e| e.to_string())?;
-                                    }
-
-                                    // Upload from temp to target
-                                    if is_dir {
-                                        count += target_sftp
-                                            .upload_recursive(&temp_path, &target_path)
-                                            .await
-                                            .map_err(|e| e.to_string())?;
-                                    } else {
-                                        target_sftp
-                                            .upload(&temp_path, &target_path)
-                                            .await
-                                            .map_err(|e| e.to_string())?;
-                                        count += 1;
-                                    }
-                                }
-
-                                Ok(count)
-                            }
-                            .await;
-
-                            let _ = cleanup_temp_dir(&temp_dir).await;
-                            if result.is_ok() {
-                                tracing::info!(
-                                    "SFTP remote copy completed: {} item(s) in {:?}",
-                                    count,
-                                    start.elapsed()
-                                );
-                            }
-
-                            result
-                        },
-                        move |result| {
-                            Message::Sftp(SftpMessage::CopyResult(tab_id, target_pane_id, result))
-                        },
-                    )
-                } else {
-                    Task::none()
-                }
-            }
-        }
+        let task = sftp_transfer_task(transfer_id, request, cancel_requested);
+        let (task, _handle) = task.abortable();
+        task
     }
 }
 

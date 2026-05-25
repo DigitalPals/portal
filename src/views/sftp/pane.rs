@@ -379,10 +379,9 @@ pub fn pane_file_list<'a>(
         .into();
     }
 
-    // Get filtered entries
-    let visible = state.visible_entries();
+    let visible_count = state.visible_entry_count();
 
-    if visible.is_empty() {
+    if visible_count == 0 {
         let message = if state.entries.is_empty() {
             "Empty directory"
         } else {
@@ -465,14 +464,14 @@ pub fn pane_file_list<'a>(
         ..Default::default()
     });
 
-    // File entries - use visible_entries which returns (original_index, &FileEntry)
-    let entries: Vec<Element<'_, Message>> = visible
-        .iter()
+    // File entries - use cached visible indices to avoid refiltering during render.
+    let entries: Vec<Element<'_, Message>> = state
+        .visible_entries_iter()
         .map(|(original_index, entry)| {
             pane_file_entry_row(
                 entry,
-                *original_index,
-                state.is_selected(*original_index),
+                original_index,
+                state.is_selected(original_index),
                 tab_id,
                 pane_id,
                 context_menu_open,
@@ -812,7 +811,7 @@ pub fn pane_footer<'a>(
     fonts: ScaledFonts,
 ) -> Element<'a, Message> {
     let total_count = state.entries.len();
-    let visible_count = state.visible_entries().len();
+    let visible_count = state.visible_entry_count();
     let selected_count = state.selected_indices.len();
 
     let status = if state.loading {

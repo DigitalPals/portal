@@ -9,6 +9,7 @@ mod proxy_sessions_manager;
 pub mod session_manager;
 mod sftp_manager;
 mod snippet_execution_manager;
+mod transfer_manager;
 
 pub use dialog_manager::{ActiveDialog, DialogManager};
 pub use file_viewer_manager::FileViewerManager;
@@ -19,4 +20,8 @@ pub use session_manager::{
 pub use sftp_manager::SftpManager;
 pub use snippet_execution_manager::{
     ExecutionStatus, HostResult, SnippetExecution, SnippetExecutionManager,
+};
+pub use transfer_manager::{
+    TransferDirection, TransferItem, TransferItemInit, TransferManager, TransferProgress,
+    TransferStatus,
 };
