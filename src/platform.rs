@@ -3,6 +3,28 @@
 //! This module provides platform-specific functionality such as detecting
 //! system UI scaling preferences.
 
+/// Send a desktop notification if the current platform supports it.
+pub fn send_desktop_notification(summary: impl Into<String>, body: impl Into<String>) {
+    send_desktop_notification_impl(summary.into(), body.into());
+}
+
+#[cfg(target_os = "linux")]
+fn send_desktop_notification_impl(summary: String, body: String) {
+    std::thread::spawn(move || {
+        if let Err(error) = notify_rust::Notification::new()
+            .appname("Portal")
+            .summary(&summary)
+            .body(&body)
+            .show()
+        {
+            tracing::debug!("Failed to send desktop notification: {}", error);
+        }
+    });
+}
+
+#[cfg(not(target_os = "linux"))]
+fn send_desktop_notification_impl(_summary: String, _body: String) {}
+
 /// Detect the system UI scale factor.
 ///
 /// Returns a scale factor (typically 1.0-2.0) based on system preferences:

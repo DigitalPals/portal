@@ -4,6 +4,7 @@
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 use alacritty_terminal::event::{Event, EventListener, WindowSize};
 use alacritty_terminal::grid::Dimensions;
@@ -18,6 +19,9 @@ use tokio::sync::mpsc;
 use super::colors::{ANSI_COLORS, DEFAULT_BG, DEFAULT_FG};
 use crate::theme::TerminalColors;
 
+const OSC_NOTIFICATION_BUFFER_LIMIT: usize = 16 * 1024;
+const COMMAND_FINISH_NOTIFICATION_THRESHOLD: Duration = Duration::from_secs(5);
+
 /// Events emitted by the terminal backend
 #[derive(Debug, Clone)]
 pub enum TerminalEvent {
@@ -29,6 +33,13 @@ pub enum TerminalEvent {
     ClipboardStore(String),
     /// Clipboard request (paste)
     ClipboardLoad,
+    /// Desktop notification requested by the terminal stream.
+    Notification { title: String, body: String },
+    /// Shell integration reported that a command finished.
+    CommandFinished {
+        exit_status: Option<i32>,
+        duration: Duration,
+    },
     /// Write response back to the PTY (e.g. device attribute queries)
     PtyWrite(Vec<u8>),
     /// Terminal exited
@@ -230,10 +241,179 @@ pub struct CursorInfo {
 pub struct TerminalBackend {
     term: Arc<Mutex<Term<EventProxy>>>,
     processor: Mutex<Processor>,
+    event_sender: mpsc::Sender<TerminalEvent>,
+    notification_parser: Mutex<OscNotificationParser>,
     size: TerminalSize,
     render_epoch: Arc<AtomicU64>,
     colors: Arc<Mutex<TerminalColors>>,
     window_size: Arc<Mutex<WindowSize>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TerminalNotification {
+    title: String,
+    body: String,
+}
+
+#[derive(Debug, Default)]
+struct OscNotificationParser {
+    buffer: Vec<u8>,
+    command_started_at: Option<Instant>,
+}
+
+impl OscNotificationParser {
+    fn push(&mut self, bytes: &[u8]) -> Vec<TerminalEvent> {
+        self.buffer.extend_from_slice(bytes);
+
+        let mut events = Vec::new();
+        let mut search_from = 0;
+        let mut drain_to = 0;
+
+        while let Some((start, start_len)) = find_osc_start(&self.buffer, search_from) {
+            if let Some((end, terminator_len)) =
+                find_osc_terminator(&self.buffer, start + start_len)
+            {
+                let osc = self.buffer[start + start_len..end].to_vec();
+                if let Some(notification) = parse_osc_notification(&osc) {
+                    events.push(TerminalEvent::Notification {
+                        title: notification.title,
+                        body: notification.body,
+                    });
+                }
+
+                if let Some(event) = self.parse_osc_command_marker(&osc) {
+                    events.push(event);
+                }
+
+                search_from = end + terminator_len;
+                drain_to = search_from;
+            } else {
+                drain_to = start;
+                break;
+            }
+        }
+
+        if search_from >= self.buffer.len() {
+            drain_to = self.buffer.len();
+        }
+
+        if drain_to > 0 {
+            self.buffer.drain(..drain_to);
+        }
+
+        if self.buffer.len() > OSC_NOTIFICATION_BUFFER_LIMIT {
+            let keep_from = self.buffer.len() - OSC_NOTIFICATION_BUFFER_LIMIT;
+            self.buffer.drain(..keep_from);
+        }
+
+        events
+    }
+
+    fn parse_osc_command_marker(&mut self, bytes: &[u8]) -> Option<TerminalEvent> {
+        let content = String::from_utf8_lossy(bytes);
+        let mut parts = content.split(';');
+
+        if parts.next() != Some("133") {
+            return None;
+        }
+
+        match parts.next() {
+            Some("C") => {
+                self.command_started_at = Some(Instant::now());
+                None
+            }
+            Some("D") => {
+                let started_at = self.command_started_at.take()?;
+                let duration = started_at.elapsed();
+                if duration < COMMAND_FINISH_NOTIFICATION_THRESHOLD {
+                    return None;
+                }
+
+                let exit_status = parts.next().and_then(|status| status.parse::<i32>().ok());
+                Some(TerminalEvent::CommandFinished {
+                    exit_status,
+                    duration,
+                })
+            }
+            _ => None,
+        }
+    }
+}
+
+fn find_osc_start(bytes: &[u8], from: usize) -> Option<(usize, usize)> {
+    let mut i = from;
+    while i < bytes.len() {
+        if bytes[i] == 0x9d {
+            return Some((i, 1));
+        }
+
+        if bytes[i] == 0x1b && bytes.get(i + 1) == Some(&b']') {
+            return Some((i, 2));
+        }
+
+        i += 1;
+    }
+
+    None
+}
+
+fn find_osc_terminator(bytes: &[u8], from: usize) -> Option<(usize, usize)> {
+    let mut i = from;
+    while i < bytes.len() {
+        match bytes[i] {
+            0x07 | 0x9c => return Some((i, 1)),
+            0x1b if bytes.get(i + 1) == Some(&b'\\') => return Some((i, 2)),
+            _ => i += 1,
+        }
+    }
+
+    None
+}
+
+fn parse_osc_notification(bytes: &[u8]) -> Option<TerminalNotification> {
+    let content = String::from_utf8_lossy(bytes);
+
+    if let Some(message) = content.strip_prefix("9;") {
+        // OSC 9;4 is a progress-reporting sequence, not a notification.
+        if message.starts_with("4;") {
+            return None;
+        }
+
+        let body = sanitize_notification_text(message);
+        return (!body.is_empty()).then(|| TerminalNotification {
+            title: "Terminal notification".to_string(),
+            body,
+        });
+    }
+
+    let mut parts = content.splitn(4, ';');
+    match (parts.next(), parts.next(), parts.next(), parts.next()) {
+        (Some("777"), Some("notify"), Some(title), Some(body)) => {
+            let title = sanitize_notification_text(title);
+            let body = sanitize_notification_text(body);
+
+            (!title.is_empty() || !body.is_empty()).then_some(TerminalNotification {
+                title: if title.is_empty() {
+                    "Terminal notification".to_string()
+                } else {
+                    title
+                },
+                body,
+            })
+        }
+        _ => None,
+    }
+}
+
+fn sanitize_notification_text(text: &str) -> String {
+    const MAX_NOTIFICATION_TEXT_CHARS: usize = 512;
+
+    text.chars()
+        .filter(|ch| !ch.is_control() || *ch == '\n' || *ch == '\t')
+        .take(MAX_NOTIFICATION_TEXT_CHARS)
+        .collect::<String>()
+        .trim()
+        .to_string()
 }
 
 impl TerminalBackend {
@@ -252,7 +432,7 @@ impl TerminalBackend {
             cell_width: 1,
             cell_height: 1,
         }));
-        let event_proxy = EventProxy::new(event_tx, colors.clone(), window_size.clone());
+        let event_proxy = EventProxy::new(event_tx.clone(), colors.clone(), window_size.clone());
         let render_epoch = Arc::new(AtomicU64::new(1));
 
         // Create terminal config with scrollback history
@@ -267,6 +447,8 @@ impl TerminalBackend {
         let backend = Self {
             term: Arc::new(Mutex::new(term)),
             processor: Mutex::new(Processor::new()),
+            event_sender: event_tx,
+            notification_parser: Mutex::new(OscNotificationParser::default()),
             size,
             render_epoch,
             colors,
@@ -305,6 +487,13 @@ impl TerminalBackend {
 
     /// Process input bytes from PTY/SSH
     pub fn process_input(&self, bytes: &[u8]) {
+        let events = self.notification_parser.lock().push(bytes);
+        for event in events {
+            if let Err(error) = self.event_sender.try_send(event) {
+                tracing::debug!("Terminal notification event dropped: {}", error);
+            }
+        }
+
         let mut term = self.term.lock();
         let mut processor = self.processor.lock();
 
@@ -345,6 +534,34 @@ mod tests {
     use super::*;
     use crate::theme::Theme;
     use alacritty_terminal::index::{Column, Line};
+    use tokio::sync::mpsc::error::TryRecvError;
+
+    fn drain_notification(
+        event_rx: &mut mpsc::Receiver<TerminalEvent>,
+    ) -> Option<(String, String)> {
+        loop {
+            match event_rx.try_recv() {
+                Ok(TerminalEvent::Notification { title, body }) => return Some((title, body)),
+                Ok(_) => continue,
+                Err(TryRecvError::Empty | TryRecvError::Disconnected) => return None,
+            }
+        }
+    }
+
+    fn drain_command_finished(
+        event_rx: &mut mpsc::Receiver<TerminalEvent>,
+    ) -> Option<(Option<i32>, Duration)> {
+        loop {
+            match event_rx.try_recv() {
+                Ok(TerminalEvent::CommandFinished {
+                    exit_status,
+                    duration,
+                }) => return Some((exit_status, duration)),
+                Ok(_) => continue,
+                Err(TryRecvError::Empty | TryRecvError::Disconnected) => return None,
+            }
+        }
+    }
 
     #[test]
     fn process_input_preserves_utf8_box_drawing_cells() {
@@ -365,6 +582,81 @@ mod tests {
         assert_eq!(line[Column(6)].c, '└');
         assert_eq!(line[Column(7)].c, '─');
         assert_eq!(line[Column(8)].c, '┘');
+    }
+
+    #[test]
+    fn process_input_emits_osc9_notification() {
+        let (backend, mut event_rx) = TerminalBackend::new(TerminalSize::new(10, 3));
+
+        backend.process_input(b"\x1b]9;Codex finished\x07");
+
+        assert_eq!(
+            drain_notification(&mut event_rx),
+            Some((
+                "Terminal notification".to_string(),
+                "Codex finished".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn process_input_emits_osc777_notification() {
+        let (backend, mut event_rx) = TerminalBackend::new(TerminalSize::new(10, 3));
+
+        backend.process_input(b"\x1b]777;notify;Codex;Task complete\x07");
+
+        assert_eq!(
+            drain_notification(&mut event_rx),
+            Some(("Codex".to_string(), "Task complete".to_string()))
+        );
+    }
+
+    #[test]
+    fn process_input_emits_split_osc777_notification_with_st() {
+        let (backend, mut event_rx) = TerminalBackend::new(TerminalSize::new(10, 3));
+
+        backend.process_input(b"\x1b]777;notify;Codex;");
+        assert_eq!(drain_notification(&mut event_rx), None);
+
+        backend.process_input(b"Task complete\x1b\\");
+
+        assert_eq!(
+            drain_notification(&mut event_rx),
+            Some(("Codex".to_string(), "Task complete".to_string()))
+        );
+    }
+
+    #[test]
+    fn process_input_ignores_osc9_progress() {
+        let (backend, mut event_rx) = TerminalBackend::new(TerminalSize::new(10, 3));
+
+        backend.process_input(b"\x1b]9;4;1;50\x07");
+
+        assert_eq!(drain_notification(&mut event_rx), None);
+    }
+
+    #[test]
+    fn process_input_emits_command_finished_for_osc133() {
+        let (backend, mut event_rx) = TerminalBackend::new(TerminalSize::new(10, 3));
+
+        backend.process_input(b"\x1b]133;C\x07");
+        backend.notification_parser.lock().command_started_at =
+            Some(Instant::now() - COMMAND_FINISH_NOTIFICATION_THRESHOLD - Duration::from_secs(1));
+        backend.process_input(b"\x1b]133;D;0\x07");
+
+        let (exit_status, duration) = drain_command_finished(&mut event_rx).unwrap();
+        assert_eq!(exit_status, Some(0));
+        assert!(duration >= COMMAND_FINISH_NOTIFICATION_THRESHOLD);
+    }
+
+    #[test]
+    fn process_input_suppresses_short_osc133_command() {
+        let (backend, mut event_rx) = TerminalBackend::new(TerminalSize::new(10, 3));
+
+        backend.process_input(b"\x1b]133;C\x07");
+        backend.process_input(b"\x1b]133;D;0\x07");
+
+        assert_eq!(drain_command_finished(&mut event_rx), None);
     }
 
     #[test]

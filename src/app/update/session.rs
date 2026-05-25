@@ -11,9 +11,10 @@ use uuid::Uuid;
 
 use crate::app::managers::{ActiveSession, SessionBackend};
 use crate::app::services::{connection, history};
-use crate::app::{Portal, Tab};
+use crate::app::{Portal, Tab, View};
 use crate::config::AuthMethod;
 use crate::message::{Message, SessionId, SessionMessage};
+use crate::platform;
 use crate::ssh::reconnect::ReconnectPolicy;
 use crate::terminal::backend::TerminalEvent;
 use crate::terminal::logger::SessionLogger;
@@ -34,6 +35,8 @@ const OUTPUT_COALESCE_BYPASS_BYTES: usize = 8 * 1024;
 const BACKLOG_WARNING_THRESHOLD: usize = 1024 * 1024;
 const BACKLOG_AGE_WARNING: Duration = Duration::from_millis(500);
 const BACKLOG_WARNING_INTERVAL: Duration = Duration::from_secs(5);
+const CODEX_TITLE_NOTIFICATION_THRESHOLD: Duration = Duration::from_secs(5);
+const TERMINAL_NOTIFICATION_COOLDOWN: Duration = Duration::from_secs(10);
 
 fn output_budget_for_pending(pending_bytes: usize) -> usize {
     if pending_bytes >= LARGE_BACKLOG_THRESHOLD {
@@ -276,6 +279,8 @@ fn start_terminal_session(
             dropped_output_bytes: 0,
             last_output_process_duration: None,
             last_backlog_warning_at: None,
+            codex_turn_started_at: None,
+            last_terminal_notification_at: None,
             logger: None,
         },
     );
@@ -306,6 +311,162 @@ fn finalize_disconnection(portal: &mut Portal, session_id: SessionId) {
         }
     }
     portal.close_tab(session_id);
+}
+
+fn terminal_notification_name(portal: &Portal, session_id: SessionId) -> String {
+    portal
+        .tabs
+        .iter()
+        .find(|tab| tab.id == session_id)
+        .map(|tab| tab.title.as_str())
+        .or_else(|| {
+            portal
+                .sessions
+                .get(session_id)
+                .map(|session| session.host_name.as_str())
+        })
+        .unwrap_or("Terminal")
+        .to_string()
+}
+
+fn mark_terminal_attention(portal: &mut Portal, session_id: SessionId) {
+    if terminal_is_visible_and_focused(portal, session_id) {
+        return;
+    }
+
+    if let Some(tab) = portal.tabs.iter_mut().find(|tab| tab.id == session_id) {
+        tab.needs_attention = true;
+    }
+}
+
+fn terminal_is_visible_and_focused(portal: &Portal, session_id: SessionId) -> bool {
+    portal.ui.window_focused
+        && matches!(portal.ui.active_view, View::Terminal(active_id) if active_id == session_id)
+}
+
+fn send_terminal_desktop_notification(
+    portal: &mut Portal,
+    session_id: SessionId,
+    summary: impl Into<String>,
+    body: impl Into<String>,
+) {
+    if terminal_is_visible_and_focused(portal, session_id) {
+        return;
+    }
+
+    let now = Instant::now();
+    let Some(session) = portal.sessions.get_mut(session_id) else {
+        return;
+    };
+
+    if session
+        .last_terminal_notification_at
+        .is_some_and(|last| now.duration_since(last) < TERMINAL_NOTIFICATION_COOLDOWN)
+    {
+        return;
+    }
+
+    session.last_terminal_notification_at = Some(now);
+    platform::send_desktop_notification(summary.into(), body.into());
+}
+
+fn notify_terminal_bell(portal: &mut Portal, session_id: SessionId) {
+    let terminal_name = terminal_notification_name(portal, session_id);
+    send_terminal_desktop_notification(portal, session_id, "Terminal bell", terminal_name);
+}
+
+fn notify_terminal_finished(portal: &mut Portal, session_id: SessionId) {
+    let terminal_name = terminal_notification_name(portal, session_id);
+    send_terminal_desktop_notification(portal, session_id, "Terminal finished", terminal_name);
+}
+
+fn notify_terminal_osc(portal: &mut Portal, session_id: SessionId, title: String, body: String) {
+    let terminal_name = terminal_notification_name(portal, session_id);
+    let body = if body.trim().is_empty() {
+        terminal_name
+    } else {
+        body
+    };
+    send_terminal_desktop_notification(portal, session_id, title, body);
+}
+
+fn notify_command_finished(
+    portal: &mut Portal,
+    session_id: SessionId,
+    exit_status: Option<i32>,
+    duration: Duration,
+) {
+    let terminal_name = terminal_notification_name(portal, session_id);
+    let seconds = duration.as_secs().max(1);
+    let status = exit_status
+        .map(|status| format!(" with exit status {}", status))
+        .unwrap_or_default();
+    send_terminal_desktop_notification(
+        portal,
+        session_id,
+        "Command finished",
+        format!("{} finished after {}s{}", terminal_name, seconds, status),
+    );
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum CodexTitleState {
+    Active,
+    Ready,
+}
+
+fn codex_title_state(title: &str) -> Option<CodexTitleState> {
+    let lower = title.to_ascii_lowercase();
+    if !lower.contains("codex") {
+        return None;
+    }
+
+    if lower.contains("working") || lower.contains("thinking") {
+        Some(CodexTitleState::Active)
+    } else if lower.contains("ready") || lower.contains("needs input") {
+        Some(CodexTitleState::Ready)
+    } else {
+        None
+    }
+}
+
+fn handle_codex_title_state(portal: &mut Portal, session_id: SessionId, title: &str) {
+    let Some(state) = codex_title_state(title) else {
+        return;
+    };
+
+    let Some(session) = portal.sessions.get_mut(session_id) else {
+        return;
+    };
+
+    match state {
+        CodexTitleState::Active => {
+            if session.codex_turn_started_at.is_none() {
+                session.codex_turn_started_at = Some(Instant::now());
+            }
+        }
+        CodexTitleState::Ready => {
+            let Some(started_at) = session.codex_turn_started_at.take() else {
+                return;
+            };
+            let duration = started_at.elapsed();
+            if duration < CODEX_TITLE_NOTIFICATION_THRESHOLD {
+                return;
+            }
+
+            mark_terminal_attention(portal, session_id);
+            send_terminal_desktop_notification(
+                portal,
+                session_id,
+                "Codex finished",
+                format!(
+                    "{} finished after {}s",
+                    terminal_notification_name(portal, session_id),
+                    duration.as_secs().max(1)
+                ),
+            );
+        }
+    }
 }
 
 fn schedule_reconnect(portal: &mut Portal, session_id: SessionId) -> Task<Message> {
@@ -606,6 +767,7 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                         ));
                     }
                     if clean {
+                        notify_terminal_finished(portal, session_id);
                         finalize_disconnection(portal, session_id);
                     }
                     return close_task;
@@ -622,6 +784,9 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                     let reconnect_task = schedule_reconnect(portal, session_id);
                     return Task::batch([close_task, reconnect_task]);
                 }
+            }
+            if clean {
+                notify_terminal_finished(portal, session_id);
             }
             finalize_disconnection(portal, session_id);
             close_task
@@ -719,6 +884,7 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                 if !portal.sessions.contains(session_id) {
                     return Task::none();
                 }
+                handle_codex_title_state(portal, session_id, &title);
                 if let Some(tab) = portal.tabs.iter_mut().find(|tab| tab.id == session_id) {
                     tab.title = title;
                 }
@@ -728,6 +894,8 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                 if !portal.sessions.contains(session_id) {
                     return Task::none();
                 }
+                mark_terminal_attention(portal, session_id);
+                notify_terminal_bell(portal, session_id);
                 portal
                     .toast_manager
                     .push_or_refresh(Toast::warning("Terminal bell"));
@@ -746,6 +914,25 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                 clipboard::read().map(move |contents| {
                     Message::Session(SessionMessage::ClipboardLoaded(session_id, contents))
                 })
+            }
+            TerminalEvent::Notification { title, body } => {
+                if !portal.sessions.contains(session_id) {
+                    return Task::none();
+                }
+                mark_terminal_attention(portal, session_id);
+                notify_terminal_osc(portal, session_id, title, body);
+                Task::none()
+            }
+            TerminalEvent::CommandFinished {
+                exit_status,
+                duration,
+            } => {
+                if !portal.sessions.contains(session_id) {
+                    return Task::none();
+                }
+                mark_terminal_attention(portal, session_id);
+                notify_command_finished(portal, session_id, exit_status, duration);
+                Task::none()
             }
             TerminalEvent::PtyWrite(bytes) => {
                 handle_session(portal, SessionMessage::Input(session_id, bytes))
@@ -935,8 +1122,31 @@ mod tests {
             dropped_output_bytes: 0,
             last_output_process_duration: None,
             last_backlog_warning_at: None,
+            codex_turn_started_at: None,
+            last_terminal_notification_at: None,
             logger: None,
         }
+    }
+
+    #[test]
+    fn codex_title_state_detects_ready_and_active_titles() {
+        assert_eq!(
+            codex_title_state("Codex - Working"),
+            Some(CodexTitleState::Active)
+        );
+        assert_eq!(
+            codex_title_state("Codex - Thinking"),
+            Some(CodexTitleState::Active)
+        );
+        assert_eq!(
+            codex_title_state("Codex - Ready"),
+            Some(CodexTitleState::Ready)
+        );
+        assert_eq!(
+            codex_title_state("Codex - Needs input"),
+            Some(CodexTitleState::Ready)
+        );
+        assert_eq!(codex_title_state("bash"), None);
     }
 
     #[test]

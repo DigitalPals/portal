@@ -448,6 +448,9 @@ impl Portal {
 
     pub(super) fn enter_terminal_view(&mut self, tab_id: Uuid, auto_hide_sidebar: bool) {
         self.active_tab = Some(tab_id);
+        if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == tab_id) {
+            tab.needs_attention = false;
+        }
         self.ui.active_view = View::Terminal(tab_id);
         self.ui.terminal_captured = true;
         self.ui.terminal_focus_token = self.ui.terminal_focus_token.wrapping_add(1);
@@ -459,18 +462,27 @@ impl Portal {
 
     pub(super) fn enter_sftp_view(&mut self, tab_id: Uuid) {
         self.active_tab = Some(tab_id);
+        if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == tab_id) {
+            tab.needs_attention = false;
+        }
         self.ui.active_view = View::DualSftp(tab_id);
         self.ui.terminal_captured = false;
     }
 
     pub(super) fn enter_file_viewer_view(&mut self, tab_id: Uuid) {
         self.active_tab = Some(tab_id);
+        if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == tab_id) {
+            tab.needs_attention = false;
+        }
         self.ui.active_view = View::FileViewer(tab_id);
         self.ui.terminal_captured = false;
     }
 
     pub(super) fn enter_vnc_view(&mut self, tab_id: Uuid) {
         self.active_tab = Some(tab_id);
+        if let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == tab_id) {
+            tab.needs_attention = false;
+        }
         self.ui.active_view = View::VncViewer(tab_id);
         self.ui.terminal_captured = false;
         self.hide_sidebar_for_session();

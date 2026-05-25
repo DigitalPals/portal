@@ -356,7 +356,10 @@ impl SshClient {
             for (name, value) in [
                 ("COLORTERM", "truecolor"),
                 ("TERM_PROGRAM", "Portal"),
+                ("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION")),
                 ("PORTAL_TERMINAL", "1"),
+                ("PORTAL_TERM_PROGRAM", "Portal"),
+                ("PORTAL_TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION")),
             ] {
                 if let Err(e) = channel.set_env(false, name, value).await {
                     tracing::warn!("Failed to set {name}: {e}");

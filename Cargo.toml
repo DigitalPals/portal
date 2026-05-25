@@ -78,6 +78,7 @@ image = "0.25"            # Image format support
 [target.'cfg(target_os = "linux")'.dependencies]
 gio = "0.20"              # For GNOME GSettings access (UI scale detection)
 keyring = { version = "3", features = ["linux-native-sync-persistent", "crypto-rust"] }
+notify-rust = "4.17.0"    # Desktop notifications via the freedesktop notification service
 
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { version = "3", features = ["apple-native"] }

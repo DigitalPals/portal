@@ -76,7 +76,14 @@ impl LocalSession {
         cmd.env("TERM", "xterm-256color");
         cmd.env("COLORTERM", "truecolor");
         cmd.env("TERM_PROGRAM", "Portal");
+        cmd.env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
         cmd.env("PORTAL_TERMINAL", "1");
+        cmd.env("PORTAL_TERM_PROGRAM", "Portal");
+        cmd.env("PORTAL_TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
+        // Enables common VTE-compatible shell integration scripts to emit
+        // OSC 133 command boundary markers, which Portal uses for completion
+        // notifications when the shell supports them.
+        cmd.env("VTE_VERSION", "7600");
 
         // Spawn shell process
         let child = pair
