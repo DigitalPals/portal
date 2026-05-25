@@ -71,14 +71,19 @@ impl TerminalSession {
         self.backend.set_cell_size(cell_width, cell_height);
     }
 
+    /// Get the current terminal grid size.
+    pub fn size(&self) -> (u16, u16) {
+        self.backend.size()
+    }
+
     /// Process input bytes (from SSH or PTY)
     pub fn process_output(&self, bytes: &[u8]) {
         self.backend.process_input(bytes);
     }
 
     /// Resize the terminal to new dimensions
-    pub fn resize(&mut self, cols: u16, rows: u16) {
-        self.backend.resize(cols, rows);
+    pub fn resize(&mut self, cols: u16, rows: u16) -> bool {
+        self.backend.resize(cols, rows)
     }
 }
 

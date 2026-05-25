@@ -815,7 +815,9 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
         SessionMessage::Resize(session_id, cols, rows) => {
             tracing::debug!("Terminal resize: {}x{}", cols, rows);
             if let Some(session) = portal.sessions.get_mut(session_id) {
-                session.terminal.resize(cols, rows);
+                if !session.terminal.resize(cols, rows) {
+                    return Task::none();
+                }
                 match &session.backend {
                     SessionBackend::Ssh(ssh_session) => {
                         let ssh_session = ssh_session.clone();

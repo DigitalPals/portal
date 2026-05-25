@@ -298,7 +298,11 @@ impl TerminalBackend {
         window_size.cell_height = cell_height.round().clamp(1.0, u16::MAX as f32) as u16;
     }
 
-    /// Get the terminal size
+    /// Get the current terminal grid size.
+    pub fn size(&self) -> (u16, u16) {
+        (self.size.columns, self.size.lines)
+    }
+
     /// Process input bytes from PTY/SSH
     pub fn process_input(&self, bytes: &[u8]) {
         let mut term = self.term.lock();
@@ -311,14 +315,14 @@ impl TerminalBackend {
     }
 
     /// Resize the terminal to new dimensions
-    pub fn resize(&mut self, cols: u16, rows: u16) {
+    pub fn resize(&mut self, cols: u16, rows: u16) -> bool {
         // Enforce minimum size
         let cols = cols.max(10);
         let rows = rows.max(3);
 
         // Only resize if actually changed
         if cols == self.size.columns && rows == self.size.lines {
-            return;
+            return false;
         }
 
         self.size.columns = cols;
@@ -332,6 +336,7 @@ impl TerminalBackend {
         let mut term = self.term.lock();
         term.resize(self.size);
         self.render_epoch.fetch_add(1, Ordering::Relaxed);
+        true
     }
 }
 

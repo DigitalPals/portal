@@ -7,8 +7,8 @@ use iced::Task;
 
 use crate::app::{Portal, SIDEBAR_AUTO_COLLAPSE_THRESHOLD, View};
 use crate::message::{
-    CommandAction, HostMessage, Message, ProxySessionsMessage, SftpMessage, SidebarMenuItem,
-    SnippetMessage, UiMessage,
+    CommandAction, HostMessage, Message, ProxySessionsMessage, SessionMessage, SftpMessage,
+    SidebarMenuItem, SnippetMessage, UiMessage,
 };
 
 /// Handle UI state messages.
@@ -141,7 +141,7 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
                     }
                 }
             }
-            Task::none()
+            reconcile_active_terminal_size(portal)
         }
         UiMessage::WindowUnfocused => {
             portal.ui.window_focused = false;
@@ -154,7 +154,7 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
         }
         UiMessage::WindowFocused => {
             portal.ui.window_focused = true;
-            Task::none()
+            reconcile_active_terminal_size(portal)
         }
         UiMessage::ToastDismiss(id) => {
             portal.toast_manager.dismiss(id);
@@ -183,6 +183,24 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
             keyboard::handle_key_released(portal, key, modifiers)
         }
     }
+}
+
+pub(super) fn reconcile_active_terminal_size(portal: &Portal) -> Task<Message> {
+    let View::Terminal(session_id) = portal.ui.active_view else {
+        return Task::none();
+    };
+    let Some(session) = portal.sessions.get(session_id) else {
+        return Task::none();
+    };
+
+    let (cols, rows) = portal.terminal_initial_size();
+    if session.terminal.size() == (cols, rows) {
+        return Task::none();
+    }
+
+    Task::done(Message::Session(SessionMessage::Resize(
+        session_id, cols, rows,
+    )))
 }
 
 fn run_command_action(portal: &mut Portal, action: CommandAction) -> Task<Message> {

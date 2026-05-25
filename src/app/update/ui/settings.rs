@@ -23,10 +23,12 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
             tracing::info!("Font changed");
             portal.prefs.terminal_font = font;
             save_settings_and_queue_sync(portal);
+            return super::reconcile_active_terminal_size(portal);
         }
         UiMessage::FontSizeChange(size) => {
             portal.prefs.terminal_font_size = size;
             save_settings_and_queue_sync(portal);
+            return super::reconcile_active_terminal_size(portal);
         }
         UiMessage::TerminalScrollSpeedChange(speed) => {
             portal.prefs.terminal_scroll_speed =
@@ -36,10 +38,12 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
         UiMessage::UiScaleChange(scale) => {
             portal.prefs.ui_scale_override = Some(scale.clamp(0.8, 1.5));
             save_settings_and_queue_sync(portal);
+            return super::reconcile_active_terminal_size(portal);
         }
         UiMessage::UiScaleReset => {
             portal.prefs.ui_scale_override = None;
             save_settings_and_queue_sync(portal);
+            return super::reconcile_active_terminal_size(portal);
         }
         UiMessage::SnippetHistoryEnabled(enabled) => {
             portal.config.snippet_history.enabled = enabled;
