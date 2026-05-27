@@ -324,6 +324,8 @@ fn title_has_spinner(title: &str) -> bool {
                 | '\u{2827}'
                 | '\u{2807}'
                 | '\u{280f}'
+                | '\u{2802}'
+                | '\u{2810}'
         )
     )
 }

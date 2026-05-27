@@ -64,8 +64,8 @@ pub struct ActiveSession {
     pub last_output_process_duration: Option<Duration>,
     /// Last time a backlog warning was emitted for this session.
     pub last_backlog_warning_at: Option<Instant>,
-    /// Start time for a long-running Codex turn inferred from terminal title state.
-    pub codex_turn_started_at: Option<Instant>,
+    /// Agent name and start time for a long-running terminal-agent turn inferred from title state.
+    pub terminal_agent_turn_started_at: Option<(String, Instant)>,
     /// Last desktop notification emitted for this terminal session.
     pub last_terminal_notification_at: Option<Instant>,
     /// Optional session logger for terminal output
@@ -217,7 +217,7 @@ mod tests {
             dropped_output_bytes: 0,
             last_output_process_duration: None,
             last_backlog_warning_at: None,
-            codex_turn_started_at: None,
+            terminal_agent_turn_started_at: None,
             last_terminal_notification_at: None,
             logger: None,
         }

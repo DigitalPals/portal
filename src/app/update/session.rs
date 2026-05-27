@@ -35,7 +35,7 @@ const OUTPUT_COALESCE_BYPASS_BYTES: usize = 8 * 1024;
 const BACKLOG_WARNING_THRESHOLD: usize = 1024 * 1024;
 const BACKLOG_AGE_WARNING: Duration = Duration::from_millis(500);
 const BACKLOG_WARNING_INTERVAL: Duration = Duration::from_secs(5);
-const CODEX_TITLE_NOTIFICATION_THRESHOLD: Duration = Duration::from_secs(5);
+const TERMINAL_AGENT_TITLE_NOTIFICATION_THRESHOLD: Duration = Duration::from_secs(5);
 const TERMINAL_NOTIFICATION_COOLDOWN: Duration = Duration::from_secs(10);
 
 fn output_budget_for_pending(pending_bytes: usize) -> usize {
@@ -279,7 +279,7 @@ fn start_terminal_session(
             dropped_output_bytes: 0,
             last_output_process_duration: None,
             last_backlog_warning_at: None,
-            codex_turn_started_at: None,
+            terminal_agent_turn_started_at: None,
             last_terminal_notification_at: None,
             logger: None,
         },
@@ -410,30 +410,34 @@ fn notify_command_finished(
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum CodexTitleState {
-    Active,
+enum TerminalAgentTitleState {
+    Active(&'static str),
     Ready,
 }
 
-fn codex_title_state(title: &str, turn_active: bool) -> Option<CodexTitleState> {
+fn terminal_agent_title_state(title: &str, turn_active: bool) -> Option<TerminalAgentTitleState> {
     let lower = title.to_ascii_lowercase();
 
     if codex_spinner_title(title) {
-        return Some(CodexTitleState::Active);
+        return Some(TerminalAgentTitleState::Active("Codex"));
+    }
+
+    if claude_spinner_title(title) {
+        return Some(TerminalAgentTitleState::Active("Claude Code"));
     }
 
     if lower.contains("codex") {
         if lower.contains("working") || lower.contains("thinking") {
-            return Some(CodexTitleState::Active);
+            return Some(TerminalAgentTitleState::Active("Codex"));
         }
 
         if lower.contains("ready") || lower.contains("needs input") {
-            return Some(CodexTitleState::Ready);
+            return Some(TerminalAgentTitleState::Ready);
         }
     }
 
     if turn_active {
-        Some(CodexTitleState::Ready)
+        Some(TerminalAgentTitleState::Ready)
     } else {
         None
     }
@@ -457,12 +461,19 @@ fn codex_spinner_title(title: &str) -> bool {
     )
 }
 
-fn handle_codex_title_state(portal: &mut Portal, session_id: SessionId, title: &str) {
+fn claude_spinner_title(title: &str) -> bool {
+    matches!(
+        title.trim_start().chars().next(),
+        Some('\u{2802}' | '\u{2810}')
+    )
+}
+
+fn handle_terminal_agent_title_state(portal: &mut Portal, session_id: SessionId, title: &str) {
     let turn_active = portal
         .sessions
         .get(session_id)
-        .is_some_and(|session| session.codex_turn_started_at.is_some());
-    let Some(state) = codex_title_state(title, turn_active) else {
+        .is_some_and(|session| session.terminal_agent_turn_started_at.is_some());
+    let Some(state) = terminal_agent_title_state(title, turn_active) else {
         return;
     };
 
@@ -471,17 +482,19 @@ fn handle_codex_title_state(portal: &mut Portal, session_id: SessionId, title: &
     };
 
     match state {
-        CodexTitleState::Active => {
-            if session.codex_turn_started_at.is_none() {
-                session.codex_turn_started_at = Some(Instant::now());
+        TerminalAgentTitleState::Active(agent_name) => {
+            if session.terminal_agent_turn_started_at.is_none() {
+                session.terminal_agent_turn_started_at =
+                    Some((agent_name.to_string(), Instant::now()));
             }
         }
-        CodexTitleState::Ready => {
-            let Some(started_at) = session.codex_turn_started_at.take() else {
+        TerminalAgentTitleState::Ready => {
+            let Some((agent_name, started_at)) = session.terminal_agent_turn_started_at.take()
+            else {
                 return;
             };
             let duration = started_at.elapsed();
-            if duration < CODEX_TITLE_NOTIFICATION_THRESHOLD {
+            if duration < TERMINAL_AGENT_TITLE_NOTIFICATION_THRESHOLD {
                 return;
             }
 
@@ -489,7 +502,7 @@ fn handle_codex_title_state(portal: &mut Portal, session_id: SessionId, title: &
             send_terminal_desktop_notification(
                 portal,
                 session_id,
-                "Codex finished",
+                format!("{} finished", agent_name),
                 format!(
                     "{} finished after {}s",
                     terminal_notification_name(portal, session_id),
@@ -915,7 +928,7 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                 if !portal.sessions.contains(session_id) {
                     return Task::none();
                 }
-                handle_codex_title_state(portal, session_id, &title);
+                handle_terminal_agent_title_state(portal, session_id, &title);
                 if let Some(tab) = portal.tabs.iter_mut().find(|tab| tab.id == session_id) {
                     tab.title = title;
                 }
@@ -1153,39 +1166,55 @@ mod tests {
             dropped_output_bytes: 0,
             last_output_process_duration: None,
             last_backlog_warning_at: None,
-            codex_turn_started_at: None,
+            terminal_agent_turn_started_at: None,
             last_terminal_notification_at: None,
             logger: None,
         }
     }
 
     #[test]
-    fn codex_title_state_detects_ready_and_active_titles() {
+    fn terminal_agent_title_state_detects_ready_and_active_titles() {
         assert_eq!(
-            codex_title_state("Codex - Working", false),
-            Some(CodexTitleState::Active)
+            terminal_agent_title_state("Codex - Working", false),
+            Some(TerminalAgentTitleState::Active("Codex"))
         );
         assert_eq!(
-            codex_title_state("Codex - Thinking", false),
-            Some(CodexTitleState::Active)
+            terminal_agent_title_state("Codex - Thinking", false),
+            Some(TerminalAgentTitleState::Active("Codex"))
         );
         assert_eq!(
-            codex_title_state("Codex - Ready", true),
-            Some(CodexTitleState::Ready)
+            terminal_agent_title_state("Codex - Ready", true),
+            Some(TerminalAgentTitleState::Ready)
         );
         assert_eq!(
-            codex_title_state("Codex - Needs input", true),
-            Some(CodexTitleState::Ready)
+            terminal_agent_title_state("Codex - Needs input", true),
+            Some(TerminalAgentTitleState::Ready)
         );
         assert_eq!(
-            codex_title_state("\u{2839} portal", false),
-            Some(CodexTitleState::Active)
+            terminal_agent_title_state("\u{2839} portal", false),
+            Some(TerminalAgentTitleState::Active("Codex"))
         );
         assert_eq!(
-            codex_title_state("portal", true),
-            Some(CodexTitleState::Ready)
+            terminal_agent_title_state("\u{2802} Claude Code", false),
+            Some(TerminalAgentTitleState::Active("Claude Code"))
         );
-        assert_eq!(codex_title_state("bash", false), None);
+        assert_eq!(
+            terminal_agent_title_state("\u{2810} Respond with confirmation message", false),
+            Some(TerminalAgentTitleState::Active("Claude Code"))
+        );
+        assert_eq!(
+            terminal_agent_title_state("portal", true),
+            Some(TerminalAgentTitleState::Ready)
+        );
+        assert_eq!(
+            terminal_agent_title_state("\u{2733} Respond with confirmation message", true),
+            Some(TerminalAgentTitleState::Ready)
+        );
+        assert_eq!(
+            terminal_agent_title_state("\u{2733} Claude Code", false),
+            None
+        );
+        assert_eq!(terminal_agent_title_state("bash", false), None);
     }
 
     #[test]
