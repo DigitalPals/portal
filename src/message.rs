@@ -779,6 +779,8 @@ pub enum UiMessage {
     ToastAction(Uuid, crate::views::toast::ToastAction),
     /// Toast timer tick
     ToastTick,
+    /// Timer tick for animated tab agent indicators.
+    AgentStatusTick,
     /// Keyboard event
     KeyboardEvent(iced::keyboard::Key, iced::keyboard::Modifiers, Option<char>),
     /// Key released event (used for VNC)

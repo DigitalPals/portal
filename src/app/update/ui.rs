@@ -176,6 +176,10 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
             portal.toast_manager.cleanup_expired();
             Task::none()
         }
+        UiMessage::AgentStatusTick => {
+            // No-op: drives animated tab agent indicators.
+            Task::none()
+        }
         UiMessage::KeyboardEvent(key, modifiers, shortcut_key) => {
             keyboard::handle_keyboard_event(portal, key, modifiers, shortcut_key)
         }

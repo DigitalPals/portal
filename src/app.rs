@@ -1374,6 +1374,17 @@ impl Portal {
             );
         }
 
+        if self
+            .tabs
+            .iter()
+            .any(|tab| tab.agent_status.is_some_and(|status| status.is_animated()))
+        {
+            subscriptions.push(
+                time::every(Duration::from_millis(80))
+                    .map(|_| Message::Ui(UiMessage::AgentStatusTick)),
+            );
+        }
+
         if self.active_delete_hold_tab().is_some() {
             subscriptions.push(
                 time::every(Duration::from_millis(16))

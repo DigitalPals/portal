@@ -1,7 +1,8 @@
 //! Tab bar component for managing multiple sessions
 
-use iced::widget::{Row, button, container, row, text};
+use iced::widget::{Row, Space, button, column, container, row, text, tooltip};
 use iced::{Alignment, Color, Element, Length, Padding};
+use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
 use crate::app::{FocusSection, SidebarState, View};
@@ -22,6 +23,10 @@ pub struct Tab {
     pub host_id: Option<Uuid>,
     /// Whether the tab needs attention because a background terminal event happened.
     pub needs_attention: bool,
+    /// Agent activity inferred from terminal title updates.
+    pub agent_status: Option<TabAgentStatus>,
+    /// Stable per-host terminal session number.
+    pub session_number: Option<usize>,
 }
 
 /// Type of content in a tab
@@ -33,14 +38,49 @@ pub enum TabType {
     Vnc,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TabAgentKind {
+    Codex,
+    Claude,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TabAgentActivity {
+    Working,
+    Ready,
+    NeedsInput,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TabAgentStatus {
+    pub kind: TabAgentKind,
+    pub activity: TabAgentActivity,
+}
+
+impl TabAgentStatus {
+    pub fn is_animated(self) -> bool {
+        matches!(
+            self.activity,
+            TabAgentActivity::Working | TabAgentActivity::NeedsInput
+        )
+    }
+}
+
 impl Tab {
-    pub fn new_terminal(id: Uuid, title: String, host_id: Option<Uuid>) -> Self {
+    pub fn new_terminal(
+        id: Uuid,
+        title: String,
+        host_id: Option<Uuid>,
+        session_number: usize,
+    ) -> Self {
         Self {
             id,
             title,
             tab_type: TabType::Terminal,
             host_id,
             needs_attention: false,
+            agent_status: None,
+            session_number: Some(session_number),
         }
     }
 
@@ -51,6 +91,8 @@ impl Tab {
             tab_type: TabType::Sftp,
             host_id,
             needs_attention: false,
+            agent_status: None,
+            session_number: None,
         }
     }
 
@@ -61,6 +103,8 @@ impl Tab {
             tab_type: TabType::Vnc,
             host_id,
             needs_attention: false,
+            agent_status: None,
+            session_number: None,
         }
     }
 
@@ -71,6 +115,8 @@ impl Tab {
             tab_type: TabType::FileViewer,
             host_id: None,
             needs_attention: false,
+            agent_status: None,
+            session_number: None,
         }
     }
 }
@@ -122,10 +168,12 @@ pub fn tab_bar_view<'a>(
     for (idx, tab) in tabs.iter().enumerate() {
         let is_active = active_tab == Some(tab.id);
         let is_focused = focus_section == FocusSection::TabBar && idx == focus_index;
+        let show_session_number = should_show_session_number(tabs, tab);
         tab_elements.push(tab_button(
             tab,
             is_active,
             is_focused,
+            show_session_number,
             theme,
             fonts,
             hosts_config,
@@ -173,6 +221,7 @@ fn tab_button<'a>(
     tab: &'a Tab,
     is_active: bool,
     is_focused: bool,
+    show_session_number: bool,
     theme: Theme,
     fonts: ScaledFonts,
     hosts_config: &'a HostsConfig,
@@ -184,11 +233,6 @@ fn tab_button<'a>(
         Color::from_rgb8(0xCD, 0xD6, 0xF4) // #CDD6F4 - active
     } else {
         Color::from_rgb8(0x77, 0x77, 0x90) // #777790 - inactive
-    };
-    let title_color = if title_has_spinner(&tab.title) {
-        Color::from_rgb8(0xf9, 0xe2, 0xaf)
-    } else {
-        text_icon_color
     };
 
     // Get icon - use distro icon if host_id is set and OS is detected
@@ -215,10 +259,14 @@ fn tab_button<'a>(
     let icon = icon_with_color(icon_data, 14, text_icon_color);
 
     // Truncate title if too long
-    let title = if tab.title.len() > 20 {
-        format!("{}...", &tab.title[..17])
+    let title = truncate_title(&tab.title, 20);
+
+    let session_number = if show_session_number {
+        tab.session_number
+            .map(|number| format!("#{}", number))
+            .unwrap_or_default()
     } else {
-        tab.title.clone()
+        String::new()
     };
 
     // Close button - always uses the reserved space, avoiding app-level hover updates.
@@ -243,23 +291,15 @@ fn tab_button<'a>(
     .align_x(Alignment::Center)
     .into();
 
-    let attention_dot: Element<'_, Message> = if tab.needs_attention {
-        container(
-            text("•")
-                .size(fonts.body)
-                .color(Color::from_rgb8(0xf9, 0xe2, 0xaf)),
-        )
-        .width(8.0)
-        .align_x(Alignment::Center)
-        .into()
-    } else {
-        container(text("")).width(8.0).into()
-    };
+    let status_indicator = agent_status_indicator(tab.agent_status, tab.needs_attention, fonts);
 
     let content = row![
-        attention_dot,
+        status_indicator,
         icon,
-        text(title).size(fonts.body).color(title_color),
+        text(title).size(fonts.body).color(text_icon_color),
+        text(session_number)
+            .size(fonts.caption)
+            .color(Color::from_rgb8(0xa6, 0xad, 0xc8)),
         close_button,
     ]
     .spacing(6)
@@ -310,24 +350,128 @@ fn tab_button<'a>(
     }
 }
 
-fn title_has_spinner(title: &str) -> bool {
-    matches!(
-        title.trim_start().chars().next(),
-        Some(
-            '\u{280b}'
-                | '\u{2819}'
-                | '\u{2839}'
-                | '\u{2838}'
-                | '\u{283c}'
-                | '\u{2834}'
-                | '\u{2826}'
-                | '\u{2827}'
-                | '\u{2807}'
-                | '\u{280f}'
-                | '\u{2802}'
-                | '\u{2810}'
-        )
+fn should_show_session_number(tabs: &[Tab], tab: &Tab) -> bool {
+    if tab.tab_type != TabType::Terminal {
+        return false;
+    }
+
+    tabs.iter()
+        .filter(|candidate| candidate.tab_type == TabType::Terminal)
+        .filter(|candidate| candidate.title == tab.title)
+        .count()
+        > 1
+}
+
+fn truncate_title(title: &str, max_chars: usize) -> String {
+    let mut chars = title.chars();
+    let truncated: String = chars.by_ref().take(max_chars).collect();
+    if chars.next().is_some() {
+        let keep = max_chars.saturating_sub(3);
+        format!("{}...", title.chars().take(keep).collect::<String>())
+    } else {
+        truncated
+    }
+}
+
+fn agent_status_indicator<'a>(
+    status: Option<TabAgentStatus>,
+    needs_attention: bool,
+    fonts: ScaledFonts,
+) -> Element<'a, Message> {
+    let Some(status) = status else {
+        let color = if needs_attention {
+            Color::from_rgb8(0xf9, 0xe2, 0xaf)
+        } else {
+            Color::from_rgba8(0xff, 0xff, 0xff, 0.0)
+        };
+
+        return container(text("•").size(fonts.body).color(color))
+            .width(14.0)
+            .height(14.0)
+            .align_x(Alignment::Center)
+            .align_y(Alignment::Center)
+            .into();
+    };
+
+    let label = match status.kind {
+        TabAgentKind::Codex => "Codex",
+        TabAgentKind::Claude => "Claude",
+    };
+    let activity_label = match status.activity {
+        TabAgentActivity::Working => "working",
+        TabAgentActivity::Ready => "ready",
+        TabAgentActivity::NeedsInput => "needs input",
+    };
+    let tooltip_label = format!("{} {}", label, activity_label);
+
+    let base = match status.activity {
+        TabAgentActivity::NeedsInput => Color::from_rgb8(0xf9, 0xe2, 0xaf),
+        _ => agent_accent(status.kind),
+    };
+    let alpha = match status.activity {
+        TabAgentActivity::Working => pulse_alpha(2400, 0.45, 1.0),
+        TabAgentActivity::Ready => 1.0,
+        TabAgentActivity::NeedsInput => pulse_alpha(1200, 0.45, 1.0),
+    };
+    let dot_color = Color { a: alpha, ..base };
+
+    const DOT_SIZE: f32 = 8.0;
+    let dot = container(Space::new())
+        .width(Length::Fixed(DOT_SIZE))
+        .height(Length::Fixed(DOT_SIZE))
+        .style(move |_| container::Style {
+            background: Some(dot_color.into()),
+            border: iced::Border {
+                radius: (DOT_SIZE / 2.0).into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+    let indicator = container(dot)
+        .width(14.0)
+        .height(14.0)
+        .align_x(Alignment::Center)
+        .align_y(Alignment::Center);
+
+    tooltip(
+        indicator,
+        column![
+            text(tooltip_label)
+                .size(fonts.label)
+                .color(Color::from_rgb8(0xCD, 0xD6, 0xF4)),
+            Space::new().height(Length::Fixed(1.0))
+        ],
+        tooltip::Position::Bottom,
     )
+    .style(move |_theme| container::Style {
+        background: Some(Color::from_rgb8(0x1e, 0x1e, 0x2e).into()),
+        border: iced::Border {
+            color: base,
+            width: 1.0,
+            radius: 4.0.into(),
+        },
+        ..Default::default()
+    })
+    .padding(8)
+    .into()
+}
+
+fn agent_accent(kind: TabAgentKind) -> Color {
+    match kind {
+        TabAgentKind::Codex => Color::from_rgb8(0x8a, 0xb4, 0xf0),
+        TabAgentKind::Claude => Color::from_rgb8(0xe5, 0xa9, 0x7a),
+    }
+}
+
+fn pulse_alpha(period_ms: u128, min: f32, max: f32) -> f32 {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0);
+    let phase = ((now % period_ms) as f32) / (period_ms as f32);
+    let normalized = (1.0 - (phase * std::f32::consts::TAU).cos()) * 0.5;
+    min + (max - min) * normalized
 }
 
 /// New tab "+" button

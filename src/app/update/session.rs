@@ -18,6 +18,7 @@ use crate::platform;
 use crate::ssh::reconnect::ReconnectPolicy;
 use crate::terminal::backend::TerminalEvent;
 use crate::terminal::logger::SessionLogger;
+use crate::views::tabs::{TabAgentActivity, TabAgentKind, TabAgentStatus, TabType};
 use crate::views::terminal_view::TerminalSession;
 use crate::views::toast::Toast;
 
@@ -286,7 +287,8 @@ fn start_terminal_session(
     );
 
     // Create a new tab for this session
-    let tab = Tab::new_terminal(session_id, host_name, host_id);
+    let session_number = next_terminal_session_number(&portal.tabs, &host_name);
+    let tab = Tab::new_terminal(session_id, host_name, host_id, session_number);
     portal.tabs.push(tab);
 
     // Switch to terminal view and hide sidebar
@@ -327,6 +329,25 @@ fn terminal_notification_name(portal: &Portal, session_id: SessionId) -> String 
         })
         .unwrap_or("Terminal")
         .to_string()
+}
+
+fn next_terminal_session_number(tabs: &[Tab], title: &str) -> usize {
+    let mut used: Vec<usize> = tabs
+        .iter()
+        .filter(|tab| tab.tab_type == TabType::Terminal && tab.title == title)
+        .filter_map(|tab| tab.session_number)
+        .collect();
+    used.sort_unstable();
+
+    let mut next = 1;
+    for number in used {
+        if number == next {
+            next += 1;
+        } else if number > next {
+            break;
+        }
+    }
+    next
 }
 
 fn mark_terminal_attention(portal: &mut Portal, session_id: SessionId) {
@@ -372,20 +393,30 @@ fn send_terminal_desktop_notification(
 
 fn notify_terminal_bell(portal: &mut Portal, session_id: SessionId) {
     let terminal_name = terminal_notification_name(portal, session_id);
-    send_terminal_desktop_notification(portal, session_id, "Terminal bell", terminal_name);
+    send_terminal_desktop_notification(
+        portal,
+        session_id,
+        format!("Terminal bell: {}", terminal_name),
+        "Background session needs attention.",
+    );
 }
 
 fn notify_terminal_finished(portal: &mut Portal, session_id: SessionId) {
     let terminal_name = terminal_notification_name(portal, session_id);
-    send_terminal_desktop_notification(portal, session_id, "Terminal finished", terminal_name);
+    send_terminal_desktop_notification(
+        portal,
+        session_id,
+        format!("Session closed: {}", terminal_name),
+        "The terminal ended cleanly.",
+    );
 }
 
 fn notify_terminal_osc(portal: &mut Portal, session_id: SessionId, title: String, body: String) {
     let terminal_name = terminal_notification_name(portal, session_id);
     let body = if body.trim().is_empty() {
-        terminal_name
+        format!("Host: {}", terminal_name)
     } else {
-        body
+        format!("Host: {}\n{}", terminal_name, body)
     };
     send_terminal_desktop_notification(portal, session_id, title, body);
 }
@@ -399,45 +430,67 @@ fn notify_command_finished(
     let terminal_name = terminal_notification_name(portal, session_id);
     let seconds = duration.as_secs().max(1);
     let status = exit_status
-        .map(|status| format!(" with exit status {}", status))
-        .unwrap_or_default();
+        .map(|status| status.to_string())
+        .unwrap_or_else(|| "unknown".to_string());
     send_terminal_desktop_notification(
         portal,
         session_id,
-        "Command finished",
-        format!("{} finished after {}s{}", terminal_name, seconds, status),
+        format!("Command finished: {}", terminal_name),
+        format!("Duration: {}s\nExit status: {}", seconds, status),
     );
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TerminalAgentTitleState {
-    Active(&'static str),
-    Ready,
+    Active(TabAgentKind),
+    Ready(Option<TabAgentKind>),
+    NeedsInput(TabAgentKind),
+    Clear,
 }
 
 fn terminal_agent_title_state(title: &str, turn_active: bool) -> Option<TerminalAgentTitleState> {
     let lower = title.to_ascii_lowercase();
 
     if codex_spinner_title(title) {
-        return Some(TerminalAgentTitleState::Active("Codex"));
+        return Some(TerminalAgentTitleState::Active(TabAgentKind::Codex));
     }
 
     if claude_spinner_title(title) {
-        return Some(TerminalAgentTitleState::Active("Claude Code"));
+        return Some(TerminalAgentTitleState::Active(TabAgentKind::Claude));
     }
 
-    if lower.contains("codex") {
-        if lower.contains("working") || lower.contains("thinking") {
-            return Some(TerminalAgentTitleState::Active("Codex"));
+    let agent_kind = if lower.contains("codex") {
+        Some(TabAgentKind::Codex)
+    } else if lower.contains("claude") {
+        Some(TabAgentKind::Claude)
+    } else {
+        None
+    };
+
+    if let Some(kind) = agent_kind {
+        if lower.contains("need input")
+            || lower.contains("needs input")
+            || lower.contains("waiting for input")
+            || lower.contains("approval")
+            || lower.contains("permission")
+            || lower.contains("confirm")
+        {
+            return Some(TerminalAgentTitleState::NeedsInput(kind));
         }
 
-        if lower.contains("ready") || lower.contains("needs input") {
-            return Some(TerminalAgentTitleState::Ready);
+        if lower.contains("working") || lower.contains("thinking") {
+            return Some(TerminalAgentTitleState::Active(kind));
+        }
+
+        if lower.contains("ready") || lower.contains("idle") || lower.contains("done") {
+            return Some(TerminalAgentTitleState::Ready(Some(kind)));
         }
     }
 
     if turn_active {
-        Some(TerminalAgentTitleState::Ready)
+        Some(TerminalAgentTitleState::Ready(None))
+    } else if agent_kind.is_none() {
+        Some(TerminalAgentTitleState::Clear)
     } else {
         None
     }
@@ -477,19 +530,55 @@ fn handle_terminal_agent_title_state(portal: &mut Portal, session_id: SessionId,
         return;
     };
 
-    let Some(session) = portal.sessions.get_mut(session_id) else {
-        return;
-    };
-
     match state {
-        TerminalAgentTitleState::Active(agent_name) => {
-            if session.terminal_agent_turn_started_at.is_none() {
-                session.terminal_agent_turn_started_at =
-                    Some((agent_name.to_string(), Instant::now()));
+        TerminalAgentTitleState::Active(kind) => {
+            if let Some(session) = portal.sessions.get_mut(session_id) {
+                if session.terminal_agent_turn_started_at.is_none() {
+                    session.terminal_agent_turn_started_at =
+                        Some((agent_display_name(kind).to_string(), Instant::now()));
+                }
             }
+            set_tab_agent_status(portal, session_id, kind, TabAgentActivity::Working);
         }
-        TerminalAgentTitleState::Ready => {
-            let Some((agent_name, started_at)) = session.terminal_agent_turn_started_at.take()
+        TerminalAgentTitleState::NeedsInput(kind) => {
+            if let Some(session) = portal.sessions.get_mut(session_id) {
+                if session.terminal_agent_turn_started_at.is_none() {
+                    session.terminal_agent_turn_started_at =
+                        Some((agent_display_name(kind).to_string(), Instant::now()));
+                }
+            }
+            set_tab_agent_status(portal, session_id, kind, TabAgentActivity::NeedsInput);
+            mark_terminal_attention(portal, session_id);
+            let terminal_name = terminal_notification_name(portal, session_id);
+            send_terminal_desktop_notification(
+                portal,
+                session_id,
+                format!(
+                    "{} needs input: {}",
+                    agent_display_name(kind),
+                    terminal_name
+                ),
+                "Portal is waiting for your response.",
+            );
+        }
+        TerminalAgentTitleState::Ready(kind) => {
+            let started_turn = portal
+                .sessions
+                .get(session_id)
+                .and_then(|session| session.terminal_agent_turn_started_at.clone());
+            let kind = kind
+                .or_else(|| tab_agent_kind(portal, session_id))
+                .or_else(|| {
+                    started_turn
+                        .as_ref()
+                        .and_then(|(name, _)| agent_kind_from_name(name))
+                })
+                .unwrap_or(TabAgentKind::Codex);
+            set_tab_agent_status(portal, session_id, kind, TabAgentActivity::Ready);
+            let Some((agent_name, started_at)) = portal
+                .sessions
+                .get_mut(session_id)
+                .and_then(|session| session.terminal_agent_turn_started_at.take())
             else {
                 return;
             };
@@ -499,17 +588,59 @@ fn handle_terminal_agent_title_state(portal: &mut Portal, session_id: SessionId,
             }
 
             mark_terminal_attention(portal, session_id);
+            let terminal_name = terminal_notification_name(portal, session_id);
             send_terminal_desktop_notification(
                 portal,
                 session_id,
-                format!("{} finished", agent_name),
-                format!(
-                    "{} finished after {}s",
-                    terminal_notification_name(portal, session_id),
-                    duration.as_secs().max(1)
-                ),
+                format!("{} ready: {}", agent_name, terminal_name),
+                format!("Finished after {}s.", duration.as_secs().max(1)),
             );
         }
+        TerminalAgentTitleState::Clear => {
+            if let Some(session) = portal.sessions.get_mut(session_id) {
+                session.terminal_agent_turn_started_at = None;
+            }
+            if let Some(tab) = portal.tabs.iter_mut().find(|tab| tab.id == session_id) {
+                tab.agent_status = None;
+            }
+        }
+    }
+}
+
+fn set_tab_agent_status(
+    portal: &mut Portal,
+    session_id: SessionId,
+    kind: TabAgentKind,
+    activity: TabAgentActivity,
+) {
+    if let Some(tab) = portal.tabs.iter_mut().find(|tab| tab.id == session_id) {
+        tab.agent_status = Some(TabAgentStatus { kind, activity });
+    }
+}
+
+fn tab_agent_kind(portal: &Portal, session_id: SessionId) -> Option<TabAgentKind> {
+    portal
+        .tabs
+        .iter()
+        .find(|tab| tab.id == session_id)
+        .and_then(|tab| tab.agent_status.map(|status| status.kind))
+}
+
+fn agent_display_name(kind: TabAgentKind) -> &'static str {
+    match kind {
+        TabAgentKind::Codex => "Codex",
+        TabAgentKind::Claude => "Claude Code",
+    }
+}
+
+fn agent_kind_from_name(name: &str) -> Option<TabAgentKind> {
+    let lower = name.to_ascii_lowercase();
+    if lower.contains("codex") {
+        Some(TabAgentKind::Codex)
+    } else if lower.contains("claude") {
+        Some(TabAgentKind::Claude)
+    } else {
+        None
     }
 }
 
@@ -929,9 +1060,6 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                     return Task::none();
                 }
                 handle_terminal_agent_title_state(portal, session_id, &title);
-                if let Some(tab) = portal.tabs.iter_mut().find(|tab| tab.id == session_id) {
-                    tab.title = title;
-                }
                 Task::none()
             }
             TerminalEvent::Bell => {
@@ -1176,45 +1304,48 @@ mod tests {
     fn terminal_agent_title_state_detects_ready_and_active_titles() {
         assert_eq!(
             terminal_agent_title_state("Codex - Working", false),
-            Some(TerminalAgentTitleState::Active("Codex"))
+            Some(TerminalAgentTitleState::Active(TabAgentKind::Codex))
         );
         assert_eq!(
             terminal_agent_title_state("Codex - Thinking", false),
-            Some(TerminalAgentTitleState::Active("Codex"))
+            Some(TerminalAgentTitleState::Active(TabAgentKind::Codex))
         );
         assert_eq!(
             terminal_agent_title_state("Codex - Ready", true),
-            Some(TerminalAgentTitleState::Ready)
+            Some(TerminalAgentTitleState::Ready(Some(TabAgentKind::Codex)))
         );
         assert_eq!(
             terminal_agent_title_state("Codex - Needs input", true),
-            Some(TerminalAgentTitleState::Ready)
+            Some(TerminalAgentTitleState::NeedsInput(TabAgentKind::Codex))
         );
         assert_eq!(
             terminal_agent_title_state("\u{2839} portal", false),
-            Some(TerminalAgentTitleState::Active("Codex"))
+            Some(TerminalAgentTitleState::Active(TabAgentKind::Codex))
         );
         assert_eq!(
             terminal_agent_title_state("\u{2802} Claude Code", false),
-            Some(TerminalAgentTitleState::Active("Claude Code"))
+            Some(TerminalAgentTitleState::Active(TabAgentKind::Claude))
         );
         assert_eq!(
             terminal_agent_title_state("\u{2810} Respond with confirmation message", false),
-            Some(TerminalAgentTitleState::Active("Claude Code"))
+            Some(TerminalAgentTitleState::Active(TabAgentKind::Claude))
         );
         assert_eq!(
             terminal_agent_title_state("portal", true),
-            Some(TerminalAgentTitleState::Ready)
+            Some(TerminalAgentTitleState::Ready(None))
         );
         assert_eq!(
             terminal_agent_title_state("\u{2733} Respond with confirmation message", true),
-            Some(TerminalAgentTitleState::Ready)
+            Some(TerminalAgentTitleState::Ready(None))
         );
         assert_eq!(
             terminal_agent_title_state("\u{2733} Claude Code", false),
             None
         );
-        assert_eq!(terminal_agent_title_state("bash", false), None);
+        assert_eq!(
+            terminal_agent_title_state("bash", false),
+            Some(TerminalAgentTitleState::Clear)
+        );
     }
 
     #[test]

@@ -11,10 +11,15 @@ pub fn send_desktop_notification(summary: impl Into<String>, body: impl Into<Str
 #[cfg(target_os = "linux")]
 fn send_desktop_notification_impl(summary: String, body: String) {
     std::thread::spawn(move || {
+        use notify_rust::{Timeout, Urgency};
+
         if let Err(error) = notify_rust::Notification::new()
             .appname("Portal")
             .summary(&summary)
             .body(&body)
+            .icon("utilities-terminal")
+            .urgency(Urgency::Normal)
+            .timeout(Timeout::Milliseconds(8000))
             .show()
         {
             tracing::debug!("Failed to send desktop notification: {}", error);
