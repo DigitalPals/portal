@@ -69,6 +69,10 @@ use self::view_model::HostGridCache;
 
 /// Threshold for auto-collapsing sidebar (in pixels)
 pub const SIDEBAR_AUTO_COLLAPSE_THRESHOLD: f32 = 800.0;
+const TERMINAL_TAB_BAR_ESTIMATED_HEIGHT: f32 = 56.0;
+const TERMINAL_STATUS_BAR_VERTICAL_PADDING: f32 = 12.0;
+const TERMINAL_STATUS_BAR_KEY_PADDING: f32 = 4.0;
+const TERMINAL_STATUS_BAR_GUARD: f32 = 4.0;
 
 /// The active view in the main content area
 #[derive(Debug, Clone, Default)]
@@ -1260,17 +1264,16 @@ impl Portal {
     /// emitted its first exact resize. Use the same font metrics as the widget
     /// and the post-connection layout, where terminal sessions hide the sidebar.
     pub fn terminal_initial_size(&self) -> (u16, u16) {
-        const TAB_BAR_ESTIMATED_HEIGHT: f32 = 48.0;
-        const STATUS_BAR_ESTIMATED_HEIGHT: f32 = 30.0;
-
         let metrics = TerminalMetrics::for_font_with_adjustments(
             self.prefs.terminal_font,
             self.prefs.terminal_font_size,
             self.prefs.terminal_metric_adjustments,
         );
+        let fonts = ScaledFonts::new(self.effective_ui_scale());
+        let status_bar_height = terminal_status_bar_estimated_height(fonts);
         let width = self.ui.window_size.width.max(metrics.cell_width * 10.0);
         let height =
-            (self.ui.window_size.height - TAB_BAR_ESTIMATED_HEIGHT - STATUS_BAR_ESTIMATED_HEIGHT)
+            (self.ui.window_size.height - TERMINAL_TAB_BAR_ESTIMATED_HEIGHT - status_bar_height)
                 .max(metrics.cell_height * 3.0);
         let bounds = iced::Rectangle {
             x: 0.0,
@@ -1413,6 +1416,17 @@ impl Portal {
             })
             .map(|state| state.tab_id)
     }
+}
+
+fn terminal_status_bar_estimated_height(fonts: ScaledFonts) -> f32 {
+    // This estimate feeds PTY/window-change sizing before the terminal widget
+    // can report exact bounds. Keep it conservative; the widget can reclaim any
+    // spare space after layout, but overestimating rows lets terminal UIs draw
+    // underneath Portal chrome.
+    fonts.small.max(fonts.caption)
+        + TERMINAL_STATUS_BAR_KEY_PADDING
+        + TERMINAL_STATUS_BAR_VERTICAL_PADDING
+        + TERMINAL_STATUS_BAR_GUARD
 }
 
 fn subscription_message(event: iced::Event, status: event::Status) -> Option<Message> {
