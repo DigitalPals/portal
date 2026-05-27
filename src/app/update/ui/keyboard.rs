@@ -167,25 +167,26 @@ pub(super) fn handle_keyboard_event(
         }
 
         // Ctrl+Shift shortcuts for VNC-specific actions
-        if modifiers.control() && modifiers.shift() {
-            if let Key::Character(c) = &key {
-                match c.as_str() {
-                    // Ctrl+Shift+S: Screenshot
-                    "s" | "S" => {
-                        return Task::done(Message::Vnc(VncMessage::CaptureScreenshot(session_id)));
-                    }
-                    // Ctrl+Shift+V: Paste clipboard to VNC
-                    "v" | "V" => {
-                        return iced::clipboard::read().map(move |contents| {
-                            if let Some(text) = contents {
-                                Message::Vnc(VncMessage::ClipboardSend(session_id, text))
-                            } else {
-                                Message::Noop
-                            }
-                        });
-                    }
-                    _ => {} // Fall through to global shortcuts
+        if modifiers.control()
+            && modifiers.shift()
+            && let Key::Character(c) = &key
+        {
+            match c.as_str() {
+                // Ctrl+Shift+S: Screenshot
+                "s" | "S" => {
+                    return Task::done(Message::Vnc(VncMessage::CaptureScreenshot(session_id)));
                 }
+                // Ctrl+Shift+V: Paste clipboard to VNC
+                "v" | "V" => {
+                    return iced::clipboard::read().map(move |contents| {
+                        if let Some(text) = contents {
+                            Message::Vnc(VncMessage::ClipboardSend(session_id, text))
+                        } else {
+                            Message::Noop
+                        }
+                    });
+                }
+                _ => {} // Fall through to global shortcuts
             }
         }
 
@@ -239,12 +240,12 @@ pub(super) fn handle_keyboard_event(
     // Priority 3: Terminal captured - only Ctrl+Escape exits
     if portal.ui.terminal_captured {
         // Ctrl+Escape exits captured mode
-        if let Key::Named(keyboard::key::Named::Escape) = &key {
-            if modifiers.control() {
-                portal.ui.terminal_captured = false;
-                portal.ui.focus_section = FocusSection::Content;
-                return Task::none();
-            }
+        if let Key::Named(keyboard::key::Named::Escape) = &key
+            && modifiers.control()
+        {
+            portal.ui.terminal_captured = false;
+            portal.ui.focus_section = FocusSection::Content;
+            return Task::none();
         }
         // Ctrl+Shift+K installs SSH key and Ctrl+Shift+U jumps to unread agent
         // notifications - allow these through to global shortcuts.
@@ -294,10 +295,10 @@ pub(super) fn handle_keyboard_event(
         }
         // Ctrl+Shift+K - Install SSH key on remote server
         (Key::Character(c), true, true) if c.as_str() == "k" || c.as_str() == "K" => {
-            if let View::Terminal(session_id) = portal.ui.active_view {
-                if portal.sessions.contains(session_id) {
-                    return portal.update(Message::Session(SessionMessage::InstallKey(session_id)));
-                }
+            if let View::Terminal(session_id) = portal.ui.active_view
+                && portal.sessions.contains(session_id)
+            {
+                return portal.update(Message::Session(SessionMessage::InstallKey(session_id)));
             }
             return Task::none();
         }
@@ -783,11 +784,11 @@ fn handle_host_grid_keyboard(
 
     if total_items == 0 {
         // "/" focuses search even when empty
-        if let Key::Character(c) = key {
-            if c.as_str() == "/" {
-                portal.ui.host_grid_focus_index = None; // Clear grid focus when focusing search
-                return iced::widget::operation::focus(crate::views::host_grid::search_input_id());
-            }
+        if let Key::Character(c) = key
+            && c.as_str() == "/"
+        {
+            portal.ui.host_grid_focus_index = None; // Clear grid focus when focusing search
+            return iced::widget::operation::focus(crate::views::host_grid::search_input_id());
         }
         return Task::none();
     }
@@ -923,11 +924,11 @@ fn handle_history_keyboard(
             portal.ui.focus_section = FocusSection::Sidebar;
         }
         Key::Named(keyboard::key::Named::Enter | keyboard::key::Named::Space) => {
-            if let Some(idx) = portal.ui.history_focus_index {
-                if let Some(entry) = portal.config.history.entries.get(idx) {
-                    let host_id = entry.host_id;
-                    return portal.update(Message::History(HistoryMessage::Reconnect(host_id)));
-                }
+            if let Some(idx) = portal.ui.history_focus_index
+                && let Some(entry) = portal.config.history.entries.get(idx)
+            {
+                let host_id = entry.host_id;
+                return portal.update(Message::History(HistoryMessage::Reconnect(host_id)));
             }
         }
         _ => {}
@@ -1074,17 +1075,16 @@ fn handle_sftp_keyboard(
         }
         Key::Named(keyboard::key::Named::Enter) => {
             // Navigate into directory or activate file
-            if let Some(idx) = pane_state.last_selected_index {
-                if let Some(entry) = pane_state.entries.get(idx) {
-                    if entry.is_dir {
-                        let path = entry.path.clone();
-                        return portal.update(Message::Sftp(SftpMessage::PaneNavigate(
-                            tab_id,
-                            active_pane,
-                            path,
-                        )));
-                    }
-                }
+            if let Some(idx) = pane_state.last_selected_index
+                && let Some(entry) = pane_state.entries.get(idx)
+                && entry.is_dir
+            {
+                let path = entry.path.clone();
+                return portal.update(Message::Sftp(SftpMessage::PaneNavigate(
+                    tab_id,
+                    active_pane,
+                    path,
+                )));
             }
         }
         Key::Named(keyboard::key::Named::Backspace) => {

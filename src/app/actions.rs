@@ -536,32 +536,29 @@ impl Portal {
             }
             vnc.session.disconnect();
         }
-        if let Some(viewer_state) = self.file_viewers.remove(tab_id) {
-            if let FileSource::Remote { temp_path, .. } = viewer_state.file_source {
-                if let Some(temp_dir) = temp_path.parent().map(|path| path.to_path_buf()) {
-                    tokio::spawn(async move {
-                        let _ = cleanup_temp_dir(&temp_dir).await;
-                    });
-                }
-            }
+        if let Some(viewer_state) = self.file_viewers.remove(tab_id)
+            && let FileSource::Remote { temp_path, .. } = viewer_state.file_source
+            && let Some(temp_dir) = temp_path.parent().map(|path| path.to_path_buf())
+        {
+            tokio::spawn(async move {
+                let _ = cleanup_temp_dir(&temp_dir).await;
+            });
         }
 
         for session_id in sftp_sessions_to_close {
             let still_used = self.sftp.is_connection_in_use(session_id);
             if !still_used {
                 self.sftp.remove_connection(session_id);
-                if let Some(entry_id) = self.sftp.remove_history_entry(session_id) {
-                    if history::mark_entry_disconnected(&mut self.config.history, entry_id) {
-                        history_changed = true;
-                    }
+                if let Some(entry_id) = self.sftp.remove_history_entry(session_id)
+                    && history::mark_entry_disconnected(&mut self.config.history, entry_id)
+                {
+                    history_changed = true;
                 }
             }
         }
 
-        if history_changed {
-            if let Err(e) = self.config.history.save() {
-                tracing::error!("Failed to save history config: {}", e);
-            }
+        if history_changed && let Err(e) = self.config.history.save() {
+            tracing::error!("Failed to save history config: {}", e);
         }
 
         if self.active_tab == Some(tab_id) {
@@ -999,56 +996,57 @@ impl Portal {
         match action {
             ContextMenuAction::Open => {
                 // Open file in the in-app file viewer
-                if let Some(entry) = selected_entries.first() {
-                    if !entry.is_dir && !entry.is_parent() {
-                        let file_name = entry.name.clone();
-                        let file_path = entry.path.clone();
-                        let file_type = FileType::from_path(&file_path);
+                if let Some(entry) = selected_entries.first()
+                    && !entry.is_dir
+                    && !entry.is_parent()
+                {
+                    let file_name = entry.name.clone();
+                    let file_path = entry.path.clone();
+                    let file_type = FileType::from_path(&file_path);
 
-                        // Check if file type is viewable
-                        if !file_type.is_viewable() {
-                            self.toast_manager.push(Toast::warning(
-                                "Binary files are not supported in the viewer.",
-                            ));
-                            return Task::none();
-                        }
-
-                        // Create a new file viewer
-                        let viewer_id = Uuid::new_v4();
-
-                        let (viewer_state, load_task) = match &pane.source {
-                            PaneSource::Local => file_viewer::build_local_viewer(
-                                viewer_id,
-                                file_name.clone(),
-                                file_path,
-                                file_type,
-                            ),
-                            PaneSource::Remote { session_id, .. } => {
-                                if let Some(sftp) = self.sftp.get_connection(*session_id) {
-                                    file_viewer::build_remote_viewer(
-                                        viewer_id,
-                                        file_name.clone(),
-                                        file_path,
-                                        *session_id,
-                                        sftp.clone(),
-                                        file_type,
-                                    )
-                                } else {
-                                    return Task::none();
-                                }
-                            }
-                        };
-
-                        // Add viewer to manager
-                        self.file_viewers.insert(viewer_state);
-
-                        // Create tab
-                        let tab = Tab::new_file_viewer(viewer_id, file_name);
-                        self.tabs.push(tab);
-                        self.enter_file_viewer_view(viewer_id);
-
-                        return load_task;
+                    // Check if file type is viewable
+                    if !file_type.is_viewable() {
+                        self.toast_manager.push(Toast::warning(
+                            "Binary files are not supported in the viewer.",
+                        ));
+                        return Task::none();
                     }
+
+                    // Create a new file viewer
+                    let viewer_id = Uuid::new_v4();
+
+                    let (viewer_state, load_task) = match &pane.source {
+                        PaneSource::Local => file_viewer::build_local_viewer(
+                            viewer_id,
+                            file_name.clone(),
+                            file_path,
+                            file_type,
+                        ),
+                        PaneSource::Remote { session_id, .. } => {
+                            if let Some(sftp) = self.sftp.get_connection(*session_id) {
+                                file_viewer::build_remote_viewer(
+                                    viewer_id,
+                                    file_name.clone(),
+                                    file_path,
+                                    *session_id,
+                                    sftp.clone(),
+                                    file_type,
+                                )
+                            } else {
+                                return Task::none();
+                            }
+                        }
+                    };
+
+                    // Add viewer to manager
+                    self.file_viewers.insert(viewer_state);
+
+                    // Create tab
+                    let tab = Tab::new_file_viewer(viewer_id, file_name);
+                    self.tabs.push(tab);
+                    self.enter_file_viewer_view(viewer_id);
+
+                    return load_task;
                 }
             }
             ContextMenuAction::CopyToTarget => {
@@ -1057,12 +1055,12 @@ impl Portal {
             }
             ContextMenuAction::Rename => {
                 // Show the Rename dialog for single selection
-                if let Some(entry) = selected_entries.first() {
-                    if !entry.is_parent() {
-                        let original_name = entry.name.clone();
-                        if let Some(tab_state) = self.sftp.get_tab_mut(tab_id) {
-                            tab_state.show_rename_dialog(original_name);
-                        }
+                if let Some(entry) = selected_entries.first()
+                    && !entry.is_parent()
+                {
+                    let original_name = entry.name.clone();
+                    if let Some(tab_state) = self.sftp.get_tab_mut(tab_id) {
+                        tab_state.show_rename_dialog(original_name);
                     }
                 }
             }
@@ -1074,10 +1072,10 @@ impl Portal {
                     .map(|e| (e.name.clone(), e.path.clone(), e.is_dir))
                     .collect();
 
-                if !entries_to_delete.is_empty() {
-                    if let Some(tab_state) = self.sftp.get_tab_mut(tab_id) {
-                        tab_state.show_delete_dialog(entries_to_delete);
-                    }
+                if !entries_to_delete.is_empty()
+                    && let Some(tab_state) = self.sftp.get_tab_mut(tab_id)
+                {
+                    tab_state.show_delete_dialog(entries_to_delete);
                 }
             }
             ContextMenuAction::Refresh => {
@@ -1095,41 +1093,41 @@ impl Portal {
             }
             ContextMenuAction::EditPermissions => {
                 // Show permissions dialog for single selection
-                if let Some(entry) = selected_entries.first() {
-                    if !entry.is_parent() {
-                        let name = entry.name.clone();
-                        let path = entry.path.clone();
+                if let Some(entry) = selected_entries.first()
+                    && !entry.is_parent()
+                {
+                    let name = entry.name.clone();
+                    let path = entry.path.clone();
 
-                        // Get current permissions
-                        let permissions = match &pane.source {
-                            PaneSource::Local => {
-                                // Read permissions from local file
-                                #[cfg(unix)]
-                                {
-                                    use std::os::unix::fs::PermissionsExt;
-                                    std::fs::metadata(&path)
-                                        .map(|m| PermissionBits::from_mode(m.permissions().mode()))
-                                        .unwrap_or_default()
-                                }
-                                #[cfg(not(unix))]
-                                {
-                                    PermissionBits::default()
-                                }
+                    // Get current permissions
+                    let permissions = match &pane.source {
+                        PaneSource::Local => {
+                            // Read permissions from local file
+                            #[cfg(unix)]
+                            {
+                                use std::os::unix::fs::PermissionsExt;
+                                std::fs::metadata(&path)
+                                    .map(|m| PermissionBits::from_mode(m.permissions().mode()))
+                                    .unwrap_or_default()
                             }
-                            PaneSource::Remote { .. } => {
-                                // For remote files, we'll use the mode from FileEntry if available
-                                // For now, use default permissions (644 for files, 755 for directories)
-                                if entry.is_dir {
-                                    PermissionBits::from_mode(0o755)
-                                } else {
-                                    PermissionBits::from_mode(0o644)
-                                }
+                            #[cfg(not(unix))]
+                            {
+                                PermissionBits::default()
                             }
-                        };
-
-                        if let Some(tab_state) = self.sftp.get_tab_mut(tab_id) {
-                            tab_state.show_permissions_dialog(name, path, permissions);
                         }
+                        PaneSource::Remote { .. } => {
+                            // For remote files, we'll use the mode from FileEntry if available
+                            // For now, use default permissions (644 for files, 755 for directories)
+                            if entry.is_dir {
+                                PermissionBits::from_mode(0o755)
+                            } else {
+                                PermissionBits::from_mode(0o644)
+                            }
+                        }
+                    };
+
+                    if let Some(tab_state) = self.sftp.get_tab_mut(tab_id) {
+                        tab_state.show_permissions_dialog(name, path, permissions);
                     }
                 }
             }

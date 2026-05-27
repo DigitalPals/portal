@@ -87,16 +87,16 @@ pub fn ensure_config_dir() -> std::io::Result<PathBuf> {
 
 /// Expand tilde in path (e.g., ~/.ssh/id_rsa -> /home/user/.ssh/id_rsa)
 pub fn expand_tilde(path: &str) -> PathBuf {
-    if path == "~" {
-        if let Some(home) = dirs_home() {
-            return home;
-        }
+    if path == "~"
+        && let Some(home) = dirs_home()
+    {
+        return home;
     }
 
-    if let Some(stripped) = path.strip_prefix("~/") {
-        if let Some(home) = dirs_home() {
-            return home.join(stripped);
-        }
+    if let Some(stripped) = path.strip_prefix("~/")
+        && let Some(home) = dirs_home()
+    {
+        return home.join(stripped);
     }
     PathBuf::from(path)
 }

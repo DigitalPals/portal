@@ -334,54 +334,54 @@ impl<'a> advanced::Widget<Message, iced::Theme, iced::Renderer> for VncMouseWrap
                     }));
                 }
                 iced::mouse::Event::CursorMoved { .. } => {
-                    if let Some(pos) = position {
-                        if let Some((x, y)) = self.map_coordinates(&bounds, pos.x, pos.y) {
-                            self.framebuffer
-                                .lock()
-                                .set_cursor_position(x as u32, y as u32);
-                            state.last_x = x;
-                            state.last_y = y;
+                    if let Some(pos) = position
+                        && let Some((x, y)) = self.map_coordinates(&bounds, pos.x, pos.y)
+                    {
+                        self.framebuffer
+                            .lock()
+                            .set_cursor_position(x as u32, y as u32);
+                        state.last_x = x;
+                        state.last_y = y;
+                        shell.publish(Message::Vnc(VncMessage::MouseEvent {
+                            session_id: self.session_id,
+                            x,
+                            y,
+                            buttons: state.button_mask,
+                        }));
+                    }
+                }
+                iced::mouse::Event::WheelScrolled { delta } => {
+                    if let Some(pos) = position
+                        && let Some((x, y)) = self.map_coordinates(&bounds, pos.x, pos.y)
+                    {
+                        self.framebuffer
+                            .lock()
+                            .set_cursor_position(x as u32, y as u32);
+                        // RFB wheel bits: 3/4 vertical, 5/6 horizontal.
+                        let (scroll_x, scroll_y) = match delta {
+                            iced::mouse::ScrollDelta::Lines { x, y } => (*x, *y),
+                            iced::mouse::ScrollDelta::Pixels { x, y } => {
+                                // Trackpads produce many small pixel deltas; accumulate
+                                // them into discrete RFB wheel steps like Remmina/TigerVNC.
+                                (*x / 120.0, *y / 120.0)
+                            }
+                        };
+                        let scroll_btn = state.scroll_mask_from_delta(scroll_x, scroll_y);
+                        if scroll_btn != 0 {
+                            // Press scroll button
+                            shell.publish(Message::Vnc(VncMessage::MouseEvent {
+                                session_id: self.session_id,
+                                x,
+                                y,
+                                buttons: state.button_mask | scroll_btn,
+                            }));
+                            // Release scroll button
                             shell.publish(Message::Vnc(VncMessage::MouseEvent {
                                 session_id: self.session_id,
                                 x,
                                 y,
                                 buttons: state.button_mask,
                             }));
-                        }
-                    }
-                }
-                iced::mouse::Event::WheelScrolled { delta } => {
-                    if let Some(pos) = position {
-                        if let Some((x, y)) = self.map_coordinates(&bounds, pos.x, pos.y) {
-                            self.framebuffer
-                                .lock()
-                                .set_cursor_position(x as u32, y as u32);
-                            // RFB wheel bits: 3/4 vertical, 5/6 horizontal.
-                            let (scroll_x, scroll_y) = match delta {
-                                iced::mouse::ScrollDelta::Lines { x, y } => (*x, *y),
-                                iced::mouse::ScrollDelta::Pixels { x, y } => {
-                                    // Trackpads produce many small pixel deltas; accumulate
-                                    // them into discrete RFB wheel steps like Remmina/TigerVNC.
-                                    (*x / 120.0, *y / 120.0)
-                                }
-                            };
-                            let scroll_btn = state.scroll_mask_from_delta(scroll_x, scroll_y);
-                            if scroll_btn != 0 {
-                                // Press scroll button
-                                shell.publish(Message::Vnc(VncMessage::MouseEvent {
-                                    session_id: self.session_id,
-                                    x,
-                                    y,
-                                    buttons: state.button_mask | scroll_btn,
-                                }));
-                                // Release scroll button
-                                shell.publish(Message::Vnc(VncMessage::MouseEvent {
-                                    session_id: self.session_id,
-                                    x,
-                                    y,
-                                    buttons: state.button_mask,
-                                }));
-                            }
                         }
                     }
                 }

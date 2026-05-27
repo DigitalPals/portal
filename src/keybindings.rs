@@ -218,13 +218,12 @@ fn set_modifier(value: &mut bool, label: &str) -> Result<(), KeybindingParseErro
 
 fn parse_key_token(token: &str) -> Result<KeybindingKey, KeybindingParseError> {
     let lower = token.to_ascii_lowercase();
-    if let Some(rest) = lower.strip_prefix('f') {
-        if !rest.starts_with('0')
-            && let Ok(num) = rest.parse::<u8>()
-            && (1..=12).contains(&num)
-        {
-            return Ok(KeybindingKey::F(num));
-        }
+    if let Some(rest) = lower.strip_prefix('f')
+        && !rest.starts_with('0')
+        && let Ok(num) = rest.parse::<u8>()
+        && (1..=12).contains(&num)
+    {
+        return Ok(KeybindingKey::F(num));
     }
 
     match lower.as_str() {

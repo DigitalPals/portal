@@ -81,18 +81,18 @@ pub fn host_details_sheet_view(
         meta = meta.push(labeled_content("Tags", tag_row.into(), theme, fonts));
     }
 
-    if let Some(notes) = &host.notes {
-        if !notes.trim().is_empty() {
-            meta = meta.push(labeled_content(
-                "Notes",
-                text(notes.clone())
-                    .size(fonts.body)
-                    .color(theme.text_secondary)
-                    .into(),
-                theme,
-                fonts,
-            ));
-        }
+    if let Some(notes) = &host.notes
+        && !notes.trim().is_empty()
+    {
+        meta = meta.push(labeled_content(
+            "Notes",
+            text(notes.clone())
+                .size(fonts.body)
+                .color(theme.text_secondary)
+                .into(),
+            theme,
+            fonts,
+        ));
     }
 
     let header = row![

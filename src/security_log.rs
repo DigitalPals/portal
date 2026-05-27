@@ -41,11 +41,11 @@ fn write_audit_entry(entry: &str) {
         .and_then(|lock| lock.read().ok().map(|guard| guard.clone()))
         .flatten();
 
-    if let Some(path) = path {
-        if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&path) {
-            let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
-            let _ = writeln!(file, "[{}] {}", timestamp, sanitize_audit_entry(entry));
-        }
+    if let Some(path) = path
+        && let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&path)
+    {
+        let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
+        let _ = writeln!(file, "[{}] {}", timestamp, sanitize_audit_entry(entry));
     }
 }
 

@@ -176,16 +176,14 @@ where
         }
 
         // Handle right-click with position callback
-        if let Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) = event {
-            if cursor.is_over(layout.bounds()) {
-                if let Some(ref on_right_press) = self.on_right_press {
-                    if let Some(pos) = cursor.position() {
-                        shell.publish(on_right_press(pos.x, pos.y));
-                        shell.capture_event();
-                        return;
-                    }
-                }
-            }
+        if let Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) = event
+            && cursor.is_over(layout.bounds())
+            && let Some(ref on_right_press) = self.on_right_press
+            && let Some(pos) = cursor.position()
+        {
+            shell.publish(on_right_press(pos.x, pos.y));
+            shell.capture_event();
+            return;
         }
 
         // Capture all events if requested
@@ -198,12 +196,11 @@ where
         }
 
         // Handle left-click
-        if let Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) = event {
-            if cursor.is_over(layout.bounds()) {
-                if let Some(ref message) = self.on_press {
-                    shell.publish(message.clone());
-                }
-            }
+        if let Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) = event
+            && cursor.is_over(layout.bounds())
+            && let Some(ref message) = self.on_press
+        {
+            shell.publish(message.clone());
         }
     }
 

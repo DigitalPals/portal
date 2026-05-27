@@ -977,94 +977,93 @@ where
             }
 
             // Draw cursor (only if visible and in valid position)
-            if is_focused && cursor_visible {
-                if let Some(cursor_info) = cached_cursor {
-                    if cursor_info.visible {
-                        let cursor_x = bounds.x
-                            + TERMINAL_PADDING_LEFT
-                            + cursor_info.column as f32 * cell_width;
-                        let cursor_y = bounds.y + cursor_info.line as f32 * cell_height;
+            if is_focused
+                && cursor_visible
+                && let Some(cursor_info) = cached_cursor
+                && cursor_info.visible
+            {
+                let cursor_x =
+                    bounds.x + TERMINAL_PADDING_LEFT + cursor_info.column as f32 * cell_width;
+                let cursor_y = bounds.y + cursor_info.line as f32 * cell_height;
 
-                        let cursor_color = colors.cursor;
+                let cursor_color = colors.cursor;
 
-                        match cursor_info.shape {
-                            CursorShape::Block => {
-                                renderer.fill_quad(
-                                    Quad {
-                                        bounds: Rectangle {
-                                            x: cursor_x,
-                                            y: cursor_y,
-                                            width: cell_width,
-                                            height: cell_height,
-                                        },
-                                        border: Border::default(),
-                                        shadow: Shadow::default(),
-                                        snap: true,
-                                    },
-                                    Background::Color(Color::from_rgba(
-                                        cursor_color.r,
-                                        cursor_color.g,
-                                        cursor_color.b,
-                                        0.7,
-                                    )),
-                                );
-                            }
-                            CursorShape::Underline => {
-                                let thickness = metrics.cursor_thickness.max(1.0);
-                                renderer.fill_quad(
-                                    Quad {
-                                        bounds: Rectangle {
-                                            x: cursor_x,
-                                            y: cursor_y + cell_height - thickness,
-                                            width: cell_width,
-                                            height: thickness,
-                                        },
-                                        border: Border::default(),
-                                        shadow: Shadow::default(),
-                                        snap: true,
-                                    },
-                                    Background::Color(cursor_color),
-                                );
-                            }
-                            CursorShape::Beam => {
-                                let thickness = metrics.cursor_thickness.max(1.0);
-                                renderer.fill_quad(
-                                    Quad {
-                                        bounds: Rectangle {
-                                            x: cursor_x,
-                                            y: cursor_y,
-                                            width: thickness,
-                                            height: metrics.cursor_height.min(cell_height),
-                                        },
-                                        border: Border::default(),
-                                        shadow: Shadow::default(),
-                                        snap: true,
-                                    },
-                                    Background::Color(cursor_color),
-                                );
-                            }
-                            _ => {
-                                // Default to block for hidden/other
-                                renderer.fill_quad(
-                                    Quad {
-                                        bounds: Rectangle {
-                                            x: cursor_x,
-                                            y: cursor_y,
-                                            width: cell_width,
-                                            height: cell_height,
-                                        },
-                                        border: Border {
-                                            color: cursor_color,
-                                            width: 1.0,
-                                            radius: 0.0.into(),
-                                        },
-                                        shadow: Shadow::default(),
-                                        snap: true,
-                                    },
-                                    Background::Color(Color::TRANSPARENT),
-                                );
-                            }
-                        }
+                match cursor_info.shape {
+                    CursorShape::Block => {
+                        renderer.fill_quad(
+                            Quad {
+                                bounds: Rectangle {
+                                    x: cursor_x,
+                                    y: cursor_y,
+                                    width: cell_width,
+                                    height: cell_height,
+                                },
+                                border: Border::default(),
+                                shadow: Shadow::default(),
+                                snap: true,
+                            },
+                            Background::Color(Color::from_rgba(
+                                cursor_color.r,
+                                cursor_color.g,
+                                cursor_color.b,
+                                0.7,
+                            )),
+                        );
+                    }
+                    CursorShape::Underline => {
+                        let thickness = metrics.cursor_thickness.max(1.0);
+                        renderer.fill_quad(
+                            Quad {
+                                bounds: Rectangle {
+                                    x: cursor_x,
+                                    y: cursor_y + cell_height - thickness,
+                                    width: cell_width,
+                                    height: thickness,
+                                },
+                                border: Border::default(),
+                                shadow: Shadow::default(),
+                                snap: true,
+                            },
+                            Background::Color(cursor_color),
+                        );
+                    }
+                    CursorShape::Beam => {
+                        let thickness = metrics.cursor_thickness.max(1.0);
+                        renderer.fill_quad(
+                            Quad {
+                                bounds: Rectangle {
+                                    x: cursor_x,
+                                    y: cursor_y,
+                                    width: thickness,
+                                    height: metrics.cursor_height.min(cell_height),
+                                },
+                                border: Border::default(),
+                                shadow: Shadow::default(),
+                                snap: true,
+                            },
+                            Background::Color(cursor_color),
+                        );
+                    }
+                    _ => {
+                        // Default to block for hidden/other
+                        renderer.fill_quad(
+                            Quad {
+                                bounds: Rectangle {
+                                    x: cursor_x,
+                                    y: cursor_y,
+                                    width: cell_width,
+                                    height: cell_height,
+                                },
+                                border: Border {
+                                    color: cursor_color,
+                                    width: 1.0,
+                                    radius: 0.0.into(),
+                                },
+                                shadow: Shadow::default(),
+                                snap: true,
+                            },
+                            Background::Color(Color::TRANSPARENT),
+                        );
                     }
                 }
             }
@@ -1124,44 +1123,43 @@ where
             {
                 state.is_focused = true;
 
-                if let Some(position) = cursor.position() {
-                    if let Some((point, side, cell)) =
+                if let Some(position) = cursor.position()
+                    && let Some((point, side, cell)) =
                         self.selection_anchor_at_position(&bounds, position)
-                    {
-                        let now = std::time::Instant::now();
+                {
+                    let now = std::time::Instant::now();
 
-                        // Check for multi-click (same position, within time threshold)
-                        let is_multi_click = state
-                            .last_click_time
-                            .is_some_and(|t| now.duration_since(t) < MULTI_CLICK_THRESHOLD)
-                            && state.last_click_position.is_some_and(|pos| {
-                                // Allow 1-cell tolerance for position
-                                let col_diff = (pos.0 as i32 - cell.0 as i32).abs();
-                                let row_diff = (pos.1 as i32 - cell.1 as i32).abs();
-                                col_diff <= 1 && row_diff == 0
-                            });
+                    // Check for multi-click (same position, within time threshold)
+                    let is_multi_click = state
+                        .last_click_time
+                        .is_some_and(|t| now.duration_since(t) < MULTI_CLICK_THRESHOLD)
+                        && state.last_click_position.is_some_and(|pos| {
+                            // Allow 1-cell tolerance for position
+                            let col_diff = (pos.0 as i32 - cell.0 as i32).abs();
+                            let row_diff = (pos.1 as i32 - cell.1 as i32).abs();
+                            col_diff <= 1 && row_diff == 0
+                        });
 
-                        if is_multi_click {
-                            state.click_count = (state.click_count % 3) + 1;
-                        } else {
-                            state.click_count = 1;
-                        }
-
-                        state.last_click_time = Some(now);
-                        state.last_click_position = Some(cell);
-
-                        let selection_type = match state.click_count {
-                            2 => SelectionType::Semantic,
-                            3 => SelectionType::Lines,
-                            _ => SelectionType::Simple,
-                        };
-                        self.begin_selection(selection_type, point, side);
-                        state.is_selecting = true;
-                        state.last_drag_anchor = Some((point, side));
-                        state.last_drag_update = None;
-                        state.last_auto_scroll = None;
-                        shell.request_redraw();
+                    if is_multi_click {
+                        state.click_count = (state.click_count % 3) + 1;
+                    } else {
+                        state.click_count = 1;
                     }
+
+                    state.last_click_time = Some(now);
+                    state.last_click_position = Some(cell);
+
+                    let selection_type = match state.click_count {
+                        2 => SelectionType::Semantic,
+                        3 => SelectionType::Lines,
+                        _ => SelectionType::Simple,
+                    };
+                    self.begin_selection(selection_type, point, side);
+                    state.is_selecting = true;
+                    state.last_drag_anchor = Some((point, side));
+                    state.last_drag_update = None;
+                    state.last_auto_scroll = None;
+                    shell.request_redraw();
                 }
             }
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
@@ -1245,24 +1243,23 @@ where
                     }
 
                     // Normal selection update when cursor is over bounds
-                    if cursor.is_over(bounds) {
-                        if let Some((point, side, _)) =
+                    if cursor.is_over(bounds)
+                        && let Some((point, side, _)) =
                             self.selection_anchor_at_position(&bounds, *position)
+                    {
+                        // Throttle selection updates to avoid excessive redraws.
+                        if let Some(last) = state.last_drag_update
+                            && last.elapsed() < std::time::Duration::from_millis(8)
                         {
-                            // Throttle selection updates to avoid excessive redraws.
-                            if let Some(last) = state.last_drag_update {
-                                if last.elapsed() < std::time::Duration::from_millis(8) {
-                                    return;
-                                }
-                            }
-                            if state.last_drag_anchor == Some((point, side)) {
-                                return;
-                            }
-                            state.last_drag_anchor = Some((point, side));
-                            state.last_drag_update = Some(std::time::Instant::now());
-                            self.update_selection(point, side);
-                            shell.request_redraw();
+                            return;
                         }
+                        if state.last_drag_anchor == Some((point, side)) {
+                            return;
+                        }
+                        state.last_drag_anchor = Some((point, side));
+                        state.last_drag_update = Some(std::time::Instant::now());
+                        self.update_selection(point, side);
+                        shell.request_redraw();
                     }
                 }
             }
@@ -1367,11 +1364,11 @@ where
 
                     if is_copy_shortcut {
                         // Copy selected text to clipboard
-                        if let Some(text_content) = self.selected_text() {
-                            if !text_content.is_empty() {
-                                clipboard
-                                    .write(iced::advanced::clipboard::Kind::Standard, text_content);
-                            }
+                        if let Some(text_content) = self.selected_text()
+                            && !text_content.is_empty()
+                        {
+                            clipboard
+                                .write(iced::advanced::clipboard::Kind::Standard, text_content);
                         }
                         return;
                     }
@@ -1466,21 +1463,21 @@ fn key_to_escape_sequence(
     app_cursor: bool,
 ) -> Option<Vec<u8>> {
     // Handle Ctrl+key combinations
-    if modifiers.control() {
-        if let Key::Character(c) = key {
-            let c = c.chars().next()?;
-            let ctrl_char = match c.to_ascii_lowercase() {
-                'a'..='z' => (c.to_ascii_lowercase() as u8) - b'a' + 1,
-                '@' => 0,
-                '[' => 27,
-                '\\' => 28,
-                ']' => 29,
-                '^' => 30,
-                '_' => 31,
-                _ => return None,
-            };
-            return Some(vec![ctrl_char]);
-        }
+    if modifiers.control()
+        && let Key::Character(c) = key
+    {
+        let c = c.chars().next()?;
+        let ctrl_char = match c.to_ascii_lowercase() {
+            'a'..='z' => (c.to_ascii_lowercase() as u8) - b'a' + 1,
+            '@' => 0,
+            '[' => 27,
+            '\\' => 28,
+            ']' => 29,
+            '^' => 30,
+            '_' => 31,
+            _ => return None,
+        };
+        return Some(vec![ctrl_char]);
     }
 
     // Handle special keys

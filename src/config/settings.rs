@@ -419,17 +419,18 @@ fn portal_hub_host_from_input(input: &str) -> String {
     if trimmed.is_empty() {
         return String::new();
     }
-    if let Ok(parsed) = Url::parse(trimmed) {
-        if matches!(parsed.scheme(), "http" | "https") {
-            return parsed.host_str().unwrap_or_default().to_string();
-        }
+    if let Ok(parsed) = Url::parse(trimmed)
+        && matches!(parsed.scheme(), "http" | "https")
+    {
+        return parsed.host_str().unwrap_or_default().to_string();
     }
-    if !trimmed.contains('/') && !trimmed.contains('?') && !trimmed.contains('#') {
-        if let Ok(parsed) = Url::parse(&format!("https://{}", trimmed)) {
-            if parsed.host_str().is_some() {
-                return parsed.host_str().unwrap_or_default().to_string();
-            }
-        }
+    if !trimmed.contains('/')
+        && !trimmed.contains('?')
+        && !trimmed.contains('#')
+        && let Ok(parsed) = Url::parse(&format!("https://{}", trimmed))
+        && parsed.host_str().is_some()
+    {
+        return parsed.host_str().unwrap_or_default().to_string();
     }
     trimmed
         .trim_start_matches("http://")
@@ -539,24 +540,23 @@ impl VncSettings {
             };
         }
 
-        if let Ok(raw) = std::env::var("PORTAL_VNC_COLOR_DEPTH") {
-            if let Ok(bits) = raw.trim().parse::<u8>() {
-                if matches!(bits, 16 | 32) {
-                    self.color_depth = bits;
-                }
-            }
+        if let Ok(raw) = std::env::var("PORTAL_VNC_COLOR_DEPTH")
+            && let Ok(bits) = raw.trim().parse::<u8>()
+            && matches!(bits, 16 | 32)
+        {
+            self.color_depth = bits;
         }
 
-        if let Ok(raw) = std::env::var("PORTAL_VNC_REFRESH_FPS") {
-            if let Ok(fps) = raw.trim().parse::<u32>() {
-                self.refresh_fps = fps.clamp(1, 20);
-            }
+        if let Ok(raw) = std::env::var("PORTAL_VNC_REFRESH_FPS")
+            && let Ok(fps) = raw.trim().parse::<u32>()
+        {
+            self.refresh_fps = fps.clamp(1, 20);
         }
 
-        if let Ok(raw) = std::env::var("PORTAL_VNC_POINTER_INTERVAL_MS") {
-            if let Ok(ms) = raw.trim().parse::<u64>() {
-                self.pointer_interval_ms = ms.min(1000);
-            }
+        if let Ok(raw) = std::env::var("PORTAL_VNC_POINTER_INTERVAL_MS")
+            && let Ok(ms) = raw.trim().parse::<u64>()
+        {
+            self.pointer_interval_ms = ms.min(1000);
         }
 
         if let Ok(raw) = std::env::var("PORTAL_VNC_REMOTE_RESIZE") {
@@ -948,10 +948,8 @@ impl SettingsConfig {
         needs_save |= config.normalize_loaded_values();
 
         // Save migrated config to persist the changes
-        if needs_save {
-            if let Err(e) = config.save() {
-                tracing::warn!("Failed to save migrated settings: {}", e);
-            }
+        if needs_save && let Err(e) = config.save() {
+            tracing::warn!("Failed to save migrated settings: {}", e);
         }
 
         Ok(config)

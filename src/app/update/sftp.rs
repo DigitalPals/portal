@@ -203,10 +203,10 @@ pub fn handle_sftp(portal: &mut Portal, msg: SftpMessage) -> Task<Message> {
             if let Some(tab_state) = portal.sftp.get_tab_mut(tab_id) {
                 tab_state.close_actions_menus();
                 tab_state.active_pane = pane_id;
-                if let Some(idx) = index {
-                    if !tab_state.pane(pane_id).is_selected(idx) {
-                        tab_state.pane_mut(pane_id).select(idx);
-                    }
+                if let Some(idx) = index
+                    && !tab_state.pane(pane_id).is_selected(idx)
+                {
+                    tab_state.pane_mut(pane_id).select(idx);
                 }
                 tab_state.show_context_menu(pane_id, x, y);
             }
@@ -226,11 +226,11 @@ pub fn handle_sftp(portal: &mut Portal, msg: SftpMessage) -> Task<Message> {
             Task::none()
         }
         SftpMessage::DialogInputChanged(tab_id, value) => {
-            if let Some(tab_state) = portal.sftp.get_tab_mut(tab_id) {
-                if let Some(ref mut dialog) = tab_state.dialog {
-                    dialog.input_value = value;
-                    dialog.error = None;
-                }
+            if let Some(tab_state) = portal.sftp.get_tab_mut(tab_id)
+                && let Some(ref mut dialog) = tab_state.dialog
+            {
+                dialog.input_value = value;
+                dialog.error = None;
             }
             Task::none()
         }
@@ -241,12 +241,11 @@ pub fn handle_sftp(portal: &mut Portal, msg: SftpMessage) -> Task<Message> {
             Task::none()
         }
         SftpMessage::DialogSubmit(tab_id) => {
-            if let Some(tab_state) = portal.sftp.get_tab(tab_id) {
-                if let Some(ref dialog) = tab_state.dialog {
-                    if dialog.is_valid() {
-                        return portal.handle_sftp_dialog_submit(tab_id);
-                    }
-                }
+            if let Some(tab_state) = portal.sftp.get_tab(tab_id)
+                && let Some(ref dialog) = tab_state.dialog
+                && dialog.is_valid()
+            {
+                return portal.handle_sftp_dialog_submit(tab_id);
             }
             Task::none()
         }
@@ -313,10 +312,10 @@ pub fn handle_sftp(portal: &mut Portal, msg: SftpMessage) -> Task<Message> {
             Task::none()
         }
         SftpMessage::PermissionToggle(tab_id, bit, value) => {
-            if let Some(tab_state) = portal.sftp.get_tab_mut(tab_id) {
-                if let Some(ref mut dialog) = tab_state.dialog {
-                    dialog.set_permission(bit, value);
-                }
+            if let Some(tab_state) = portal.sftp.get_tab_mut(tab_id)
+                && let Some(ref mut dialog) = tab_state.dialog
+            {
+                dialog.set_permission(bit, value);
             }
             Task::none()
         }
@@ -483,23 +482,22 @@ pub fn handle_sftp(portal: &mut Portal, msg: SftpMessage) -> Task<Message> {
             handle_dropped_files(portal, tab_id, paths)
         }
         SftpMessage::DeleteHoldStart(tab_id) => {
-            if let Some(tab_state) = portal.sftp.get_tab_mut(tab_id) {
-                if let Some(dialog) = tab_state.dialog.as_mut() {
-                    if matches!(
-                        dialog.dialog_type,
-                        crate::views::sftp::SftpDialogType::Delete { .. }
-                    ) {
-                        dialog.delete_hold_started = Some(std::time::Instant::now());
-                    }
-                }
+            if let Some(tab_state) = portal.sftp.get_tab_mut(tab_id)
+                && let Some(dialog) = tab_state.dialog.as_mut()
+                && matches!(
+                    dialog.dialog_type,
+                    crate::views::sftp::SftpDialogType::Delete { .. }
+                )
+            {
+                dialog.delete_hold_started = Some(std::time::Instant::now());
             }
             Task::none()
         }
         SftpMessage::DeleteHoldCancel(tab_id) => {
-            if let Some(tab_state) = portal.sftp.get_tab_mut(tab_id) {
-                if let Some(dialog) = tab_state.dialog.as_mut() {
-                    dialog.delete_hold_started = None;
-                }
+            if let Some(tab_state) = portal.sftp.get_tab_mut(tab_id)
+                && let Some(dialog) = tab_state.dialog.as_mut()
+            {
+                dialog.delete_hold_started = None;
             }
             Task::none()
         }
@@ -514,10 +512,10 @@ pub fn handle_sftp(portal: &mut Portal, msg: SftpMessage) -> Task<Message> {
             });
 
             if let Some(tab_id) = tab_id {
-                if let Some(tab_state) = portal.sftp.get_tab_mut(tab_id) {
-                    if let Some(dialog) = tab_state.dialog.as_mut() {
-                        dialog.delete_hold_started = None;
-                    }
+                if let Some(tab_state) = portal.sftp.get_tab_mut(tab_id)
+                    && let Some(dialog) = tab_state.dialog.as_mut()
+                {
+                    dialog.delete_hold_started = None;
                 }
                 return portal.handle_sftp_dialog_submit(tab_id);
             }
@@ -549,18 +547,18 @@ pub fn handle_sftp(portal: &mut Portal, msg: SftpMessage) -> Task<Message> {
             Task::none()
         }
         SftpMessage::ColumnResizing(tab_id, current_x) => {
-            if let Some(tab_state) = portal.sftp.get_tab_mut(tab_id) {
-                if let Some(ref drag) = tab_state.column_resize_drag.clone() {
-                    // Direct pixel-based resize: new width = original + delta
-                    let delta = current_x - drag.start_x;
-                    let original_width = drag.original_widths.get(drag.column);
-                    let new_width = original_width + delta;
+            if let Some(tab_state) = portal.sftp.get_tab_mut(tab_id)
+                && let Some(ref drag) = tab_state.column_resize_drag.clone()
+            {
+                // Direct pixel-based resize: new width = original + delta
+                let delta = current_x - drag.start_x;
+                let original_width = drag.original_widths.get(drag.column);
+                let new_width = original_width + delta;
 
-                    // The set() method enforces minimum width
-                    let pane = tab_state.pane_mut(drag.pane_id);
-                    if (pane.column_widths.get(drag.column) - new_width).abs() > 0.5 {
-                        pane.column_widths.set(drag.column, new_width);
-                    }
+                // The set() method enforces minimum width
+                let pane = tab_state.pane_mut(drag.pane_id);
+                if (pane.column_widths.get(drag.column) - new_width).abs() > 0.5 {
+                    pane.column_widths.set(drag.column, new_width);
                 }
             }
             Task::none()

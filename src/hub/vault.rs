@@ -219,15 +219,15 @@ pub fn upsert_vnc_password(
     let replacement = encrypt_secret(name, VaultSecretKind::VncPassword, password, passphrase)?;
     let id = replacement.id;
 
-    if let Some(existing_id) = existing_id {
-        if let Some(secret) = vault.find_secret_mut(existing_id) {
-            *secret = VaultSecret {
-                id: existing_id,
-                created_at: secret.created_at,
-                ..replacement
-            };
-            return Ok(existing_id);
-        }
+    if let Some(existing_id) = existing_id
+        && let Some(secret) = vault.find_secret_mut(existing_id)
+    {
+        *secret = VaultSecret {
+            id: existing_id,
+            created_at: secret.created_at,
+            ..replacement
+        };
+        return Ok(existing_id);
     }
 
     vault.secrets.push(replacement);

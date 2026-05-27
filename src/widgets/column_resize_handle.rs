@@ -126,11 +126,11 @@ where
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 if cursor.is_over(bounds) {
                     state.is_dragging = true;
-                    if let Some(ref on_drag_start) = self.on_drag_start {
-                        if let Some(pos) = cursor.position() {
-                            shell.publish(on_drag_start(pos.x));
-                            shell.capture_event();
-                        }
+                    if let Some(ref on_drag_start) = self.on_drag_start
+                        && let Some(pos) = cursor.position()
+                    {
+                        shell.publish(on_drag_start(pos.x));
+                        shell.capture_event();
                     }
                 }
             }
@@ -144,13 +144,12 @@ where
                 }
             }
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {
-                if state.is_dragging {
-                    if let Some(ref on_drag) = self.on_drag {
-                        if let Some(pos) = cursor.position() {
-                            shell.publish(on_drag(pos.x));
-                            shell.capture_event();
-                        }
-                    }
+                if state.is_dragging
+                    && let Some(ref on_drag) = self.on_drag
+                    && let Some(pos) = cursor.position()
+                {
+                    shell.publish(on_drag(pos.x));
+                    shell.capture_event();
                 }
             }
             _ => {}

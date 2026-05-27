@@ -220,10 +220,10 @@ impl Drop for LocalSession {
         tracing::debug!("Local PTY session cleanup: closing channel and killing process");
         let (replacement_tx, _replacement_rx) = mpsc::channel(1);
         let _ = std::mem::replace(&mut self.command_tx, replacement_tx);
-        if let Some(mut killer) = self.child_killer.take() {
-            if let Err(e) = killer.kill() {
-                tracing::debug!("Failed to kill local PTY process: {}", e);
-            }
+        if let Some(mut killer) = self.child_killer.take()
+            && let Err(e) = killer.kill()
+        {
+            tracing::debug!("Failed to kill local PTY process: {}", e);
         }
     }
 }

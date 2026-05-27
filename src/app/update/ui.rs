@@ -132,23 +132,21 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
                     SidebarState::Expanded
                 };
             }
-            if portal.prefs.vnc_settings.remote_resize {
-                if let View::VncViewer(session_id) = portal.ui.active_view {
-                    if let Some(vnc) = portal.vnc_sessions.get(&session_id) {
-                        if let Some((w, h)) = portal.vnc_target_size() {
-                            vnc.session.try_request_desktop_size(w, h);
-                        }
-                    }
-                }
+            if portal.prefs.vnc_settings.remote_resize
+                && let View::VncViewer(session_id) = portal.ui.active_view
+                && let Some(vnc) = portal.vnc_sessions.get(&session_id)
+                && let Some((w, h)) = portal.vnc_target_size()
+            {
+                vnc.session.try_request_desktop_size(w, h);
             }
             reconcile_active_terminal_size(portal)
         }
         UiMessage::WindowUnfocused => {
             portal.ui.window_focused = false;
-            if let View::VncViewer(session_id) = portal.ui.active_view {
-                if let Some(vnc) = portal.vnc_sessions.get(&session_id) {
-                    vnc.session.release_all_keys();
-                }
+            if let View::VncViewer(session_id) = portal.ui.active_view
+                && let Some(vnc) = portal.vnc_sessions.get(&session_id)
+            {
+                vnc.session.release_all_keys();
             }
             Task::none()
         }
@@ -229,14 +227,12 @@ fn run_command_action(portal: &mut Portal, action: CommandAction) -> Task<Messag
 
 fn handle_sidebar_item_select(portal: &mut Portal, item: SidebarMenuItem) -> Task<Message> {
     // Auto-close pristine SFTP tab when navigating away (not when staying on SFTP).
-    if item != SidebarMenuItem::Sftp {
-        if let View::DualSftp(tab_id) = portal.ui.active_view {
-            if let Some(state) = portal.sftp.get_tab(tab_id) {
-                if state.is_pristine() {
-                    portal.close_tab(tab_id);
-                }
-            }
-        }
+    if item != SidebarMenuItem::Sftp
+        && let View::DualSftp(tab_id) = portal.ui.active_view
+        && let Some(state) = portal.sftp.get_tab(tab_id)
+        && state.is_pristine()
+    {
+        portal.close_tab(tab_id);
     }
 
     portal.ui.terminal_captured = false;

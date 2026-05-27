@@ -626,7 +626,7 @@ where
     let mut rects = Vec::new();
     for row in 0..rows {
         for col in 0..cols {
-            if (row + col + phase) % step == 0 {
+            if (row + col + phase).is_multiple_of(step) {
                 rects.push(Rectangle {
                     x: cell.x + col as f32,
                     y: cell.y + row as f32,

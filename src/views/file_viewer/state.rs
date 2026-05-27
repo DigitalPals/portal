@@ -123,10 +123,9 @@ impl FileViewerState {
             total_pages,
             ..
         } = &mut self.content
+            && page < *total_pages
         {
-            if page < *total_pages {
-                *current_page = page;
-            }
+            *current_page = page;
         }
     }
 
@@ -135,19 +134,18 @@ impl FileViewerState {
         if let ViewerContent::Pdf {
             rendering_pages, ..
         } = &mut self.content
+            && let Some(slot) = rendering_pages.get_mut(page)
         {
-            if let Some(slot) = rendering_pages.get_mut(page) {
-                *slot = rendering;
-            }
+            *slot = rendering;
         }
     }
 
     /// Store rendered data for a PDF page
     pub fn set_pdf_page_data(&mut self, page: usize, data: Vec<u8>) {
-        if let ViewerContent::Pdf { pages, .. } = &mut self.content {
-            if let Some(slot) = pages.get_mut(page) {
-                *slot = Some(data);
-            }
+        if let ViewerContent::Pdf { pages, .. } = &mut self.content
+            && let Some(slot) = pages.get_mut(page)
+        {
+            *slot = Some(data);
         }
     }
 

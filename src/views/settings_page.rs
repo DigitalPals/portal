@@ -1666,7 +1666,7 @@ fn format_timeout_seconds(seconds: u64) -> String {
         return "Off".to_string();
     }
 
-    if seconds % 3600 == 0 {
+    if seconds.is_multiple_of(3600) {
         let hours = seconds / 3600;
         return if hours == 1 {
             "1 hour".to_string()
@@ -1675,7 +1675,7 @@ fn format_timeout_seconds(seconds: u64) -> String {
         };
     }
 
-    if seconds % 60 == 0 {
+    if seconds.is_multiple_of(60) {
         let minutes = seconds / 60;
         return if minutes == 1 {
             "1 min".to_string()
@@ -1690,7 +1690,7 @@ fn format_timeout_seconds(seconds: u64) -> String {
 fn format_duration_ms(ms: u64) -> String {
     if ms < 1000 {
         format!("{}ms", ms)
-    } else if ms % 1000 == 0 {
+    } else if ms.is_multiple_of(1000) {
         format!("{}s", ms / 1000)
     } else {
         format!("{:.1}s", ms as f32 / 1000.0)

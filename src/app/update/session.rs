@@ -305,12 +305,11 @@ fn start_terminal_session(
 }
 
 fn finalize_disconnection(portal: &mut Portal, session_id: SessionId) {
-    if let Some(session) = portal.sessions.get(session_id) {
-        if history::mark_entry_disconnected(&mut portal.config.history, session.history_entry_id) {
-            if let Err(e) = portal.config.history.save() {
-                tracing::error!("Failed to save history config: {}", e);
-            }
-        }
+    if let Some(session) = portal.sessions.get(session_id)
+        && history::mark_entry_disconnected(&mut portal.config.history, session.history_entry_id)
+        && let Err(e) = portal.config.history.save()
+    {
+        tracing::error!("Failed to save history config: {}", e);
     }
     portal.close_tab(session_id);
 }
@@ -532,20 +531,20 @@ fn handle_terminal_agent_title_state(portal: &mut Portal, session_id: SessionId,
 
     match state {
         TerminalAgentTitleState::Active(kind) => {
-            if let Some(session) = portal.sessions.get_mut(session_id) {
-                if session.terminal_agent_turn_started_at.is_none() {
-                    session.terminal_agent_turn_started_at =
-                        Some((agent_display_name(kind).to_string(), Instant::now()));
-                }
+            if let Some(session) = portal.sessions.get_mut(session_id)
+                && session.terminal_agent_turn_started_at.is_none()
+            {
+                session.terminal_agent_turn_started_at =
+                    Some((agent_display_name(kind).to_string(), Instant::now()));
             }
             set_tab_agent_status(portal, session_id, kind, TabAgentActivity::Working);
         }
         TerminalAgentTitleState::NeedsInput(kind) => {
-            if let Some(session) = portal.sessions.get_mut(session_id) {
-                if session.terminal_agent_turn_started_at.is_none() {
-                    session.terminal_agent_turn_started_at =
-                        Some((agent_display_name(kind).to_string(), Instant::now()));
-                }
+            if let Some(session) = portal.sessions.get_mut(session_id)
+                && session.terminal_agent_turn_started_at.is_none()
+            {
+                session.terminal_agent_turn_started_at =
+                    Some((agent_display_name(kind).to_string(), Instant::now()));
             }
             set_tab_agent_status(portal, session_id, kind, TabAgentActivity::NeedsInput);
             mark_terminal_attention(portal, session_id);
@@ -660,10 +659,10 @@ fn schedule_reconnect(portal: &mut Portal, session_id: SessionId) -> Task<Messag
         return Task::none();
     }
 
-    if let Some(next_attempt) = session.reconnect_next_attempt {
-        if next_attempt > Instant::now() {
-            return Task::none();
-        }
+    if let Some(next_attempt) = session.reconnect_next_attempt
+        && next_attempt > Instant::now()
+    {
+        return Task::none();
     }
 
     let policy = ReconnectPolicy::new(
@@ -848,13 +847,13 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                 return Task::none();
             }
 
-            if let Some(host_id) = host_id {
-                if let Some(host) = portal.config.hosts.find_host_mut(host_id) {
-                    host.last_connected = Some(chrono::Utc::now());
-                    host.updated_at = chrono::Utc::now();
-                    if let Err(e) = portal.config.hosts.save() {
-                        tracing::error!("Failed to save host connection time: {}", e);
-                    }
+            if let Some(host_id) = host_id
+                && let Some(host) = portal.config.hosts.find_host_mut(host_id)
+            {
+                host.last_connected = Some(chrono::Utc::now());
+                host.updated_at = chrono::Utc::now();
+                if let Err(e) = portal.config.hosts.save() {
+                    tracing::error!("Failed to save host connection time: {}", e);
                 }
             }
 
@@ -893,13 +892,13 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
         SessionMessage::Data(session_id, data) => {
             let now = Instant::now();
 
-            if let Some(session) = portal.sessions.get_mut(session_id) {
-                if !data.is_empty() {
-                    if let Some(logger) = session.logger.as_ref() {
-                        logger.write(&data);
-                    }
-                    queue_terminal_output(session, data, now);
+            if let Some(session) = portal.sessions.get_mut(session_id)
+                && !data.is_empty()
+            {
+                if let Some(logger) = session.logger.as_ref() {
+                    logger.write(&data);
                 }
+                queue_terminal_output(session, data, now);
             }
             Task::none()
         }
@@ -926,10 +925,9 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                     if history::mark_entry_disconnected(
                         &mut portal.config.history,
                         session.history_entry_id,
-                    ) {
-                        if let Err(e) = portal.config.history.save() {
-                            tracing::error!("Failed to save history config: {}", e);
-                        }
+                    ) && let Err(e) = portal.config.history.save()
+                    {
+                        tracing::error!("Failed to save history config: {}", e);
                     }
                     if let Some(session) = portal.sessions.get_mut(session_id) {
                         session.status_message = Some((

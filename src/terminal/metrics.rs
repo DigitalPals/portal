@@ -322,14 +322,14 @@ fn measured_face_metrics(font: TerminalFont, font_size: f32) -> Option<FaceMetri
 
 fn vertical_metrics(face: &Face<'_>, px_per_unit: f32) -> (f32, f32, f32) {
     let hhea = face.tables().hhea;
-    if let Some(os2) = face.tables().os2 {
-        if os2.use_typographic_metrics() {
-            return (
-                os2.typographic_ascender() as f32 * px_per_unit,
-                os2.typographic_descender() as f32 * px_per_unit,
-                os2.typographic_line_gap() as f32 * px_per_unit,
-            );
-        }
+    if let Some(os2) = face.tables().os2
+        && os2.use_typographic_metrics()
+    {
+        return (
+            os2.typographic_ascender() as f32 * px_per_unit,
+            os2.typographic_descender() as f32 * px_per_unit,
+            os2.typographic_line_gap() as f32 * px_per_unit,
+        );
     }
 
     if hhea.ascender != 0 || hhea.descender != 0 {

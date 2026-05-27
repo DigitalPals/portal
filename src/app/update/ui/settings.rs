@@ -255,24 +255,24 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
             save_settings_and_queue_sync(portal);
         }
         UiMessage::PortalHubWebPortChanged(port) => {
-            if let Ok(parsed) = port.trim().parse::<u16>() {
-                if parsed > 0 {
-                    portal.prefs.portal_hub.web_port = parsed;
-                    portal.prefs.portal_hub.web_url = portal.prefs.portal_hub.derived_web_url();
-                    portal.ui.portal_hub_auth_user = None;
-                    portal.ui.portal_hub_auth_error = None;
-                    save_settings_and_queue_sync(portal);
-                }
+            if let Ok(parsed) = port.trim().parse::<u16>()
+                && parsed > 0
+            {
+                portal.prefs.portal_hub.web_port = parsed;
+                portal.prefs.portal_hub.web_url = portal.prefs.portal_hub.derived_web_url();
+                portal.ui.portal_hub_auth_user = None;
+                portal.ui.portal_hub_auth_error = None;
+                save_settings_and_queue_sync(portal);
             }
         }
         UiMessage::PortalHubPortChanged(port) => {
-            if let Ok(parsed) = port.trim().parse::<u16>() {
-                if parsed > 0 {
-                    // Deprecated legacy SSH transport setting; retained only for old configs.
-                    portal.prefs.portal_hub.port = parsed;
-                    clear_portal_hub_status(portal);
-                    save_settings_and_queue_sync(portal);
-                }
+            if let Ok(parsed) = port.trim().parse::<u16>()
+                && parsed > 0
+            {
+                // Deprecated legacy SSH transport setting; retained only for old configs.
+                portal.prefs.portal_hub.port = parsed;
+                clear_portal_hub_status(portal);
+                save_settings_and_queue_sync(portal);
             }
         }
         UiMessage::PortalHubUsernameChanged(username) => {

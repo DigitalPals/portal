@@ -104,21 +104,21 @@ fn detect_gnome_scale() -> Option<f32> {
 #[cfg(target_os = "linux")]
 fn detect_env_scale() -> Option<f32> {
     // Check GDK_DPI_SCALE (GTK apps)
-    if let Ok(val) = std::env::var("GDK_DPI_SCALE") {
-        if let Ok(scale) = val.trim().parse::<f32>() {
-            if scale.is_finite() && (0.5..=3.0).contains(&scale) {
-                return Some(scale);
-            }
-        }
+    if let Ok(val) = std::env::var("GDK_DPI_SCALE")
+        && let Ok(scale) = val.trim().parse::<f32>()
+        && scale.is_finite()
+        && (0.5..=3.0).contains(&scale)
+    {
+        return Some(scale);
     }
 
     // Check QT_SCALE_FACTOR (Qt/KDE apps)
-    if let Ok(val) = std::env::var("QT_SCALE_FACTOR") {
-        if let Ok(scale) = val.trim().parse::<f32>() {
-            if scale.is_finite() && (0.5..=3.0).contains(&scale) {
-                return Some(scale);
-            }
-        }
+    if let Ok(val) = std::env::var("QT_SCALE_FACTOR")
+        && let Ok(scale) = val.trim().parse::<f32>()
+        && scale.is_finite()
+        && (0.5..=3.0).contains(&scale)
+    {
+        return Some(scale);
     }
 
     None

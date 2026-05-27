@@ -76,15 +76,15 @@ impl KnownHostsManager {
     }
 
     fn select_write_path(&self) -> Option<PathBuf> {
-        if let Some(path) = &self.primary_path {
-            if Self::ensure_parent_dir(path).is_ok() {
-                return Some(path.clone());
-            }
+        if let Some(path) = &self.primary_path
+            && Self::ensure_parent_dir(path).is_ok()
+        {
+            return Some(path.clone());
         }
-        if let Some(path) = &self.ssh_path {
-            if Self::ensure_parent_dir(path).is_ok() {
-                return Some(path.clone());
-            }
+        if let Some(path) = &self.ssh_path
+            && Self::ensure_parent_dir(path).is_ok()
+        {
+            return Some(path.clone());
         }
         None
     }

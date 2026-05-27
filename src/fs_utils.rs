@@ -14,10 +14,10 @@ pub fn ensure_not_same_path(source: &Path, target: &Path) -> Result<(), String> 
         .canonicalize()
         .map_err(|e| format!("Failed to resolve source {}: {}", source.display(), e))?;
 
-    if let Ok(target) = target.canonicalize() {
-        if target == source {
-            return Err(format!("Cannot copy {} onto itself", source.display()));
-        }
+    if let Ok(target) = target.canonicalize()
+        && target == source
+    {
+        return Err(format!("Cannot copy {} onto itself", source.display()));
     }
 
     Ok(())

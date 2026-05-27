@@ -125,48 +125,43 @@ pub fn handle_file_viewer(app: &mut Portal, msg: FileViewerMessage) -> Task<Mess
                     rendering_pages,
                     ..
                 } = &mut viewer.content
+                    && pages.get(page).and_then(|slot| slot.as_ref()).is_none()
+                    && !rendering_pages.get(page).copied().unwrap_or(false)
                 {
-                    if pages.get(page).and_then(|slot| slot.as_ref()).is_none()
-                        && !rendering_pages.get(page).copied().unwrap_or(false)
-                    {
-                        viewer.set_pdf_rendering(page, true);
-                        let source = viewer.file_source.clone();
-                        return Task::perform(
-                            async move { file_viewer::render_pdf_page(source, page).await },
-                            move |result| {
-                                Message::FileViewer(FileViewerMessage::PdfPageRendered(
-                                    viewer_id, page, result,
-                                ))
-                            },
-                        );
-                    }
+                    viewer.set_pdf_rendering(page, true);
+                    let source = viewer.file_source.clone();
+                    return Task::perform(
+                        async move { file_viewer::render_pdf_page(source, page).await },
+                        move |result| {
+                            Message::FileViewer(FileViewerMessage::PdfPageRendered(
+                                viewer_id, page, result,
+                            ))
+                        },
+                    );
                 }
             }
             Task::none()
         }
         FileViewerMessage::PdfRenderPage(viewer_id, page) => {
-            if let Some(viewer) = app.file_viewers.get_mut(viewer_id) {
-                if let crate::views::file_viewer::ViewerContent::Pdf {
+            if let Some(viewer) = app.file_viewers.get_mut(viewer_id)
+                && let crate::views::file_viewer::ViewerContent::Pdf {
                     pages,
                     rendering_pages,
                     ..
                 } = &mut viewer.content
-                {
-                    if pages.get(page).and_then(|slot| slot.as_ref()).is_none()
-                        && !rendering_pages.get(page).copied().unwrap_or(false)
-                    {
-                        viewer.set_pdf_rendering(page, true);
-                        let source = viewer.file_source.clone();
-                        return Task::perform(
-                            async move { file_viewer::render_pdf_page(source, page).await },
-                            move |result| {
-                                Message::FileViewer(FileViewerMessage::PdfPageRendered(
-                                    viewer_id, page, result,
-                                ))
-                            },
-                        );
-                    }
-                }
+                && pages.get(page).and_then(|slot| slot.as_ref()).is_none()
+                && !rendering_pages.get(page).copied().unwrap_or(false)
+            {
+                viewer.set_pdf_rendering(page, true);
+                let source = viewer.file_source.clone();
+                return Task::perform(
+                    async move { file_viewer::render_pdf_page(source, page).await },
+                    move |result| {
+                        Message::FileViewer(FileViewerMessage::PdfPageRendered(
+                            viewer_id, page, result,
+                        ))
+                    },
+                );
             }
             Task::none()
         }

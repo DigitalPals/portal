@@ -192,10 +192,10 @@ impl GlyphConstraint {
             ConstraintSize::Stretch => {}
         }
 
-        if let Some(ratio) = self.max_xy_ratio {
-            if group.width * width_factor > group.height * height_factor * ratio {
-                width_factor = group.height * height_factor * ratio / group.width;
-            }
+        if let Some(ratio) = self.max_xy_ratio
+            && group.width * width_factor > group.height * height_factor * ratio
+        {
+            width_factor = group.height * height_factor * ratio / group.width;
         }
 
         (width_factor, height_factor)

@@ -601,10 +601,10 @@ impl Drop for ProxySession {
         tracing::debug!("Portal Hub session cleanup: detaching local ssh process");
         let (replacement_tx, _replacement_rx) = mpsc::channel(1);
         let _ = std::mem::replace(&mut self.command_tx, replacement_tx);
-        if let Some(mut killer) = self.child_killer.take() {
-            if let Err(error) = killer.kill() {
-                tracing::debug!("Failed to kill Portal Hub ssh process: {}", error);
-            }
+        if let Some(mut killer) = self.child_killer.take()
+            && let Err(error) = killer.kill()
+        {
+            tracing::debug!("Failed to kill Portal Hub ssh process: {}", error);
         }
     }
 }

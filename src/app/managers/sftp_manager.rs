@@ -58,10 +58,10 @@ impl SftpManager {
 
         let mut ids = Vec::new();
         for pane in [&state.left_pane, &state.right_pane] {
-            if let PaneSource::Remote { session_id, .. } = &pane.source {
-                if !ids.contains(session_id) {
-                    ids.push(*session_id);
-                }
+            if let PaneSource::Remote { session_id, .. } = &pane.source
+                && !ids.contains(session_id)
+            {
+                ids.push(*session_id);
             }
         }
 
