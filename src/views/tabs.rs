@@ -185,6 +185,11 @@ fn tab_button<'a>(
     } else {
         Color::from_rgb8(0x77, 0x77, 0x90) // #777790 - inactive
     };
+    let title_color = if title_has_spinner(&tab.title) {
+        Color::from_rgb8(0xf9, 0xe2, 0xaf)
+    } else {
+        text_icon_color
+    };
 
     // Get icon - use distro icon if host_id is set and OS is detected
     let icon_data = if let Some(host_id) = tab.host_id {
@@ -254,7 +259,7 @@ fn tab_button<'a>(
     let content = row![
         attention_dot,
         icon,
-        text(title).size(fonts.body).color(text_icon_color),
+        text(title).size(fonts.body).color(title_color),
         close_button,
     ]
     .spacing(6)
@@ -303,6 +308,24 @@ fn tab_button<'a>(
     } else {
         tab_button.into()
     }
+}
+
+fn title_has_spinner(title: &str) -> bool {
+    matches!(
+        title.trim_start().chars().next(),
+        Some(
+            '\u{280b}'
+                | '\u{2819}'
+                | '\u{2839}'
+                | '\u{2838}'
+                | '\u{283c}'
+                | '\u{2834}'
+                | '\u{2826}'
+                | '\u{2827}'
+                | '\u{2807}'
+                | '\u{280f}'
+        )
+    )
 }
 
 /// New tab "+" button

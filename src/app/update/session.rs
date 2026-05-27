@@ -415,23 +415,54 @@ enum CodexTitleState {
     Ready,
 }
 
-fn codex_title_state(title: &str) -> Option<CodexTitleState> {
+fn codex_title_state(title: &str, turn_active: bool) -> Option<CodexTitleState> {
     let lower = title.to_ascii_lowercase();
-    if !lower.contains("codex") {
-        return None;
+
+    if codex_spinner_title(title) {
+        return Some(CodexTitleState::Active);
     }
 
-    if lower.contains("working") || lower.contains("thinking") {
-        Some(CodexTitleState::Active)
-    } else if lower.contains("ready") || lower.contains("needs input") {
+    if lower.contains("codex") {
+        if lower.contains("working") || lower.contains("thinking") {
+            return Some(CodexTitleState::Active);
+        }
+
+        if lower.contains("ready") || lower.contains("needs input") {
+            return Some(CodexTitleState::Ready);
+        }
+    }
+
+    if turn_active {
         Some(CodexTitleState::Ready)
     } else {
         None
     }
 }
 
+fn codex_spinner_title(title: &str) -> bool {
+    matches!(
+        title.trim_start().chars().next(),
+        Some(
+            '\u{280b}'
+                | '\u{2819}'
+                | '\u{2839}'
+                | '\u{2838}'
+                | '\u{283c}'
+                | '\u{2834}'
+                | '\u{2826}'
+                | '\u{2827}'
+                | '\u{2807}'
+                | '\u{280f}'
+        )
+    )
+}
+
 fn handle_codex_title_state(portal: &mut Portal, session_id: SessionId, title: &str) {
-    let Some(state) = codex_title_state(title) else {
+    let turn_active = portal
+        .sessions
+        .get(session_id)
+        .is_some_and(|session| session.codex_turn_started_at.is_some());
+    let Some(state) = codex_title_state(title, turn_active) else {
         return;
     };
 
@@ -1131,22 +1162,30 @@ mod tests {
     #[test]
     fn codex_title_state_detects_ready_and_active_titles() {
         assert_eq!(
-            codex_title_state("Codex - Working"),
+            codex_title_state("Codex - Working", false),
             Some(CodexTitleState::Active)
         );
         assert_eq!(
-            codex_title_state("Codex - Thinking"),
+            codex_title_state("Codex - Thinking", false),
             Some(CodexTitleState::Active)
         );
         assert_eq!(
-            codex_title_state("Codex - Ready"),
+            codex_title_state("Codex - Ready", true),
             Some(CodexTitleState::Ready)
         );
         assert_eq!(
-            codex_title_state("Codex - Needs input"),
+            codex_title_state("Codex - Needs input", true),
             Some(CodexTitleState::Ready)
         );
-        assert_eq!(codex_title_state("bash"), None);
+        assert_eq!(
+            codex_title_state("\u{2839} portal", false),
+            Some(CodexTitleState::Active)
+        );
+        assert_eq!(
+            codex_title_state("portal", true),
+            Some(CodexTitleState::Ready)
+        );
+        assert_eq!(codex_title_state("bash", false), None);
     }
 
     #[test]
