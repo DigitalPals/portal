@@ -40,15 +40,32 @@ ecosystem, use this order to avoid long feedback loops:
   and `~/Code/portal-android`. Commit only intentional files and leave generated
   state such as `.direnv/` alone.
 - Identify release triggers before pushing release changes:
-  - Portal releases are created by pushing the release version to the `release`
-    branch.
+  - Portal releases are created by pushing a `v*` tag whose version matches
+    `Cargo.toml`.
   - Portal Hub releases are created by pushing a `v*` tag.
   - Portal Android currently has CI but no GitHub release workflow in this repo.
 - Decide whether a new release is needed before waiting on CI. If a release is
   needed, bump versions first, then run local focused checks, then push once so
   CI validates the final release candidate commit.
+- For Portal release candidates, validate the release-only paths before pushing
+  the release tag:
+  - Run `nix build --print-build-logs` whenever `flake.nix`, `flake.lock`,
+    `Cargo.lock`, `.github/workflows/release.yml`, or Rust dependencies changed.
+    This build is slow because it compiles release artifacts and runs release-mode
+    tests, but it catches Nix vendoring and Cachix failures before a tag triggers
+    the full GitHub release.
+  - If `Cargo.lock` or `nixpkgs` changes and `flake.nix` uses `cargoHash`, update
+    the hash locally by first using `pkgs.lib.fakeHash`, then replace it with the
+    hash reported by Nix.
+  - Treat GitHub Actions deprecation warnings in release workflows as blockers
+    while preparing a release. Update actions before tagging so failures do not
+    appear after the expensive binary builds have already run.
 - Before triggering release workflows, wait for CI on the final pushed heads to
   pass. For Portal Hub, include both `CI` and `Contract compatibility`.
+- For Portal, create and push the `v*` tag only after the final `main` CI run is
+  green. If a tag workflow fails before a GitHub release is created, fix `main`,
+  verify CI again, delete and recreate the tag on the corrected commit, then
+  re-run the release.
 - If a workflow fails and logs are not accessible, reproduce it in a fresh
   sibling checkout layout that matches GitHub Actions:
   `/tmp/portal-ci-repro/{portal,portal-hub,portal-android}`.
@@ -58,5 +75,8 @@ ecosystem, use this order to avoid long feedback loops:
   `libglib2.0-dev`, and `libdbus-1-dev`.
 - When polling long GitHub Actions jobs, check job-level status after the first
   wait so it is clear whether the run is queued, building, stuck, or failed.
+- Portal release jobs can legitimately take 30 minutes or more on a cold cache.
+  Poll job-level status and name the slow job explicitly; do not assume the run
+  is stuck until the job stops advancing or hits its workflow timeout.
 - Do not trigger GitHub releases until release-candidate CI is green and human
   testing on the Portal Hub LXC has been completed when applicable.
