@@ -1,6 +1,6 @@
 [package]
 name = "portal"
-version = "0.6.14"
+version = "0.6.15"
 edition = "2024"
 description = "A modern SSH client with GUI"
 authors = ["John"]
@@ -100,13 +100,6 @@ codegen-units = 16
 
 [patch.crates-io]
 vnc-rs = { path = "vendor/vnc-rs" }
-
-[package.metadata.bundle]
-name = "Portal"
-identifier = "com.digitalpals.portal"
-icon = ["assets/app-icons/portal.icns"]
-category = "public.app-category.utilities"
-short_description = "A modern SSH client with GUI"
 
 [package.metadata.deb]
 assets = [

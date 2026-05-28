@@ -4,11 +4,10 @@
 
 # Portal
 
-**A modern, fast SSH and VNC client for macOS and Linux**
+**A modern, fast SSH and VNC client for Linux**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.88%2B-orange.svg)](https://www.rust-lang.org/)
-[![macOS](https://img.shields.io/badge/macOS-000000?logo=apple&logoColor=white)](https://github.com/DigitalPals/portal/releases)
 [![AppImage](https://img.shields.io/badge/AppImage-x86__64-blue)](https://github.com/DigitalPals/portal/releases)
 [![DEB](https://img.shields.io/badge/DEB-Debian%2FUbuntu-A81D33)](https://github.com/DigitalPals/portal/releases)
 [![RPM](https://img.shields.io/badge/RPM-Fedora%2FRHEL-294172)](https://github.com/DigitalPals/portal/releases)
@@ -119,29 +118,14 @@ Pick the file that matches your OS and CPU:
 
 | Platform | Asset name |
 |----------|------------|
-| macOS (Apple Silicon) | `portal-*-macos-arm64.app.zip` |
-| macOS (Intel) | `portal-*-macos-x86_64.app.zip` |
 | Linux (arm64) | `portal-*-linux-arm64.deb` / `.rpm` / `.tar.gz` |
 | Linux (x86_64) | `portal-*-linux-x86_64.AppImage` / `.deb` / `.rpm` / `.tar.gz` |
 
-### Install on macOS
+Verify downloaded release assets with:
 
-1. Download the matching `.app.zip` for your architecture from Releases.
-2. Extract and move `Portal.app` to your Applications folder.
-
-**Gatekeeper Warning:** Portal is not signed with an Apple Developer certificate, so macOS may show "Portal.app is damaged and can't be opened" or block the app from running. Use one of these methods to open it:
-
-**Method 1 — Remove quarantine attribute (recommended):**
 ```bash
-xattr -cr /Applications/Portal.app
+sha256sum --ignore-missing -c SHA256SUMS
 ```
-Then open Portal normally.
-
-**Method 2 — Right-click to open:**
-Right-click (or Control-click) Portal.app → select **Open** → click **Open** in the dialog. You only need to do this once.
-
-**Method 3 — System Settings:**
-Open **System Settings > Privacy & Security**, scroll down and click **Open Anyway** for Portal.
 
 ### Install on Linux
 
@@ -225,7 +209,7 @@ Portal is available as a Nix flake with binaries cached on [Cachix](https://app.
 **Run directly:**
 
 ```bash
-nix run github:DigitalPals/portal/release
+nix run github:DigitalPals/portal/vX.Y.Z
 ```
 
 **Install in NixOS configuration** (`flake.nix`):
@@ -234,9 +218,9 @@ nix run github:DigitalPals/portal/release
 {
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    # Use the release branch for stable builds with cachix cache hits
+    # Use a release tag for stable builds with Cachix cache hits.
     # Don't use inputs.nixpkgs.follows for portal - it breaks cachix
-    portal.url = "github:DigitalPals/portal/release";
+    portal.url = "github:DigitalPals/portal/vX.Y.Z";
   };
 
   outputs = { nixpkgs, portal, ... }: {
@@ -258,7 +242,7 @@ nix run github:DigitalPals/portal/release
 
 > **Note:** Do not add `inputs.nixpkgs.follows = "nixpkgs"` to the portal input. This changes the derivation hash and prevents cachix from providing pre-built binaries.
 
-> **Note:** The `release` branch contains stable releases. The `main` branch may contain unreleased development changes.
+> **Note:** Replace `vX.Y.Z` with a published release tag. The `main` branch may contain unreleased development changes.
 
 **Build from source:**
 

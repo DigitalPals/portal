@@ -2,8 +2,8 @@ name: Release
 
 on:
   push:
-    branches:
-      - release
+    tags:
+      - 'v*'
 
 env:
   CARGO_TERM_COLOR: always
@@ -15,51 +15,37 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
-      skip: ${{ steps.version.outputs.skip }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0  # Need full history for tag check
 
-      - name: Get version and check if release exists
+      - name: Validate release tag
         id: version
         run: |
           VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
-          echo "version=v$VERSION" >> "$GITHUB_OUTPUT"
+          TAG="${GITHUB_REF_NAME}"
 
-          if git ls-remote --tags origin | grep -q "refs/tags/v$VERSION$"; then
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::Tag v$VERSION already exists, skipping release"
-          else
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::Will create release v$VERSION"
+          if [ "$TAG" != "v$VERSION" ]; then
+            echo "::error::Release tag $TAG does not match Cargo.toml version v$VERSION"
+            exit 1
           fi
+
+          echo "version=$TAG" >> "$GITHUB_OUTPUT"
+          echo "::notice::Will create release $TAG"
 
   build:
     name: Build ${{ matrix.name }}
     needs: prepare
-    if: needs.prepare.outputs.skip != 'true'
     strategy:
       matrix:
         include:
           - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
             name: linux-x86_64
             cross: false
           - target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
             name: linux-arm64
             cross: true
-          - target: x86_64-apple-darwin
-            os: macos-latest
-            name: macos-x86_64
-            cross: false
-          - target: aarch64-apple-darwin
-            os: macos-latest
-            name: macos-arm64
-            cross: false
 
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
@@ -72,13 +58,12 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Install Linux dependencies
-        if: runner.os == 'Linux' && !matrix.cross
+        if: "!matrix.cross"
         run: |
           sudo apt-get update
           sudo apt-get install -y pkg-config libxkbcommon-dev libwayland-dev libvulkan-dev libglib2.0-dev libdbus-1-dev
 
       - name: Install Linux packaging tools
-        if: runner.os == 'Linux'
         run: cargo install cargo-deb cargo-generate-rpm
 
       - name: Install cross
@@ -93,48 +78,27 @@ jobs:
         if: "!matrix.cross"
         run: cargo build --release --target ${{ matrix.target }}
 
-      - name: Install macOS packaging tools
-        if: runner.os == 'macOS'
-        run: cargo install cargo-bundle
-
-      - name: Bundle macOS app
-        if: runner.os == 'macOS'
-        run: cargo bundle --release --target ${{ matrix.target }}
-
-      - name: Sign macOS app (ad-hoc)
-        if: runner.os == 'macOS'
-        run: codesign --deep --force -s - target/${{ matrix.target }}/release/bundle/osx/Portal.app
-
-      - name: Package macOS app
-        if: runner.os == 'macOS'
-        run: |
-          cd target/${{ matrix.target }}/release/bundle/osx
-          ditto -c -k --sequesterRsrc --keepParent Portal.app ../../../../../portal-${{ needs.prepare.outputs.version }}-${{ matrix.name }}.app.zip
-          cd ../../../../..
-
       - name: Install AppImage tools
-        if: runner.os == 'Linux' && matrix.target == 'x86_64-unknown-linux-gnu'
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
         run: |
           curl -L -o linuxdeploy-x86_64.AppImage https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
           curl -L -o linuxdeploy-plugin-appimage-x86_64.AppImage https://github.com/linuxdeploy/linuxdeploy-plugin-appimage/releases/download/continuous/linuxdeploy-plugin-appimage-x86_64.AppImage
           chmod +x linuxdeploy-x86_64.AppImage linuxdeploy-plugin-appimage-x86_64.AppImage
 
       - name: Package DEB
-        if: runner.os == 'Linux'
         run: |
           cargo deb --target ${{ matrix.target }} --no-build --no-strip
           deb_path=$(ls target/${{ matrix.target }}/debian/*.deb | head -n 1)
           mv "$deb_path" portal-${{ needs.prepare.outputs.version }}-${{ matrix.name }}.deb
 
       - name: Package RPM
-        if: runner.os == 'Linux'
         run: |
           cargo generate-rpm --target ${{ matrix.target }}
           rpm_path=$(ls target/${{ matrix.target }}/generate-rpm/*.rpm | head -n 1)
           mv "$rpm_path" portal-${{ needs.prepare.outputs.version }}-${{ matrix.name }}.rpm
 
       - name: Package AppImage
-        if: runner.os == 'Linux' && matrix.target == 'x86_64-unknown-linux-gnu'
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
         run: |
           mkdir -p AppDir/usr/bin
           cp target/${{ matrix.target }}/release/portal AppDir/usr/bin/portal
@@ -149,7 +113,6 @@ jobs:
           mv "$appimage_path" portal-${{ needs.prepare.outputs.version }}-${{ matrix.name }}.AppImage
 
       - name: Package tarball
-        if: runner.os == 'Linux'
         shell: bash
         run: |
           cd target/${{ matrix.target }}/release
@@ -167,7 +130,6 @@ jobs:
   nix-build:
     name: Nix Build (Cachix)
     needs: prepare
-    if: needs.prepare.outputs.skip != 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -186,7 +148,6 @@ jobs:
   validate-appimage:
     name: Validate AppImage
     needs: [prepare, build]
-    if: needs.prepare.outputs.skip != 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Download AppImage artifact
@@ -215,7 +176,6 @@ jobs:
   release:
     name: Create Release
     needs: [prepare, build, nix-build, validate-appimage]
-    if: needs.prepare.outputs.skip != 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -224,18 +184,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Create and push tag
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag -a ${{ needs.prepare.outputs.version }} -m "Release ${{ needs.prepare.outputs.version }}"
-          git push origin ${{ needs.prepare.outputs.version }}
-
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
           path: artifacts
           merge-multiple: true
+
+      - name: Generate checksums
+        shell: bash
+        run: |
+          cd artifacts
+          sha256sum portal-* > SHA256SUMS
 
       - name: Create Release
         uses: softprops/action-gh-release@v2

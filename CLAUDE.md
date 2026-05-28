@@ -173,17 +173,17 @@ The VNC widget uses a custom wgpu shader (`src/vnc/widget.rs`) with a `FrameBuff
    git push origin main
    ```
 
-3. **Merge to release branch**:
+3. **Create a release tag**:
    ```bash
-   git checkout release
-   git merge main
-   git push origin release
+   git tag -a vX.Y.Z -m "Release vX.Y.Z"
+   git push origin vX.Y.Z
    ```
 
 4. **Automated CI/CD** (`.github/workflows/release.yml`) will:
-   - Build for Linux (x86_64, arm64) and macOS (x86_64, arm64)
-   - Create DEB, RPM, AppImage, and tarball packages
+   - Build for Linux (x86_64, arm64)
+   - Create DEB, RPM, tarball, and x86_64 AppImage packages
    - Push Nix build to Cachix
+   - Add `SHA256SUMS` for release asset verification
    - Create GitHub release with tag `vX.Y.Z`
 
 ### Release Artifacts
@@ -192,5 +192,3 @@ The VNC widget uses a custom wgpu shader (`src/vnc/widget.rs`) with a `FrameBuff
 |----------|-----------|
 | Linux x86_64 | `.tar.gz`, `.deb`, `.rpm`, `.AppImage` |
 | Linux arm64 | `.tar.gz`, `.deb`, `.rpm` |
-| macOS x86_64 | `.app.zip` |
-| macOS arm64 | `.app.zip` |

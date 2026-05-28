@@ -34,23 +34,6 @@ jobs:
       - name: Run unit tests
         run: cargo test --lib
 
-  unit-tests-macos:
-    name: Unit Tests (macOS)
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-
-      - name: Run unit tests
-        run: cargo test --lib
-
   ssh-integration-linux:
     name: SSH Integration Tests (Linux)
     runs-on: ubuntu-latest
@@ -114,23 +97,6 @@ jobs:
         run: |
           cd tests/docker
           docker compose down -v
-
-  ssh-integration-macos:
-    name: SSH Integration Tests (macOS)
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: ${{ env.RUST_VERSION }}
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-
-      - name: Run SSH integration tests (skips if Docker unavailable)
-        run: cargo test --test ssh_integration -- --test-threads=1
 
   portal-hub-contracts:
     name: Portal Hub Contracts

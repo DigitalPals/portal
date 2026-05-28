@@ -50,7 +50,7 @@ pub fn about_dialog_view(
         .size(fonts.section)
         .color(theme.text_primary);
 
-    let tagline = text("A modern, fast SSH client for macOS and Linux")
+    let tagline = text("A modern, fast SSH client for Linux")
         .size(fonts.body)
         .color(theme.text_secondary);
 
