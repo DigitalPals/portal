@@ -171,6 +171,7 @@ pub enum SessionMessage {
         host_name: String,
         host_id: Option<Uuid>,
         session_started_at: Option<DateTime<Utc>>,
+        resume_preview: Vec<u8>,
     },
     /// Data received from terminal (SSH or local)
     Data(SessionId, Vec<u8>),

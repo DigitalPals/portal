@@ -191,6 +191,18 @@ mod tests {
         assert!(modifiers.control());
         assert_eq!(shortcut_key, Some('c'));
     }
+
+    #[test]
+    fn pre_session_terminal_output_keeps_bounded_tail() {
+        let mut output = PreSessionTerminalOutput::default();
+
+        output.push_bounded(vec![b'a'; 3], 5);
+        output.push_bounded(vec![b'b'; 3], 5);
+
+        assert_eq!(output.bytes(), 3);
+        let chunks: Vec<Vec<u8>> = output.drain().into_iter().collect();
+        assert_eq!(chunks, vec![vec![b'b'; 3]]);
+    }
 }
 
 /// Aggregated UI/navigation state for the app.
@@ -396,6 +408,7 @@ pub struct Portal {
     proxy_sessions: ProxySessionsState,
     dialogs: DialogManager,
     pending_connect: Option<PendingConnect>,
+    pre_session_terminal_output: std::collections::HashMap<SessionId, PreSessionTerminalOutput>,
 
     // VNC sessions (separate from terminal sessions)
     pub(crate) vnc_sessions: std::collections::HashMap<SessionId, VncActiveSession>,
@@ -426,6 +439,36 @@ impl PendingConnect {
 
     fn is_for(&self, session_id: SessionId) -> bool {
         self.session_id == session_id
+    }
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct PreSessionTerminalOutput {
+    chunks: std::collections::VecDeque<Vec<u8>>,
+    bytes: usize,
+}
+
+impl PreSessionTerminalOutput {
+    pub(crate) fn push_bounded(&mut self, data: Vec<u8>, max_bytes: usize) {
+        self.bytes = self.bytes.saturating_add(data.len());
+        self.chunks.push_back(data);
+
+        while self.bytes > max_bytes {
+            let Some(dropped) = self.chunks.pop_front() else {
+                self.bytes = 0;
+                break;
+            };
+            self.bytes = self.bytes.saturating_sub(dropped.len());
+        }
+    }
+
+    pub(crate) fn drain(self) -> std::collections::VecDeque<Vec<u8>> {
+        self.chunks
+    }
+
+    #[cfg(test)]
+    fn bytes(&self) -> usize {
+        self.bytes
     }
 }
 
@@ -580,6 +623,7 @@ impl Portal {
             proxy_sessions: ProxySessionsState::new(),
             dialogs: DialogManager::new(),
             pending_connect: None,
+            pre_session_terminal_output: std::collections::HashMap::new(),
             vnc_sessions: std::collections::HashMap::new(),
             prefs: PreferencesState {
                 theme_id: settings_config.theme,

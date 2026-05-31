@@ -38,6 +38,8 @@ const BACKLOG_AGE_WARNING: Duration = Duration::from_millis(500);
 const BACKLOG_WARNING_INTERVAL: Duration = Duration::from_secs(5);
 const TERMINAL_AGENT_TITLE_NOTIFICATION_THRESHOLD: Duration = Duration::from_secs(5);
 const TERMINAL_NOTIFICATION_COOLDOWN: Duration = Duration::from_secs(10);
+const MAX_PRE_SESSION_OUTPUT_BYTES: usize = 4 * 1024 * 1024;
+const PROXY_RESUME_SNAPSHOT_PROTECTION: Duration = Duration::from_millis(750);
 
 fn output_budget_for_pending(pending_bytes: usize) -> usize {
     if pending_bytes >= LARGE_BACKLOG_THRESHOLD {
@@ -69,6 +71,94 @@ fn queue_terminal_output(session: &mut ActiveSession, data: Vec<u8>, now: Instan
     session.last_data_received_at = Some(now);
 
     enforce_pending_output_limit(session, now);
+}
+
+fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
+    haystack
+        .windows(needle.len())
+        .any(|window| window == needle)
+}
+
+fn looks_like_attach_redraw_clear(data: &[u8]) -> bool {
+    let prefix = &data[..data.len().min(256)];
+    [
+        b"\x1b[H\x1b[J".as_slice(),
+        b"\x1b[H\x1b[2J".as_slice(),
+        b"\x1b[2J".as_slice(),
+        b"\x1b[3J".as_slice(),
+        b"\x1b[J".as_slice(),
+        b"\x1bc".as_slice(),
+    ]
+    .into_iter()
+    .any(|sequence| contains_bytes(prefix, sequence))
+}
+
+fn should_drop_resume_attach_redraw(
+    session: &mut ActiveSession,
+    data: &[u8],
+    now: Instant,
+) -> bool {
+    let Some(protected_until) = session.resume_snapshot_protected_until else {
+        return false;
+    };
+
+    if now >= protected_until {
+        session.resume_snapshot_protected_until = None;
+        return false;
+    }
+
+    if looks_like_attach_redraw_clear(data) {
+        session.resume_snapshot_protected_until = None;
+        tracing::debug!(
+            host = %session.host_name,
+            bytes = data.len(),
+            "Dropped initial Portal Hub attach redraw after seeded resume snapshot"
+        );
+        return true;
+    }
+
+    false
+}
+
+fn buffer_pre_session_terminal_output(portal: &mut Portal, session_id: SessionId, data: Vec<u8>) {
+    if data.is_empty() {
+        return;
+    }
+
+    if !portal
+        .pending_connect
+        .as_ref()
+        .is_some_and(|pending| pending.is_for(session_id))
+    {
+        return;
+    }
+
+    portal
+        .pre_session_terminal_output
+        .entry(session_id)
+        .or_default()
+        .push_bounded(data, MAX_PRE_SESSION_OUTPUT_BYTES);
+}
+
+fn flush_pre_session_terminal_output(portal: &mut Portal, session_id: SessionId) {
+    let Some(buffered) = portal.pre_session_terminal_output.remove(&session_id) else {
+        return;
+    };
+    let Some(session) = portal.sessions.get_mut(session_id) else {
+        return;
+    };
+
+    let now = Instant::now();
+    for data in buffered.drain() {
+        if should_drop_resume_attach_redraw(session, &data, now) {
+            continue;
+        }
+        if let Some(logger) = session.logger.as_ref() {
+            logger.write(&data);
+        }
+        queue_terminal_output(session, data, now);
+    }
+    process_terminal_output_tick(session, now + OUTPUT_COALESCE_DELAY);
 }
 
 fn enforce_pending_output_limit(session: &mut ActiveSession, now: Instant) {
@@ -246,18 +336,53 @@ fn close_session_logger(portal: &mut Portal, session_id: SessionId) -> Task<Mess
     Task::none()
 }
 
+struct TerminalSessionStart {
+    history_entry_id: Uuid,
+    session_start: Instant,
+    resume_preview: Vec<u8>,
+}
+
+impl TerminalSessionStart {
+    fn new(history_entry_id: Uuid, session_start: Instant) -> Self {
+        Self {
+            history_entry_id,
+            session_start,
+            resume_preview: Vec::new(),
+        }
+    }
+
+    fn with_resume_preview(
+        history_entry_id: Uuid,
+        session_start: Instant,
+        resume_preview: Vec<u8>,
+    ) -> Self {
+        Self {
+            history_entry_id,
+            session_start,
+            resume_preview,
+        }
+    }
+}
+
 fn start_terminal_session(
     portal: &mut Portal,
     session_id: SessionId,
     backend: SessionBackend,
     host_name: String,
     host_id: Option<Uuid>,
-    history_entry_id: Uuid,
-    session_start: Instant,
+    start: TerminalSessionStart,
 ) -> Task<Message> {
     // Create terminal session
     let (cols, rows) = portal.terminal_initial_size();
     let (terminal, terminal_events) = TerminalSession::new_with_size(&host_name, cols, rows);
+    let resume_snapshot_protected_until = if !start.resume_preview.is_empty() {
+        Some(Instant::now() + PROXY_RESUME_SNAPSHOT_PROTECTION)
+    } else {
+        None
+    };
+    if !start.resume_preview.is_empty() {
+        terminal.replace_with_rendered_snapshot(&start.resume_preview);
+    }
 
     // Store the active session
     portal.sessions.insert(
@@ -265,10 +390,10 @@ fn start_terminal_session(
         ActiveSession {
             backend,
             terminal,
-            session_start,
+            session_start: start.session_start,
             host_name: host_name.clone(),
             host_id,
-            history_entry_id,
+            history_entry_id: start.history_entry_id,
             status_message: None,
             reconnect_attempts: 0,
             reconnect_next_attempt: None,
@@ -282,6 +407,7 @@ fn start_terminal_session(
             last_backlog_warning_at: None,
             terminal_agent_turn_started_at: None,
             last_terminal_notification_at: None,
+            resume_snapshot_protected_until,
             logger: None,
         },
     );
@@ -295,6 +421,7 @@ fn start_terminal_session(
     portal.enter_terminal_view(session_id, true);
 
     start_session_logger(portal, session_id);
+    flush_pre_session_terminal_output(portal, session_id);
 
     Task::run(
         stream::unfold(terminal_events, |mut rx| async move {
@@ -787,8 +914,7 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                 SessionBackend::Ssh(ssh_session),
                 host_name,
                 Some(host_id),
-                history_entry_id,
-                Instant::now(),
+                TerminalSessionStart::new(history_entry_id, Instant::now()),
             )
         }
         SessionMessage::LocalConnected {
@@ -811,8 +937,7 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                 SessionBackend::Local(local_session),
                 "Local Terminal".to_string(),
                 None,
-                history_entry_id,
-                Instant::now(),
+                TerminalSessionStart::new(history_entry_id, Instant::now()),
             )
         }
         SessionMessage::ProxyConnected {
@@ -821,6 +946,7 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
             host_name,
             host_id,
             session_started_at,
+            resume_preview,
         } => {
             tracing::info!("Portal Hub connected");
             let existing_session = portal.sessions.contains(session_id);
@@ -885,16 +1011,25 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                 SessionBackend::Proxy(proxy_session),
                 host_name,
                 host_id,
-                history_entry_id,
-                proxy_session_start,
+                TerminalSessionStart::with_resume_preview(
+                    history_entry_id,
+                    proxy_session_start,
+                    resume_preview,
+                ),
             )
         }
         SessionMessage::Data(session_id, data) => {
             let now = Instant::now();
 
-            if let Some(session) = portal.sessions.get_mut(session_id)
-                && !data.is_empty()
-            {
+            let Some(session) = portal.sessions.get_mut(session_id) else {
+                buffer_pre_session_terminal_output(portal, session_id, data);
+                return Task::none();
+            };
+
+            if !data.is_empty() {
+                if should_drop_resume_attach_redraw(session, &data, now) {
+                    return Task::none();
+                }
                 if let Some(logger) = session.logger.as_ref() {
                     logger.write(&data);
                 }
@@ -1049,6 +1184,7 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                 );
                 return Task::none();
             }
+            portal.pre_session_terminal_output.remove(&session_id);
             portal.toast_manager.push(Toast::error(error));
             Task::none()
         }
@@ -1127,47 +1263,45 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
         }
         SessionMessage::Input(session_id, bytes) => {
             tracing::debug!("Terminal input ({} bytes)", bytes.len());
-            if !portal.sessions.contains(session_id) {
+            let Some(session) = portal.sessions.get_mut(session_id) else {
                 return Task::none();
-            }
-            if let Some(session) = portal.sessions.get(session_id) {
-                match &session.backend {
-                    SessionBackend::Ssh(ssh_session) => {
-                        let ssh_session = ssh_session.clone();
-                        return Task::perform(
-                            async move {
-                                if let Err(e) = ssh_session.send(&bytes).await {
-                                    tracing::error!("Failed to send to SSH: {}", e);
-                                }
-                            },
-                            |_| Message::Noop,
-                        );
-                    }
-                    SessionBackend::Local(local_session) => {
-                        let local_session = local_session.clone();
-                        return Task::perform(
-                            async move {
-                                if let Err(e) = local_session.send(&bytes).await {
-                                    tracing::error!("Failed to send to local PTY: {}", e);
-                                }
-                            },
-                            |_| Message::Noop,
-                        );
-                    }
-                    SessionBackend::Proxy(proxy_session) => {
-                        let proxy_session = proxy_session.clone();
-                        return Task::perform(
-                            async move {
-                                if let Err(e) = proxy_session.send(&bytes).await {
-                                    tracing::error!("Failed to send to Portal Hub: {}", e);
-                                }
-                            },
-                            |_| Message::Noop,
-                        );
-                    }
+            };
+            session.resume_snapshot_protected_until = None;
+            match &session.backend {
+                SessionBackend::Ssh(ssh_session) => {
+                    let ssh_session = ssh_session.clone();
+                    Task::perform(
+                        async move {
+                            if let Err(e) = ssh_session.send(&bytes).await {
+                                tracing::error!("Failed to send to SSH: {}", e);
+                            }
+                        },
+                        |_| Message::Noop,
+                    )
+                }
+                SessionBackend::Local(local_session) => {
+                    let local_session = local_session.clone();
+                    Task::perform(
+                        async move {
+                            if let Err(e) = local_session.send(&bytes).await {
+                                tracing::error!("Failed to send to local PTY: {}", e);
+                            }
+                        },
+                        |_| Message::Noop,
+                    )
+                }
+                SessionBackend::Proxy(proxy_session) => {
+                    let proxy_session = proxy_session.clone();
+                    Task::perform(
+                        async move {
+                            if let Err(e) = proxy_session.send(&bytes).await {
+                                tracing::error!("Failed to send to Portal Hub: {}", e);
+                            }
+                        },
+                        |_| Message::Noop,
+                    )
                 }
             }
-            Task::none()
         }
         SessionMessage::Resize(session_id, cols, rows) => {
             tracing::debug!("Terminal resize: {}x{}", cols, rows);
@@ -1294,6 +1428,7 @@ mod tests {
             last_backlog_warning_at: None,
             terminal_agent_turn_started_at: None,
             last_terminal_notification_at: None,
+            resume_snapshot_protected_until: None,
             logger: None,
         }
     }
@@ -1392,6 +1527,63 @@ mod tests {
 
         assert_eq!(session.pending_output_bytes, b"prompt".len());
         assert_eq!(session.pending_output.len(), 1);
+    }
+
+    #[test]
+    fn seeded_resume_preview_allows_live_output_to_continue_from_snapshot() {
+        let mut session = create_test_session();
+        let now = Instant::now();
+        session
+            .terminal
+            .replace_with_rendered_snapshot(b"snapshot output");
+        queue_terminal_output(&mut session, b"live output".to_vec(), now);
+
+        process_terminal_output_tick(&mut session, now + OUTPUT_COALESCE_DELAY);
+
+        assert_eq!(session.pending_output_bytes, 0);
+        assert!(session.pending_output.is_empty());
+    }
+
+    #[test]
+    fn resume_snapshot_protection_drops_initial_clear_redraw() {
+        let mut session = create_test_session();
+        let now = Instant::now();
+        session.resume_snapshot_protected_until = Some(now + PROXY_RESUME_SNAPSHOT_PROTECTION);
+
+        assert!(should_drop_resume_attach_redraw(
+            &mut session,
+            b"\x1b[H\x1b[Jredrawn attach screen",
+            now
+        ));
+        assert!(session.resume_snapshot_protected_until.is_none());
+    }
+
+    #[test]
+    fn resume_snapshot_protection_keeps_regular_live_output() {
+        let mut session = create_test_session();
+        let now = Instant::now();
+        session.resume_snapshot_protected_until = Some(now + PROXY_RESUME_SNAPSHOT_PROTECTION);
+
+        assert!(!should_drop_resume_attach_redraw(
+            &mut session,
+            b"regular live output",
+            now
+        ));
+        assert!(session.resume_snapshot_protected_until.is_some());
+    }
+
+    #[test]
+    fn resume_snapshot_protection_expires_before_clear_redraw() {
+        let mut session = create_test_session();
+        let now = Instant::now();
+        session.resume_snapshot_protected_until = Some(now);
+
+        assert!(!should_drop_resume_attach_redraw(
+            &mut session,
+            b"\x1b[2Jlater clear",
+            now + Duration::from_millis(1)
+        ));
+        assert!(session.resume_snapshot_protected_until.is_none());
     }
 
     #[test]

@@ -81,6 +81,11 @@ impl TerminalSession {
         self.backend.process_input(bytes);
     }
 
+    /// Replace the visible terminal state with the final rendered state of a byte stream.
+    pub fn replace_with_rendered_snapshot(&self, bytes: &[u8]) {
+        self.backend.replace_with_rendered_snapshot(bytes);
+    }
+
     /// Resize the terminal to new dimensions
     pub fn resize(&mut self, cols: u16, rows: u16) -> bool {
         self.backend.resize(cols, rows)

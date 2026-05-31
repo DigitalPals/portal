@@ -15,6 +15,7 @@ pub struct ProxySessionCard {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub last_output_at: Option<DateTime<Utc>>,
+    pub preview: Vec<u8>,
     pub preview_truncated: bool,
     pub terminal: TerminalSession,
 }
@@ -110,6 +111,7 @@ impl ProxySessionCard {
             created_at: session.created_at,
             updated_at: session.updated_at,
             last_output_at: session.last_output_at,
+            preview: session.preview,
             preview_truncated: session.preview_truncated,
             terminal,
         }
@@ -215,5 +217,15 @@ mod tests {
 
         assert_eq!(card.display_name, "john@192.0.2.206:22");
         assert_eq!(card.host_id, None);
+    }
+
+    #[test]
+    fn session_card_preserves_preview_for_resume_seed() {
+        let hosts = HostsConfig::default();
+        let session = listed_session("192.0.2.206", 22, "john");
+
+        let card = ProxySessionCard::from_listed(session, &hosts);
+
+        assert_eq!(card.preview, b"shell output");
     }
 }

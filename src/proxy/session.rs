@@ -24,6 +24,7 @@ use crate::error::LocalError;
 use crate::hub::http;
 
 const MIN_SUPPORTED_WEB_PROXY_API_VERSION: u16 = 2;
+const SESSION_LIST_PREVIEW_BYTES: u64 = 64 * 1024;
 
 #[derive(Debug)]
 pub enum ProxyEvent {
@@ -149,6 +150,7 @@ struct WebTerminalStart {
     target_user: String,
     cols: u16,
     rows: u16,
+    replay_bytes: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     private_key: Option<String>,
 }
@@ -312,6 +314,7 @@ async fn run_web_terminal(
             target_user: target.target_user,
             cols,
             rows,
+            replay_bytes: 0,
             private_key,
         };
         write
@@ -375,11 +378,12 @@ async fn run_web_terminal(
                         WsMessage::Binary(data) => {
                             let _ = event_tx.send(ProxyEvent::Data(data)).await;
                         }
-                        WsMessage::Text(text) => {
-                            if text.starts_with("{\"type\":\"error\"") {
-                                let _ = event_tx.send(ProxyEvent::Data(format!("{}\r\n", text).into_bytes())).await;
-                            }
+                        WsMessage::Text(text) if text.starts_with("{\"type\":\"error\"") => {
+                            let _ = event_tx
+                                .send(ProxyEvent::Data(format!("{}\r\n", text).into_bytes()))
+                                .await;
                         }
+                        WsMessage::Text(_) => {}
                         WsMessage::Close(_) => return Ok(()),
                         WsMessage::Ping(data) => {
                             let _ = write.send(WsMessage::Pong(data)).await;
@@ -480,8 +484,8 @@ pub async fn list_active_sessions(
 ) -> Result<Vec<ListedProxySession>, String> {
     let hub_url = settings.effective_web_url();
     let url = format!(
-        "{}/api/sessions?active=true&include_preview=true&preview_bytes=524288",
-        hub_url
+        "{}/api/sessions?active=true&include_preview=true&preview_bytes={}",
+        hub_url, SESSION_LIST_PREVIEW_BYTES
     );
     let response: RawListResponse = http::authenticated_json(
         &hub_url,
@@ -734,6 +738,7 @@ mod tests {
             target_user: "john".to_string(),
             cols: 120,
             rows: 30,
+            replay_bytes: 0,
             private_key: Some("-----BEGIN OPENSSH PRIVATE KEY-----\n...\n".to_string()),
         };
         let instance = serde_json::to_value(start).unwrap();

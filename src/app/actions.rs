@@ -394,6 +394,7 @@ impl Portal {
     ) -> Task<Message> {
         if let Some(pending) = self.pending_connect.take() {
             pending.handle.abort();
+            self.pre_session_terminal_output.remove(&pending.session_id);
         }
 
         let (task, handle) = task.abortable();
@@ -403,6 +404,7 @@ impl Portal {
 
     pub(super) fn finish_pending_connect(&mut self) {
         self.pending_connect = None;
+        self.pre_session_terminal_output.clear();
         self.dialogs.close_connecting();
     }
 
@@ -422,6 +424,7 @@ impl Portal {
     pub(super) fn cancel_pending_connect(&mut self) {
         if let Some(pending) = self.pending_connect.take() {
             pending.handle.abort();
+            self.pre_session_terminal_output.remove(&pending.session_id);
             self.toast_manager
                 .push(Toast::warning("Connection cancelled"));
         }

@@ -217,6 +217,7 @@ pub fn proxy_connect_tasks(
                 host_name: host.name.clone(),
                 host_id: Some(host_id),
                 session_started_at: None,
+                resume_preview: Vec::new(),
             }),
             Err(error) => Message::Session(SessionMessage::ConnectFailed {
                 session_id,
@@ -237,6 +238,7 @@ pub fn proxy_resume_tasks(
 ) -> Task<Message> {
     let session_id = listed_session.session_id;
     let session_started_at = listed_session.created_at;
+    let resume_preview = listed_session.preview.clone();
     let target = ProxySessionTarget {
         session_id,
         target_host: listed_session.target_host,
@@ -266,6 +268,7 @@ pub fn proxy_resume_tasks(
                 host_name,
                 host_id,
                 session_started_at: Some(session_started_at),
+                resume_preview: resume_preview.clone(),
             }),
             Err(error) => Message::Session(SessionMessage::ConnectFailed {
                 session_id,

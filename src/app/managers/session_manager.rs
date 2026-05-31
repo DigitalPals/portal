@@ -68,6 +68,8 @@ pub struct ActiveSession {
     pub terminal_agent_turn_started_at: Option<(String, Instant)>,
     /// Last desktop notification emitted for this terminal session.
     pub last_terminal_notification_at: Option<Instant>,
+    /// Short guard used after seeding a resumed Portal Hub screen snapshot.
+    pub resume_snapshot_protected_until: Option<Instant>,
     /// Optional session logger for terminal output
     pub logger: Option<SessionLogger>,
 }
@@ -219,6 +221,7 @@ mod tests {
             last_backlog_warning_at: None,
             terminal_agent_turn_started_at: None,
             last_terminal_notification_at: None,
+            resume_snapshot_protected_until: None,
             logger: None,
         }
     }

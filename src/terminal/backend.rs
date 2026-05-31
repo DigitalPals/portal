@@ -3,7 +3,7 @@
 //! This module wraps the alacritty_terminal Term for use with iced.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use alacritty_terminal::event::{Event, EventListener, WindowSize};
@@ -54,6 +54,7 @@ pub struct EventProxy {
     sender: mpsc::Sender<TerminalEvent>,
     colors: Arc<Mutex<TerminalColors>>,
     window_size: Arc<Mutex<WindowSize>>,
+    muted: Arc<AtomicBool>,
 }
 
 impl EventProxy {
@@ -66,12 +67,21 @@ impl EventProxy {
             sender,
             colors,
             window_size,
+            muted: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    fn set_muted(&self, muted: bool) {
+        self.muted.store(muted, Ordering::Relaxed);
     }
 }
 
 impl EventListener for EventProxy {
     fn send_event(&self, event: Event) {
+        if self.muted.load(Ordering::Relaxed) {
+            return;
+        }
+
         let terminal_event = match event {
             Event::Wakeup => TerminalEvent::Wakeup,
             Event::Bell => TerminalEvent::Bell,
@@ -503,6 +513,32 @@ impl TerminalBackend {
         }
     }
 
+    /// Replace the visible terminal state with the final rendered state of a byte stream.
+    ///
+    /// This is used for Portal Hub resume snapshots: the raw log tail is parsed offscreen,
+    /// then swapped into view once so reconnect does not visibly replay the output.
+    pub fn replace_with_rendered_snapshot(&self, bytes: &[u8]) {
+        let event_proxy = EventProxy::new(
+            self.event_sender.clone(),
+            self.colors.clone(),
+            self.window_size.clone(),
+        );
+        event_proxy.set_muted(true);
+
+        let config = TermConfig {
+            scrolling_history: self.size.history_size,
+            ..TermConfig::default()
+        };
+        let mut snapshot = Term::new(config, &self.size, event_proxy.clone());
+        let mut snapshot_processor: Processor = Processor::new();
+        snapshot_processor.advance(&mut snapshot, bytes);
+        event_proxy.set_muted(false);
+
+        *self.term.lock() = snapshot;
+        *self.processor.lock() = Processor::new();
+        self.render_epoch.fetch_add(1, Ordering::Relaxed);
+    }
+
     /// Resize the terminal to new dimensions
     pub fn resize(&mut self, cols: u16, rows: u16) -> bool {
         // Enforce minimum size
@@ -582,6 +618,29 @@ mod tests {
         assert_eq!(line[Column(6)].c, '└');
         assert_eq!(line[Column(7)].c, '─');
         assert_eq!(line[Column(8)].c, '┘');
+    }
+
+    #[test]
+    fn replace_with_rendered_snapshot_seeds_visible_grid_without_replay_events() {
+        let (backend, mut event_rx) = TerminalBackend::new(TerminalSize::new(20, 3));
+
+        backend.replace_with_rendered_snapshot(b"snapshot");
+
+        assert!(matches!(event_rx.try_recv(), Err(TryRecvError::Empty)));
+        {
+            let term = backend.term.lock();
+            let line = &term.grid()[Line(0)];
+            assert_eq!(line[Column(0)].c, 's');
+            assert_eq!(line[Column(7)].c, 't');
+        }
+
+        backend.process_input(b"\r\nlive");
+
+        let term = backend.term.lock();
+        let grid = term.grid();
+        assert_eq!(grid[Line(0)][Column(0)].c, 's');
+        assert_eq!(grid[Line(1)][Column(0)].c, 'l');
+        assert_eq!(grid[Line(1)][Column(3)].c, 'e');
     }
 
     #[test]

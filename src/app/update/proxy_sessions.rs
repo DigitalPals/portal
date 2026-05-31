@@ -65,7 +65,7 @@ pub fn handle_proxy_sessions(portal: &mut Portal, msg: ProxySessionsMessage) -> 
                 created_at: session.created_at,
                 updated_at: session.updated_at,
                 last_output_at: session.last_output_at,
-                preview: Vec::new(),
+                preview: session.preview.clone(),
                 preview_truncated: session.preview_truncated,
             };
 
