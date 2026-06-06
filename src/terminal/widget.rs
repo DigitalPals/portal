@@ -19,10 +19,11 @@ use iced::advanced::widget::{self, Tree, Widget};
 use iced::advanced::{Clipboard, Shell};
 use iced::keyboard::{self, Key, Modifiers};
 use iced::mouse::{self, Cursor};
+use iced::window;
 use iced::{Background, Border, Color, Element, Event, Length, Rectangle, Shadow, Size};
 use parking_lot::Mutex;
 
-use super::backend::{CursorInfo, EventProxy, RenderCell};
+use super::backend::{CursorInfo, EventProxy, RenderCell, paste_bytes_for_mode};
 use super::block_elements::{TerminalGraphicCell, render_terminal_graphic};
 use super::colors::{DEFAULT_BG, DEFAULT_FG, ansi_to_iced_themed, cell_fg_to_iced};
 use super::glyph_constraints::GlyphSize;
@@ -571,6 +572,111 @@ impl<'a, Message> TerminalWidget<'a, Message> {
         let term = self.term.lock();
         term.selection_to_string()
     }
+
+    fn terminal_mode(&self) -> TermMode {
+        let term = self.term.lock();
+        *term.mode()
+    }
+
+    fn mouse_reporting_enabled(&self) -> bool {
+        self.terminal_mode().intersects(TermMode::MOUSE_MODE)
+    }
+
+    fn mouse_button_report(
+        &self,
+        button: mouse::Button,
+        bounds: Rectangle,
+        position: Option<iced::Point>,
+        metrics: TerminalMetrics,
+        kind: MouseReportKind,
+        modifiers: Modifiers,
+    ) -> Option<(u8, Vec<u8>)> {
+        let code = mouse_button_code(button)?;
+        let (column, row) = mouse_cell(bounds, position?, metrics)?;
+        let bytes =
+            mouse_report_sequence(self.terminal_mode(), code, column, row, kind, modifiers)?;
+        Some((code, bytes))
+    }
+
+    fn mouse_button_release_report(
+        &self,
+        button: mouse::Button,
+        active_button: Option<u8>,
+        bounds: Rectangle,
+        position: Option<iced::Point>,
+        metrics: TerminalMetrics,
+        modifiers: Modifiers,
+    ) -> Option<Vec<u8>> {
+        let code = active_button.or_else(|| mouse_button_code(button))?;
+        let (column, row) = mouse_cell(bounds, position?, metrics)?;
+        mouse_report_sequence(
+            self.terminal_mode(),
+            code,
+            column,
+            row,
+            MouseReportKind::Release,
+            modifiers,
+        )
+    }
+
+    fn mouse_motion_report(
+        &self,
+        active_button: Option<u8>,
+        bounds: Rectangle,
+        position: iced::Point,
+        metrics: TerminalMetrics,
+    ) -> Option<Vec<u8>> {
+        let mode = self.terminal_mode();
+        let code = if let Some(code) = active_button {
+            if !mode.contains(TermMode::MOUSE_DRAG) && !mode.contains(TermMode::MOUSE_MOTION) {
+                return None;
+            }
+            code
+        } else if mode.contains(TermMode::MOUSE_MOTION) {
+            35
+        } else {
+            return None;
+        };
+        let (column, row) = mouse_cell(bounds, position, metrics)?;
+        mouse_report_sequence(
+            mode,
+            code,
+            column,
+            row,
+            MouseReportKind::Motion,
+            Modifiers::NONE,
+        )
+    }
+
+    fn mouse_wheel_report(
+        &self,
+        bounds: Rectangle,
+        position: Option<iced::Point>,
+        metrics: TerminalMetrics,
+        delta: &mouse::ScrollDelta,
+    ) -> Option<Vec<u8>> {
+        let y = scroll_delta_y(delta);
+        if y == 0.0 {
+            return None;
+        }
+        let code = if y > 0.0 { 64 } else { 65 };
+        let (column, row) = mouse_cell(bounds, position?, metrics)?;
+        mouse_report_sequence(
+            self.terminal_mode(),
+            code,
+            column,
+            row,
+            MouseReportKind::Press,
+            Modifiers::NONE,
+        )
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MouseReportKind {
+    Press,
+    Release,
+    Motion,
 }
 
 fn terminal_cell_index(offset: f32, cell_size: f32) -> Option<usize> {
@@ -583,6 +689,99 @@ fn terminal_cell_index(offset: f32, cell_size: f32) -> Option<usize> {
             .floor()
             .clamp(0.0, u16::MAX as f32) as usize,
     )
+}
+
+fn mouse_cell(
+    bounds: Rectangle,
+    position: iced::Point,
+    metrics: TerminalMetrics,
+) -> Option<(usize, usize)> {
+    let column = terminal_cell_index(
+        position.x - bounds.x - TERMINAL_PADDING_LEFT,
+        metrics.cell_width,
+    )?;
+    let row = terminal_cell_index(position.y - bounds.y, metrics.cell_height)?;
+    Some((column, row))
+}
+
+fn mouse_button_code(button: mouse::Button) -> Option<u8> {
+    match button {
+        mouse::Button::Left => Some(0),
+        mouse::Button::Middle => Some(1),
+        mouse::Button::Right => Some(2),
+        _ => None,
+    }
+}
+
+fn mouse_report_sequence(
+    mode: TermMode,
+    code: u8,
+    column: usize,
+    row: usize,
+    kind: MouseReportKind,
+    modifiers: Modifiers,
+) -> Option<Vec<u8>> {
+    let code = match kind {
+        MouseReportKind::Press => code,
+        MouseReportKind::Release if mode.contains(TermMode::SGR_MOUSE) => code,
+        MouseReportKind::Release => 3,
+        MouseReportKind::Motion => code | 32,
+    } + mouse_modifier_bits(modifiers);
+
+    let column = column.saturating_add(1);
+    let row = row.saturating_add(1);
+
+    if mode.contains(TermMode::SGR_MOUSE) {
+        let suffix = if kind == MouseReportKind::Release {
+            'm'
+        } else {
+            'M'
+        };
+        return Some(format!("\x1b[<{};{};{}{}", code, column, row, suffix).into_bytes());
+    }
+
+    legacy_mouse_report(code, column, row)
+}
+
+fn legacy_mouse_report(code: u8, column: usize, row: usize) -> Option<Vec<u8>> {
+    let x = u8::try_from(column.checked_add(32)?).ok()?;
+    let y = u8::try_from(row.checked_add(32)?).ok()?;
+    Some(vec![0x1b, b'[', b'M', code.saturating_add(32), x, y])
+}
+
+fn mouse_modifier_bits(modifiers: Modifiers) -> u8 {
+    (u8::from(modifiers.shift()) * 4)
+        + (u8::from(modifiers.alt()) * 8)
+        + (u8::from(modifiers.control()) * 16)
+}
+
+fn scroll_delta_y(delta: &mouse::ScrollDelta) -> f32 {
+    match delta {
+        mouse::ScrollDelta::Lines { y, .. } | mouse::ScrollDelta::Pixels { y, .. } => *y,
+    }
+}
+
+fn alternate_scroll_sequence(delta: &mouse::ScrollDelta) -> Option<Vec<u8>> {
+    let y = scroll_delta_y(delta);
+    if y > 0.0 {
+        Some(b"\x1b[A".to_vec())
+    } else if y < 0.0 {
+        Some(b"\x1b[B".to_vec())
+    } else {
+        None
+    }
+}
+
+fn focus_report_sequence(mode: TermMode, focused: bool) -> Option<Vec<u8>> {
+    if !mode.contains(TermMode::FOCUS_IN_OUT) {
+        return None;
+    }
+
+    if focused {
+        Some(b"\x1b[I".to_vec())
+    } else {
+        Some(b"\x1b[O".to_vec())
+    }
 }
 
 fn selection_side(offset: f32, column: usize, cell_width: f32) -> Option<Side> {
@@ -618,6 +817,8 @@ struct TerminalState {
     // Auto-scroll during selection
     last_auto_scroll: Option<std::time::Instant>,
     last_focus_token: u64,
+    last_focus_reported: Option<bool>,
+    mouse_button: Option<u8>,
 }
 
 #[derive(Debug, Default)]
@@ -648,6 +849,8 @@ impl Default for TerminalState {
             click_count: 0,
             last_auto_scroll: None,
             last_focus_token: 0,
+            last_focus_reported: None,
+            mouse_button: None,
         }
     }
 }
@@ -698,6 +901,8 @@ where
             click_count: 0,
             last_auto_scroll: None,
             last_focus_token: 0,
+            last_focus_reported: None,
+            mouse_button: None,
         })
     }
 
@@ -1088,6 +1293,12 @@ where
         if state.last_focus_token != self.focus_token {
             state.last_focus_token = self.focus_token;
             state.is_focused = true;
+            if let Some(bytes) = focus_report_sequence(self.terminal_mode(), true)
+                && state.last_focus_reported != Some(true)
+            {
+                state.last_focus_reported = Some(true);
+                shell.publish((self.on_input)(bytes));
+            }
             shell.request_redraw();
         }
 
@@ -1118,10 +1329,73 @@ where
         const MULTI_CLICK_THRESHOLD: std::time::Duration = std::time::Duration::from_millis(400);
 
         match event {
+            Event::Window(window::Event::Focused) => {
+                if state.is_focused
+                    && let Some(bytes) = focus_report_sequence(self.terminal_mode(), true)
+                    && state.last_focus_reported != Some(true)
+                {
+                    state.last_focus_reported = Some(true);
+                    shell.publish((self.on_input)(bytes));
+                }
+            }
+            Event::Window(window::Event::Unfocused) => {
+                if state.is_focused
+                    && let Some(bytes) = focus_report_sequence(self.terminal_mode(), false)
+                    && state.last_focus_reported != Some(false)
+                {
+                    state.last_focus_reported = Some(false);
+                    shell.publish((self.on_input)(bytes));
+                }
+            }
+            Event::Mouse(mouse::Event::ButtonPressed(button))
+                if cursor.is_over(bounds) && self.mouse_reporting_enabled() =>
+            {
+                state.is_focused = true;
+                if let Some(bytes) = focus_report_sequence(self.terminal_mode(), true)
+                    && state.last_focus_reported != Some(true)
+                {
+                    state.last_focus_reported = Some(true);
+                    shell.publish((self.on_input)(bytes));
+                }
+                if let Some((code, bytes)) = self.mouse_button_report(
+                    *button,
+                    bounds,
+                    cursor.position(),
+                    metrics,
+                    MouseReportKind::Press,
+                    Modifiers::NONE,
+                ) {
+                    state.mouse_button = Some(code);
+                    shell.publish((self.on_input)(bytes));
+                }
+                return;
+            }
+            Event::Mouse(mouse::Event::ButtonReleased(button))
+                if self.mouse_reporting_enabled() =>
+            {
+                if let Some(bytes) = self.mouse_button_release_report(
+                    *button,
+                    state.mouse_button,
+                    bounds,
+                    cursor.position(),
+                    metrics,
+                    Modifiers::NONE,
+                ) {
+                    shell.publish((self.on_input)(bytes));
+                }
+                state.mouse_button = None;
+                return;
+            }
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
                 if cursor.is_over(bounds) =>
             {
                 state.is_focused = true;
+                if let Some(bytes) = focus_report_sequence(self.terminal_mode(), true)
+                    && state.last_focus_reported != Some(true)
+                {
+                    state.last_focus_reported = Some(true);
+                    shell.publish((self.on_input)(bytes));
+                }
 
                 if let Some(position) = cursor.position()
                     && let Some((point, side, cell)) =
@@ -1164,6 +1438,12 @@ where
             }
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
                 state.is_focused = false;
+                if let Some(bytes) = focus_report_sequence(self.terminal_mode(), false)
+                    && state.last_focus_reported != Some(false)
+                {
+                    state.last_focus_reported = Some(false);
+                    shell.publish((self.on_input)(bytes));
+                }
                 self.clear_selection();
                 state.is_selecting = false;
                 state.click_count = 0;
@@ -1172,6 +1452,15 @@ where
                 shell.request_redraw();
             }
             Event::Mouse(mouse::Event::CursorMoved { position }) => {
+                if self.mouse_reporting_enabled() {
+                    if let Some(bytes) =
+                        self.mouse_motion_report(state.mouse_button, bounds, *position, metrics)
+                    {
+                        shell.publish((self.on_input)(bytes));
+                    }
+                    return;
+                }
+
                 // Update selection while dragging
                 if state.is_selecting {
                     // Auto-scroll zone (pixels from edge to trigger scrolling)
@@ -1276,10 +1565,22 @@ where
                 // Focus the terminal on scroll
                 state.is_focused = true;
 
+                if self.mouse_reporting_enabled() {
+                    if let Some(bytes) =
+                        self.mouse_wheel_report(bounds, cursor.position(), metrics, delta)
+                    {
+                        shell.publish((self.on_input)(bytes));
+                    }
+                    return;
+                }
+
                 // Check if in alternate screen mode (vim, htop, etc.) - no scrollback there
-                let in_alt_screen = {
+                let (in_alt_screen, alternate_scroll) = {
                     let term = self.term.lock();
-                    term.mode().contains(TermMode::ALT_SCREEN)
+                    (
+                        term.mode().contains(TermMode::ALT_SCREEN),
+                        term.mode().contains(TermMode::ALTERNATE_SCROLL),
+                    )
                 };
 
                 if !in_alt_screen {
@@ -1311,6 +1612,8 @@ where
                         state.render_cache.borrow_mut().needs_refresh = true;
                         shell.request_redraw();
                     }
+                } else if alternate_scroll && let Some(bytes) = alternate_scroll_sequence(delta) {
+                    shell.publish((self.on_input)(bytes));
                 }
             }
             Event::Keyboard(keyboard::Event::KeyPressed {
@@ -1378,7 +1681,10 @@ where
                         if let Some(text_content) =
                             clipboard.read(iced::advanced::clipboard::Kind::Standard)
                         {
-                            let bytes = text_content.into_bytes();
+                            let bytes = {
+                                let term = self.term.lock();
+                                paste_bytes_for_mode(&text_content, term.mode())
+                            };
                             if !bytes.is_empty() {
                                 shell.publish((self.on_input)(bytes));
                             }
@@ -1462,6 +1768,10 @@ fn key_to_escape_sequence(
     text: Option<&str>,
     app_cursor: bool,
 ) -> Option<Vec<u8>> {
+    if modifiers.control() && matches!(key, Key::Named(keyboard::key::Named::Space)) {
+        return Some(vec![0]);
+    }
+
     // Handle Ctrl+key combinations
     if modifiers.control()
         && let Key::Character(c) = key
@@ -1482,60 +1792,83 @@ fn key_to_escape_sequence(
 
     // Handle special keys
     match key {
-        Key::Named(named) => {
-            let seq = match named {
-                keyboard::key::Named::Enter => b"\r".to_vec(),
-                keyboard::key::Named::Backspace => vec![127],
-                keyboard::key::Named::Tab => {
-                    if modifiers.shift() {
-                        b"\x1b[Z".to_vec()
-                    } else {
-                        b"\t".to_vec()
-                    }
-                }
-                keyboard::key::Named::Escape => vec![27],
-                keyboard::key::Named::ArrowUp => cursor_key_sequence(b'A', modifiers, app_cursor),
-                keyboard::key::Named::ArrowDown => cursor_key_sequence(b'B', modifiers, app_cursor),
-                keyboard::key::Named::ArrowRight => {
-                    cursor_key_sequence(b'C', modifiers, app_cursor)
-                }
-                keyboard::key::Named::ArrowLeft => cursor_key_sequence(b'D', modifiers, app_cursor),
-                keyboard::key::Named::Home => b"\x1b[H".to_vec(),
-                keyboard::key::Named::End => b"\x1b[F".to_vec(),
-                keyboard::key::Named::PageUp => b"\x1b[5~".to_vec(),
-                keyboard::key::Named::PageDown => b"\x1b[6~".to_vec(),
-                keyboard::key::Named::Insert => b"\x1b[2~".to_vec(),
-                keyboard::key::Named::Delete => b"\x1b[3~".to_vec(),
-                keyboard::key::Named::F1 => b"\x1bOP".to_vec(),
-                keyboard::key::Named::F2 => b"\x1bOQ".to_vec(),
-                keyboard::key::Named::F3 => b"\x1bOR".to_vec(),
-                keyboard::key::Named::F4 => b"\x1bOS".to_vec(),
-                keyboard::key::Named::F5 => b"\x1b[15~".to_vec(),
-                keyboard::key::Named::F6 => b"\x1b[17~".to_vec(),
-                keyboard::key::Named::F7 => b"\x1b[18~".to_vec(),
-                keyboard::key::Named::F8 => b"\x1b[19~".to_vec(),
-                keyboard::key::Named::F9 => b"\x1b[20~".to_vec(),
-                keyboard::key::Named::F10 => b"\x1b[21~".to_vec(),
-                keyboard::key::Named::F11 => b"\x1b[23~".to_vec(),
-                keyboard::key::Named::F12 => b"\x1b[24~".to_vec(),
-                keyboard::key::Named::Space => b" ".to_vec(),
-                _ => return None,
-            };
-            Some(seq)
-        }
+        Key::Named(named) => named_key_sequence(*named, modifiers, app_cursor),
         Key::Character(_) => {
-            // Use the text representation for regular characters
-            text.map(|t| t.as_bytes().to_vec())
+            // Use the text representation for regular characters.
+            let bytes = text.map(|t| t.as_bytes().to_vec())?;
+            if modifiers.alt() && !bytes.starts_with(b"\x1b") {
+                let mut escaped = Vec::with_capacity(bytes.len() + 1);
+                escaped.push(0x1b);
+                escaped.extend_from_slice(&bytes);
+                Some(escaped)
+            } else {
+                Some(bytes)
+            }
         }
         _ => None,
     }
 }
 
+fn named_key_sequence(
+    named: keyboard::key::Named,
+    modifiers: Modifiers,
+    app_cursor: bool,
+) -> Option<Vec<u8>> {
+    let seq = match named {
+        keyboard::key::Named::Enter => {
+            if modifiers.alt() {
+                b"\x1b\r".to_vec()
+            } else {
+                b"\r".to_vec()
+            }
+        }
+        keyboard::key::Named::Backspace => {
+            if modifiers.alt() {
+                b"\x1b\x7f".to_vec()
+            } else {
+                vec![127]
+            }
+        }
+        keyboard::key::Named::Tab => {
+            if modifiers.shift() {
+                b"\x1b[Z".to_vec()
+            } else if modifiers.alt() {
+                b"\x1b\t".to_vec()
+            } else {
+                b"\t".to_vec()
+            }
+        }
+        keyboard::key::Named::Escape => vec![27],
+        keyboard::key::Named::ArrowUp => cursor_key_sequence(b'A', modifiers, app_cursor),
+        keyboard::key::Named::ArrowDown => cursor_key_sequence(b'B', modifiers, app_cursor),
+        keyboard::key::Named::ArrowRight => cursor_key_sequence(b'C', modifiers, app_cursor),
+        keyboard::key::Named::ArrowLeft => cursor_key_sequence(b'D', modifiers, app_cursor),
+        keyboard::key::Named::Home => csi_final_sequence(b'H', modifiers, b"\x1b[H"),
+        keyboard::key::Named::End => csi_final_sequence(b'F', modifiers, b"\x1b[F"),
+        keyboard::key::Named::PageUp => csi_tilde_sequence(5, modifiers),
+        keyboard::key::Named::PageDown => csi_tilde_sequence(6, modifiers),
+        keyboard::key::Named::Insert => csi_tilde_sequence(2, modifiers),
+        keyboard::key::Named::Delete => csi_tilde_sequence(3, modifiers),
+        keyboard::key::Named::F1 => function_key_sequence(b'P', None, modifiers),
+        keyboard::key::Named::F2 => function_key_sequence(b'Q', None, modifiers),
+        keyboard::key::Named::F3 => function_key_sequence(b'R', None, modifiers),
+        keyboard::key::Named::F4 => function_key_sequence(b'S', None, modifiers),
+        keyboard::key::Named::F5 => function_key_sequence(0, Some(15), modifiers),
+        keyboard::key::Named::F6 => function_key_sequence(0, Some(17), modifiers),
+        keyboard::key::Named::F7 => function_key_sequence(0, Some(18), modifiers),
+        keyboard::key::Named::F8 => function_key_sequence(0, Some(19), modifiers),
+        keyboard::key::Named::F9 => function_key_sequence(0, Some(20), modifiers),
+        keyboard::key::Named::F10 => function_key_sequence(0, Some(21), modifiers),
+        keyboard::key::Named::F11 => function_key_sequence(0, Some(23), modifiers),
+        keyboard::key::Named::F12 => function_key_sequence(0, Some(24), modifiers),
+        keyboard::key::Named::Space => b" ".to_vec(),
+        _ => return None,
+    };
+    Some(seq)
+}
+
 fn cursor_key_sequence(final_byte: u8, modifiers: Modifiers, app_cursor: bool) -> Vec<u8> {
-    let modifier_value = 1
-        + u8::from(modifiers.shift())
-        + (u8::from(modifiers.alt()) * 2)
-        + (u8::from(modifiers.control()) * 4);
+    let modifier_value = xterm_modifier_value(modifiers);
 
     if modifier_value > 1 {
         format!("\x1b[1;{}{}", modifier_value, final_byte as char).into_bytes()
@@ -1543,6 +1876,40 @@ fn cursor_key_sequence(final_byte: u8, modifiers: Modifiers, app_cursor: bool) -
         vec![0x1b, b'O', final_byte]
     } else {
         vec![0x1b, b'[', final_byte]
+    }
+}
+
+fn xterm_modifier_value(modifiers: Modifiers) -> u8 {
+    1 + u8::from(modifiers.shift())
+        + (u8::from(modifiers.alt()) * 2)
+        + (u8::from(modifiers.control()) * 4)
+}
+
+fn csi_final_sequence(final_byte: u8, modifiers: Modifiers, unmodified: &[u8]) -> Vec<u8> {
+    let modifier_value = xterm_modifier_value(modifiers);
+    if modifier_value > 1 {
+        format!("\x1b[1;{}{}", modifier_value, final_byte as char).into_bytes()
+    } else {
+        unmodified.to_vec()
+    }
+}
+
+fn csi_tilde_sequence(number: u8, modifiers: Modifiers) -> Vec<u8> {
+    let modifier_value = xterm_modifier_value(modifiers);
+    if modifier_value > 1 {
+        format!("\x1b[{};{}~", number, modifier_value).into_bytes()
+    } else {
+        format!("\x1b[{}~", number).into_bytes()
+    }
+}
+
+fn function_key_sequence(final_byte: u8, number: Option<u8>, modifiers: Modifiers) -> Vec<u8> {
+    let modifier_value = xterm_modifier_value(modifiers);
+    match (number, modifier_value > 1) {
+        (None, false) => vec![0x1b, b'O', final_byte],
+        (None, true) => format!("\x1b[1;{}{}", modifier_value, final_byte as char).into_bytes(),
+        (Some(number), false) => format!("\x1b[{}~", number).into_bytes(),
+        (Some(number), true) => format!("\x1b[{};{}~", number, modifier_value).into_bytes(),
     }
 }
 
@@ -1693,6 +2060,127 @@ mod tests {
                 true
             ),
             Some(b"\x1b[1;7C".to_vec())
+        );
+    }
+
+    #[test]
+    fn modified_navigation_and_function_keys_use_xterm_sequences() {
+        assert_eq!(
+            key_to_escape_sequence(
+                &Key::Named(keyboard::key::Named::Home),
+                Modifiers::CTRL,
+                None,
+                false
+            ),
+            Some(b"\x1b[1;5H".to_vec())
+        );
+        assert_eq!(
+            key_to_escape_sequence(
+                &Key::Named(keyboard::key::Named::PageDown),
+                Modifiers::SHIFT,
+                None,
+                false
+            ),
+            Some(b"\x1b[6;2~".to_vec())
+        );
+        assert_eq!(
+            key_to_escape_sequence(
+                &Key::Named(keyboard::key::Named::F2),
+                Modifiers::ALT,
+                None,
+                false
+            ),
+            Some(b"\x1b[1;3Q".to_vec())
+        );
+    }
+
+    #[test]
+    fn alt_character_prefixes_escape() {
+        assert_eq!(
+            key_to_escape_sequence(
+                &Key::Character("x".into()),
+                Modifiers::ALT,
+                Some("x"),
+                false
+            ),
+            Some(b"\x1bx".to_vec())
+        );
+    }
+
+    #[test]
+    fn ctrl_space_sends_nul() {
+        assert_eq!(
+            key_to_escape_sequence(
+                &Key::Named(keyboard::key::Named::Space),
+                Modifiers::CTRL,
+                None,
+                false
+            ),
+            Some(vec![0])
+        );
+    }
+
+    #[test]
+    fn sgr_mouse_reports_press_release_and_motion() {
+        let mode = TermMode::MOUSE_REPORT_CLICK | TermMode::SGR_MOUSE;
+        assert_eq!(
+            mouse_report_sequence(mode, 0, 4, 2, MouseReportKind::Press, Modifiers::NONE),
+            Some(b"\x1b[<0;5;3M".to_vec())
+        );
+        assert_eq!(
+            mouse_report_sequence(mode, 0, 4, 2, MouseReportKind::Release, Modifiers::NONE),
+            Some(b"\x1b[<0;5;3m".to_vec())
+        );
+        assert_eq!(
+            mouse_report_sequence(
+                TermMode::MOUSE_MOTION | TermMode::SGR_MOUSE,
+                35,
+                4,
+                2,
+                MouseReportKind::Motion,
+                Modifiers::NONE
+            ),
+            Some(b"\x1b[<35;5;3M".to_vec())
+        );
+    }
+
+    #[test]
+    fn legacy_mouse_report_uses_x10_coordinates() {
+        assert_eq!(
+            mouse_report_sequence(
+                TermMode::MOUSE_REPORT_CLICK,
+                0,
+                4,
+                2,
+                MouseReportKind::Press,
+                Modifiers::NONE
+            ),
+            Some(vec![0x1b, b'[', b'M', 32, 37, 35])
+        );
+    }
+
+    #[test]
+    fn alternate_scroll_maps_wheel_to_cursor_keys() {
+        assert_eq!(
+            alternate_scroll_sequence(&mouse::ScrollDelta::Lines { x: 0.0, y: 1.0 }),
+            Some(b"\x1b[A".to_vec())
+        );
+        assert_eq!(
+            alternate_scroll_sequence(&mouse::ScrollDelta::Pixels { x: 0.0, y: -30.0 }),
+            Some(b"\x1b[B".to_vec())
+        );
+    }
+
+    #[test]
+    fn focus_reports_follow_requested_mode() {
+        assert_eq!(focus_report_sequence(TermMode::default(), true), None);
+        assert_eq!(
+            focus_report_sequence(TermMode::FOCUS_IN_OUT, true),
+            Some(b"\x1b[I".to_vec())
+        );
+        assert_eq!(
+            focus_report_sequence(TermMode::FOCUS_IN_OUT, false),
+            Some(b"\x1b[O".to_vec())
         );
     }
 }

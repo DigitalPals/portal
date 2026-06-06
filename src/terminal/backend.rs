@@ -9,8 +9,8 @@ use std::time::{Duration, Instant};
 use alacritty_terminal::event::{Event, EventListener, WindowSize};
 use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::term::Config as TermConfig;
-use alacritty_terminal::term::Term;
 use alacritty_terminal::term::cell::Flags as CellFlags;
+use alacritty_terminal::term::{Term, TermMode};
 use alacritty_terminal::vte::ansi::{Color as AnsiColor, CursorShape, NamedColor, Processor, Rgb};
 use iced::Color;
 use parking_lot::Mutex;
@@ -21,6 +21,8 @@ use crate::theme::TerminalColors;
 
 const OSC_NOTIFICATION_BUFFER_LIMIT: usize = 16 * 1024;
 const COMMAND_FINISH_NOTIFICATION_THRESHOLD: Duration = Duration::from_secs(5);
+const BRACKETED_PASTE_START: &[u8] = b"\x1b[200~";
+const BRACKETED_PASTE_END: &[u8] = b"\x1b[201~";
 
 /// Events emitted by the terminal backend
 #[derive(Debug, Clone)]
@@ -46,6 +48,21 @@ pub enum TerminalEvent {
     Exit,
     /// Wakeup (content changed)
     Wakeup,
+}
+
+/// Convert clipboard text to terminal input bytes, honoring negotiated paste mode.
+pub fn paste_bytes_for_mode(text: &str, mode: &TermMode) -> Vec<u8> {
+    let bytes = text.as_bytes();
+    if !mode.contains(TermMode::BRACKETED_PASTE) {
+        return bytes.to_vec();
+    }
+
+    let mut pasted =
+        Vec::with_capacity(BRACKETED_PASTE_START.len() + bytes.len() + BRACKETED_PASTE_END.len());
+    pasted.extend_from_slice(BRACKETED_PASTE_START);
+    pasted.extend_from_slice(bytes);
+    pasted.extend_from_slice(BRACKETED_PASTE_END);
+    pasted
 }
 
 /// Event proxy that forwards alacritty events to our channel
@@ -597,6 +614,25 @@ mod tests {
                 Err(TryRecvError::Empty | TryRecvError::Disconnected) => return None,
             }
         }
+    }
+
+    #[test]
+    fn paste_bytes_are_raw_without_bracketed_paste_mode() {
+        assert_eq!(
+            paste_bytes_for_mode("one\ntwo", &TermMode::default()),
+            b"one\ntwo".to_vec()
+        );
+    }
+
+    #[test]
+    fn paste_bytes_are_wrapped_in_bracketed_paste_mode() {
+        assert_eq!(
+            paste_bytes_for_mode(
+                "one\ntwo",
+                &(TermMode::default() | TermMode::BRACKETED_PASTE)
+            ),
+            b"\x1b[200~one\ntwo\x1b[201~".to_vec()
+        );
     }
 
     #[test]

@@ -16,7 +16,7 @@ use crate::config::AuthMethod;
 use crate::message::{Message, SessionId, SessionMessage};
 use crate::platform;
 use crate::ssh::reconnect::ReconnectPolicy;
-use crate::terminal::backend::TerminalEvent;
+use crate::terminal::backend::{TerminalEvent, paste_bytes_for_mode};
 use crate::terminal::logger::SessionLogger;
 use crate::views::tabs::{TabAgentActivity, TabAgentKind, TabAgentStatus, TabType};
 use crate::views::terminal_view::TerminalSession;
@@ -383,6 +383,7 @@ fn start_terminal_session(
     if !start.resume_preview.is_empty() {
         terminal.replace_with_rendered_snapshot(&start.resume_preview);
     }
+    let terminal_size = terminal.size();
 
     // Store the active session
     portal.sessions.insert(
@@ -397,6 +398,7 @@ fn start_terminal_session(
             status_message: None,
             reconnect_attempts: 0,
             reconnect_next_attempt: None,
+            last_terminal_size: terminal_size,
             pending_output: VecDeque::new(),
             pending_output_bytes: 0,
             last_data_received_at: None,
@@ -1057,26 +1059,32 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
             let close_task = close_session_logger(portal, session_id);
             if let Some(session) = portal.sessions.get(session_id) {
                 if matches!(session.backend, SessionBackend::Proxy(_)) {
-                    if history::mark_entry_disconnected(
-                        &mut portal.config.history,
-                        session.history_entry_id,
-                    ) && let Err(e) = portal.config.history.save()
-                    {
-                        tracing::error!("Failed to save history config: {}", e);
+                    if clean {
+                        if history::mark_entry_disconnected(
+                            &mut portal.config.history,
+                            session.history_entry_id,
+                        ) && let Err(e) = portal.config.history.save()
+                        {
+                            tracing::error!("Failed to save history config: {}", e);
+                        }
+                        if let Some(session) = portal.sessions.get_mut(session_id) {
+                            session.status_message =
+                                Some(("Portal Hub session ended".to_string(), Instant::now()));
+                        }
+                        notify_terminal_finished(portal, session_id);
+                        finalize_disconnection(portal, session_id);
+                        return close_task;
                     }
+
                     if let Some(session) = portal.sessions.get_mut(session_id) {
                         session.status_message = Some((
-                            if clean {
-                                "Portal Hub session ended".to_string()
-                            } else {
-                                "Portal Hub session disconnected".to_string()
-                            },
+                            "Portal Hub session disconnected".to_string(),
                             Instant::now(),
                         ));
                     }
-                    if clean {
-                        notify_terminal_finished(portal, session_id);
-                        finalize_disconnection(portal, session_id);
+                    if portal.prefs.auto_reconnect {
+                        let reconnect_task = schedule_reconnect(portal, session_id);
+                        return Task::batch([close_task, reconnect_task]);
                     }
                     return close_task;
                 }
@@ -1144,7 +1152,7 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
             let use_proxy =
                 is_proxy && connection::should_use_portal_hub(&portal.prefs.portal_hub, &host);
             let host = Arc::new(host);
-            let terminal_size = portal.terminal_initial_size();
+            let terminal_size = session.last_terminal_size;
             if use_proxy {
                 return connection::proxy_connect_tasks(
                     portal.prefs.portal_hub.clone(),
@@ -1254,10 +1262,16 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
         },
         SessionMessage::ClipboardLoaded(session_id, contents) => {
             if let Some(text) = contents {
-                return handle_session(
-                    portal,
-                    SessionMessage::Input(session_id, text.into_bytes()),
-                );
+                let bytes = portal
+                    .sessions
+                    .get(session_id)
+                    .map(|session| {
+                        let term = session.terminal.term();
+                        let term = term.lock();
+                        paste_bytes_for_mode(&text, term.mode())
+                    })
+                    .unwrap_or_else(|| text.into_bytes());
+                return handle_session(portal, SessionMessage::Input(session_id, bytes));
             }
             Task::none()
         }
@@ -1309,6 +1323,7 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                 if !session.terminal.resize(cols, rows) {
                     return Task::none();
                 }
+                session.last_terminal_size = (cols, rows);
                 match &session.backend {
                     SessionBackend::Ssh(ssh_session) => {
                         let ssh_session = ssh_session.clone();
@@ -1408,6 +1423,7 @@ mod tests {
 
     fn create_test_session() -> ActiveSession {
         let (terminal, _rx) = TerminalSession::new("test-host");
+        let terminal_size = terminal.size();
         ActiveSession {
             backend: SessionBackend::Local(Arc::new(LocalSession::new_test_stub())),
             terminal,
@@ -1418,6 +1434,7 @@ mod tests {
             status_message: None,
             reconnect_attempts: 0,
             reconnect_next_attempt: None,
+            last_terminal_size: terminal_size,
             pending_output: VecDeque::new(),
             pending_output_bytes: 0,
             last_data_received_at: None,

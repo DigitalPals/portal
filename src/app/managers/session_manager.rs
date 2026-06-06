@@ -46,6 +46,8 @@ pub struct ActiveSession {
     pub reconnect_attempts: u32,
     /// Next scheduled reconnect attempt time (if any)
     pub reconnect_next_attempt: Option<Instant>,
+    /// Last exact terminal grid size emitted by the rendered terminal widget.
+    pub last_terminal_size: (u16, u16),
     /// Buffered output to process in small chunks for UI responsiveness
     pub pending_output: VecDeque<Vec<u8>>,
     /// Total bytes currently held in pending_output.
@@ -201,6 +203,7 @@ mod tests {
     /// Helper to create a test ActiveSession
     fn create_test_session(host_name: &str) -> ActiveSession {
         let (terminal, _rx) = TerminalSession::new(host_name);
+        let terminal_size = terminal.size();
         ActiveSession {
             backend: SessionBackend::Local(Arc::new(LocalSession::new_test_stub())),
             terminal,
@@ -211,6 +214,7 @@ mod tests {
             status_message: None,
             reconnect_attempts: 0,
             reconnect_next_attempt: None,
+            last_terminal_size: terminal_size,
             pending_output: VecDeque::new(),
             pending_output_bytes: 0,
             last_data_received_at: None,
