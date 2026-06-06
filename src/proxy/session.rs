@@ -528,6 +528,31 @@ pub async fn kill_session(settings: &PortalHubSettings, session_id: Uuid) -> Res
     .await
 }
 
+pub async fn check_terminal_websocket(settings: &PortalHubSettings) -> Result<(), String> {
+    let hub_url = settings.effective_web_url();
+    if hub_url.is_empty() {
+        return Err("Portal Hub host and web port are not configured".to_string());
+    }
+    let token = refreshed_portal_hub_access_token(&hub_url).await?;
+    let mut request = terminal_ws_url(&hub_url)?
+        .into_client_request()
+        .map_err(|error| format!("failed to build Portal Hub terminal request: {}", error))?;
+    request.headers_mut().insert(
+        tokio_tungstenite::tungstenite::http::header::AUTHORIZATION,
+        format!("Bearer {}", token)
+            .parse()
+            .map_err(|error| format!("invalid Portal Hub authorization header: {}", error))?,
+    );
+
+    let (mut stream, _) =
+        tokio::time::timeout(http::WEBSOCKET_CONNECT_TIMEOUT, connect_async(request))
+            .await
+            .map_err(|_| "timed out connecting to Portal Hub terminal".to_string())?
+            .map_err(|error| format!("failed to connect to Portal Hub terminal: {}", error))?;
+    let _ = stream.close(None).await;
+    Ok(())
+}
+
 pub async fn check_proxy_status(settings: &PortalHubSettings) -> Result<ProxyStatus, String> {
     let hub_url = settings.effective_web_url();
     let raw: RawProxyVersion = http::json(

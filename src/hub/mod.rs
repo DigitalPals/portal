@@ -1,4 +1,5 @@
 pub(crate) mod auth;
+pub(crate) mod diagnostics;
 pub(crate) mod http;
 pub(crate) mod sync;
 pub(crate) mod vault;

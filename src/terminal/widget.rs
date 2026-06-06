@@ -1368,7 +1368,6 @@ where
                     state.mouse_button = Some(code);
                     shell.publish((self.on_input)(bytes));
                 }
-                return;
             }
             Event::Mouse(mouse::Event::ButtonReleased(button))
                 if self.mouse_reporting_enabled() =>
@@ -1384,7 +1383,6 @@ where
                     shell.publish((self.on_input)(bytes));
                 }
                 state.mouse_button = None;
-                return;
             }
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
                 if cursor.is_over(bounds) =>
@@ -1621,13 +1619,12 @@ where
                 modifiers,
                 text,
                 ..
-            }) => {
-                if state.is_focused {
-                    // Handle copy/paste shortcuts:
-                    // - Ctrl+Insert (copy) / Shift+Insert (paste) - X11/Hyprland style
-                    // - Ctrl+Shift+C/V - Linux terminal style
-                    // - Super+C/V - macOS style (if not intercepted by WM)
-                    let is_copy_shortcut = self
+            }) if state.is_focused => {
+                // Handle copy/paste shortcuts:
+                // - Ctrl+Insert (copy) / Shift+Insert (paste) - X11/Hyprland style
+                // - Ctrl+Shift+C/V - Linux terminal style
+                // - Super+C/V - macOS style (if not intercepted by WM)
+                let is_copy_shortcut = self
                         .keybindings
                         .matches_action(AppAction::Copy, key, modifiers)
                         ||
@@ -1643,7 +1640,7 @@ where
                         || (modifiers.logo()
                             && matches!(&key, Key::Character(c) if c.as_str() == "c"));
 
-                    let is_paste_shortcut = self
+                let is_paste_shortcut = self
                         .keybindings
                         .matches_action(AppAction::Paste, key, modifiers)
                         ||
@@ -1659,86 +1656,84 @@ where
                         || (modifiers.logo()
                             && matches!(&key, Key::Character(c) if c.as_str() == "v"));
 
-                    let is_select_all = modifiers.logo()
-                        && matches!(&key, Key::Character(c) if c.as_str() == "a")
-                        || (modifiers.control()
-                            && modifiers.shift()
-                            && matches!(&key, Key::Character(c) if c.as_str().to_lowercase() == "a"));
+                let is_select_all = modifiers.logo()
+                    && matches!(&key, Key::Character(c) if c.as_str() == "a")
+                    || (modifiers.control()
+                        && modifiers.shift()
+                        && matches!(&key, Key::Character(c) if c.as_str().to_lowercase() == "a"));
 
-                    if is_copy_shortcut {
-                        // Copy selected text to clipboard
-                        if let Some(text_content) = self.selected_text()
-                            && !text_content.is_empty()
-                        {
-                            clipboard
-                                .write(iced::advanced::clipboard::Kind::Standard, text_content);
-                        }
-                        return;
-                    }
-
-                    if is_paste_shortcut {
-                        // Paste from clipboard
-                        if let Some(text_content) =
-                            clipboard.read(iced::advanced::clipboard::Kind::Standard)
-                        {
-                            let bytes = {
-                                let term = self.term.lock();
-                                paste_bytes_for_mode(&text_content, term.mode())
-                            };
-                            if !bytes.is_empty() {
-                                shell.publish((self.on_input)(bytes));
-                            }
-                        }
-                        return;
-                    }
-
-                    if is_select_all {
-                        self.select_visible_content();
-                        shell.request_redraw();
-                        return;
-                    }
-
-                    // Suppress all Super/Logo key combinations to prevent garbage being sent
-                    // Super key on Linux is often intercepted by window manager anyway
-                    if modifiers.logo() {
-                        return;
-                    }
-
-                    // Clear selection on any other key press (typing)
-                    let has_selection = {
-                        let term = self.term.lock();
-                        term.selection.is_some()
-                    };
-                    if !modifiers.control() && has_selection {
-                        // Don't clear on modifier-only or navigation keys
-                        let is_nav_key = matches!(
-                            key,
-                            Key::Named(
-                                keyboard::key::Named::Shift
-                                    | keyboard::key::Named::Control
-                                    | keyboard::key::Named::Alt
-                                    | keyboard::key::Named::Super
-                            )
-                        );
-                        if !is_nav_key {
-                            self.clear_selection();
-                        }
-                    }
-
-                    let app_cursor = {
-                        let term = self.term.lock();
-                        term.mode().contains(TermMode::APP_CURSOR)
-                    };
-
-                    if let Some(bytes) =
-                        key_to_escape_sequence(key, *modifiers, text.as_deref(), app_cursor)
+                if is_copy_shortcut {
+                    // Copy selected text to clipboard
+                    if let Some(text_content) = self.selected_text()
+                        && !text_content.is_empty()
                     {
-                        shell.publish((self.on_input)(bytes));
-
-                        // Scroll back to bottom when user types (after scrolling up in history)
-                        let mut term = self.term.lock();
-                        term.scroll_display(Scroll::Bottom);
+                        clipboard.write(iced::advanced::clipboard::Kind::Standard, text_content);
                     }
+                    return;
+                }
+
+                if is_paste_shortcut {
+                    // Paste from clipboard
+                    if let Some(text_content) =
+                        clipboard.read(iced::advanced::clipboard::Kind::Standard)
+                    {
+                        let bytes = {
+                            let term = self.term.lock();
+                            paste_bytes_for_mode(&text_content, term.mode())
+                        };
+                        if !bytes.is_empty() {
+                            shell.publish((self.on_input)(bytes));
+                        }
+                    }
+                    return;
+                }
+
+                if is_select_all {
+                    self.select_visible_content();
+                    shell.request_redraw();
+                    return;
+                }
+
+                // Suppress all Super/Logo key combinations to prevent garbage being sent
+                // Super key on Linux is often intercepted by window manager anyway
+                if modifiers.logo() {
+                    return;
+                }
+
+                // Clear selection on any other key press (typing)
+                let has_selection = {
+                    let term = self.term.lock();
+                    term.selection.is_some()
+                };
+                if !modifiers.control() && has_selection {
+                    // Don't clear on modifier-only or navigation keys
+                    let is_nav_key = matches!(
+                        key,
+                        Key::Named(
+                            keyboard::key::Named::Shift
+                                | keyboard::key::Named::Control
+                                | keyboard::key::Named::Alt
+                                | keyboard::key::Named::Super
+                        )
+                    );
+                    if !is_nav_key {
+                        self.clear_selection();
+                    }
+                }
+
+                let app_cursor = {
+                    let term = self.term.lock();
+                    term.mode().contains(TermMode::APP_CURSOR)
+                };
+
+                if let Some(bytes) =
+                    key_to_escape_sequence(key, *modifiers, text.as_deref(), app_cursor)
+                {
+                    shell.publish((self.on_input)(bytes));
+
+                    // Scroll back to bottom when user types (after scrolling up in history)
+                    let mut term = self.term.lock();
+                    term.scroll_display(Scroll::Bottom);
                 }
             }
             _ => {}

@@ -970,87 +970,79 @@ fn handle_sftp_keyboard(
                 PaneId::Right => PaneId::Left,
             };
         }
-        Key::Named(keyboard::key::Named::ArrowUp) => {
-            if visible_count > 0 {
-                // Find current position in visible entries
-                let current_visible_pos = pane_state
-                    .last_selected_index
-                    .and_then(|idx| visible.iter().position(|(i, _)| *i == idx))
-                    .unwrap_or(0);
-                let new_visible_pos = current_visible_pos.saturating_sub(1);
-                let new_idx = visible[new_visible_pos].0;
+        Key::Named(keyboard::key::Named::ArrowUp) if visible_count > 0 => {
+            // Find current position in visible entries
+            let current_visible_pos = pane_state
+                .last_selected_index
+                .and_then(|idx| visible.iter().position(|(i, _)| *i == idx))
+                .unwrap_or(0);
+            let new_visible_pos = current_visible_pos.saturating_sub(1);
+            let new_idx = visible[new_visible_pos].0;
 
-                pane_state.selected_indices.clear();
-                pane_state.selected_indices.insert(new_idx);
-                pane_state.last_selected_index = Some(new_idx);
+            pane_state.selected_indices.clear();
+            pane_state.selected_indices.insert(new_idx);
+            pane_state.last_selected_index = Some(new_idx);
 
-                // Scroll to keep selection visible
-                let scroll_offset = new_visible_pos as f32 * ROW_HEIGHT;
-                return iced::widget::operation::scroll_to(
-                    pane_state.scrollable_id.clone(),
-                    scrollable::AbsoluteOffset {
-                        x: 0.0,
-                        y: scroll_offset,
-                    },
-                );
-            }
+            // Scroll to keep selection visible
+            let scroll_offset = new_visible_pos as f32 * ROW_HEIGHT;
+            return iced::widget::operation::scroll_to(
+                pane_state.scrollable_id.clone(),
+                scrollable::AbsoluteOffset {
+                    x: 0.0,
+                    y: scroll_offset,
+                },
+            );
         }
-        Key::Named(keyboard::key::Named::ArrowDown) => {
-            if visible_count > 0 {
-                // Find current position in visible entries
-                let current_visible_pos = pane_state
-                    .last_selected_index
-                    .and_then(|idx| visible.iter().position(|(i, _)| *i == idx))
-                    .unwrap_or(0);
-                let new_visible_pos = (current_visible_pos + 1).min(visible_count - 1);
-                let new_idx = visible[new_visible_pos].0;
+        Key::Named(keyboard::key::Named::ArrowDown) if visible_count > 0 => {
+            // Find current position in visible entries
+            let current_visible_pos = pane_state
+                .last_selected_index
+                .and_then(|idx| visible.iter().position(|(i, _)| *i == idx))
+                .unwrap_or(0);
+            let new_visible_pos = (current_visible_pos + 1).min(visible_count - 1);
+            let new_idx = visible[new_visible_pos].0;
 
-                pane_state.selected_indices.clear();
-                pane_state.selected_indices.insert(new_idx);
-                pane_state.last_selected_index = Some(new_idx);
+            pane_state.selected_indices.clear();
+            pane_state.selected_indices.insert(new_idx);
+            pane_state.last_selected_index = Some(new_idx);
 
-                // Scroll to keep selection visible
-                let scroll_offset = new_visible_pos as f32 * ROW_HEIGHT;
-                return iced::widget::operation::scroll_to(
-                    pane_state.scrollable_id.clone(),
-                    scrollable::AbsoluteOffset {
-                        x: 0.0,
-                        y: scroll_offset,
-                    },
-                );
-            }
+            // Scroll to keep selection visible
+            let scroll_offset = new_visible_pos as f32 * ROW_HEIGHT;
+            return iced::widget::operation::scroll_to(
+                pane_state.scrollable_id.clone(),
+                scrollable::AbsoluteOffset {
+                    x: 0.0,
+                    y: scroll_offset,
+                },
+            );
         }
-        Key::Named(keyboard::key::Named::Home) => {
-            if visible_count > 0 {
-                let new_idx = visible[0].0;
-                pane_state.selected_indices.clear();
-                pane_state.selected_indices.insert(new_idx);
-                pane_state.last_selected_index = Some(new_idx);
+        Key::Named(keyboard::key::Named::Home) if visible_count > 0 => {
+            let new_idx = visible[0].0;
+            pane_state.selected_indices.clear();
+            pane_state.selected_indices.insert(new_idx);
+            pane_state.last_selected_index = Some(new_idx);
 
-                // Scroll to top
-                return iced::widget::operation::scroll_to(
-                    pane_state.scrollable_id.clone(),
-                    scrollable::AbsoluteOffset { x: 0.0, y: 0.0 },
-                );
-            }
+            // Scroll to top
+            return iced::widget::operation::scroll_to(
+                pane_state.scrollable_id.clone(),
+                scrollable::AbsoluteOffset { x: 0.0, y: 0.0 },
+            );
         }
-        Key::Named(keyboard::key::Named::End) => {
-            if visible_count > 0 {
-                let new_idx = visible[visible_count - 1].0;
-                pane_state.selected_indices.clear();
-                pane_state.selected_indices.insert(new_idx);
-                pane_state.last_selected_index = Some(new_idx);
+        Key::Named(keyboard::key::Named::End) if visible_count > 0 => {
+            let new_idx = visible[visible_count - 1].0;
+            pane_state.selected_indices.clear();
+            pane_state.selected_indices.insert(new_idx);
+            pane_state.last_selected_index = Some(new_idx);
 
-                // Scroll to bottom
-                let scroll_offset = (visible_count - 1) as f32 * ROW_HEIGHT;
-                return iced::widget::operation::scroll_to(
-                    pane_state.scrollable_id.clone(),
-                    scrollable::AbsoluteOffset {
-                        x: 0.0,
-                        y: scroll_offset,
-                    },
-                );
-            }
+            // Scroll to bottom
+            let scroll_offset = (visible_count - 1) as f32 * ROW_HEIGHT;
+            return iced::widget::operation::scroll_to(
+                pane_state.scrollable_id.clone(),
+                scrollable::AbsoluteOffset {
+                    x: 0.0,
+                    y: scroll_offset,
+                },
+            );
         }
         Key::Named(keyboard::key::Named::ArrowLeft) => {
             // Need to re-borrow state since we're not inside the match

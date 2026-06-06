@@ -12,6 +12,7 @@ use crate::config::settings::{
     VncSettings,
 };
 use crate::fonts::TerminalFont;
+use crate::hub::diagnostics::{DiagnosticStatus, PortalHubDiagnosticsReport};
 use crate::hub::sync::PortalHubSyncService;
 use crate::icons::{self, icon_with_color};
 use crate::message::{Message, SettingsTab, UiMessage};
@@ -42,6 +43,8 @@ pub struct SettingsPageContext {
     pub portal_hub_status: Option<ProxyStatus>,
     pub portal_hub_status_error: Option<String>,
     pub portal_hub_status_loading: bool,
+    pub portal_hub_diagnostics_loading: bool,
+    pub portal_hub_diagnostics: Option<PortalHubDiagnosticsReport>,
     pub portal_hub_auth_user: Option<String>,
     pub portal_hub_sync_loading: bool,
     pub portal_hub_sync_error: Option<String>,
@@ -962,31 +965,37 @@ fn portal_hub_sections(
     fonts: ScaledFonts,
 ) -> Vec<Element<'static, Message>> {
     if context.portal_hub_auth_user.is_none() {
-        return vec![settings_section(
+        return vec![
+            settings_section(
+                "Portal Hub",
+                theme,
+                fonts,
+                vec![portal_hub_intro_setting(theme, fonts)],
+            ),
+            portal_hub_diagnostics_section(context, theme, fonts),
+        ];
+    }
+
+    vec![
+        settings_section(
             "Portal Hub",
             theme,
             fonts,
-            vec![portal_hub_intro_setting(theme, fonts)],
-        )];
-    }
-
-    vec![settings_section(
-        "Portal Hub",
-        theme,
-        fonts,
-        vec![
-            portal_hub_account_summary(context, theme, fonts),
-            portal_hub_service_toggles(&context.portal_hub, theme, fonts),
-            portal_hub_sync_status_setting(context, theme, fonts),
-            portal_hub_status_setting(
-                context.portal_hub_status.clone(),
-                context.portal_hub_status_error.clone(),
-                context.portal_hub_status_loading,
-                theme,
-                fonts,
-            ),
-        ],
-    )]
+            vec![
+                portal_hub_account_summary(context, theme, fonts),
+                portal_hub_service_toggles(&context.portal_hub, theme, fonts),
+                portal_hub_sync_status_setting(context, theme, fonts),
+                portal_hub_status_setting(
+                    context.portal_hub_status.clone(),
+                    context.portal_hub_status_error.clone(),
+                    context.portal_hub_status_loading,
+                    theme,
+                    fonts,
+                ),
+            ],
+        ),
+        portal_hub_diagnostics_section(context, theme, fonts),
+    ]
 }
 
 fn portal_hub_intro_setting(theme: Theme, fonts: ScaledFonts) -> Element<'static, Message> {
@@ -1336,6 +1345,126 @@ fn portal_hub_sync_status_setting(
     .align_y(Alignment::Center);
 
     field("Sync", status, control, theme, fonts)
+}
+
+fn portal_hub_diagnostics_section(
+    context: &SettingsPageContext,
+    theme: Theme,
+    fonts: ScaledFonts,
+) -> Element<'static, Message> {
+    let mut items = vec![portal_hub_diagnostics_header(context, theme, fonts)];
+    if let Some(report) = &context.portal_hub_diagnostics {
+        items.push(portal_hub_diagnostics_summary(report, theme, fonts));
+        for check in &report.checks {
+            items.push(portal_hub_diagnostic_row(
+                check.name.clone(),
+                check.status,
+                check.detail.clone(),
+                theme,
+                fonts,
+            ));
+        }
+    }
+
+    settings_section("Portal Hub Doctor", theme, fonts, items)
+}
+
+fn portal_hub_diagnostics_header(
+    context: &SettingsPageContext,
+    theme: Theme,
+    fonts: ScaledFonts,
+) -> Element<'static, Message> {
+    let button_label = if context.portal_hub_diagnostics_loading {
+        "Running"
+    } else {
+        "Run Doctor"
+    };
+    let run_button = small_settings_button(button_label, theme, fonts).on_press_maybe(
+        (!context.portal_hub_diagnostics_loading)
+            .then_some(Message::Ui(UiMessage::PortalHubRunDiagnostics)),
+    );
+    let run_button = help_tooltip(
+        run_button,
+        "Check Portal Hub configuration, auth, sync, sessions, terminal proxy, and vault state",
+        theme,
+        fonts,
+        iced::widget::tooltip::Position::Top,
+    );
+
+    let status = if context.portal_hub_diagnostics_loading {
+        "Running checks...".to_string()
+    } else if let Some(report) = &context.portal_hub_diagnostics {
+        report.summary()
+    } else {
+        "Run diagnostics when Portal Hub setup, sync, vault, or session resume behaves unexpectedly."
+            .to_string()
+    };
+
+    field("Diagnostics", status, run_button, theme, fonts)
+}
+
+fn portal_hub_diagnostics_summary(
+    report: &PortalHubDiagnosticsReport,
+    theme: Theme,
+    fonts: ScaledFonts,
+) -> Element<'static, Message> {
+    let checked_at = report
+        .checked_at
+        .with_timezone(&chrono::Local)
+        .format("%H:%M:%S")
+        .to_string();
+    let summary = format!(
+        "{} pass, {} review, {} fail - checked {}",
+        report.pass_count(),
+        report.warning_count(),
+        report.fail_count(),
+        checked_at
+    );
+    let tone = if report.fail_count() > 0 {
+        BadgeTone::Danger
+    } else if report.warning_count() > 0 {
+        BadgeTone::Warning
+    } else {
+        BadgeTone::Success
+    };
+
+    row![
+        status_badge(report.summary(), tone, theme, fonts),
+        text(summary).size(fonts.label).color(theme.text_muted),
+    ]
+    .spacing(10)
+    .align_y(Alignment::Center)
+    .into()
+}
+
+fn portal_hub_diagnostic_row(
+    name: String,
+    status: DiagnosticStatus,
+    detail: String,
+    theme: Theme,
+    fonts: ScaledFonts,
+) -> Element<'static, Message> {
+    let tone = match status {
+        DiagnosticStatus::Pass => BadgeTone::Success,
+        DiagnosticStatus::Warning => BadgeTone::Warning,
+        DiagnosticStatus::Fail => BadgeTone::Danger,
+    };
+
+    row![
+        status_badge(status.label(), tone, theme, fonts),
+        column![
+            text(name).size(fonts.body).color(theme.text_primary),
+            text(detail)
+                .size(fonts.label)
+                .color(theme.text_muted)
+                .wrapping(text::Wrapping::Word),
+        ]
+        .spacing(3)
+        .width(Fill),
+    ]
+    .spacing(12)
+    .align_y(Alignment::Start)
+    .into()
 }
 
 fn small_settings_button<'a>(

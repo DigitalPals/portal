@@ -733,6 +733,10 @@ pub enum UiMessage {
     PortalHubCheckStatus,
     /// Portal Hub version and compatibility check result
     PortalHubStatusLoaded(Result<ProxyStatus, String>),
+    /// Run Portal Hub diagnostics.
+    PortalHubRunDiagnostics,
+    /// Portal Hub diagnostics result.
+    PortalHubDiagnosticsDone(crate::hub::diagnostics::PortalHubDiagnosticsReport),
     /// Authenticate Portal with Portal Hub through browser OAuth.
     PortalHubAuthenticate,
     /// Portal Hub browser OAuth result.

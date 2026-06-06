@@ -865,10 +865,8 @@ impl VncSession {
                     stats.lock().record_cursor();
                     framebuffer.lock().set_remote_cursor_seen();
                 }
-                VncEvent::Text(text) => {
-                    if !text.is_empty() {
-                        let _ = event_tx.send(VncSessionEvent::ClipboardText(text)).await;
-                    }
+                VncEvent::Text(text) if !text.is_empty() => {
+                    let _ = event_tx.send(VncSessionEvent::ClipboardText(text)).await;
                 }
                 _ => {}
             }

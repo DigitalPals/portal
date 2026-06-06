@@ -105,6 +105,8 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
         | UiMessage::PortalHubOpenGithub
         | UiMessage::PortalHubCheckStatus
         | UiMessage::PortalHubStatusLoaded(_)
+        | UiMessage::PortalHubRunDiagnostics
+        | UiMessage::PortalHubDiagnosticsDone(_)
         | UiMessage::PortalHubAuthenticate
         | UiMessage::PortalHubAuthenticated(_)
         | UiMessage::PortalHubLogout

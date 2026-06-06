@@ -15,6 +15,7 @@ const HOSTS: &str = "hosts";
 const SETTINGS: &str = "settings";
 const SNIPPETS: &str = "snippets";
 const VAULT: &str = "vault";
+const SYNC_EVENT_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PortalHubSyncService {
@@ -585,6 +586,18 @@ pub fn sync_revision_event_stream(
         }
     }
     .boxed()
+}
+
+pub async fn check_sync_revision_events(settings: &PortalHubSettings) -> Result<(), String> {
+    let hub_url = web_url(settings)?;
+    let response = tokio::time::timeout(
+        SYNC_EVENT_CONNECT_TIMEOUT,
+        connect_sync_revision_events(&hub_url),
+    )
+    .await
+    .map_err(|_| "timed out connecting to Portal Hub sync events".to_string())??;
+    drop(response);
+    Ok(())
 }
 
 async fn connect_sync_revision_events(hub_url: &str) -> Result<reqwest::Response, String> {

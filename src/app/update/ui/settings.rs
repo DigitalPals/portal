@@ -262,6 +262,7 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
                 portal.prefs.portal_hub.web_url = portal.prefs.portal_hub.derived_web_url();
                 portal.ui.portal_hub_auth_user = None;
                 portal.ui.portal_hub_auth_error = None;
+                clear_portal_hub_status(portal);
                 save_settings_and_queue_sync(portal);
             }
         }
@@ -295,6 +296,7 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
             portal.prefs.portal_hub.apply_web_url_input(url);
             portal.ui.portal_hub_auth_user = None;
             portal.ui.portal_hub_auth_error = None;
+            clear_portal_hub_status(portal);
             save_settings_and_queue_sync(portal);
         }
         UiMessage::PortalHubCheckStatus => {
@@ -332,6 +334,29 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
                     portal.ui.portal_hub_status_error = Some(error);
                 }
             }
+        }
+        UiMessage::PortalHubRunDiagnostics => {
+            portal.ui.portal_hub_diagnostics_loading = true;
+            portal.ui.portal_hub_diagnostics = None;
+            let settings = portal.prefs.portal_hub.clone();
+            return Task::perform(
+                async move { crate::hub::diagnostics::run_portal_hub_diagnostics(settings).await },
+                |report| Message::Ui(UiMessage::PortalHubDiagnosticsDone(report)),
+            );
+        }
+        UiMessage::PortalHubDiagnosticsDone(report) => {
+            portal.ui.portal_hub_diagnostics_loading = false;
+            let summary = report.summary();
+            if report.fail_count() > 0 {
+                portal
+                    .toast_manager
+                    .push(Toast::error(format!("Portal Hub Doctor: {}", summary)));
+            } else {
+                portal
+                    .toast_manager
+                    .push(Toast::success(format!("Portal Hub Doctor: {}", summary)));
+            }
+            portal.ui.portal_hub_diagnostics = Some(report);
         }
         UiMessage::PortalHubAuthenticate => {
             if portal.prefs.portal_hub.web_url.trim().is_empty() {
@@ -803,6 +828,8 @@ fn clear_portal_hub_status(portal: &mut Portal) {
     portal.ui.portal_hub_status = None;
     portal.ui.portal_hub_status_error = None;
     portal.ui.portal_hub_status_loading = false;
+    portal.ui.portal_hub_diagnostics = None;
+    portal.ui.portal_hub_diagnostics_loading = false;
 }
 
 fn apply_portal_hub_discovery(

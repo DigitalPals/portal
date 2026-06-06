@@ -123,24 +123,24 @@ where
         let bounds = layout.bounds();
 
         match event {
-            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
-                if cursor.is_over(bounds) {
-                    state.is_dragging = true;
-                    if let Some(ref on_drag_start) = self.on_drag_start
-                        && let Some(pos) = cursor.position()
-                    {
-                        shell.publish(on_drag_start(pos.x));
-                        shell.capture_event();
-                    }
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
+                if cursor.is_over(bounds) =>
+            {
+                state.is_dragging = true;
+                if let Some(ref on_drag_start) = self.on_drag_start
+                    && let Some(pos) = cursor.position()
+                {
+                    shell.publish(on_drag_start(pos.x));
+                    shell.capture_event();
                 }
             }
-            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
-                if state.is_dragging {
-                    state.is_dragging = false;
-                    if let Some(ref message) = self.on_drag_end {
-                        shell.publish(message.clone());
-                        shell.capture_event();
-                    }
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
+                if state.is_dragging =>
+            {
+                state.is_dragging = false;
+                if let Some(ref message) = self.on_drag_end {
+                    shell.publish(message.clone());
+                    shell.capture_event();
                 }
             }
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {

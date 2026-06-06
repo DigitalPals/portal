@@ -36,7 +36,7 @@ dev)
 check)
   echo "Checking Portal..."
   run_cargo check
-  run_cargo clippy
+  run_cargo clippy --all-targets -- -D warnings
   ;;
 *)
   echo "Usage: $0 {build|run|dev|check}"
