@@ -1,7 +1,7 @@
 //! Dialog for choosing between existing sessions and a new host session.
 
 use chrono::{DateTime, Utc};
-use iced::widget::{Column, Row, Space, button, column, container, row, scrollable, text};
+use iced::widget::{Column, Row, Space, button, column, container, row, text};
 use iced::{Alignment, Element, Fill, Length};
 use uuid::Uuid;
 
@@ -13,10 +13,11 @@ use crate::theme::{BORDER_RADIUS, GRID_SPACING, ScaledFonts, Theme};
 use crate::views::proxy_sessions::{SESSION_CARD_WIDTH, terminal_thumbnail};
 use crate::views::terminal_view::TerminalSession;
 
-use super::common::{dialog_backdrop, primary_button_style, secondary_button_style};
+use super::common::{dialog_backdrop, secondary_button_style};
 
 const SESSION_CHOICE_COLUMNS: usize = 2;
 const DIALOG_HORIZONTAL_PADDING: f32 = 24.0;
+const NEW_SESSION_THUMBNAIL_HEIGHT: f32 = 150.0;
 const SESSION_CHOICE_DIALOG_WIDTH: f32 = SESSION_CARD_WIDTH * SESSION_CHOICE_COLUMNS as f32
     + GRID_SPACING * (SESSION_CHOICE_COLUMNS as f32 - 1.0)
     + DIALOG_HORIZONTAL_PADDING * 2.0;
@@ -117,63 +118,57 @@ pub fn session_choice_dialog_view(
         .size(fonts.body)
         .color(theme.text_secondary);
 
-    let new_button = button(
-        row![
-            icon_with_color(icons::ui::PLUS, 16, theme.text_on_accent()),
-            text("Create New Session").size(fonts.button_small),
-        ]
-        .spacing(8)
-        .align_y(Alignment::Center),
-    )
-    .padding([10, 14])
-    .width(Length::Fill)
-    .style(primary_button_style(theme))
-    .on_press(Message::Host(HostMessage::CreateNewSession(state.host_id)));
-
     let mut rows: Vec<Element<'static, Message>> = Vec::new();
+    let mut new_session_card = Some(new_session_card(state.host_id, theme, fonts));
 
     if !state.local_sessions.is_empty() {
         rows.push(section_label("Open Portal tabs", theme, fonts));
-        rows.push(session_grid(
-            state
-                .local_sessions
-                .iter()
-                .map(|session| {
-                    session_card(
-                        icons::ui::TERMINAL,
-                        session.title.clone(),
-                        "Open tab".to_string(),
-                        session.thumbnail.clone(),
-                        Message::Host(HostMessage::OpenExistingSession(session.session_id)),
-                        theme,
-                        fonts,
-                    )
-                })
-                .collect(),
-        ));
+        let mut cards = state
+            .local_sessions
+            .iter()
+            .map(|session| {
+                session_card(
+                    icons::ui::TERMINAL,
+                    session.title.clone(),
+                    "Open tab".to_string(),
+                    session.thumbnail.clone(),
+                    Message::Host(HostMessage::OpenExistingSession(session.session_id)),
+                    theme,
+                    fonts,
+                )
+            })
+            .collect::<Vec<_>>();
+        if state.proxy_sessions.is_empty()
+            && let Some(card) = new_session_card.take()
+        {
+            cards.push(card);
+        }
+        rows.push(session_grid(cards));
     }
 
     if !state.proxy_sessions.is_empty() {
         rows.push(section_label("Detached Portal Hub sessions", theme, fonts));
-        rows.push(session_grid(
-            state
-                .proxy_sessions
-                .iter()
-                .map(|choice| {
-                    session_card(
-                        icons::ui::SERVER,
-                        choice.display_name.clone(),
-                        proxy_detail(&choice.session),
-                        choice.thumbnail.clone(),
-                        Message::Host(HostMessage::OpenDetachedProxySession(
-                            choice.session.session_id,
-                        )),
-                        theme,
-                        fonts,
-                    )
-                })
-                .collect(),
-        ));
+        let mut cards = state
+            .proxy_sessions
+            .iter()
+            .map(|choice| {
+                session_card(
+                    icons::ui::SERVER,
+                    choice.display_name.clone(),
+                    proxy_detail(&choice.session),
+                    choice.thumbnail.clone(),
+                    Message::Host(HostMessage::OpenDetachedProxySession(
+                        choice.session.session_id,
+                    )),
+                    theme,
+                    fonts,
+                )
+            })
+            .collect::<Vec<_>>();
+        if let Some(card) = new_session_card.take() {
+            cards.push(card);
+        }
+        rows.push(session_grid(cards));
     }
 
     if state.proxy_loading {
@@ -188,9 +183,11 @@ pub fn session_choice_dialog_view(
         rows.push(status_row("No existing sessions found", theme, fonts));
     }
 
-    let session_list = scrollable(column(rows).spacing(8))
-        .height(Length::Fixed(260.0))
-        .width(Length::Fill);
+    if let Some(card) = new_session_card {
+        rows.push(session_grid(vec![card]));
+    }
+
+    let session_list = column(rows).spacing(8).width(Length::Fill);
 
     let cancel_button = button(
         text("Cancel")
@@ -205,8 +202,6 @@ pub fn session_choice_dialog_view(
         title,
         subtitle,
         Space::new().height(12),
-        new_button,
-        Space::new().height(8),
         session_list,
         Space::new().height(12),
         row![Space::new().width(Length::Fill), cancel_button].spacing(8),
@@ -256,6 +251,39 @@ fn error_row(error: String, _theme: Theme, fonts: ScaledFonts) -> Element<'stati
             },
             ..Default::default()
         })
+        .into()
+}
+
+fn new_session_card(host_id: Uuid, theme: Theme, fonts: ScaledFonts) -> Element<'static, Message> {
+    let empty_terminal = container(
+        column![
+            icon_with_color(icons::ui::PLUS, 44, theme.text_secondary),
+            text("New session")
+                .size(fonts.body)
+                .color(theme.text_secondary),
+        ]
+        .spacing(10)
+        .align_x(Alignment::Center),
+    )
+    .height(Length::Fixed(NEW_SESSION_THUMBNAIL_HEIGHT))
+    .width(Fill)
+    .align_x(Alignment::Center)
+    .align_y(Alignment::Center)
+    .style(move |_theme| container::Style {
+        background: Some(theme.terminal.background.into()),
+        border: iced::Border {
+            color: theme.border,
+            width: 1.0,
+            radius: BORDER_RADIUS.into(),
+        },
+        ..Default::default()
+    });
+
+    button(container(empty_terminal).padding(12).width(Fill))
+        .padding(0)
+        .width(Length::Fixed(SESSION_CARD_WIDTH))
+        .style(secondary_button_style(theme))
+        .on_press(Message::Host(HostMessage::CreateNewSession(host_id)))
         .into()
 }
 

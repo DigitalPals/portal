@@ -5,7 +5,7 @@ pub(crate) mod settings;
 
 use iced::Task;
 
-use crate::app::{Portal, SIDEBAR_AUTO_COLLAPSE_THRESHOLD, View};
+use crate::app::{Portal, SIDEBAR_AUTO_COLLAPSE_THRESHOLD, SidebarState, View};
 use crate::message::{
     CommandAction, HostMessage, Message, ProxySessionsMessage, SessionMessage, SftpMessage,
     SidebarMenuItem, SnippetMessage, UiMessage,
@@ -126,8 +126,12 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
         }
         UiMessage::WindowResized(size) => {
             portal.ui.window_size = size;
-            if !portal.ui.sidebar_manually_set {
-                use crate::app::SidebarState;
+            if should_apply_responsive_sidebar_state(
+                portal.ui.sidebar_manually_set,
+                &portal.ui.active_view,
+                portal.ui.sidebar_state,
+                portal.ui.sidebar_state_before_session,
+            ) {
                 portal.ui.sidebar_state = if size.width < SIDEBAR_AUTO_COLLAPSE_THRESHOLD {
                     SidebarState::IconsOnly
                 } else {
@@ -187,6 +191,23 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
             keyboard::handle_key_released(portal, key, modifiers)
         }
     }
+}
+
+fn should_apply_responsive_sidebar_state(
+    sidebar_manually_set: bool,
+    active_view: &View,
+    sidebar_state: SidebarState,
+    sidebar_state_before_session: Option<SidebarState>,
+) -> bool {
+    !sidebar_manually_set
+        && !matches!(
+            (active_view, sidebar_state, sidebar_state_before_session),
+            (
+                View::Terminal(_) | View::VncViewer(_),
+                SidebarState::Hidden,
+                Some(_)
+            )
+        )
 }
 
 pub(super) fn reconcile_active_terminal_size(portal: &Portal) -> Task<Message> {
@@ -284,5 +305,41 @@ fn handle_sidebar_item_select(portal: &mut Portal, item: SidebarMenuItem) -> Tas
             portal.dialogs.open_about();
             Task::none()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use uuid::Uuid;
+
+    #[test]
+    fn responsive_resize_preserves_auto_hidden_terminal_sidebar() {
+        assert!(!should_apply_responsive_sidebar_state(
+            false,
+            &View::Terminal(Uuid::new_v4()),
+            SidebarState::Hidden,
+            Some(SidebarState::Expanded)
+        ));
+    }
+
+    #[test]
+    fn responsive_resize_still_updates_regular_views() {
+        assert!(should_apply_responsive_sidebar_state(
+            false,
+            &View::HostGrid,
+            SidebarState::Expanded,
+            None
+        ));
+    }
+
+    #[test]
+    fn responsive_resize_respects_manual_sidebar_choice() {
+        assert!(!should_apply_responsive_sidebar_state(
+            true,
+            &View::HostGrid,
+            SidebarState::Expanded,
+            None
+        ));
     }
 }
