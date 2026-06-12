@@ -2,6 +2,8 @@
 use directories::ProjectDirs;
 use std::path::PathBuf;
 
+use crate::fs_utils::ensure_private_dir_no_follow;
+
 /// Get the configuration directory path
 /// Creates the directory if it doesn't exist
 pub fn config_dir() -> Option<PathBuf> {
@@ -77,9 +79,6 @@ pub fn ensure_config_dir() -> std::io::Result<PathBuf> {
         )
     })?;
 
-    if !dir.exists() {
-        std::fs::create_dir_all(&dir)?;
-    }
     ensure_owner_only_dir(&dir)?;
 
     Ok(dir)
@@ -152,25 +151,13 @@ pub fn ensure_log_dir() -> std::io::Result<PathBuf> {
         )
     })?;
 
-    if !dir.exists() {
-        std::fs::create_dir_all(&dir)?;
-    }
     ensure_owner_only_dir(&dir)?;
 
     Ok(dir)
 }
 
 fn ensure_owner_only_dir(dir: &std::path::Path) -> std::io::Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700))?;
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = dir;
-    }
-    Ok(())
+    ensure_private_dir_no_follow(dir)
 }
 
 #[cfg(test)]
@@ -233,6 +220,27 @@ mod tests {
         }
     }
 
+    #[test]
+    fn ensure_owner_only_dir_rejects_regular_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("config");
+        std::fs::write(&file, "not a directory").unwrap();
+
+        let error = ensure_owner_only_dir(&file).expect_err("regular file should be rejected");
+
+        assert_eq!(error.kind(), std::io::ErrorKind::NotADirectory);
+    }
+
+    #[test]
+    fn ensure_owner_only_dir_creates_missing_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("config");
+
+        ensure_owner_only_dir(&config).unwrap();
+
+        assert!(config.is_dir());
+    }
+
     #[cfg(unix)]
     #[test]
     fn ensure_owner_only_dir_tightens_existing_directory() {
@@ -245,5 +253,25 @@ mod tests {
 
         let mode = std::fs::metadata(dir.path()).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o700);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ensure_owner_only_dir_rejects_symlinked_directory_without_changing_target() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let target = temp.path().join("target");
+        let link = temp.path().join("config");
+        std::fs::create_dir(&target).unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let error =
+            ensure_owner_only_dir(&link).expect_err("symlinked directory should be rejected");
+
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        let mode = std::fs::metadata(&target).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o755);
     }
 }

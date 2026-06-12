@@ -1,4 +1,5 @@
-use std::path::PathBuf;
+use std::io::ErrorKind;
+use std::path::{Path, PathBuf};
 
 use chrono::Utc;
 use uuid::Uuid;
@@ -7,6 +8,9 @@ use crate::config::hosts::default_username;
 use crate::config::paths::{expand_tilde, ssh_dir};
 use crate::config::{AuthMethod, Host, Protocol};
 use crate::error::ConfigError;
+use crate::fs_utils;
+
+const SSH_CONFIG_MAX_BYTES: u64 = 1024 * 1024;
 
 #[derive(Default, Debug, Clone)]
 struct HostBlock {
@@ -28,16 +32,26 @@ pub fn load_hosts_from_ssh_config() -> Result<Vec<Host>, ConfigError> {
             ),
         })?;
 
-    if !path.exists() {
-        return Ok(Vec::new());
-    }
-
-    let content = std::fs::read_to_string(&path).map_err(|e| ConfigError::ReadFile {
-        path: path.clone(),
-        source: e,
-    })?;
+    let content = match read_ssh_config_file(&path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => {
+            return Err(ConfigError::ReadFile {
+                path: path.clone(),
+                source: error,
+            });
+        }
+    };
 
     Ok(parse_ssh_config(&content))
+}
+
+fn read_ssh_config_file(path: &Path) -> std::io::Result<String> {
+    fs_utils::read_regular_file_follow_symlink_to_string_limited(
+        path,
+        SSH_CONFIG_MAX_BYTES,
+        "SSH config",
+    )
 }
 
 pub fn parse_ssh_config(content: &str) -> Vec<Host> {
@@ -385,6 +399,7 @@ fn split_tokens(line: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::ErrorKind;
 
     #[test]
     fn parse_basic_host() {
@@ -659,5 +674,76 @@ mod tests {
         let db = hosts.iter().find(|host| host.name == "db").unwrap();
         assert_eq!(api.username, "deploy");
         assert_ne!(db.username, "deploy");
+    }
+
+    #[test]
+    fn read_ssh_config_file_reads_regular_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config");
+        std::fs::write(&path, "Host api\n  HostName api.internal\n").unwrap();
+
+        let content = read_ssh_config_file(&path).unwrap();
+
+        assert_eq!(content, "Host api\n  HostName api.internal\n");
+    }
+
+    #[test]
+    fn read_ssh_config_file_reports_missing_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config");
+
+        let error = read_ssh_config_file(&path).expect_err("missing file should be reported");
+
+        assert_eq!(error.kind(), ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn read_ssh_config_file_rejects_oversized_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config");
+        let data = vec![b'a'; SSH_CONFIG_MAX_BYTES as usize + 1];
+        std::fs::write(&path, data).unwrap();
+
+        let error = read_ssh_config_file(&path).expect_err("oversized config should be rejected");
+
+        assert_eq!(error.kind(), ErrorKind::FileTooLarge);
+        assert!(error.to_string().contains("too large"));
+    }
+
+    #[test]
+    fn read_ssh_config_file_rejects_directory() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let error = read_ssh_config_file(dir.path()).expect_err("directory should be rejected");
+
+        assert_eq!(error.kind(), ErrorKind::InvalidInput);
+        assert!(error.to_string().contains("not a regular file"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn read_ssh_config_file_allows_symlinked_config_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("real_config");
+        let link = dir.path().join("config");
+        std::fs::write(&target, "Host api\n  HostName api.internal\n").unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let content = read_ssh_config_file(&link).unwrap();
+
+        assert_eq!(content, "Host api\n  HostName api.internal\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn read_ssh_config_file_rejects_socket() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config");
+        let _listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+
+        let error = read_ssh_config_file(&path).expect_err("socket should be rejected");
+
+        assert_eq!(error.kind(), ErrorKind::InvalidInput);
+        assert!(error.to_string().contains("not a regular file"));
     }
 }

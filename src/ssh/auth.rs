@@ -85,9 +85,12 @@ fn find_default_key() -> Option<std::path::PathBuf> {
 
 /// Load an SSH private key from file
 async fn load_key_file(path: &Path, passphrase: Option<&str>) -> Result<ResolvedAuth, SshError> {
-    // Check if the file exists and is readable
-    let content = std::fs::read_to_string(path).map_err(|e| {
-        SshError::KeyFile(format!("Cannot read key file {}: {}", path.display(), e))
+    let content = crate::hub::vault::read_private_key_file(path).map_err(|error| {
+        SshError::KeyFile(format!(
+            "Cannot read key file {}: {}",
+            path.display(),
+            error
+        ))
     })?;
 
     // Check if this is actually a public key (common mistake)
@@ -109,7 +112,7 @@ async fn load_key_file(path: &Path, passphrase: Option<&str>) -> Result<Resolved
         )));
     }
 
-    let key = russh::keys::load_secret_key(path, passphrase).map_err(|e| {
+    let key = russh::keys::decode_secret_key(&content, passphrase).map_err(|e| {
         // Prefer stable error variants when available. Fall back to string matching
         // for other decrypt-related errors which can vary by key format.
         if matches!(e, russh::keys::Error::KeyIsEncrypted) {
@@ -515,6 +518,17 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err();
         assert!(matches!(err, SshError::KeyFile(_)));
+    }
+
+    #[tokio::test]
+    async fn load_key_file_rejects_directory_path() {
+        let dir = tempdir().expect("temp dir");
+
+        let result = load_key_file(dir.path(), None).await;
+
+        let err = result.expect_err("directory should be rejected as key file");
+        assert!(matches!(err, SshError::KeyFile(_)));
+        assert!(err.to_string().contains("not a regular file"));
     }
 
     /// Test load_key_file preserves path in passphrase errors

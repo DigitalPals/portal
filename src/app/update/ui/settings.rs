@@ -106,12 +106,28 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
                 }
 
                 save_settings_and_queue_sync(portal);
-                let audit_path = portal.prefs.security_audit_dir.as_ref().map(|dir| {
-                    let _ = std::fs::create_dir_all(dir);
-                    dir.join("audit.log")
-                });
-                crate::security_log::init_audit_log(audit_path);
-                tracing::info!("Security audit logging enabled");
+                match crate::security_log::init_audit_log_dir(
+                    portal.prefs.security_audit_dir.clone(),
+                ) {
+                    Ok(Some(path)) => {
+                        tracing::info!("Security audit logging enabled at {}", path.display());
+                    }
+                    Ok(None) => {
+                        portal.toast_manager.push(Toast::error(
+                            "Security audit log directory is not available",
+                        ));
+                        tracing::warn!(
+                            "Security audit logging disabled: no audit directory available"
+                        );
+                    }
+                    Err(error) => {
+                        portal.toast_manager.push(Toast::error(format!(
+                            "Security audit logging disabled: {}",
+                            error
+                        )));
+                        tracing::warn!("Security audit logging disabled: {}", error);
+                    }
+                }
             } else {
                 save_settings_and_queue_sync(portal);
                 crate::security_log::init_audit_log(None);

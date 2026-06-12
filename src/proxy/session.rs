@@ -472,7 +472,7 @@ fn proxy_private_key(auth: &AuthMethod) -> Result<Option<String>, LocalError> {
         AuthMethod::PublicKey {
             key_path: Some(key_path),
             ..
-        } => std::fs::read_to_string(key_path)
+        } => crate::hub::vault::read_private_key_file(key_path)
             .map(Some)
             .map_err(|error| LocalError::SpawnFailed(error.to_string())),
         _ => Ok(None),
@@ -711,6 +711,42 @@ mod tests {
         assert!(raw.capabilities.sync_events);
         assert!(raw.capabilities.key_vault);
         assert!(raw.capabilities.vault_enrollment);
+    }
+
+    #[test]
+    fn proxy_private_key_reads_regular_public_key_auth_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let key_path = dir.path().join("id_ed25519");
+        std::fs::write(&key_path, "-----BEGIN OPENSSH PRIVATE KEY-----\nexample\n").unwrap();
+
+        let private_key = proxy_private_key(&AuthMethod::PublicKey {
+            key_path: Some(key_path),
+            vault_key_id: None,
+        })
+        .unwrap();
+
+        assert_eq!(
+            private_key.as_deref(),
+            Some("-----BEGIN OPENSSH PRIVATE KEY-----\nexample\n")
+        );
+    }
+
+    #[test]
+    fn proxy_private_key_rejects_non_file_public_key_auth_path() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let error = proxy_private_key(&AuthMethod::PublicKey {
+            key_path: Some(dir.path().to_path_buf()),
+            vault_key_id: None,
+        })
+        .expect_err("directory key path should be rejected");
+
+        match error {
+            LocalError::SpawnFailed(message) => {
+                assert!(message.contains("not a regular file"));
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
     }
 
     #[test]

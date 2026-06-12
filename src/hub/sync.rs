@@ -7,6 +7,7 @@ use serde_json::{Value, json};
 
 use crate::config::settings::PortalHubSettings;
 use crate::config::{HostsConfig, SettingsConfig, SnippetsConfig, paths};
+use crate::fs_utils;
 use crate::hub::http;
 use crate::hub::vault::HubVaultConfig;
 use crate::proxy::{HubSyncPutRequest, HubSyncResponse};
@@ -16,6 +17,7 @@ const SETTINGS: &str = "settings";
 const SNIPPETS: &str = "snippets";
 const VAULT: &str = "vault";
 const SYNC_EVENT_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+const LOCAL_SYNC_STATE_MAX_BYTES: u64 = 8 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PortalHubSyncService {
@@ -725,14 +727,20 @@ fn apply_payloads(
 fn load_local_sync_state(hub_url: &str) -> Result<LocalSyncState, String> {
     let path = paths::hub_sync_state_file()
         .ok_or_else(|| "could not determine sync state path".to_string())?;
-    if !path.exists() {
-        return Ok(LocalSyncState {
-            hub_url: hub_url.to_string(),
-            services: HashMap::new(),
-        });
-    }
-    let content = std::fs::read_to_string(&path)
-        .map_err(|error| format!("failed to read {}: {}", path.display(), error))?;
+    let content = match fs_utils::read_regular_file_to_string_limited_io(
+        &path,
+        LOCAL_SYNC_STATE_MAX_BYTES,
+        "Portal Hub sync state",
+    ) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(LocalSyncState {
+                hub_url: hub_url.to_string(),
+                services: HashMap::new(),
+            });
+        }
+        Err(error) => return Err(format!("failed to read {}: {}", path.display(), error)),
+    };
     let mut state: LocalSyncState = serde_json::from_str(&content)
         .map_err(|error| format!("failed to parse {}: {}", path.display(), error))?;
     if state.hub_url != hub_url {

@@ -80,7 +80,7 @@ pub enum SftpDialogType {
     },
     Delete {
         entries: Vec<(String, std::path::PathBuf, bool)>,
-    }, // (name, path, is_dir)
+    }, // (name, path, delete_recursively)
     EditPermissions {
         name: String,
         path: std::path::PathBuf,

@@ -7,6 +7,7 @@ use iced::widget::{Column, Space, button, container, text};
 use iced::{Color, Element, Fill, Length, Padding};
 
 use crate::message::{Message, SessionId, SftpMessage};
+use crate::sftp::FileEntry;
 use crate::theme::{ScaledFonts, Theme};
 use crate::widgets::mouse_area;
 
@@ -70,6 +71,33 @@ fn context_menu_item<'a>(
     }
 }
 
+fn selection_has_parent(entries: &[&FileEntry]) -> bool {
+    entries.iter().any(|entry| entry.is_parent())
+}
+
+fn selection_has_dir(entries: &[&FileEntry]) -> bool {
+    entries.iter().any(|entry| entry.is_dir)
+}
+
+fn selection_has_symlink(entries: &[&FileEntry]) -> bool {
+    entries.iter().any(|entry| entry.is_symlink)
+}
+
+fn can_open_selection(entries: &[&FileEntry]) -> bool {
+    entries.len() == 1
+        && !selection_has_parent(entries)
+        && !selection_has_dir(entries)
+        && !selection_has_symlink(entries)
+}
+
+fn can_copy_selection(entries: &[&FileEntry]) -> bool {
+    !entries.is_empty() && !selection_has_parent(entries) && !selection_has_symlink(entries)
+}
+
+fn can_edit_permissions_selection(entries: &[&FileEntry]) -> bool {
+    entries.len() == 1 && !selection_has_parent(entries) && !selection_has_symlink(entries)
+}
+
 /// Build the context menu overlay
 pub fn context_menu_view(
     state: &DualPaneSftpState,
@@ -82,14 +110,10 @@ pub fn context_menu_view(
     }
 
     let pane = state.pane(state.context_menu.target_pane);
-    let selection_count = pane.selected_indices.len();
-    let has_selection = selection_count > 0;
-    let is_single = selection_count == 1;
-
-    // Check if any selected item is a directory or parent
-    let has_dir = pane.selected_entries().iter().any(|e| e.is_dir);
-    let has_parent = pane.selected_entries().iter().any(|e| e.is_parent());
-    let is_file_selected = has_selection && !has_dir && !has_parent;
+    let selected_entries = pane.selected_entries();
+    let has_selection = !selected_entries.is_empty();
+    let is_single = selected_entries.len() == 1;
+    let has_parent = selection_has_parent(&selected_entries);
 
     let tab_id = state.tab_id;
 
@@ -98,7 +122,7 @@ pub fn context_menu_view(
     let mut items: Vec<Element<'_, Message>> = vec![];
 
     // Open (only for single file selection)
-    if is_single && is_file_selected {
+    if can_open_selection(&selected_entries) {
         items.push(context_menu_item(
             "Open",
             ContextMenuAction::Open,
@@ -111,7 +135,7 @@ pub fn context_menu_view(
     }
 
     // Copy to target directory (for any selection except parent directory)
-    if has_selection && !has_parent {
+    if can_copy_selection(&selected_entries) {
         items.push(context_menu_item(
             "Copy to target directory",
             ContextMenuAction::CopyToTarget,
@@ -170,7 +194,7 @@ pub fn context_menu_view(
     ));
 
     // Edit Permissions (only for single file/folder selection, not parent)
-    if is_single && !has_parent {
+    if can_edit_permissions_selection(&selected_entries) {
         items.push(context_menu_item(
             "Edit Permissions",
             ContextMenuAction::EditPermissions,
@@ -230,4 +254,71 @@ pub fn context_menu_view(
     let positioned_menu = container(menu).padding(Padding::new(0.0).top(y).left(x));
 
     iced::widget::stack![background, positioned_menu].into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{can_copy_selection, can_edit_permissions_selection, can_open_selection};
+    use crate::sftp::FileEntry;
+    use std::path::PathBuf;
+
+    fn entry(name: &str, is_dir: bool, is_symlink: bool) -> FileEntry {
+        FileEntry {
+            name: name.to_string(),
+            path: PathBuf::from(name),
+            is_dir,
+            is_symlink,
+            size: 0,
+            modified: None,
+        }
+    }
+
+    #[test]
+    fn file_selection_can_open_copy_and_edit_permissions() {
+        let file = entry("file.txt", false, false);
+        let selection = vec![&file];
+
+        assert!(can_open_selection(&selection));
+        assert!(can_copy_selection(&selection));
+        assert!(can_edit_permissions_selection(&selection));
+    }
+
+    #[test]
+    fn symlink_selection_cannot_open_copy_or_edit_permissions() {
+        let symlink = entry("link.txt", false, true);
+        let selection = vec![&symlink];
+
+        assert!(!can_open_selection(&selection));
+        assert!(!can_copy_selection(&selection));
+        assert!(!can_edit_permissions_selection(&selection));
+    }
+
+    #[test]
+    fn directory_selection_can_copy_and_edit_but_not_open() {
+        let dir = entry("dir", true, false);
+        let selection = vec![&dir];
+
+        assert!(!can_open_selection(&selection));
+        assert!(can_copy_selection(&selection));
+        assert!(can_edit_permissions_selection(&selection));
+    }
+
+    #[test]
+    fn parent_selection_cannot_use_file_actions() {
+        let parent = entry("..", true, false);
+        let selection = vec![&parent];
+
+        assert!(!can_open_selection(&selection));
+        assert!(!can_copy_selection(&selection));
+        assert!(!can_edit_permissions_selection(&selection));
+    }
+
+    #[test]
+    fn mixed_selection_with_symlink_cannot_copy() {
+        let file = entry("file.txt", false, false);
+        let symlink = entry("link.txt", false, true);
+        let selection = vec![&file, &symlink];
+
+        assert!(!can_copy_selection(&selection));
+    }
 }

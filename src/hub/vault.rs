@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::config::{self, paths};
+use crate::fs_utils;
 
 const KEYCHAIN_SERVICE: &str = "com.digitalpals.portal";
 const KEYCHAIN_USER: &str = "portal-hub-vault";
@@ -23,6 +24,8 @@ const KEY_LEN: usize = 32;
 const SALT_LEN: usize = 16;
 const NONCE_LEN: usize = 24;
 const DEVICE_SECRET_LEN: usize = 32;
+const PRIVATE_KEY_FILE_MAX_BYTES: u64 = 1024 * 1024;
+const HUB_VAULT_FILE_MAX_BYTES: u64 = 8 * 1024 * 1024;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct HubVaultConfig {
@@ -84,11 +87,18 @@ impl HubVaultConfig {
     pub fn load() -> Result<Self, String> {
         let path =
             paths::hub_vault_file().ok_or_else(|| "could not determine vault path".to_string())?;
-        if !path.exists() {
-            return Ok(Self::default());
-        }
-        let content = match std::fs::read_to_string(&path) {
+        let content = match fs_utils::read_regular_file_to_string_limited_io(
+            &path,
+            HUB_VAULT_FILE_MAX_BYTES,
+            "Hub vault",
+        ) {
             Ok(content) => content,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(Self::default());
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::FileTooLarge => {
+                return Err(format!("failed to read {}: {}", path.display(), error));
+            }
             Err(error) if error.kind() == std::io::ErrorKind::InvalidData => {
                 config::recover_corrupt_config(&path, "Hub vault", &error.to_string()).map_err(
                     |backup_error| {
@@ -156,8 +166,7 @@ pub fn import_private_key_file(
     name: Option<String>,
     passphrase: &SecretString,
 ) -> Result<VaultKey, String> {
-    let private_key = std::fs::read_to_string(path)
-        .map_err(|error| format!("failed to read key {}: {}", path.display(), error))?;
+    let private_key = read_private_key_file(path)?;
     encrypt_private_key(
         name.unwrap_or_else(|| {
             path.file_name()
@@ -168,6 +177,15 @@ pub fn import_private_key_file(
         private_key.as_bytes(),
         passphrase,
     )
+}
+
+pub fn read_private_key_file(path: &Path) -> Result<String, String> {
+    fs_utils::read_regular_file_follow_symlink_to_string_limited(
+        path,
+        PRIVATE_KEY_FILE_MAX_BYTES,
+        "private key",
+    )
+    .map_err(|error| format!("failed to read key {}: {}", path.display(), error))
 }
 
 pub fn encrypt_private_key(
@@ -442,7 +460,7 @@ fn load_matching_local_private_key(
     }
 
     for path in candidates.into_iter().filter(|path| path.exists()) {
-        let private_key = match std::fs::read_to_string(&path) {
+        let private_key = match read_private_key_file(&path) {
             Ok(private_key) => private_key,
             Err(error) => {
                 tracing::debug!(
@@ -575,6 +593,64 @@ mod tests {
 
         let decrypted = decrypt_secret(&secret, &passphrase).unwrap();
         assert_eq!(decrypted.expose_secret(), password.expose_secret());
+    }
+
+    #[test]
+    fn read_private_key_file_reads_regular_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("id_ed25519");
+        std::fs::write(&path, "-----BEGIN OPENSSH PRIVATE KEY-----\nexample\n").unwrap();
+
+        let content = read_private_key_file(&path).unwrap();
+
+        assert!(content.starts_with("-----BEGIN OPENSSH PRIVATE KEY-----"));
+    }
+
+    #[test]
+    fn read_private_key_file_rejects_oversized_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("id_ed25519");
+        let data = vec![b'a'; PRIVATE_KEY_FILE_MAX_BYTES as usize + 1];
+        std::fs::write(&path, data).unwrap();
+
+        let error = read_private_key_file(&path).expect_err("oversized key should be rejected");
+
+        assert!(error.contains("too large"));
+    }
+
+    #[test]
+    fn read_private_key_file_rejects_directory() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let error = read_private_key_file(dir.path()).expect_err("directory should be rejected");
+
+        assert!(error.contains("not a regular file"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn read_private_key_file_allows_symlinked_key_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("real_id_ed25519");
+        let link = dir.path().join("id_ed25519");
+        std::fs::write(&target, "-----BEGIN OPENSSH PRIVATE KEY-----\nexample\n").unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let content = read_private_key_file(&link).unwrap();
+
+        assert!(content.starts_with("-----BEGIN OPENSSH PRIVATE KEY-----"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn read_private_key_file_rejects_socket() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("id_ed25519.sock");
+        let _listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+
+        let error = read_private_key_file(&path).expect_err("socket should be rejected");
+
+        assert!(error.contains("not a regular file"));
     }
 
     #[test]

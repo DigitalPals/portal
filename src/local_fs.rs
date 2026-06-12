@@ -17,6 +17,8 @@ pub async fn list_local_dir(path: &Path) -> Result<Vec<FileEntry>, String> {
 
 /// Synchronous version of directory listing
 fn list_local_dir_sync(path: &Path) -> Result<Vec<FileEntry>, String> {
+    ensure_local_dir_root(path)?;
+
     let mut result = Vec::new();
 
     // Add parent directory entry if there is a real navigable parent.
@@ -79,6 +81,25 @@ fn list_local_dir_sync(path: &Path) -> Result<Vec<FileEntry>, String> {
     Ok(result)
 }
 
+fn ensure_local_dir_root(path: &Path) -> Result<(), String> {
+    let metadata = std::fs::symlink_metadata(path)
+        .map_err(|e| format!("Failed to read directory metadata: {}", e))?;
+    let file_type = metadata.file_type();
+
+    if file_type.is_symlink() {
+        return Err(format!(
+            "Refusing to read local directory through symbolic link {}",
+            path.display()
+        ));
+    }
+
+    if !file_type.is_dir() {
+        return Err(format!("{} is not a directory", path.display()));
+    }
+
+    Ok(())
+}
+
 fn parent_entry_path(path: &Path) -> Option<&Path> {
     let parent = path.parent()?;
     if parent.as_os_str().is_empty() {
@@ -89,7 +110,7 @@ fn parent_entry_path(path: &Path) -> Option<&Path> {
 
 #[cfg(test)]
 mod tests {
-    use super::parent_entry_path;
+    use super::{ensure_local_dir_root, list_local_dir_sync, parent_entry_path};
     use std::path::Path;
 
     #[test]
@@ -101,5 +122,85 @@ mod tests {
     #[test]
     fn parent_entry_path_keeps_absolute_parent() {
         assert_eq!(parent_entry_path(Path::new("/home")), Some(Path::new("/")));
+    }
+
+    #[test]
+    fn list_local_dir_marks_regular_directory_navigable() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir(temp.path().join("dir")).unwrap();
+
+        let entries = list_local_dir_sync(temp.path()).unwrap();
+        let dir = entries
+            .iter()
+            .find(|entry| entry.name == "dir")
+            .expect("directory should be listed");
+
+        assert!(dir.is_dir);
+        assert!(!dir.is_symlink);
+        assert!(dir.is_navigable_dir());
+    }
+
+    #[test]
+    fn ensure_local_dir_root_rejects_regular_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("file");
+        std::fs::write(&path, "content").unwrap();
+
+        let error = ensure_local_dir_root(&path).expect_err("file should not be listed as a dir");
+
+        assert!(error.contains("not a directory"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn list_local_dir_marks_symlinked_directory_non_navigable() {
+        let temp = tempfile::tempdir().unwrap();
+        let target = temp.path().join("target");
+        let link = temp.path().join("link");
+        std::fs::create_dir(&target).unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let entries = list_local_dir_sync(temp.path()).unwrap();
+        let link_entry = entries
+            .iter()
+            .find(|entry| entry.name == "link")
+            .expect("symlink should be listed");
+
+        assert!(link_entry.is_dir);
+        assert!(link_entry.is_symlink);
+        assert!(!link_entry.is_navigable_dir());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn list_local_dir_lists_broken_symlink_as_non_navigable_symlink() {
+        let temp = tempfile::tempdir().unwrap();
+        let link = temp.path().join("broken");
+        std::os::unix::fs::symlink(temp.path().join("missing"), &link).unwrap();
+
+        let entries = list_local_dir_sync(temp.path()).unwrap();
+        let link_entry = entries
+            .iter()
+            .find(|entry| entry.name == "broken")
+            .expect("broken symlink should be listed");
+
+        assert!(!link_entry.is_dir);
+        assert!(link_entry.is_symlink);
+        assert!(!link_entry.is_navigable_dir());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn list_local_dir_rejects_symlinked_root_without_listing_target() {
+        let temp = tempfile::tempdir().unwrap();
+        let target = temp.path().join("target");
+        let link = temp.path().join("link");
+        std::fs::create_dir(&target).unwrap();
+        std::fs::write(target.join("secret.txt"), "secret").unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let error = list_local_dir_sync(&link).expect_err("symlink root should not be listed");
+
+        assert!(error.contains("symbolic link"));
     }
 }

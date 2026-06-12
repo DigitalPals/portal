@@ -1,6 +1,6 @@
 //! SFTP types for file browser
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
 
@@ -32,10 +32,26 @@ pub struct FileEntry {
     pub modified: Option<DateTime<Utc>>,
 }
 
+/// Return true when `name` is a single safe SFTP directory-entry name.
+pub fn is_safe_sftp_entry_name(name: &str) -> bool {
+    !name.is_empty()
+        && name != "."
+        && name != ".."
+        && !name.contains('\0')
+        && !name.contains('/')
+        && !name.contains('\\')
+        && !Path::new(name).is_absolute()
+}
+
 impl FileEntry {
     /// Check if this is the parent directory entry (..)
     pub fn is_parent(&self) -> bool {
         self.name == ".."
+    }
+
+    /// Check if this entry should be treated as enterable in the file browser.
+    pub fn is_navigable_dir(&self) -> bool {
+        self.is_dir && !self.is_symlink
     }
 
     /// Get file extension if any
@@ -252,6 +268,25 @@ impl SortOrder {
 
     /// Sort file entries according to this order
     pub fn sort(&self, entries: &mut [FileEntry]) {
+        match self {
+            SortOrder::NameAsc => {
+                entries.sort_by_cached_key(|entry| {
+                    (entry_sort_group(entry), entry.name.to_lowercase())
+                });
+                return;
+            }
+            SortOrder::NameDesc => {
+                entries.sort_by_cached_key(|entry| {
+                    (
+                        entry_sort_group(entry),
+                        std::cmp::Reverse(entry.name.to_lowercase()),
+                    )
+                });
+                return;
+            }
+            _ => {}
+        }
+
         // Always keep ".." at the top, then directories, then files
         entries.sort_by(|a, b| {
             // Parent directory always first
@@ -273,8 +308,7 @@ impl SortOrder {
 
             // Apply sort order
             match self {
-                SortOrder::NameAsc => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-                SortOrder::NameDesc => b.name.to_lowercase().cmp(&a.name.to_lowercase()),
+                SortOrder::NameAsc | SortOrder::NameDesc => std::cmp::Ordering::Equal,
                 SortOrder::DateAsc => a.modified.cmp(&b.modified),
                 SortOrder::DateDesc => b.modified.cmp(&a.modified),
                 SortOrder::SizeAsc => a.size.cmp(&b.size),
@@ -283,6 +317,16 @@ impl SortOrder {
                 SortOrder::KindDesc => b.kind_description().cmp(a.kind_description()),
             }
         });
+    }
+}
+
+fn entry_sort_group(entry: &FileEntry) -> u8 {
+    if entry.is_parent() {
+        0
+    } else if entry.is_dir {
+        1
+    } else {
+        2
     }
 }
 
@@ -359,6 +403,31 @@ mod tests {
     // === FileEntry::is_parent tests ===
 
     #[test]
+    fn safe_sftp_entry_name_allows_plain_names() {
+        assert!(is_safe_sftp_entry_name("file.txt"));
+        assert!(is_safe_sftp_entry_name("folder name"));
+    }
+
+    #[test]
+    fn safe_sftp_entry_name_rejects_path_components_and_special_names() {
+        for name in [
+            "",
+            ".",
+            "..",
+            "a/b",
+            r"a\b",
+            "/tmp/x",
+            r"C:\tmp\x",
+            "nul\0byte",
+        ] {
+            assert!(
+                !is_safe_sftp_entry_name(name),
+                "{name:?} should be rejected"
+            );
+        }
+    }
+
+    #[test]
     fn is_parent_returns_true_for_dotdot() {
         let entry = FileEntry {
             name: "..".to_string(),
@@ -379,6 +448,30 @@ mod tests {
     #[test]
     fn is_parent_returns_false_for_directory() {
         assert!(!make_dir("subdir").is_parent());
+    }
+
+    // === FileEntry::is_navigable_dir tests ===
+
+    #[test]
+    fn is_navigable_dir_allows_real_directories_and_parent() {
+        assert!(make_dir("subdir").is_navigable_dir());
+        assert!(
+            FileEntry {
+                name: "..".to_string(),
+                path: PathBuf::from("/"),
+                is_dir: true,
+                is_symlink: false,
+                size: 0,
+                modified: None,
+            }
+            .is_navigable_dir()
+        );
+    }
+
+    #[test]
+    fn is_navigable_dir_rejects_files_and_symlinked_directories() {
+        assert!(!make_file("test.txt").is_navigable_dir());
+        assert!(!make_symlink_dir("linked-folder").is_navigable_dir());
     }
 
     // === FileEntry::extension tests ===
@@ -661,6 +754,34 @@ mod tests {
         assert_eq!(entries[0].name, "apple.txt");
         assert_eq!(entries[1].name, "BANANA.txt");
         assert_eq!(entries[2].name, "Zebra.txt");
+    }
+
+    #[test]
+    fn sort_name_desc_keeps_groups_and_reverses_names_case_insensitive() {
+        let mut entries = vec![
+            make_file("apple.txt"),
+            make_dir("docs"),
+            FileEntry {
+                name: "..".to_string(),
+                path: PathBuf::from("/"),
+                is_dir: true,
+                is_symlink: false,
+                size: 0,
+                modified: None,
+            },
+            make_file("Zebra.txt"),
+            make_dir("src"),
+            make_file("BANANA.txt"),
+        ];
+
+        SortOrder::NameDesc.sort(&mut entries);
+
+        assert_eq!(entries[0].name, "..");
+        assert_eq!(entries[1].name, "src");
+        assert_eq!(entries[2].name, "docs");
+        assert_eq!(entries[3].name, "Zebra.txt");
+        assert_eq!(entries[4].name, "BANANA.txt");
+        assert_eq!(entries[5].name, "apple.txt");
     }
 
     #[test]

@@ -473,11 +473,6 @@ impl HostsConfig {
 
         tracing::debug!("Loading hosts from: {:?}", path);
 
-        if !path.exists() {
-            tracing::warn!("Hosts file does not exist: {:?}", path);
-            return Ok(Self::default());
-        }
-
         super::load_toml_or_recover(&path, "hosts")
     }
 

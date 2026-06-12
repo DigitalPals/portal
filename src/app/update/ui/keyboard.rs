@@ -13,6 +13,7 @@ use crate::message::{
     DialogMessage, HistoryMessage, HostMessage, Message, SessionMessage, SftpMessage,
     SidebarMenuItem, TabMessage, UiMessage, VncMessage,
 };
+use crate::sftp::FileEntry;
 use crate::ssh::host_key_verification::HostKeyVerificationResponse;
 use crate::views::dialogs::host_dialog::host_dialog_field_id;
 use crate::views::dialogs::portal_hub_dialogs::{
@@ -1067,11 +1068,9 @@ fn handle_sftp_keyboard(
         }
         Key::Named(keyboard::key::Named::Enter) => {
             // Navigate into directory or activate file
-            if let Some(idx) = pane_state.last_selected_index
-                && let Some(entry) = pane_state.entries.get(idx)
-                && entry.is_dir
+            if let Some(path) =
+                sftp_enter_navigation_path(pane_state.last_selected_index, &pane_state.entries)
             {
-                let path = entry.path.clone();
                 return portal.update(Message::Sftp(SftpMessage::PaneNavigate(
                     tab_id,
                     active_pane,
@@ -1095,9 +1094,29 @@ fn handle_sftp_keyboard(
     Task::none()
 }
 
+fn sftp_enter_navigation_path(
+    selected_index: Option<usize>,
+    entries: &[FileEntry],
+) -> Option<std::path::PathBuf> {
+    let entry = entries.get(selected_index?)?;
+    entry.is_navigable_dir().then(|| entry.path.clone())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+
+    fn sftp_entry(name: &str, is_dir: bool, is_symlink: bool) -> FileEntry {
+        FileEntry {
+            name: name.to_string(),
+            path: PathBuf::from(name),
+            is_dir,
+            is_symlink,
+            size: 0,
+            modified: None,
+        }
+    }
 
     #[test]
     fn portal_hub_clipboard_modifier_accepts_platform_command() {
@@ -1116,5 +1135,31 @@ mod tests {
         assert!(!is_portal_hub_clipboard_modifier(
             keyboard::Modifiers::SHIFT
         ));
+    }
+
+    #[test]
+    fn sftp_enter_navigation_path_allows_real_directory() {
+        let entries = vec![sftp_entry("dir", true, false)];
+
+        assert_eq!(
+            sftp_enter_navigation_path(Some(0), &entries),
+            Some(PathBuf::from("dir"))
+        );
+    }
+
+    #[test]
+    fn sftp_enter_navigation_path_rejects_symlinked_directory() {
+        let entries = vec![sftp_entry("linked-dir", true, true)];
+
+        assert_eq!(sftp_enter_navigation_path(Some(0), &entries), None);
+    }
+
+    #[test]
+    fn sftp_enter_navigation_path_rejects_files_and_missing_selection() {
+        let entries = vec![sftp_entry("file.txt", false, false)];
+
+        assert_eq!(sftp_enter_navigation_path(Some(0), &entries), None);
+        assert_eq!(sftp_enter_navigation_path(None, &entries), None);
+        assert_eq!(sftp_enter_navigation_path(Some(1), &entries), None);
     }
 }

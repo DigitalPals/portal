@@ -1,13 +1,16 @@
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use russh::keys::{self, HashAlg, PublicKey};
+use russh::keys::{HashAlg, PublicKey};
 
 use crate::config::{paths, write_atomic};
 use crate::error::SshError;
+use crate::fs_utils;
 
 mod matchers;
 mod scan;
+
+const OPENSSH_KNOWN_HOSTS_MAX_BYTES: u64 = 8 * 1024 * 1024;
 
 #[cfg(test)]
 pub(crate) use matchers::glob_match;
@@ -40,6 +43,12 @@ pub struct KnownHostsManager {
     ssh_path: Option<PathBuf>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KnownHostsPathKind {
+    Primary,
+    OpenSsh,
+}
+
 impl KnownHostsManager {
     /// Create a new manager and load known hosts from file
     pub fn new() -> Self {
@@ -54,10 +63,18 @@ impl KnownHostsManager {
         }
     }
 
+    #[cfg(test)]
     fn known_hosts_paths(&self) -> Vec<PathBuf> {
+        self.known_hosts_path_entries()
+            .into_iter()
+            .map(|(path, _)| path)
+            .collect()
+    }
+
+    fn known_hosts_path_entries(&self) -> Vec<(PathBuf, KnownHostsPathKind)> {
         let mut paths = Vec::new();
         if let Some(path) = &self.primary_path {
-            paths.push(path.clone());
+            paths.push((path.clone(), KnownHostsPathKind::Primary));
         }
         if let Some(path) = &self.ssh_path {
             let should_add = match &self.primary_path {
@@ -65,33 +82,68 @@ impl KnownHostsManager {
                 None => true,
             };
             if should_add {
-                paths.push(path.clone());
+                paths.push((path.clone(), KnownHostsPathKind::OpenSsh));
             }
         }
         paths
     }
 
-    fn primary_write_path(&self) -> Option<PathBuf> {
+    fn primary_write_path(&self) -> Option<(PathBuf, KnownHostsPathKind)> {
         self.select_write_path()
     }
 
-    fn select_write_path(&self) -> Option<PathBuf> {
+    fn select_write_path(&self) -> Option<(PathBuf, KnownHostsPathKind)> {
         if let Some(path) = &self.primary_path
             && Self::ensure_parent_dir(path).is_ok()
         {
-            return Some(path.clone());
+            return Some((path.clone(), KnownHostsPathKind::Primary));
         }
         if let Some(path) = &self.ssh_path
             && Self::ensure_parent_dir(path).is_ok()
         {
-            return Some(path.clone());
+            return Some((path.clone(), KnownHostsPathKind::OpenSsh));
         }
         None
     }
 
     fn ensure_parent_dir(path: &std::path::Path) -> std::io::Result<()> {
         if let Some(parent) = path.parent() {
+            match std::fs::symlink_metadata(parent) {
+                Ok(metadata) if metadata.file_type().is_symlink() => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        format!("{} is a symbolic link", parent.display()),
+                    ));
+                }
+                Ok(metadata) if !metadata.is_dir() => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::NotADirectory,
+                        format!("{} is not a directory", parent.display()),
+                    ));
+                }
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
             std::fs::create_dir_all(parent)?;
+            let metadata = std::fs::symlink_metadata(parent)?;
+            if metadata.file_type().is_symlink() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("{} is a symbolic link", parent.display()),
+                ));
+            }
+            if !metadata.is_dir() {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::NotADirectory,
+                    format!("{} is not a directory", parent.display()),
+                ));
+            }
+            #[cfg(unix)]
+            {
+                fs_utils::set_private_dir_permissions_no_follow(parent)?;
+            }
+            fs_utils::sync_parent_dir(parent);
         }
         Ok(())
     }
@@ -147,17 +199,18 @@ impl KnownHostsManager {
 
     /// Add a host key to known_hosts
     pub fn add_host_key(&mut self, host: &str, port: u16, key: &PublicKey) -> Result<(), SshError> {
-        let path = self.primary_write_path().ok_or_else(|| {
+        let (path, kind) = self.primary_write_path().ok_or_else(|| {
             SshError::HostKeyVerification("No known_hosts path configured".to_string())
         })?;
 
-        keys::known_hosts::learn_known_hosts_path(host, port, key, &path).map_err(|e| {
-            SshError::HostKeyVerification(format!(
-                "Failed to write known_hosts {}: {}",
-                path.display(),
-                e
-            ))
-        })
+        let mut content = read_known_hosts_content(&path, kind)?.unwrap_or_default();
+
+        if !content.is_empty() && !content.ends_with('\n') {
+            content.push('\n');
+        }
+        content.push_str(&known_hosts_line(host, port, key)?);
+
+        write_known_hosts_content(&path, kind, &content)
     }
 
     /// Update a host key (after user confirms key change)
@@ -172,8 +225,8 @@ impl KnownHostsManager {
     }
 
     fn remove_host_key_entries_all(&self, host: &str, port: u16) -> Result<(), SshError> {
-        for path in self.known_hosts_paths() {
-            self.remove_host_key_entries(host, port, &path)?;
+        for (path, kind) in self.known_hosts_path_entries() {
+            self.remove_host_key_entries(host, port, &path, kind)?;
         }
         Ok(())
     }
@@ -182,21 +235,14 @@ impl KnownHostsManager {
         &self,
         host: &str,
         port: u16,
-        path: &PathBuf,
+        path: &Path,
+        kind: KnownHostsPathKind,
     ) -> Result<(), SshError> {
-        if !path.exists() {
+        let Some(content) = read_known_hosts_content(path, kind)? else {
             return Ok(());
-        }
+        };
 
-        let content = std::fs::read_to_string(path).map_err(|e| {
-            SshError::HostKeyVerification(format!(
-                "Failed to read known_hosts {}: {}",
-                path.display(),
-                e
-            ))
-        })?;
-
-        let scan = self.scan_known_hosts_path(host, port, path)?;
+        let scan = self.scan_known_hosts_path(host, port, path, kind)?;
         if scan.line_numbers.is_empty() {
             return Ok(());
         }
@@ -218,18 +264,12 @@ impl KnownHostsManager {
             new_content.push('\n');
         }
 
-        write_atomic(path, &new_content).map_err(|e| {
-            SshError::HostKeyVerification(format!(
-                "Failed to update known_hosts {}: {}",
-                path.display(),
-                e
-            ))
-        })
+        write_known_hosts_content(path, kind, &new_content)
     }
 
     fn scan_known_hosts(&self, host: &str, port: u16, scan: &mut scan::HostKeyScan) {
-        for path in self.known_hosts_paths() {
-            match self.scan_known_hosts_path(host, port, &path) {
+        for (path, kind) in self.known_hosts_path_entries() {
+            match self.scan_known_hosts_path(host, port, &path, kind) {
                 Ok(result) => {
                     scan.keys.extend(result.keys);
                     scan.revoked_keys.extend(result.revoked_keys);
@@ -245,10 +285,102 @@ impl KnownHostsManager {
         &self,
         host: &str,
         port: u16,
-        path: &PathBuf,
+        path: &Path,
+        kind: KnownHostsPathKind,
     ) -> Result<scan::HostKeyScan, SshError> {
-        scan::scan_known_hosts_path(host, port, path)
+        match kind {
+            KnownHostsPathKind::Primary => {
+                let Some(content) = read_known_hosts_content(path, kind)? else {
+                    return Ok(scan::HostKeyScan::default());
+                };
+                Ok(scan::scan_known_hosts_content(host, port, path, &content))
+            }
+            KnownHostsPathKind::OpenSsh => {
+                let Some(content) = read_known_hosts_content(path, kind)? else {
+                    return Ok(scan::HostKeyScan::default());
+                };
+                Ok(scan::scan_known_hosts_content(host, port, path, &content))
+            }
+        }
     }
+}
+
+fn read_known_hosts_content(
+    path: &Path,
+    kind: KnownHostsPathKind,
+) -> Result<Option<String>, SshError> {
+    let result = match kind {
+        KnownHostsPathKind::Primary => fs_utils::read_regular_file_to_string(path, "known_hosts"),
+        KnownHostsPathKind::OpenSsh => read_openssh_known_hosts_file(path),
+    };
+
+    match result {
+        Ok(content) => Ok(Some(content)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(SshError::HostKeyVerification(format!(
+            "Failed to read known_hosts {}: {}",
+            path.display(),
+            error
+        ))),
+    }
+}
+
+fn read_openssh_known_hosts_file(path: &Path) -> std::io::Result<String> {
+    fs_utils::read_regular_file_follow_symlink_to_string_limited(
+        path,
+        OPENSSH_KNOWN_HOSTS_MAX_BYTES,
+        "OpenSSH known_hosts",
+    )
+}
+
+fn write_known_hosts_content(
+    path: &Path,
+    kind: KnownHostsPathKind,
+    content: &str,
+) -> Result<(), SshError> {
+    let write_path = match kind {
+        KnownHostsPathKind::Primary => path.to_path_buf(),
+        KnownHostsPathKind::OpenSsh => match std::fs::symlink_metadata(path) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                path.canonicalize().map_err(|e| {
+                    SshError::HostKeyVerification(format!(
+                        "Failed to resolve known_hosts {}: {}",
+                        path.display(),
+                        e
+                    ))
+                })?
+            }
+            Ok(_) => path.to_path_buf(),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => path.to_path_buf(),
+            Err(error) => {
+                return Err(SshError::HostKeyVerification(format!(
+                    "Failed to inspect known_hosts {}: {}",
+                    path.display(),
+                    error
+                )));
+            }
+        },
+    };
+
+    write_atomic(&write_path, content).map_err(|e| {
+        SshError::HostKeyVerification(format!(
+            "Failed to write known_hosts {}: {}",
+            path.display(),
+            e
+        ))
+    })
+}
+
+fn known_hosts_line(host: &str, port: u16, key: &PublicKey) -> Result<String, SshError> {
+    let host_field = if port == 22 {
+        host.to_string()
+    } else {
+        format!("[{}]:{}", host, port)
+    };
+    let key = key.to_openssh().map_err(|error| {
+        SshError::HostKeyVerification(format!("Failed to format known_hosts key: {}", error))
+    })?;
+    Ok(format!("{} {}\n", host_field, key))
 }
 
 impl Default for KnownHostsManager {
@@ -259,7 +391,10 @@ impl Default for KnownHostsManager {
 
 #[cfg(test)]
 mod tests {
-    use super::{HostKeyStatus, KnownHostsManager, glob_match, matchers};
+    use super::{
+        HostKeyStatus, KnownHostsManager, KnownHostsPathKind, OPENSSH_KNOWN_HOSTS_MAX_BYTES,
+        glob_match, matchers, read_known_hosts_content,
+    };
     use russh::keys;
     use std::fs;
     use std::path::PathBuf;
@@ -897,6 +1032,220 @@ mod tests {
         // Verify the file was created and contains the host
         let content = fs::read_to_string(&path).expect("read file");
         assert!(content.contains("newhost.com"));
+    }
+
+    #[test]
+    fn add_host_key_creates_missing_parent_directory() {
+        let dir = tempdir().expect("temp dir");
+        let path = dir.path().join("nested").join("known_hosts");
+
+        let mut manager = KnownHostsManager::with_paths(Some(path.clone()), None);
+        let key = keys::parse_public_key_base64(KEY1).expect("parse key");
+
+        manager
+            .add_host_key("newhost.com", 22, &key)
+            .expect("add key");
+
+        assert!(path.parent().expect("parent").is_dir());
+        assert!(fs::read_to_string(&path).unwrap().contains("newhost.com"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn add_host_key_makes_parent_directory_private() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempdir().expect("temp dir");
+        let parent = dir.path().join("nested");
+        let path = parent.join("known_hosts");
+
+        let mut manager = KnownHostsManager::with_paths(Some(path), None);
+        let key = keys::parse_public_key_base64(KEY1).expect("parse key");
+
+        manager
+            .add_host_key("newhost.com", 22, &key)
+            .expect("add key");
+
+        let mode = fs::metadata(&parent).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700);
+    }
+
+    #[test]
+    fn add_host_key_preserves_existing_content_and_newline() {
+        let dir = tempdir().expect("temp dir");
+        let path = dir.path().join("known_hosts");
+        fs::write(&path, format!("existing.com ssh-ed25519 {KEY1}")).expect("write initial");
+
+        let mut manager = KnownHostsManager::with_paths(Some(path.clone()), None);
+        let key = keys::parse_public_key_base64(KEY2).expect("parse key");
+
+        manager
+            .add_host_key("newhost.com", 2222, &key)
+            .expect("add key");
+
+        let content = fs::read_to_string(&path).expect("read file");
+        let lines: Vec<_> = content.lines().collect();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0], format!("existing.com ssh-ed25519 {KEY1}"));
+        assert!(lines[1].starts_with("[newhost.com]:2222 ssh-ed25519 "));
+        assert!(content.ends_with('\n'));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn add_host_key_rejects_symlinked_parent_without_writing_target() {
+        let dir = tempdir().expect("temp dir");
+        let target_parent = dir.path().join("target");
+        let link_parent = dir.path().join("link");
+        fs::create_dir(&target_parent).expect("create target parent");
+        std::os::unix::fs::symlink(&target_parent, &link_parent).expect("create symlink parent");
+
+        let path = link_parent.join("known_hosts");
+        let mut manager = KnownHostsManager::with_paths(Some(path), None);
+        let key = keys::parse_public_key_base64(KEY1).expect("parse key");
+
+        let error = manager
+            .add_host_key("newhost.com", 22, &key)
+            .expect_err("symlink parent should be rejected");
+
+        assert!(error.to_string().contains("No known_hosts path configured"));
+        assert!(!target_parent.join("known_hosts").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn add_host_key_rejects_symlink_without_writing_target() {
+        let dir = tempdir().expect("temp dir");
+        let target = dir.path().join("target_known_hosts");
+        let link = dir.path().join("known_hosts");
+        fs::write(&target, format!("existing.com ssh-ed25519 {KEY1}\n")).expect("write target");
+        std::os::unix::fs::symlink(&target, &link).expect("create symlink");
+
+        let mut manager = KnownHostsManager::with_paths(Some(link.clone()), None);
+        let key = keys::parse_public_key_base64(KEY2).expect("parse key");
+
+        let error = manager
+            .add_host_key("newhost.com", 22, &key)
+            .expect_err("symlink should be rejected");
+
+        assert!(error.to_string().contains("symbolic link"));
+        assert!(
+            fs::symlink_metadata(&link)
+                .expect("link metadata")
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(
+            fs::read_to_string(&target).expect("read target"),
+            format!("existing.com ssh-ed25519 {KEY1}\n")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn primary_known_hosts_symlink_is_not_trusted_for_scan_or_update() {
+        let dir = tempdir().expect("temp dir");
+        let target = dir.path().join("target_known_hosts");
+        let link = dir.path().join("known_hosts");
+        fs::write(&target, format!("example.com ssh-ed25519 {KEY1}\n")).expect("write target");
+        std::os::unix::fs::symlink(&target, &link).expect("create symlink");
+
+        let mut manager = KnownHostsManager::with_paths(Some(link.clone()), None);
+        let key = keys::parse_public_key_base64(KEY1).expect("parse key");
+        let status = manager.check_host_key("example.com", 22, &key);
+        assert!(matches!(status, HostKeyStatus::Unknown { .. }));
+
+        let new_key = keys::parse_public_key_base64(KEY2).expect("parse key");
+        let error = manager
+            .update_host_key("example.com", 22, &new_key)
+            .expect_err("primary symlink should not be updated");
+
+        assert!(error.to_string().contains("symbolic link"));
+        assert_eq!(
+            fs::read_to_string(&target).expect("read target"),
+            format!("example.com ssh-ed25519 {KEY1}\n")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn openssh_known_hosts_symlink_remains_compatible() {
+        let dir = tempdir().expect("temp dir");
+        let target = dir.path().join("ssh_known_hosts_target");
+        let link = dir.path().join("ssh_known_hosts");
+        fs::write(&target, format!("example.com ssh-ed25519 {KEY1}\n")).expect("write target");
+        std::os::unix::fs::symlink(&target, &link).expect("create symlink");
+
+        let mut manager = KnownHostsManager::with_paths(None, Some(link.clone()));
+        let old_key = keys::parse_public_key_base64(KEY1).expect("parse old key");
+        assert!(matches!(
+            manager.check_host_key("example.com", 22, &old_key),
+            HostKeyStatus::Known
+        ));
+
+        let new_key = keys::parse_public_key_base64(KEY2).expect("parse new key");
+        manager
+            .update_host_key("example.com", 22, &new_key)
+            .expect("OpenSSH symlink should update its target");
+
+        assert!(
+            fs::symlink_metadata(&link)
+                .expect("link metadata")
+                .file_type()
+                .is_symlink()
+        );
+        assert!(fs::read_to_string(&target).unwrap().contains(KEY2));
+        assert!(matches!(
+            manager.check_host_key("example.com", 22, &new_key),
+            HostKeyStatus::Known
+        ));
+    }
+
+    #[test]
+    fn openssh_known_hosts_read_missing_returns_none() {
+        let dir = tempdir().expect("temp dir");
+        let path = dir.path().join("ssh_known_hosts");
+
+        let content =
+            read_known_hosts_content(&path, KnownHostsPathKind::OpenSsh).expect("read missing");
+
+        assert!(content.is_none());
+    }
+
+    #[test]
+    fn openssh_known_hosts_rejects_directory() {
+        let dir = tempdir().expect("temp dir");
+
+        let error = read_known_hosts_content(dir.path(), KnownHostsPathKind::OpenSsh)
+            .expect_err("directory should be rejected");
+
+        assert!(error.to_string().contains("not a regular file"));
+    }
+
+    #[test]
+    fn openssh_known_hosts_rejects_oversized_file() {
+        let dir = tempdir().expect("temp dir");
+        let path = dir.path().join("ssh_known_hosts");
+        let data = vec![b'a'; OPENSSH_KNOWN_HOSTS_MAX_BYTES as usize + 1];
+        fs::write(&path, data).expect("write oversized known_hosts");
+
+        let error = read_known_hosts_content(&path, KnownHostsPathKind::OpenSsh)
+            .expect_err("oversized file should be rejected");
+
+        assert!(error.to_string().contains("too large"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn openssh_known_hosts_rejects_socket() {
+        let dir = tempdir().expect("temp dir");
+        let path = dir.path().join("ssh_known_hosts");
+        let _listener = std::os::unix::net::UnixListener::bind(&path).expect("bind socket");
+
+        let error = read_known_hosts_content(&path, KnownHostsPathKind::OpenSsh)
+            .expect_err("socket should be rejected");
+
+        assert!(error.to_string().contains("not a regular file"));
     }
 
     #[test]

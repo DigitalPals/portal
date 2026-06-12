@@ -1,9 +1,7 @@
 use std::borrow::Cow;
-use std::path::PathBuf;
+use std::path::Path;
 
 use russh::keys::{self, PublicKey};
-
-use crate::error::SshError;
 
 use super::matchers;
 
@@ -14,23 +12,12 @@ pub(crate) struct HostKeyScan {
     pub(crate) line_numbers: Vec<usize>,
 }
 
-pub(crate) fn scan_known_hosts_path(
+pub(crate) fn scan_known_hosts_content(
     host: &str,
     port: u16,
-    path: &PathBuf,
-) -> Result<HostKeyScan, SshError> {
-    if !path.exists() {
-        return Ok(HostKeyScan::default());
-    }
-
-    let content = std::fs::read_to_string(path).map_err(|e| {
-        SshError::HostKeyVerification(format!(
-            "Failed to read known_hosts {}: {}",
-            path.display(),
-            e
-        ))
-    })?;
-
+    path: &Path,
+    content: &str,
+) -> HostKeyScan {
     let host_port = if port == 22 {
         Cow::Borrowed(host)
     } else {
@@ -103,5 +90,5 @@ pub(crate) fn scan_known_hosts_path(
         }
     }
 
-    Ok(scan)
+    scan
 }

@@ -1,7 +1,7 @@
 use iced::Task;
 use image::{GenericImageView, ImageEncoder};
 use pdfium_render::prelude::{PdfRenderConfig, Pdfium};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 const MAX_TEXT_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_IMAGE_BYTES: u64 = 20 * 1024 * 1024;
@@ -16,30 +16,24 @@ fn file_type_limit(file_type: &FileType) -> u64 {
     }
 }
 
+use crate::fs_utils::{
+    ensure_private_dir_no_follow, read_regular_file_limited, read_regular_file_to_string_limited,
+};
 use crate::message::{FileViewerMessage, Message, SessionId};
 use crate::sftp::SharedSftpSession;
 use crate::views::file_viewer::{FileSource, FileType, FileViewerState, ViewerContent};
 
 /// Load file content from local path based on file type
-pub async fn load_local_file(
-    path: std::path::PathBuf,
-    file_type: FileType,
-) -> Result<ViewerContent, String> {
+pub async fn load_local_file(path: PathBuf, file_type: FileType) -> Result<ViewerContent, String> {
     match file_type {
         FileType::Text { .. } => {
-            enforce_local_size(&path, MAX_TEXT_BYTES, "Text").await?;
-            let text = tokio::fs::read_to_string(&path)
-                .await
-                .map_err(|e| format!("Failed to read file: {}", e))?;
+            let text = read_local_text_file(path, MAX_TEXT_BYTES, "Text").await?;
             Ok(ViewerContent::Text {
                 content: iced::widget::text_editor::Content::with_text(&text),
             })
         }
         FileType::Markdown => {
-            enforce_local_size(&path, MAX_TEXT_BYTES, "Markdown").await?;
-            let text = tokio::fs::read_to_string(&path)
-                .await
-                .map_err(|e| format!("Failed to read file: {}", e))?;
+            let text = read_local_text_file(path, MAX_TEXT_BYTES, "Markdown").await?;
             Ok(ViewerContent::Markdown {
                 content: iced::widget::text_editor::Content::with_text(&text),
                 raw_text: text,
@@ -47,10 +41,7 @@ pub async fn load_local_file(
             })
         }
         FileType::Image => {
-            enforce_local_size(&path, MAX_IMAGE_BYTES, "Image").await?;
-            let data = tokio::fs::read(&path)
-                .await
-                .map_err(|e| format!("Failed to read image: {}", e))?;
+            let data = read_local_file_bytes(path.clone(), MAX_IMAGE_BYTES, "Image").await?;
             let path_for_parse = path.clone();
             let data_for_parse = data.clone();
             let (width, height, is_svg) = tokio::task::spawn_blocking(move || {
@@ -77,6 +68,26 @@ pub async fn load_local_file(
     }
 }
 
+async fn read_local_text_file(
+    path: PathBuf,
+    limit: u64,
+    label: &'static str,
+) -> Result<String, String> {
+    tokio::task::spawn_blocking(move || read_regular_file_to_string_limited(&path, limit, label))
+        .await
+        .map_err(|e| format!("{} read task failed: {}", label, e))?
+}
+
+async fn read_local_file_bytes(
+    path: PathBuf,
+    limit: u64,
+    label: &'static str,
+) -> Result<Vec<u8>, String> {
+    tokio::task::spawn_blocking(move || read_regular_file_limited(&path, limit, label))
+        .await
+        .map_err(|e| format!("{} read task failed: {}", label, e))?
+}
+
 fn parse_image_dimensions(path: &Path, data: &[u8]) -> Result<(u32, u32, bool), String> {
     let is_svg = path
         .extension()
@@ -94,6 +105,8 @@ fn parse_image_dimensions(path: &Path, data: &[u8]) -> Result<(u32, u32, bool), 
 }
 
 fn inspect_pdf(path: &Path) -> Result<ViewerContent, String> {
+    ensure_regular_file_sync(path, "PDF")?;
+
     let bindings = Pdfium::bind_to_system_library()
         .map_err(|e| format!("PDF rendering unavailable: {}", e))?;
     let pdfium = Pdfium::new(bindings);
@@ -124,6 +137,9 @@ async fn enforce_local_size(path: &Path, limit: u64, label: &str) -> Result<(), 
     if metadata.file_type().is_symlink() {
         return Err(format!("{} file is a symbolic link", label));
     }
+    if !metadata.file_type().is_file() {
+        return Err(format!("{} file is not a regular file", label));
+    }
     let size = metadata.len();
     if size > limit {
         return Err(format!(
@@ -134,15 +150,34 @@ async fn enforce_local_size(path: &Path, limit: u64, label: &str) -> Result<(), 
     Ok(())
 }
 
-async fn ensure_private_dir(path: &Path) -> Result<(), String> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        tokio::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
-            .await
-            .map_err(|e| format!("Failed to set temp directory permissions: {}", e))?;
+fn ensure_regular_file_sync(path: &Path, label: &str) -> Result<(), String> {
+    let metadata = std::fs::symlink_metadata(path)
+        .map_err(|e| format!("Failed to stat {} file: {}", label, e))?;
+    if metadata.file_type().is_symlink() {
+        return Err(format!("{} file is a symbolic link", label));
+    }
+    if !metadata.file_type().is_file() {
+        return Err(format!("{} file is not a regular file", label));
     }
     Ok(())
+}
+
+async fn ensure_private_dir(path: &Path) -> Result<(), String> {
+    let path = path.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        ensure_private_dir_no_follow(&path)
+            .map_err(|e| format!("Failed to prepare directory {}: {}", path.display(), e))
+    })
+    .await
+    .map_err(|e| format!("Directory preparation task failed: {}", e))?
+}
+
+async fn prepare_remote_viewer_temp_dir(temp_dir: &Path) -> Result<(), String> {
+    let base_dir = temp_dir
+        .parent()
+        .ok_or_else(|| format!("Cannot determine temp base for {}", temp_dir.display()))?;
+    ensure_private_dir(base_dir).await?;
+    ensure_private_dir(temp_dir).await
 }
 
 pub async fn render_pdf_page(source: FileSource, page_index: usize) -> Result<Vec<u8>, String> {
@@ -157,6 +192,8 @@ pub async fn render_pdf_page(source: FileSource, page_index: usize) -> Result<Ve
 }
 
 fn render_pdf_page_sync(path: &Path, page_index: usize) -> Result<Vec<u8>, String> {
+    ensure_regular_file_sync(path, "PDF")?;
+
     let bindings = Pdfium::bind_to_system_library()
         .map_err(|e| format!("PDF rendering unavailable: {}", e))?;
     let pdfium = Pdfium::new(bindings);
@@ -239,10 +276,7 @@ pub fn build_remote_viewer(
     let ftype = file_type.clone();
     let task = Task::perform(
         async move {
-            tokio::fs::create_dir_all(&temp_dir)
-                .await
-                .map_err(|e| format!("Failed to create temp directory: {}", e))?;
-            ensure_private_dir(&temp_dir).await?;
+            prepare_remote_viewer_temp_dir(&temp_dir).await?;
             let limit = file_type_limit(&ftype);
             if limit > 0 {
                 let size = sftp
@@ -294,7 +328,11 @@ fn safe_temp_file_name(file_name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{MAX_TEXT_BYTES, enforce_local_size, safe_temp_file_name};
+    use super::{
+        MAX_TEXT_BYTES, enforce_local_size, ensure_regular_file_sync, load_local_file,
+        prepare_remote_viewer_temp_dir, safe_temp_file_name,
+    };
+    use crate::views::file_viewer::{FileType, ViewerContent};
 
     #[test]
     fn safe_temp_file_name_removes_path_components() {
@@ -320,5 +358,174 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn enforce_local_size_rejects_non_regular_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let socket_path = temp.path().join("viewer.sock");
+        let _listener = std::os::unix::net::UnixListener::bind(&socket_path).unwrap();
+
+        let error = enforce_local_size(&socket_path, MAX_TEXT_BYTES, "Text")
+            .await
+            .expect_err("non-regular file should be rejected");
+
+        assert!(error.contains("not a regular file"));
+    }
+
+    #[tokio::test]
+    async fn load_local_file_reads_text_with_checked_open() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("note.txt");
+        std::fs::write(&path, "hello").unwrap();
+
+        let content = load_local_file(path, FileType::Text { language: None })
+            .await
+            .expect("regular text file should load");
+
+        match content {
+            ViewerContent::Text { content } => assert_eq!(content.text(), "hello"),
+            other => panic!("expected text content, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn load_local_file_rejects_text_symlink() {
+        let temp = tempfile::tempdir().unwrap();
+        let target = temp.path().join("target.txt");
+        let link = temp.path().join("link.txt");
+        std::fs::write(&target, "secret").unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let error = load_local_file(link, FileType::Text { language: None })
+            .await
+            .expect_err("symlink text file should be rejected");
+
+        assert!(error.contains("symbolic link"));
+    }
+
+    #[test]
+    fn ensure_regular_file_sync_allows_regular_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("file.pdf");
+        std::fs::write(&path, "content").unwrap();
+
+        ensure_regular_file_sync(&path, "PDF").unwrap();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn ensure_regular_file_sync_rejects_symlinks() {
+        let temp = tempfile::tempdir().unwrap();
+        let target = temp.path().join("target.pdf");
+        let link = temp.path().join("link.pdf");
+        std::fs::write(&target, "content").unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let error = ensure_regular_file_sync(&link, "PDF")
+            .expect_err("symlink should be rejected before PDF rendering");
+
+        assert!(error.contains("symbolic link"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn ensure_regular_file_sync_rejects_non_regular_files() {
+        let temp = tempfile::tempdir().unwrap();
+        let socket_path = temp.path().join("viewer.sock");
+        let _listener = std::os::unix::net::UnixListener::bind(&socket_path).unwrap();
+
+        let error = ensure_regular_file_sync(&socket_path, "PDF")
+            .expect_err("non-regular file should be rejected before PDF rendering");
+
+        assert!(error.contains("not a regular file"));
+    }
+
+    #[tokio::test]
+    async fn prepare_remote_viewer_temp_dir_creates_private_tree() {
+        let temp = tempfile::tempdir().unwrap();
+        let viewer_dir = temp.path().join("portal_viewer").join("viewer-id");
+
+        prepare_remote_viewer_temp_dir(&viewer_dir).await.unwrap();
+
+        assert!(viewer_dir.is_dir());
+        assert!(viewer_dir.parent().unwrap().is_dir());
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn prepare_remote_viewer_temp_dir_makes_tree_private() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let viewer_dir = temp.path().join("portal_viewer").join("viewer-id");
+
+        prepare_remote_viewer_temp_dir(&viewer_dir).await.unwrap();
+
+        let base_mode = std::fs::metadata(viewer_dir.parent().unwrap())
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        let viewer_mode = std::fs::metadata(&viewer_dir).unwrap().permissions().mode() & 0o777;
+        assert_eq!(base_mode, 0o700);
+        assert_eq!(viewer_mode, 0o700);
+    }
+
+    #[tokio::test]
+    async fn prepare_remote_viewer_temp_dir_rejects_file_base() {
+        let temp = tempfile::tempdir().unwrap();
+        let base = temp.path().join("portal_viewer");
+        let viewer_dir = base.join("viewer-id");
+        std::fs::write(&base, "not a directory").unwrap();
+
+        let error = prepare_remote_viewer_temp_dir(&viewer_dir)
+            .await
+            .expect_err("file base should be rejected");
+
+        assert!(error.contains("directory"));
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn prepare_remote_viewer_temp_dir_rejects_symlink_base_without_creating_leaf() {
+        let temp = tempfile::tempdir().unwrap();
+        let outside = temp.path().join("outside");
+        let base = temp.path().join("portal_viewer");
+        let viewer_dir = base.join("viewer-id");
+        std::fs::create_dir(&outside).unwrap();
+        std::os::unix::fs::symlink(&outside, &base).unwrap();
+
+        let error = prepare_remote_viewer_temp_dir(&viewer_dir)
+            .await
+            .expect_err("symlink base should be rejected");
+
+        assert!(error.contains("symbolic link"));
+        assert!(!outside.join("viewer-id").exists());
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn prepare_remote_viewer_temp_dir_rejects_symlink_leaf_without_changing_target() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let base = temp.path().join("portal_viewer");
+        let outside = temp.path().join("outside");
+        let viewer_dir = base.join("viewer-id");
+        std::fs::create_dir(&base).unwrap();
+        std::fs::create_dir(&outside).unwrap();
+        std::fs::set_permissions(&outside, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::os::unix::fs::symlink(&outside, &viewer_dir).unwrap();
+
+        let error = prepare_remote_viewer_temp_dir(&viewer_dir)
+            .await
+            .expect_err("symlink leaf should be rejected");
+
+        assert!(error.contains("symbolic link"));
+        let outside_mode = std::fs::metadata(&outside).unwrap().permissions().mode() & 0o777;
+        assert_eq!(outside_mode, 0o755);
     }
 }

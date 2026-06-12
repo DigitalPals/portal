@@ -14,9 +14,10 @@ use tokio::sync::Mutex;
 use uuid::Uuid;
 
 use crate::error::SftpError;
+use crate::fs_utils::{ensure_dir_no_follow, open_directory_for_sync, open_read_regular_file};
 use crate::ssh::SshConnection;
 
-use super::types::FileEntry;
+use super::types::{FileEntry, is_safe_sftp_entry_name};
 
 const TRANSFER_BUFFER_SIZE: usize = 64 * 1024;
 
@@ -110,17 +111,38 @@ impl SftpSession {
         let metadata = sftp.symlink_metadata(path_str.clone()).await.map_err(|e| {
             SftpError::FileOperation(format!("Failed to get metadata for {}: {}", path_str, e))
         })?;
-        if metadata.is_symlink() {
-            return Err(SftpError::FileOperation(format!(
-                "Cannot inspect symbolic link {}",
-                path_str
-            )));
-        }
+        ensure_remote_file_source(
+            &path_str,
+            metadata.is_dir(),
+            metadata.is_symlink(),
+            "inspect",
+        )
+        .map_err(SftpError::FileOperation)?;
         Ok(metadata.size.unwrap_or(0))
     }
 
     /// Create a directory
     pub async fn create_dir(&self, path: &Path) -> Result<(), SftpError> {
+        let sftp = self.sftp.lock().await;
+        let path_str = path.to_string_lossy().to_string();
+
+        match sftp.try_exists(path_str.clone()).await {
+            Ok(exists) => reject_existing_remote_create_dir(&path_str, exists)
+                .map_err(SftpError::FileOperation)?,
+            Err(e) => {
+                return Err(SftpError::FileOperation(format!(
+                    "Failed to check directory {}: {}",
+                    path_str, e
+                )));
+            }
+        }
+
+        sftp.create_dir(path_str.clone()).await.map_err(|e| {
+            SftpError::FileOperation(format!("Failed to create directory {}: {}", path_str, e))
+        })
+    }
+
+    async fn ensure_remote_dir(&self, path: &Path) -> Result<(), SftpError> {
         let sftp = self.sftp.lock().await;
         let path_str = path.to_string_lossy().to_string();
 
@@ -132,13 +154,13 @@ impl SftpSession {
                         path_str, e
                     ))
                 })?;
-                if metadata.is_dir() {
-                    return Ok(());
-                }
-                return Err(SftpError::FileOperation(format!(
-                    "Cannot create directory {}; a non-directory already exists",
-                    path_str
-                )));
+                ensure_existing_remote_directory(
+                    &path_str,
+                    metadata.is_dir(),
+                    metadata.is_symlink(),
+                )
+                .map_err(SftpError::FileOperation)?;
+                return Ok(());
             }
             Ok(false) => {}
             Err(e) => {
@@ -160,6 +182,17 @@ impl SftpSession {
         let old_path_str = old_path.to_string_lossy().to_string();
         let new_path_str = new_path.to_string_lossy().to_string();
 
+        match sftp.try_exists(new_path_str.clone()).await {
+            Ok(exists) => reject_existing_remote_rename_destination(&new_path_str, exists)
+                .map_err(SftpError::FileOperation)?,
+            Err(e) => {
+                return Err(SftpError::FileOperation(format!(
+                    "Failed to check destination {}: {}",
+                    new_path_str, e
+                )));
+            }
+        }
+
         sftp.rename(old_path_str.clone(), new_path_str.clone())
             .await
             .map_err(|e| {
@@ -174,6 +207,12 @@ impl SftpSession {
     pub async fn set_permissions(&self, path: &Path, mode: u32) -> Result<(), SftpError> {
         let sftp = self.sftp.lock().await;
         let path_str = path.to_string_lossy().to_string();
+
+        let metadata = sftp.symlink_metadata(path_str.clone()).await.map_err(|e| {
+            SftpError::FileOperation(format!("Failed to get metadata for {}: {}", path_str, e))
+        })?;
+        reject_remote_permissions_target(&path_str, metadata.is_symlink())
+            .map_err(SftpError::FileOperation)?;
 
         // Create file attributes with only permissions set
         let attrs = russh_sftp::protocol::FileAttributes {
@@ -261,21 +300,29 @@ impl SftpSession {
         F: FnMut(u64),
         C: Fn() -> bool,
     {
-        ensure_local_target_is_not_symlink(local_path).await?;
-
-        if let Some(parent) = local_path.parent() {
-            tokio::fs::create_dir_all(parent).await.map_err(|e| {
-                SftpError::LocalIo(format!(
-                    "Failed to create local directory {}: {}",
-                    parent.display(),
-                    e
-                ))
-            })?;
-        }
+        ensure_local_download_parent(local_path).await?;
+        ensure_local_file_download_target(local_path).await?;
 
         let partial_path = local_staging_path(local_path, STAGING_PARTIAL_MARKER)?;
         let sftp = self.sftp.lock().await;
         let remote_str = remote_path.to_string_lossy().to_string();
+
+        let metadata = sftp
+            .symlink_metadata(remote_str.clone())
+            .await
+            .map_err(|e| {
+                SftpError::Transfer(format!(
+                    "Failed to get metadata for remote file {}: {}",
+                    remote_str, e
+                ))
+            })?;
+        ensure_remote_file_source(
+            &remote_str,
+            metadata.is_dir(),
+            metadata.is_symlink(),
+            "download",
+        )
+        .map_err(SftpError::Transfer)?;
 
         let mut remote = sftp.open(remote_str.clone()).await.map_err(|e| {
             SftpError::Transfer(format!("Failed to open remote file {}: {}", remote_str, e))
@@ -389,13 +436,7 @@ impl SftpSession {
         F: FnMut(u64),
         C: Fn() -> bool,
     {
-        let mut local = tokio::fs::File::open(local_path).await.map_err(|e| {
-            SftpError::LocalIo(format!(
-                "Failed to read local file {}: {}",
-                local_path.display(),
-                e
-            ))
-        })?;
+        let mut local = open_local_upload_file_source(local_path).await?;
 
         let sftp = self.sftp.lock().await;
         let remote_str = remote_path.to_string_lossy().to_string();
@@ -503,20 +544,14 @@ impl SftpSession {
         remote_path: &Path,
         local_path: &Path,
     ) -> Result<usize, SftpError> {
-        // Create local directory
-        tokio::fs::create_dir_all(local_path).await.map_err(|e| {
-            SftpError::LocalIo(format!(
-                "Failed to create local directory {}: {}",
-                local_path.display(),
-                e
-            ))
-        })?;
+        ensure_local_download_parent(local_path).await?;
+        ensure_local_download_directory(local_path).await?;
 
         let entries = self.list_dir(remote_path).await?;
         let mut count = 0;
 
         for entry in entries {
-            if entry.name == ".." {
+            if should_skip_recursive_download_entry(&entry) {
                 continue;
             }
 
@@ -539,22 +574,10 @@ impl SftpSession {
         local_path: &Path,
         remote_path: &Path,
     ) -> Result<usize, SftpError> {
-        let metadata = tokio::fs::symlink_metadata(local_path).await.map_err(|e| {
-            SftpError::LocalIo(format!(
-                "Failed to read metadata for {}: {}",
-                local_path.display(),
-                e
-            ))
-        })?;
-        if metadata.file_type().is_symlink() {
-            return Err(SftpError::LocalIo(format!(
-                "Cannot upload symbolic link {}",
-                local_path.display()
-            )));
-        }
+        ensure_local_upload_directory_root(local_path).await?;
 
-        // Create remote directory
-        self.create_dir(remote_path).await?;
+        // Ensure remote directory exists; recursive upload can target an existing directory.
+        self.ensure_remote_dir(remote_path).await?;
 
         let mut count = 0;
         let mut entries = tokio::fs::read_dir(local_path).await.map_err(|e| {
@@ -570,23 +593,21 @@ impl SftpSession {
             .await
             .map_err(|e| SftpError::LocalIo(format!("Failed to read directory entry: {}", e)))?
         {
-            let file_type = entry
-                .file_type()
-                .await
-                .map_err(|e| SftpError::LocalIo(format!("Failed to get file type: {}", e)))?;
-
             let entry_name = entry.file_name();
             let local_entry_path = entry.path();
             let remote_entry_path = remote_path.join(&entry_name);
 
-            if file_type.is_dir() {
-                count +=
-                    Box::pin(self.upload_recursive(&local_entry_path, &remote_entry_path)).await?;
-            } else if file_type.is_file() {
-                self.upload(&local_entry_path, &remote_entry_path).await?;
-                count += 1;
+            match local_upload_entry_kind(&local_entry_path).await? {
+                Some(LocalUploadEntryKind::Directory) => {
+                    count += Box::pin(self.upload_recursive(&local_entry_path, &remote_entry_path))
+                        .await?;
+                }
+                Some(LocalUploadEntryKind::File) => {
+                    self.upload(&local_entry_path, &remote_entry_path).await?;
+                    count += 1;
+                }
+                None => {}
             }
-            // Skip symlinks for now
         }
 
         Ok(count)
@@ -605,26 +626,93 @@ fn parent_entry_path(path: &Path) -> Option<&Path> {
     Some(parent)
 }
 
-fn is_safe_sftp_entry_name(name: &str) -> bool {
-    !name.is_empty()
-        && name != "."
-        && name != ".."
-        && !name.contains('\0')
-        && !name.contains('/')
-        && !name.contains('\\')
-        && !Path::new(name).is_absolute()
+fn should_skip_recursive_download_entry(entry: &FileEntry) -> bool {
+    entry.name == ".." || entry.is_symlink
+}
+
+fn ensure_remote_file_source(
+    path: &str,
+    is_dir: bool,
+    is_symlink: bool,
+    operation: &str,
+) -> Result<(), String> {
+    if is_symlink {
+        return Err(format!("Cannot {} symbolic link {}", operation, path));
+    }
+
+    if is_dir {
+        return Err(format!("Cannot {} directory {}", operation, path));
+    }
+
+    Ok(())
+}
+
+fn reject_existing_remote_rename_destination(path: &str, exists: bool) -> Result<(), String> {
+    if exists {
+        Err(format!("{} already exists", path))
+    } else {
+        Ok(())
+    }
+}
+
+fn reject_existing_remote_create_dir(path: &str, exists: bool) -> Result<(), String> {
+    if exists {
+        Err(format!("{} already exists", path))
+    } else {
+        Ok(())
+    }
+}
+
+fn ensure_existing_remote_directory(
+    path: &str,
+    is_dir: bool,
+    is_symlink: bool,
+) -> Result<(), String> {
+    if is_symlink {
+        return Err(format!("Cannot use symbolic link {} as directory", path));
+    }
+
+    if !is_dir {
+        return Err(format!(
+            "Cannot use {}; a non-directory already exists",
+            path
+        ));
+    }
+
+    Ok(())
+}
+
+fn reject_remote_permissions_target(path: &str, is_symlink: bool) -> Result<(), String> {
+    if is_symlink {
+        Err(format!(
+            "Refusing to set permissions on symbolic link {}",
+            path
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LocalUploadEntryKind {
+    Directory,
+    File,
 }
 
 const STAGING_PARTIAL_MARKER: &str = ".portal-part-";
 const STAGING_BACKUP_MARKER: &str = ".portal-backup-";
 
-async fn ensure_local_target_is_not_symlink(local_path: &Path) -> Result<(), SftpError> {
+async fn ensure_local_file_download_target(local_path: &Path) -> Result<(), SftpError> {
     match tokio::fs::symlink_metadata(local_path).await {
         Ok(metadata) if metadata.file_type().is_symlink() => Err(SftpError::LocalIo(format!(
             "Refusing to overwrite local symbolic link {}",
             local_path.display()
         ))),
-        Ok(_) => Ok(()),
+        Ok(metadata) if metadata.is_file() => Ok(()),
+        Ok(_) => Err(SftpError::LocalIo(format!(
+            "Refusing to overwrite non-regular local file {}",
+            local_path.display()
+        ))),
         Err(e) if e.kind() == ErrorKind::NotFound => Ok(()),
         Err(e) => Err(SftpError::LocalIo(format!(
             "Failed to inspect local file {}: {}",
@@ -632,6 +720,176 @@ async fn ensure_local_target_is_not_symlink(local_path: &Path) -> Result<(), Sft
             e
         ))),
     }
+}
+
+async fn ensure_local_download_directory(local_path: &Path) -> Result<(), SftpError> {
+    let path = local_path.to_path_buf();
+    tokio::task::spawn_blocking(move || ensure_dir_no_follow(&path))
+        .await
+        .map_err(|e| SftpError::LocalIo(format!("Local directory task failed: {}", e)))?
+        .map_err(|e| local_download_directory_error(local_path, e))
+}
+
+async fn ensure_local_download_parent(local_path: &Path) -> Result<(), SftpError> {
+    let Some(parent) = local_path.parent() else {
+        return Ok(());
+    };
+    if parent.as_os_str().is_empty() {
+        return Ok(());
+    }
+
+    let parent = parent.to_path_buf();
+    tokio::task::spawn_blocking(move || ensure_dir_no_follow(&parent))
+        .await
+        .map_err(|e| SftpError::LocalIo(format!("Local directory task failed: {}", e)))?
+        .map_err(|e| local_download_parent_error(local_path, e))
+}
+
+fn local_download_directory_error(path: &Path, error: std::io::Error) -> SftpError {
+    match error.kind() {
+        ErrorKind::InvalidInput => SftpError::LocalIo(format!(
+            "Refusing to write directory through local symbolic link {}",
+            path.display()
+        )),
+        ErrorKind::NotADirectory => SftpError::LocalIo(format!(
+            "Cannot create local directory {}; not a directory",
+            path.display()
+        )),
+        _ => SftpError::LocalIo(format!(
+            "Failed to create local directory {}: {}",
+            path.display(),
+            error
+        )),
+    }
+}
+
+fn local_download_parent_error(local_path: &Path, error: std::io::Error) -> SftpError {
+    match error.kind() {
+        ErrorKind::InvalidInput => SftpError::LocalIo(format!(
+            "Refusing to write through local symbolic link directory {}",
+            local_path
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+                .unwrap_or(local_path)
+                .display()
+        )),
+        ErrorKind::NotADirectory => SftpError::LocalIo(format!(
+            "Cannot create local file {}; parent is not a directory",
+            local_path.display()
+        )),
+        _ => SftpError::LocalIo(format!(
+            "Failed to create local directory {}: {}",
+            local_path
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+                .unwrap_or(local_path)
+                .display(),
+            error
+        )),
+    }
+}
+
+async fn ensure_local_upload_directory_root(local_path: &Path) -> Result<(), SftpError> {
+    let metadata = tokio::fs::symlink_metadata(local_path).await.map_err(|e| {
+        SftpError::LocalIo(format!(
+            "Failed to read metadata for {}: {}",
+            local_path.display(),
+            e
+        ))
+    })?;
+
+    if metadata.file_type().is_symlink() {
+        return Err(SftpError::LocalIo(format!(
+            "Cannot upload symbolic link {}",
+            local_path.display()
+        )));
+    }
+
+    if !metadata.is_dir() {
+        return Err(SftpError::LocalIo(format!(
+            "Cannot upload directory {}; not a directory",
+            local_path.display()
+        )));
+    }
+
+    Ok(())
+}
+
+async fn local_upload_entry_kind(
+    local_path: &Path,
+) -> Result<Option<LocalUploadEntryKind>, SftpError> {
+    let metadata = tokio::fs::symlink_metadata(local_path).await.map_err(|e| {
+        SftpError::LocalIo(format!(
+            "Failed to read metadata for {}: {}",
+            local_path.display(),
+            e
+        ))
+    })?;
+    let file_type = metadata.file_type();
+
+    if file_type.is_symlink() {
+        return Ok(None);
+    }
+
+    if file_type.is_dir() {
+        Ok(Some(LocalUploadEntryKind::Directory))
+    } else if file_type.is_file() {
+        Ok(Some(LocalUploadEntryKind::File))
+    } else {
+        Ok(None)
+    }
+}
+
+async fn ensure_local_upload_file_source(local_path: &Path) -> Result<(), SftpError> {
+    let metadata = tokio::fs::symlink_metadata(local_path).await.map_err(|e| {
+        SftpError::LocalIo(format!(
+            "Failed to read metadata for {}: {}",
+            local_path.display(),
+            e
+        ))
+    })?;
+
+    if metadata.file_type().is_symlink() {
+        return Err(SftpError::LocalIo(format!(
+            "Cannot upload symbolic link {}",
+            local_path.display()
+        )));
+    }
+
+    if !metadata.is_file() {
+        return Err(SftpError::LocalIo(format!(
+            "Cannot upload file {}; not a regular file",
+            local_path.display()
+        )));
+    }
+
+    Ok(())
+}
+
+async fn open_local_upload_file_source(local_path: &Path) -> Result<tokio::fs::File, SftpError> {
+    ensure_local_upload_file_source(local_path).await?;
+
+    let path = local_path.to_path_buf();
+    let path_for_open = path.clone();
+    let file =
+        tokio::task::spawn_blocking(move || open_read_regular_file(&path_for_open, "local upload"))
+            .await
+            .map_err(|e| {
+                SftpError::LocalIo(format!(
+                    "Failed to open local file {}: {}",
+                    path.display(),
+                    e
+                ))
+            })?
+            .map_err(|e| {
+                SftpError::LocalIo(format!(
+                    "Failed to open local file {}: {}",
+                    local_path.display(),
+                    e
+                ))
+            })?;
+
+    Ok(tokio::fs::File::from_std(file))
 }
 
 fn local_staging_path(path: &Path, marker: &str) -> Result<PathBuf, SftpError> {
@@ -681,7 +939,7 @@ async fn sync_local_parent_dir(path: &Path) {
     };
 
     match tokio::task::spawn_blocking(move || {
-        let dir = std::fs::File::open(&parent)?;
+        let dir = open_directory_for_sync(&parent)?;
         dir.sync_all()
     })
     .await
@@ -1075,16 +1333,121 @@ mod tests {
     }
 
     #[test]
-    fn sftp_entry_name_rejects_path_traversal_names() {
-        for name in ["", ".", "..", "../x", "a/b", r"a\b", "/tmp/x", "nul\0byte"] {
-            assert!(
-                !is_safe_sftp_entry_name(name),
-                "{name:?} should be rejected"
-            );
-        }
+    fn recursive_download_skips_parent_and_symlink_entries() {
+        let parent = FileEntry {
+            name: "..".to_string(),
+            path: PathBuf::from("/remote"),
+            is_dir: true,
+            is_symlink: false,
+            size: 0,
+            modified: None,
+        };
+        let symlink = FileEntry {
+            name: "linked".to_string(),
+            path: PathBuf::from("/remote/linked"),
+            is_dir: false,
+            is_symlink: true,
+            size: 0,
+            modified: None,
+        };
+        let file = FileEntry {
+            name: "file.txt".to_string(),
+            path: PathBuf::from("/remote/file.txt"),
+            is_dir: false,
+            is_symlink: false,
+            size: 1,
+            modified: None,
+        };
 
-        assert!(is_safe_sftp_entry_name("notes.txt"));
-        assert!(is_safe_sftp_entry_name(".profile"));
+        assert!(should_skip_recursive_download_entry(&parent));
+        assert!(should_skip_recursive_download_entry(&symlink));
+        assert!(!should_skip_recursive_download_entry(&file));
+    }
+
+    #[test]
+    fn remote_file_source_guard_allows_regular_file_candidate() {
+        ensure_remote_file_source("/remote/file.txt", false, false, "download")
+            .expect("regular file candidates should be allowed");
+    }
+
+    #[test]
+    fn remote_file_source_guard_rejects_symlink() {
+        let error = ensure_remote_file_source("/remote/link", false, true, "download")
+            .expect_err("symlink should be rejected");
+
+        assert!(error.contains("symbolic link"));
+    }
+
+    #[test]
+    fn remote_file_source_guard_rejects_directory() {
+        let error = ensure_remote_file_source("/remote/dir", true, false, "inspect")
+            .expect_err("directory should be rejected");
+
+        assert!(error.contains("directory"));
+    }
+
+    #[test]
+    fn remote_rename_destination_guard_allows_missing_path() {
+        reject_existing_remote_rename_destination("/remote/new-name.txt", false)
+            .expect("missing destination should be allowed");
+    }
+
+    #[test]
+    fn remote_rename_destination_guard_rejects_existing_path() {
+        let error = reject_existing_remote_rename_destination("/remote/existing.txt", true)
+            .expect_err("existing destination should be rejected");
+
+        assert!(error.contains("already exists"));
+    }
+
+    #[test]
+    fn remote_create_dir_guard_allows_missing_path() {
+        reject_existing_remote_create_dir("/remote/new-dir", false)
+            .expect("missing directory target should be creatable");
+    }
+
+    #[test]
+    fn remote_create_dir_guard_rejects_existing_path() {
+        let error = reject_existing_remote_create_dir("/remote/existing-dir", true)
+            .expect_err("existing directory target should be rejected");
+
+        assert!(error.contains("already exists"));
+    }
+
+    #[test]
+    fn existing_remote_directory_guard_allows_real_directory() {
+        ensure_existing_remote_directory("/remote/dir", true, false)
+            .expect("existing real directory should be reusable");
+    }
+
+    #[test]
+    fn existing_remote_directory_guard_rejects_file() {
+        let error = ensure_existing_remote_directory("/remote/file.txt", false, false)
+            .expect_err("existing file should not be accepted as directory");
+
+        assert!(error.contains("non-directory"));
+    }
+
+    #[test]
+    fn existing_remote_directory_guard_rejects_symlink() {
+        let error = ensure_existing_remote_directory("/remote/link", true, true)
+            .expect_err("existing symlink should not be accepted as directory");
+
+        assert!(error.contains("symbolic link"));
+    }
+
+    #[test]
+    fn remote_permissions_target_guard_allows_non_symlink() {
+        reject_remote_permissions_target("/remote/file.txt", false)
+            .expect("non-symlink permissions target should be allowed");
+    }
+
+    #[test]
+    fn remote_permissions_target_guard_rejects_symlink() {
+        let error = reject_remote_permissions_target("/remote/link.txt", true)
+            .expect_err("symlink permissions target should be rejected");
+
+        assert!(error.contains("symbolic link"));
     }
 
     #[test]
@@ -1113,6 +1476,337 @@ mod tests {
             .expect_err("root cannot have a sibling staging file");
 
         assert!(error.contains("Cannot create staging path"));
+    }
+
+    #[tokio::test]
+    async fn local_file_download_target_allows_missing_path() {
+        let temp = tempfile::tempdir().unwrap();
+        let missing = temp.path().join("download.txt");
+
+        ensure_local_file_download_target(&missing)
+            .await
+            .expect("missing file target should be creatable later");
+    }
+
+    #[tokio::test]
+    async fn local_file_download_target_allows_regular_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let file = temp.path().join("download.txt");
+        std::fs::write(&file, "old").unwrap();
+
+        ensure_local_file_download_target(&file)
+            .await
+            .expect("regular file target should be replaceable");
+    }
+
+    #[tokio::test]
+    async fn local_file_download_target_rejects_directory() {
+        let temp = tempfile::tempdir().unwrap();
+
+        let error = ensure_local_file_download_target(temp.path())
+            .await
+            .expect_err("directory should not be accepted as file download target");
+
+        assert!(error.to_string().contains("non-regular"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn local_file_download_target_rejects_symlinked_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let target = temp.path().join("target.txt");
+        let link = temp.path().join("download.txt");
+        std::fs::write(&target, "old").unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let error = ensure_local_file_download_target(&link)
+            .await
+            .expect_err("symlinked file target should be rejected");
+
+        assert!(error.to_string().contains("symbolic link"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn local_file_download_target_rejects_socket() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("download.sock");
+        let _listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+
+        let error = ensure_local_file_download_target(&path)
+            .await
+            .expect_err("socket should not be accepted as file download target");
+
+        assert!(error.to_string().contains("non-regular"));
+    }
+
+    #[tokio::test]
+    async fn local_download_parent_allows_existing_directory() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("download.txt");
+
+        ensure_local_download_parent(&path)
+            .await
+            .expect("existing parent directory should be accepted");
+    }
+
+    #[tokio::test]
+    async fn local_download_parent_creates_missing_directory() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("nested").join("download.txt");
+
+        ensure_local_download_parent(&path)
+            .await
+            .expect("missing parent directory should be created");
+
+        assert!(path.parent().unwrap().is_dir());
+    }
+
+    #[tokio::test]
+    async fn local_download_parent_rejects_file_parent() {
+        let temp = tempfile::tempdir().unwrap();
+        let parent = temp.path().join("not-a-dir");
+        let path = parent.join("download.txt");
+        std::fs::write(&parent, "content").unwrap();
+
+        let error = ensure_local_download_parent(&path)
+            .await
+            .expect_err("file parent should not be accepted");
+
+        assert!(error.to_string().contains("parent is not a directory"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn local_download_parent_rejects_symlinked_directory() {
+        let temp = tempfile::tempdir().unwrap();
+        let target = temp.path().join("target");
+        let link = temp.path().join("link");
+        let path = link.join("download.txt");
+        std::fs::create_dir(&target).unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let error = ensure_local_download_parent(&path)
+            .await
+            .expect_err("symlinked parent should be rejected");
+
+        assert!(error.to_string().contains("symbolic link"));
+        assert!(!target.join("download.txt").exists());
+    }
+
+    #[tokio::test]
+    async fn local_download_directory_allows_existing_directory() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("download-dir");
+        std::fs::create_dir(&path).unwrap();
+
+        ensure_local_download_directory(&path)
+            .await
+            .expect("existing directory should be accepted");
+    }
+
+    #[tokio::test]
+    async fn local_download_directory_creates_missing_directory() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("download-dir");
+
+        ensure_local_download_directory(&path)
+            .await
+            .expect("missing directory should be created");
+
+        assert!(path.is_dir());
+    }
+
+    #[tokio::test]
+    async fn local_download_directory_rejects_file_target() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("download-dir");
+        std::fs::write(&path, "content").unwrap();
+
+        let error = ensure_local_download_directory(&path)
+            .await
+            .expect_err("file should not be used as download directory");
+
+        assert!(error.to_string().contains("not a directory"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn local_download_directory_rejects_symlinked_directory() {
+        let temp = tempfile::tempdir().unwrap();
+        let target = temp.path().join("target");
+        let link = temp.path().join("download-dir");
+        std::fs::create_dir(&target).unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let error = ensure_local_download_directory(&link)
+            .await
+            .expect_err("symlinked directory should be rejected");
+
+        assert!(error.to_string().contains("symbolic link"));
+        assert!(std::fs::read_dir(target).unwrap().next().is_none());
+    }
+
+    #[tokio::test]
+    async fn local_upload_directory_root_allows_directory() {
+        let temp = tempfile::tempdir().unwrap();
+
+        ensure_local_upload_directory_root(temp.path())
+            .await
+            .expect("directory root should be uploadable");
+    }
+
+    #[tokio::test]
+    async fn local_upload_directory_root_rejects_regular_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let file = temp.path().join("file.txt");
+        std::fs::write(&file, "content").unwrap();
+
+        let error = ensure_local_upload_directory_root(&file)
+            .await
+            .expect_err("regular file should not be accepted as a recursive upload root");
+
+        assert!(error.to_string().contains("not a directory"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn local_upload_directory_root_rejects_symlinked_directory() {
+        let temp = tempfile::tempdir().unwrap();
+        let target = temp.path().join("target");
+        let link = temp.path().join("link");
+        std::fs::create_dir(&target).unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let error = ensure_local_upload_directory_root(&link)
+            .await
+            .expect_err("symlinked directory root should be rejected");
+
+        assert!(error.to_string().contains("symbolic link"));
+    }
+
+    #[tokio::test]
+    async fn local_upload_entry_kind_classifies_regular_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let file = temp.path().join("file.txt");
+        std::fs::write(&file, "content").unwrap();
+
+        let kind = local_upload_entry_kind(&file)
+            .await
+            .expect("regular file should be classifiable");
+
+        assert_eq!(kind, Some(LocalUploadEntryKind::File));
+    }
+
+    #[tokio::test]
+    async fn local_upload_entry_kind_classifies_directory() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().join("dir");
+        std::fs::create_dir(&dir).unwrap();
+
+        let kind = local_upload_entry_kind(&dir)
+            .await
+            .expect("directory should be classifiable");
+
+        assert_eq!(kind, Some(LocalUploadEntryKind::Directory));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn local_upload_entry_kind_skips_symlink() {
+        let temp = tempfile::tempdir().unwrap();
+        let target = temp.path().join("target.txt");
+        let link = temp.path().join("link.txt");
+        std::fs::write(&target, "content").unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let kind = local_upload_entry_kind(&link)
+            .await
+            .expect("symlink metadata should be readable");
+
+        assert_eq!(kind, None);
+    }
+
+    #[tokio::test]
+    async fn local_upload_file_source_allows_regular_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let file = temp.path().join("file.txt");
+        std::fs::write(&file, "content").unwrap();
+
+        ensure_local_upload_file_source(&file)
+            .await
+            .expect("regular file should be uploadable");
+    }
+
+    #[tokio::test]
+    async fn local_upload_file_source_rejects_directory() {
+        let temp = tempfile::tempdir().unwrap();
+
+        let error = ensure_local_upload_file_source(temp.path())
+            .await
+            .expect_err("directory should not be accepted as a file upload source");
+
+        assert!(error.to_string().contains("not a regular file"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn local_upload_file_source_rejects_symlinked_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let target = temp.path().join("target.txt");
+        let link = temp.path().join("link.txt");
+        std::fs::write(&target, "content").unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let error = ensure_local_upload_file_source(&link)
+            .await
+            .expect_err("symlinked file should be rejected");
+
+        assert!(error.to_string().contains("symbolic link"));
+    }
+
+    #[tokio::test]
+    async fn open_local_upload_file_source_reads_regular_file() {
+        use tokio::io::AsyncReadExt as _;
+
+        let temp = tempfile::tempdir().unwrap();
+        let file = temp.path().join("file.txt");
+        std::fs::write(&file, "content").unwrap();
+
+        let mut opened = open_local_upload_file_source(&file)
+            .await
+            .expect("regular file should open for upload");
+        let mut content = String::new();
+        opened.read_to_string(&mut content).await.unwrap();
+
+        assert_eq!(content, "content");
+    }
+
+    #[tokio::test]
+    async fn open_local_upload_file_source_rejects_directory() {
+        let temp = tempfile::tempdir().unwrap();
+
+        let error = open_local_upload_file_source(temp.path())
+            .await
+            .expect_err("directory should not open for upload");
+
+        assert!(error.to_string().contains("not a regular file"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn open_local_upload_file_source_rejects_symlinked_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let target = temp.path().join("target.txt");
+        let link = temp.path().join("link.txt");
+        std::fs::write(&target, "content").unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let error = open_local_upload_file_source(&link)
+            .await
+            .expect_err("symlinked file should not open for upload");
+
+        assert!(error.to_string().contains("symbolic link"));
     }
 
     // === Error message formatting patterns ===

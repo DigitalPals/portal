@@ -13,13 +13,14 @@
 //! RUST_LOG=portal::security_log=info cargo run
 //! ```
 
-use std::fs::OpenOptions;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{OnceLock, RwLock};
 
 use chrono::Local;
 use tracing::{info, warn};
+
+use crate::fs_utils::{ensure_private_dir_no_follow, open_append_regular_file};
 
 /// Path to the security audit log file, if enabled
 static AUDIT_LOG_PATH: OnceLock<RwLock<Option<PathBuf>>> = OnceLock::new();
@@ -34,6 +35,35 @@ pub fn init_audit_log(path: Option<PathBuf>) {
     }
 }
 
+/// Initialize security audit logging in a directory after validating it is private.
+pub fn init_audit_log_dir(dir: Option<PathBuf>) -> std::io::Result<Option<PathBuf>> {
+    match dir {
+        Some(dir) => match prepare_audit_log_path(&dir) {
+            Ok(path) => {
+                init_audit_log(Some(path.clone()));
+                Ok(Some(path))
+            }
+            Err(error) => {
+                init_audit_log(None);
+                Err(error)
+            }
+        },
+        None => {
+            init_audit_log(None);
+            Ok(None)
+        }
+    }
+}
+
+fn prepare_audit_log_path(dir: &Path) -> std::io::Result<PathBuf> {
+    ensure_private_audit_dir(dir)?;
+    Ok(dir.join("audit.log"))
+}
+
+fn ensure_private_audit_dir(dir: &Path) -> std::io::Result<()> {
+    ensure_private_dir_no_follow(dir)
+}
+
 /// Write an entry to the audit log file, if configured.
 fn write_audit_entry(entry: &str) {
     let path = AUDIT_LOG_PATH
@@ -42,7 +72,7 @@ fn write_audit_entry(entry: &str) {
         .flatten();
 
     if let Some(path) = path
-        && let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&path)
+        && let Ok(mut file) = open_append_regular_file(&path)
     {
         let timestamp = Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
         let _ = writeln!(file, "[{}] {}", timestamp, sanitize_audit_entry(entry));
@@ -264,7 +294,7 @@ pub fn log_vnc_disconnect(host: &str, port: u16) {
 
 #[cfg(test)]
 mod tests {
-    use super::sanitize_audit_entry;
+    use super::{init_audit_log, prepare_audit_log_path, sanitize_audit_entry, write_audit_entry};
 
     #[test]
     fn audit_entry_sanitizes_control_characters() {
@@ -274,5 +304,85 @@ mod tests {
         assert!(!sanitized.contains('\n'));
         assert!(!sanitized.contains('\r'));
         assert!(!sanitized.contains('\t'));
+    }
+
+    #[test]
+    fn prepare_audit_log_path_creates_directory() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().join("security");
+
+        let path = prepare_audit_log_path(&dir).expect("audit directory should be created");
+
+        assert_eq!(path, dir.join("audit.log"));
+        assert!(dir.is_dir());
+    }
+
+    #[test]
+    fn prepare_audit_log_path_rejects_file_directory() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().join("security");
+        std::fs::write(&dir, "not a directory").unwrap();
+
+        let error =
+            prepare_audit_log_path(&dir).expect_err("file path should not be accepted as dir");
+
+        assert_eq!(error.kind(), std::io::ErrorKind::NotADirectory);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn prepare_audit_log_path_makes_directory_private() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().join("security");
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        prepare_audit_log_path(&dir).expect("audit directory should be accepted");
+
+        let mode = std::fs::metadata(&dir).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn prepare_audit_log_path_rejects_symlink_directory() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let target = temp.path().join("target");
+        let link = temp.path().join("security");
+        std::fs::create_dir(&target).unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let error = prepare_audit_log_path(&link).expect_err("symlink dir should be rejected");
+
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        assert!(
+            std::fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        let mode = std::fs::metadata(&target).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o755);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn audit_entry_does_not_append_through_symlink() {
+        let temp = tempfile::tempdir().unwrap();
+        let target = temp.path().join("target.log");
+        let link = temp.path().join("audit.log");
+        std::fs::write(&target, "original\n").unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        init_audit_log(Some(link));
+        write_audit_entry("AUTH_ATTEMPT host=example.com");
+        init_audit_log(None);
+
+        assert_eq!(std::fs::read_to_string(target).unwrap(), "original\n");
     }
 }

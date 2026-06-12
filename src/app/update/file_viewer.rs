@@ -1,9 +1,11 @@
 //! File viewer message handler
 
 use iced::Task;
+use std::path::Path;
 
 use crate::app::Portal;
 use crate::app::services::file_viewer;
+use crate::fs_utils::write_regular_file;
 use crate::message::{FileViewerMessage, Message, TabMessage};
 use crate::sftp::SharedSftpSession;
 use crate::views::file_viewer::FileSource;
@@ -205,9 +207,7 @@ async fn save_file_content(
 ) -> Result<(), String> {
     match source {
         FileSource::Local { path } => {
-            tokio::fs::write(&path, text)
-                .await
-                .map_err(|e| format!("Failed to write file: {}", e))?;
+            write_text_file(&path, text, "file").await?;
             Ok(())
         }
         FileSource::Remote {
@@ -216,9 +216,7 @@ async fn save_file_content(
             ..
         } => {
             // Save to temp path first
-            tokio::fs::write(&temp_path, text)
-                .await
-                .map_err(|e| format!("Failed to write temp file: {}", e))?;
+            write_text_file(&temp_path, text, "temp file").await?;
 
             // Upload to remote via SFTP
             let sftp = sftp_session.ok_or_else(|| "SFTP connection not available".to_string())?;
@@ -228,5 +226,74 @@ async fn save_file_content(
 
             Ok(())
         }
+    }
+}
+
+async fn write_text_file(path: &Path, text: String, label: &str) -> Result<(), String> {
+    let path = path.to_path_buf();
+    let label = label.to_string();
+    let task_label = label.clone();
+    tokio::task::spawn_blocking(move || write_regular_file(&path, text.as_bytes(), &task_label))
+        .await
+        .map_err(|e| format!("{} save task failed: {}", label, e))?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::write_text_file;
+
+    #[tokio::test]
+    async fn write_text_file_updates_regular_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("note.txt");
+        std::fs::write(&path, "old").unwrap();
+
+        write_text_file(&path, "new".to_string(), "file")
+            .await
+            .expect("regular file should be writable");
+
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "new");
+    }
+
+    #[tokio::test]
+    async fn write_text_file_rejects_directory_target() {
+        let temp = tempfile::tempdir().unwrap();
+
+        let error = write_text_file(temp.path(), "new".to_string(), "file")
+            .await
+            .expect_err("directory target should be rejected");
+
+        assert!(error.contains("directory"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn write_text_file_rejects_symlink_target_without_writing_target() {
+        let temp = tempfile::tempdir().unwrap();
+        let target = temp.path().join("target.txt");
+        let link = temp.path().join("link.txt");
+        std::fs::write(&target, "original").unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let error = write_text_file(&link, "changed".to_string(), "file")
+            .await
+            .expect_err("symlink target should be rejected");
+
+        assert!(error.contains("symbolic link"));
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "original");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn write_text_file_rejects_non_regular_target() {
+        let temp = tempfile::tempdir().unwrap();
+        let socket_path = temp.path().join("viewer.sock");
+        let _listener = std::os::unix::net::UnixListener::bind(&socket_path).unwrap();
+
+        let error = write_text_file(&socket_path, "changed".to_string(), "file")
+            .await
+            .expect_err("non-regular target should be rejected");
+
+        assert!(error.contains("non-regular"));
     }
 }

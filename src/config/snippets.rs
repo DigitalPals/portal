@@ -90,10 +90,6 @@ impl SnippetsConfig {
             ),
         })?;
 
-        if !path.exists() {
-            return Ok(Self::default());
-        }
-
         super::load_toml_or_recover(&path, "snippets")
     }
 

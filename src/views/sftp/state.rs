@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use iced::widget::Id;
 
 use crate::message::SessionId;
-use crate::sftp::{FileEntry, SortOrder};
+use crate::sftp::{FileEntry, SortOrder, is_safe_sftp_entry_name};
 
 use super::types::{
     ColumnWidths, ContextMenuState, PaneId, PaneSource, PermissionBit, PermissionBits, SftpColumn,
@@ -282,12 +282,7 @@ impl SftpDialogState {
             SftpDialogType::EditPermissions { .. } => true, // Always valid
             _ => {
                 let name = self.input_value.trim();
-                !name.is_empty()
-                    && !name.contains('/')
-                    && !name.contains('\\')
-                    && !name.contains('\0')
-                    && name != "."
-                    && name != ".."
+                is_safe_sftp_entry_name(name)
             }
         }
     }
@@ -552,6 +547,9 @@ mod tests {
         assert!(!dialog.is_valid());
 
         dialog.input_value = "bad/name".to_string();
+        assert!(!dialog.is_valid());
+
+        dialog.input_value = r"bad\name".to_string();
         assert!(!dialog.is_valid());
 
         dialog.input_value = ".".to_string();

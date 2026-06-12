@@ -680,13 +680,17 @@ impl Portal {
             let audit_dir = settings_config.security_audit_dir.clone().or_else(|| {
                 crate::config::paths::config_dir().map(|dir| dir.join("logs").join("security"))
             });
-            let audit_path = audit_dir.as_ref().map(|dir| {
-                // Create directory if it doesn't exist
-                let _ = std::fs::create_dir_all(dir);
-                dir.join("audit.log")
-            });
-            crate::security_log::init_audit_log(audit_path);
-            tracing::info!("Security audit logging enabled");
+            match crate::security_log::init_audit_log_dir(audit_dir) {
+                Ok(Some(path)) => {
+                    tracing::info!("Security audit logging enabled at {}", path.display());
+                }
+                Ok(None) => {
+                    tracing::warn!("Security audit logging disabled: no audit directory available");
+                }
+                Err(error) => {
+                    tracing::warn!("Security audit logging disabled: {}", error);
+                }
+            }
         } else {
             crate::security_log::init_audit_log(None);
         }

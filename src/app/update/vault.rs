@@ -3,7 +3,9 @@ use iced::widget::text_editor;
 
 use crate::app::{Portal, VaultModal};
 use crate::config::paths;
-use crate::hub::vault::{HubVaultConfig, encrypt_private_key, load_or_create_vault_secret};
+use crate::hub::vault::{
+    HubVaultConfig, encrypt_private_key, load_or_create_vault_secret, read_private_key_file,
+};
 use crate::message::{Message, VaultMessage};
 use crate::views::toast::{Toast, ToastAction};
 
@@ -36,8 +38,7 @@ pub fn handle_vault(portal: &mut Portal, msg: VaultMessage) -> Task<Message> {
                     else {
                         return Ok(None);
                     };
-                    let content = std::fs::read_to_string(&path)
-                        .map_err(|error| format!("failed to read {}: {}", path.display(), error))?;
+                    let content = read_private_key_file(&path)?;
                     Ok(Some((path, content)))
                 },
                 |result| match result {
@@ -56,8 +57,7 @@ pub fn handle_vault(portal: &mut Portal, msg: VaultMessage) -> Task<Message> {
                         .into_iter()
                         .find(|path| path.exists())
                         .ok_or_else(|| "No default SSH private key found in ~/.ssh".to_string())?;
-                    let content = std::fs::read_to_string(&path)
-                        .map_err(|error| format!("failed to read {}: {}", path.display(), error))?;
+                    let content = read_private_key_file(&path)?;
                     Ok((path, content))
                 },
                 |result| Message::Vault(VaultMessage::AddKeyFileLoaded(result)),

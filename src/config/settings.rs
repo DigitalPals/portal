@@ -917,10 +917,6 @@ impl SettingsConfig {
             ),
         })?;
 
-        if !path.exists() {
-            return Ok(Self::default());
-        }
-
         let mut config: Self = super::load_toml_or_recover(&path, "settings")?;
         let mut needs_save = false;
 

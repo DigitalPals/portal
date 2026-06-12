@@ -10,15 +10,16 @@ use tokio::sync::mpsc;
 use uuid::Uuid;
 
 use crate::config::{AuthMethod, Host};
+#[cfg(unix)]
+use crate::fs_utils::set_private_dir_permissions_no_follow;
 use crate::fs_utils::{
-    cleanup_temp_dir, copy_dir_recursive, count_items_in_dir, ensure_not_same_path,
-    ensure_not_symlink,
+    cleanup_temp_dir, copy_dir_recursive, copy_regular_file, count_items_in_dir, sync_parent_dir,
 };
 use crate::keybindings::AppAction;
 use crate::local::{LocalEvent, LocalSession};
 use crate::local_fs::list_local_dir;
 use crate::message::{Message, SessionId, SessionMessage, SftpMessage, VncMessage};
-use crate::sftp::SharedSftpSession;
+use crate::sftp::{SharedSftpSession, is_safe_sftp_entry_name};
 use crate::views::dialogs::password_dialog::PasswordDialogState;
 use crate::views::file_viewer::{FileSource, FileType};
 use crate::views::sftp::{ContextMenuAction, PaneId, PaneSource, PermissionBits, SftpDialogType};
@@ -122,14 +123,14 @@ fn sftp_transfer_task(
             ) {
                 let path = std::env::temp_dir()
                     .join(format!("portal_copy_{}", uuid::Uuid::new_v4()));
-                match tokio::fs::create_dir_all(&path).await {
+                match prepare_sftp_transfer_temp_dir(&path).await {
                     Ok(()) => Some(path),
                     Err(error) => {
                         yield Message::Sftp(SftpMessage::TransferFinished {
                             transfer_id,
                             tab_id,
                             target_pane_id,
-                            result: Err(format!("Failed to create temp directory: {}", error)),
+                            result: Err(error),
                         });
                         return;
                     }
@@ -290,13 +291,7 @@ where
                     copy_dir_recursive(&source_path, &target_path)?;
                     count_items_in_dir(&source_path)
                 } else {
-                    ensure_not_symlink(&source_path)?;
-                    ensure_not_same_path(&source_path, &target_path)?;
-                    std::fs::copy(&source_path, &target_path)
-                        .map_err(|error| {
-                            format!("Failed to copy {}: {}", source_path.display(), error)
-                        })
-                        .map(|_| 1)
+                    copy_regular_file(&source_path, &target_path).map(|()| 1)
                 }
             })
             .await
@@ -1005,6 +1000,10 @@ impl Portal {
                 {
                     let file_name = entry.name.clone();
                     let file_path = entry.path.clone();
+                    if let Err(error) = reject_symlink_open(&file_name, entry.is_symlink) {
+                        self.toast_manager.push(Toast::error(error));
+                        return Task::none();
+                    }
                     let file_type = FileType::from_path(&file_path);
 
                     // Check if file type is viewable
@@ -1072,7 +1071,13 @@ impl Portal {
                 let entries_to_delete: Vec<_> = selected_entries
                     .iter()
                     .filter(|e| !e.is_parent())
-                    .map(|e| (e.name.clone(), e.path.clone(), e.is_dir))
+                    .map(|e| {
+                        (
+                            e.name.clone(),
+                            e.path.clone(),
+                            delete_entry_is_recursive(e.is_dir, e.is_symlink),
+                        )
+                    })
                     .collect();
 
                 if !entries_to_delete.is_empty()
@@ -1106,16 +1111,12 @@ impl Portal {
                     let permissions = match &pane.source {
                         PaneSource::Local => {
                             // Read permissions from local file
-                            #[cfg(unix)]
-                            {
-                                use std::os::unix::fs::PermissionsExt;
-                                std::fs::metadata(&path)
-                                    .map(|m| PermissionBits::from_mode(m.permissions().mode()))
-                                    .unwrap_or_default()
-                            }
-                            #[cfg(not(unix))]
-                            {
-                                PermissionBits::default()
+                            match read_local_permissions(&path) {
+                                Ok(permissions) => permissions,
+                                Err(error) => {
+                                    self.toast_manager.push(Toast::error(error));
+                                    return Task::none();
+                                }
                             }
                         }
                         PaneSource::Remote { .. } => {
@@ -1156,7 +1157,17 @@ impl Portal {
 
         match &dialog.dialog_type {
             SftpDialogType::NewFolder => {
-                let new_folder_path = current_path.join(&input_value);
+                let child_name = match validated_sftp_child_name(&input_value) {
+                    Ok(name) => name,
+                    Err(error) => {
+                        return Task::done(Message::Sftp(SftpMessage::NewFolderResult(
+                            tab_id,
+                            pane_id,
+                            Err(error),
+                        )));
+                    }
+                };
+                let new_folder_path = current_path.join(&child_name);
 
                 match &pane.source {
                     PaneSource::Local => {
@@ -1198,7 +1209,17 @@ impl Portal {
             }
             SftpDialogType::Rename { original_name } => {
                 let old_path = current_path.join(original_name);
-                let new_path = current_path.join(&input_value);
+                let child_name = match validated_sftp_child_name(&input_value) {
+                    Ok(name) => name,
+                    Err(error) => {
+                        return Task::done(Message::Sftp(SftpMessage::RenameResult(
+                            tab_id,
+                            pane_id,
+                            Err(error),
+                        )));
+                    }
+                };
+                let new_path = current_path.join(&child_name);
 
                 match &pane.source {
                     PaneSource::Local => {
@@ -1206,7 +1227,8 @@ impl Portal {
                         Task::perform(
                             async move {
                                 tokio::task::spawn_blocking(move || {
-                                    std::fs::rename(&old_path, &new_path).map_err(|e| e.to_string())
+                                    rename_local_path(&old_path, &new_path)
+                                        .map_err(|e| e.to_string())
                                 })
                                 .await
                                 .map_err(|e| e.to_string())?
@@ -1248,8 +1270,8 @@ impl Portal {
                             async move {
                                 tokio::task::spawn_blocking(move || {
                                     let mut deleted_count = 0;
-                                    for (_, path, is_dir) in entries {
-                                        let result = delete_local_path(&path, is_dir);
+                                    for (_, path, _is_dir) in entries {
+                                        let result = delete_local_path(&path);
                                         match result {
                                             Ok(()) => deleted_count += 1,
                                             Err(e) => {
@@ -1321,20 +1343,7 @@ impl Portal {
                         Task::perform(
                             async move {
                                 tokio::task::spawn_blocking(move || {
-                                    #[cfg(unix)]
-                                    {
-                                        use std::os::unix::fs::PermissionsExt;
-                                        let permissions = std::fs::Permissions::from_mode(mode);
-                                        std::fs::set_permissions(&path, permissions).map_err(|e| {
-                                            format!("Failed to set permissions: {}", e)
-                                        })
-                                    }
-                                    #[cfg(not(unix))]
-                                    {
-                                        let _ = (path, mode);
-                                        Err("Permissions are only supported on Unix systems"
-                                            .to_string())
-                                    }
+                                    set_local_permissions(&path, mode)
                                 })
                                 .await
                                 .map_err(|e| e.to_string())?
@@ -1459,23 +1468,277 @@ fn reject_symlink_copy(name: &str, is_symlink: bool) -> Result<(), String> {
     }
 }
 
-fn delete_local_path(path: &std::path::Path, listed_is_dir: bool) -> std::io::Result<()> {
-    match std::fs::symlink_metadata(path) {
+fn reject_symlink_open(name: &str, is_symlink: bool) -> Result<(), String> {
+    if is_symlink {
+        Err(format!("Cannot open symbolic link {}", name))
+    } else {
+        Ok(())
+    }
+}
+
+fn delete_entry_is_recursive(is_dir: bool, is_symlink: bool) -> bool {
+    is_dir && !is_symlink
+}
+
+async fn prepare_sftp_transfer_temp_dir(path: &std::path::Path) -> Result<(), String> {
+    let existed = match tokio::fs::symlink_metadata(path).await {
+        Ok(_) => true,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => {
+            return Err(format!(
+                "Failed to inspect temp directory {}: {}",
+                path.display(),
+                error
+            ));
+        }
+    };
+
+    let result = async {
+        tokio::fs::create_dir_all(path)
+            .await
+            .map_err(|error| format!("Failed to create temp directory: {}", error))?;
+
+        let metadata = tokio::fs::symlink_metadata(path).await.map_err(|error| {
+            format!(
+                "Failed to inspect temp directory {}: {}",
+                path.display(),
+                error
+            )
+        })?;
+        if metadata.file_type().is_symlink() {
+            return Err(format!(
+                "Refusing to stage transfer through symbolic link directory {}",
+                path.display()
+            ));
+        }
+        if !metadata.is_dir() {
+            return Err(format!("{} is not a directory", path.display()));
+        }
+
+        #[cfg(unix)]
+        {
+            let path = path.to_path_buf();
+            tokio::task::spawn_blocking(move || {
+                set_private_dir_permissions_no_follow(&path).map_err(|error| {
+                    format!(
+                        "Failed to set temp directory permissions for {}: {}",
+                        path.display(),
+                        error
+                    )
+                })
+            })
+            .await
+            .map_err(|error| format!("Temp directory permission task failed: {}", error))??;
+        }
+
+        Ok(())
+    }
+    .await;
+
+    if result.is_err() && !existed {
+        let _ = cleanup_temp_dir(path).await;
+    }
+
+    result
+}
+
+fn validated_sftp_child_name(input: &str) -> Result<String, String> {
+    let name = input.trim();
+    if name.is_empty() {
+        return Err("Name cannot be empty".to_string());
+    }
+    if name == "." || name == ".." {
+        return Err("Name must be a file or folder name".to_string());
+    }
+    if !is_safe_sftp_entry_name(name) {
+        return Err("Name cannot contain path separators or NUL bytes".to_string());
+    }
+    Ok(name.to_string())
+}
+
+fn rename_local_path(
+    old_path: &std::path::Path,
+    new_path: &std::path::Path,
+) -> std::io::Result<()> {
+    rename_local_path_noreplace(old_path, new_path)?;
+    sync_parent_dir(old_path);
+    if old_path.parent() != new_path.parent() {
+        sync_parent_dir(new_path);
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn rename_local_path_noreplace(
+    old_path: &std::path::Path,
+    new_path: &std::path::Path,
+) -> std::io::Result<()> {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+
+    let old = CString::new(old_path.as_os_str().as_bytes()).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("{} contains an interior NUL byte", old_path.display()),
+        )
+    })?;
+    let new = CString::new(new_path.as_os_str().as_bytes()).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("{} contains an interior NUL byte", new_path.display()),
+        )
+    })?;
+
+    // SAFETY: both paths are owned C strings and the directory fds are AT_FDCWD.
+    let result = unsafe {
+        libc::syscall(
+            libc::SYS_renameat2,
+            libc::AT_FDCWD,
+            old.as_ptr(),
+            libc::AT_FDCWD,
+            new.as_ptr(),
+            libc::RENAME_NOREPLACE,
+        )
+    };
+
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(std::io::Error::last_os_error())
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn rename_local_path_noreplace(
+    old_path: &std::path::Path,
+    new_path: &std::path::Path,
+) -> std::io::Result<()> {
+    match std::fs::symlink_metadata(new_path) {
+        Ok(_) => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                format!("{} already exists", new_path.display()),
+            ));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
+    }
+
+    std::fs::rename(old_path, new_path)
+}
+
+fn set_local_permissions(path: &std::path::Path, mode: u32) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let file = open_local_permissions_target(path, "set permissions on")?;
+        let permissions = std::fs::Permissions::from_mode(mode);
+        file.set_permissions(permissions)
+            .map_err(|e| format!("Failed to set permissions: {}", e))
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = (path, mode);
+        Err("Permissions are only supported on Unix systems".to_string())
+    }
+}
+
+fn read_local_permissions(path: &std::path::Path) -> Result<PermissionBits, String> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+
+        let file = open_local_permissions_target(path, "edit permissions for")?;
+        let metadata = file
+            .metadata()
+            .map_err(|e| format!("Failed to read metadata for {}: {}", path.display(), e))?;
+        Ok(PermissionBits::from_mode(metadata.permissions().mode()))
+    }
+
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        Ok(PermissionBits::default())
+    }
+}
+
+#[cfg(unix)]
+fn open_local_permissions_target(
+    path: &std::path::Path,
+    action: &str,
+) -> Result<std::fs::File, String> {
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)
+        .map_err(|error| {
+            if error.raw_os_error() == Some(libc::ELOOP) {
+                format!("Refusing to {action} symbolic link {}", path.display())
+            } else {
+                format!(
+                    "Failed to open {} for permissions: {}",
+                    path.display(),
+                    error
+                )
+            }
+        })?;
+    let metadata = file
+        .metadata()
+        .map_err(|error| format!("Failed to read metadata for {}: {}", path.display(), error))?;
+    if !metadata.is_file() && !metadata.is_dir() {
+        return Err(format!(
+            "Refusing to {action} non-regular path {}",
+            path.display()
+        ));
+    }
+
+    Ok(file)
+}
+
+fn delete_local_path(path: &std::path::Path) -> std::io::Result<()> {
+    let result = match std::fs::symlink_metadata(path) {
         Ok(metadata) if metadata.file_type().is_symlink() => std::fs::remove_file(path),
         Ok(metadata) if metadata.is_dir() => std::fs::remove_dir_all(path),
         Ok(_) => std::fs::remove_file(path),
-        Err(_) if listed_is_dir => std::fs::remove_dir_all(path),
-        Err(_) => std::fs::remove_file(path),
+        Err(error) => Err(error),
+    };
+    if result.is_ok() {
+        sync_parent_dir(path);
     }
+    result
 }
 
 #[cfg(test)]
 mod tests {
-    use super::delete_local_path;
+    use super::{
+        delete_entry_is_recursive, delete_local_path, prepare_sftp_transfer_temp_dir,
+        read_local_permissions, reject_symlink_open, rename_local_path, set_local_permissions,
+        validated_sftp_child_name,
+    };
     use crate::app::PendingConnect;
     use crate::message::Message;
     use iced::Task;
+    use std::io::ErrorKind;
     use uuid::Uuid;
+
+    #[cfg(unix)]
+    fn make_fifo(path: &std::path::Path) {
+        use std::ffi::CString;
+        use std::os::unix::ffi::OsStrExt;
+
+        let path = CString::new(path.as_os_str().as_bytes()).unwrap();
+        let result = unsafe { libc::mkfifo(path.as_ptr(), 0o600) };
+        assert_eq!(
+            result,
+            0,
+            "mkfifo failed: {}",
+            std::io::Error::last_os_error()
+        );
+    }
 
     #[test]
     fn pending_connect_matches_only_its_session() {
@@ -1485,6 +1748,114 @@ mod tests {
 
         assert!(pending.is_for(session_id));
         assert!(!pending.is_for(Uuid::new_v4()));
+    }
+
+    #[test]
+    fn reject_symlink_open_allows_regular_entry() {
+        reject_symlink_open("file.txt", false).expect("regular entry should be openable");
+    }
+
+    #[test]
+    fn reject_symlink_open_rejects_symlink_entry() {
+        let error =
+            reject_symlink_open("link.txt", true).expect_err("symlink entry should not be opened");
+
+        assert!(error.contains("symbolic link"));
+    }
+
+    #[test]
+    fn delete_entry_is_recursive_only_for_real_directories() {
+        assert!(delete_entry_is_recursive(true, false));
+        assert!(!delete_entry_is_recursive(false, false));
+        assert!(!delete_entry_is_recursive(false, true));
+        assert!(!delete_entry_is_recursive(true, true));
+    }
+
+    #[tokio::test]
+    async fn prepare_sftp_transfer_temp_dir_creates_directory() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("staging");
+
+        prepare_sftp_transfer_temp_dir(&path)
+            .await
+            .expect("temp transfer directory should be created");
+
+        assert!(path.is_dir());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn prepare_sftp_transfer_temp_dir_makes_directory_private() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("staging");
+
+        prepare_sftp_transfer_temp_dir(&path)
+            .await
+            .expect("temp transfer directory should be created");
+
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700);
+    }
+
+    #[tokio::test]
+    async fn prepare_sftp_transfer_temp_dir_rejects_regular_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("staging");
+        std::fs::write(&path, "not a directory").unwrap();
+
+        let error = prepare_sftp_transfer_temp_dir(&path)
+            .await
+            .expect_err("regular file should not be accepted as a transfer directory");
+
+        assert!(
+            error.contains("Failed to create temp directory") || error.contains("not a directory")
+        );
+    }
+
+    #[tokio::test]
+    #[cfg(unix)]
+    async fn prepare_sftp_transfer_temp_dir_rejects_symlinked_directory_without_writing_target() {
+        let temp = tempfile::tempdir().unwrap();
+        let target = temp.path().join("target");
+        let link = temp.path().join("staging");
+        std::fs::create_dir(&target).unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let error = prepare_sftp_transfer_temp_dir(&link)
+            .await
+            .expect_err("symlinked transfer directory should be rejected");
+
+        assert!(error.contains("symbolic link"));
+        assert!(std::fs::read_dir(target).unwrap().next().is_none());
+    }
+
+    #[test]
+    fn validated_sftp_child_name_accepts_plain_name_and_trims() {
+        let name = validated_sftp_child_name("  folder  ").unwrap();
+
+        assert_eq!(name, "folder");
+    }
+
+    #[test]
+    fn validated_sftp_child_name_rejects_empty_and_parent_names() {
+        for name in ["", "   ", ".", ".."] {
+            assert!(
+                validated_sftp_child_name(name).is_err(),
+                "{name:?} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn validated_sftp_child_name_rejects_path_components() {
+        for name in ["a/b", r"a\b", "/tmp/x", r"C:\tmp\x", "nul\0byte"] {
+            assert!(
+                validated_sftp_child_name(name).is_err(),
+                "{name:?} should be rejected"
+            );
+        }
     }
 
     #[cfg(unix)]
@@ -1497,9 +1868,222 @@ mod tests {
         std::fs::write(target.join("file.txt"), "content").unwrap();
         std::os::unix::fs::symlink(&target, &symlink).unwrap();
 
-        delete_local_path(&symlink, true).unwrap();
+        delete_local_path(&symlink).unwrap();
 
         assert!(!symlink.exists());
         assert!(target.join("file.txt").exists());
+    }
+
+    #[test]
+    fn delete_local_path_removes_real_directory_recursively() {
+        let temp = tempfile::tempdir().unwrap();
+        let target = temp.path().join("target");
+        std::fs::create_dir(&target).unwrap();
+        std::fs::write(target.join("file.txt"), "content").unwrap();
+
+        delete_local_path(&target).unwrap();
+
+        assert!(!target.exists());
+    }
+
+    #[test]
+    fn delete_local_path_returns_metadata_error_for_missing_path() {
+        let temp = tempfile::tempdir().unwrap();
+        let missing = temp.path().join("missing");
+
+        let error = delete_local_path(&missing).expect_err("missing path should fail");
+
+        assert_eq!(error.kind(), ErrorKind::NotFound);
+    }
+
+    #[test]
+    fn rename_local_path_moves_to_missing_destination() {
+        let temp = tempfile::tempdir().unwrap();
+        let old_path = temp.path().join("old.txt");
+        let new_path = temp.path().join("new.txt");
+        std::fs::write(&old_path, "content").unwrap();
+
+        rename_local_path(&old_path, &new_path).unwrap();
+
+        assert!(!old_path.exists());
+        assert_eq!(std::fs::read_to_string(&new_path).unwrap(), "content");
+    }
+
+    #[test]
+    fn rename_local_path_rejects_existing_destination() {
+        let temp = tempfile::tempdir().unwrap();
+        let old_path = temp.path().join("old.txt");
+        let new_path = temp.path().join("new.txt");
+        std::fs::write(&old_path, "old").unwrap();
+        std::fs::write(&new_path, "new").unwrap();
+
+        let error = rename_local_path(&old_path, &new_path)
+            .expect_err("existing destination should not be replaced");
+
+        assert_eq!(error.kind(), ErrorKind::AlreadyExists);
+        assert_eq!(std::fs::read_to_string(&old_path).unwrap(), "old");
+        assert_eq!(std::fs::read_to_string(&new_path).unwrap(), "new");
+    }
+
+    #[test]
+    fn rename_local_path_rejects_existing_directory_destination() {
+        let temp = tempfile::tempdir().unwrap();
+        let old_path = temp.path().join("old.txt");
+        let new_path = temp.path().join("new-dir");
+        std::fs::write(&old_path, "old").unwrap();
+        std::fs::create_dir(&new_path).unwrap();
+
+        let error = rename_local_path(&old_path, &new_path)
+            .expect_err("existing directory destination should not be replaced");
+
+        assert_eq!(error.kind(), ErrorKind::AlreadyExists);
+        assert_eq!(std::fs::read_to_string(&old_path).unwrap(), "old");
+        assert!(new_path.is_dir());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rename_local_path_rejects_existing_symlink_destination() {
+        let temp = tempfile::tempdir().unwrap();
+        let old_path = temp.path().join("old.txt");
+        let target = temp.path().join("target.txt");
+        let link = temp.path().join("new.txt");
+        std::fs::write(&old_path, "old").unwrap();
+        std::fs::write(&target, "target").unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let error = rename_local_path(&old_path, &link)
+            .expect_err("symlink destination should be rejected");
+
+        assert_eq!(error.kind(), ErrorKind::AlreadyExists);
+        assert_eq!(std::fs::read_to_string(&old_path).unwrap(), "old");
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "target");
+        assert!(
+            std::fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn set_local_permissions_updates_regular_file() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("file.txt");
+        std::fs::write(&path, "content").unwrap();
+
+        set_local_permissions(&path, 0o600).unwrap();
+
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn set_local_permissions_updates_directory() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("dir");
+        std::fs::create_dir(&path).unwrap();
+
+        set_local_permissions(&path, 0o700).unwrap();
+
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o700);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn set_local_permissions_rejects_symlink_without_changing_target() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let target = temp.path().join("target.txt");
+        let link = temp.path().join("link.txt");
+        std::fs::write(&target, "content").unwrap();
+        std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o640)).unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let error = set_local_permissions(&link, 0o600)
+            .expect_err("symlink permissions target should be rejected");
+
+        assert!(error.contains("symbolic link"));
+        let mode = std::fs::metadata(&target).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o640);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn set_local_permissions_rejects_fifo_without_blocking() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("pipe");
+        make_fifo(&path);
+
+        let error = set_local_permissions(&path, 0o600)
+            .expect_err("fifo permissions target should be rejected");
+
+        assert!(error.contains("non-regular"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn read_local_permissions_rejects_symlink_without_following_target() {
+        let temp = tempfile::tempdir().unwrap();
+        let target = temp.path().join("target.txt");
+        let link = temp.path().join("link.txt");
+        std::fs::write(&target, "content").unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let error = read_local_permissions(&link)
+            .expect_err("symlink permissions dialog setup should be rejected");
+
+        assert!(error.contains("symbolic link"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn read_local_permissions_rejects_fifo_without_blocking() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("pipe");
+        make_fifo(&path);
+
+        let error =
+            read_local_permissions(&path).expect_err("fifo permissions target should be rejected");
+
+        assert!(error.contains("non-regular"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn read_local_permissions_reads_regular_file_mode() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("file.txt");
+        std::fs::write(&path, "content").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o640)).unwrap();
+
+        let permissions = read_local_permissions(&path).unwrap();
+
+        assert_eq!(permissions.to_mode(), 0o640);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn read_local_permissions_reads_directory_mode() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("dir");
+        std::fs::create_dir(&path).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o750)).unwrap();
+
+        let permissions = read_local_permissions(&path).unwrap();
+
+        assert_eq!(permissions.to_mode(), 0o750);
     }
 }

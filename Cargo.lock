@@ -5069,6 +5069,7 @@ dependencies = [
  "image",
  "jsonschema",
  "keyring",
+ "libc",
  "md-5",
  "notify-rust",
  "num-bigint",

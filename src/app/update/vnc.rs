@@ -5,6 +5,7 @@ use iced::Task;
 use crate::app::Portal;
 use crate::app::managers::session_manager::VncActiveSession;
 use crate::config::settings::VncScalingMode;
+use crate::fs_utils;
 use crate::message::{Message, VncMessage};
 use crate::views::tabs::Tab;
 use crate::views::toast::Toast;
@@ -280,10 +281,7 @@ pub fn handle_vnc(portal: &mut Portal, msg: VncMessage) -> Task<Message> {
                         tokio::fs::create_dir_all(&dir)
                             .await
                             .map_err(|e| format!("Failed to create screenshot directory: {}", e))?;
-                        let path = dir.join(&filename);
-
-                        image::save_buffer(&path, &rgba, width, height, image::ColorType::Rgba8)
-                            .map_err(|e| format!("Failed to save screenshot: {}", e))?;
+                        let path = save_rgba_png_unique(&dir, &filename, &rgba, width, height)?;
 
                         Ok(path.display().to_string())
                     },
@@ -411,9 +409,102 @@ fn safe_filename_component(value: &str, fallback: &str) -> String {
     }
 }
 
+fn save_rgba_png_new(
+    path: &std::path::Path,
+    rgba: &[u8],
+    width: u32,
+    height: u32,
+) -> Result<(), String> {
+    use image::ImageEncoder;
+
+    let expected_len = usize::try_from(width)
+        .ok()
+        .and_then(|width| {
+            usize::try_from(height)
+                .ok()
+                .and_then(|height| width.checked_mul(height))
+        })
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or_else(|| "Screenshot dimensions are too large".to_string())?;
+    if rgba.len() != expected_len {
+        return Err(format!(
+            "Invalid screenshot buffer length: expected {} bytes, got {}",
+            expected_len,
+            rgba.len()
+        ));
+    }
+
+    let mut file = fs_utils::create_new_regular_file_no_follow(path)
+        .map_err(|e| format!("Failed to create screenshot {}: {}", path.display(), e))?;
+    let encoder = image::codecs::png::PngEncoder::new(&mut file);
+    if let Err(error) = encoder.write_image(rgba, width, height, image::ColorType::Rgba8.into()) {
+        drop(file);
+        let _ = std::fs::remove_file(path);
+        return Err(format!("Failed to save screenshot: {}", error));
+    }
+    file.sync_all()
+        .map_err(|e| format!("Failed to sync screenshot {}: {}", path.display(), e))?;
+    fs_utils::sync_parent_dir(path);
+    Ok(())
+}
+
+fn save_rgba_png_unique(
+    dir: &std::path::Path,
+    filename: &str,
+    rgba: &[u8],
+    width: u32,
+    height: u32,
+) -> Result<std::path::PathBuf, String> {
+    for index in 0..1000 {
+        let path = screenshot_candidate_path(dir, filename, index);
+        match std::fs::symlink_metadata(&path) {
+            Ok(_) => continue,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                save_rgba_png_new(&path, rgba, width, height)?;
+                return Ok(path);
+            }
+            Err(error) => {
+                return Err(format!(
+                    "Failed to inspect screenshot target {}: {}",
+                    path.display(),
+                    error
+                ));
+            }
+        }
+    }
+
+    Err(format!(
+        "No available screenshot filename for {}",
+        dir.join(filename).display()
+    ))
+}
+
+fn screenshot_candidate_path(
+    dir: &std::path::Path,
+    filename: &str,
+    index: usize,
+) -> std::path::PathBuf {
+    if index == 0 {
+        return dir.join(filename);
+    }
+
+    let path = std::path::Path::new(filename);
+    let stem = path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or(filename);
+
+    match path.extension().and_then(|extension| extension.to_str()) {
+        Some(extension) => dir.join(format!("{}_{}.{}", stem, index, extension)),
+        None => dir.join(format!("{}_{}", filename, index)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::safe_filename_component;
+    use super::{
+        safe_filename_component, save_rgba_png_new, save_rgba_png_unique, screenshot_candidate_path,
+    };
 
     #[test]
     fn safe_filename_component_strips_path_separators() {
@@ -426,5 +517,119 @@ mod tests {
     #[test]
     fn safe_filename_component_uses_fallback_for_empty_names() {
         assert_eq!(safe_filename_component("../", "session"), "session");
+    }
+
+    #[test]
+    fn save_rgba_png_new_rejects_existing_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("screenshot.png");
+        std::fs::write(&path, "original").unwrap();
+
+        let error = save_rgba_png_new(&path, &[0, 0, 0, 255], 1, 1)
+            .expect_err("existing screenshot target should not be overwritten");
+
+        assert!(error.contains("Failed to create screenshot"));
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "original");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn save_rgba_png_new_rejects_symlink_without_writing_target() {
+        let temp = tempfile::tempdir().unwrap();
+        let target = temp.path().join("target.png");
+        let link = temp.path().join("screenshot.png");
+        std::fs::write(&target, "original").unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let error = save_rgba_png_new(&link, &[0, 0, 0, 255], 1, 1)
+            .expect_err("screenshot should not be saved through symlink");
+
+        assert!(error.contains("Failed to create screenshot"));
+        assert_eq!(std::fs::read_to_string(target).unwrap(), "original");
+    }
+
+    #[test]
+    fn save_rgba_png_new_writes_png() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("screenshot.png");
+
+        save_rgba_png_new(&path, &[0, 0, 0, 255], 1, 1).unwrap();
+
+        let bytes = std::fs::read(path).unwrap();
+        assert!(bytes.starts_with(b"\x89PNG\r\n\x1a\n"));
+    }
+
+    #[test]
+    fn save_rgba_png_new_removes_file_on_encode_failure() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("screenshot.png");
+
+        let error = save_rgba_png_new(&path, &[0, 0, 0], 1, 1)
+            .expect_err("invalid RGBA buffer should fail");
+
+        assert!(error.contains("Invalid screenshot buffer length"));
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn screenshot_candidate_path_adds_index_before_extension() {
+        let temp = tempfile::tempdir().unwrap();
+
+        assert_eq!(
+            screenshot_candidate_path(temp.path(), "vnc_host.png", 2),
+            temp.path().join("vnc_host_2.png")
+        );
+    }
+
+    #[test]
+    fn save_rgba_png_unique_skips_existing_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let existing = temp.path().join("screenshot.png");
+        std::fs::write(&existing, "original").unwrap();
+
+        let path =
+            save_rgba_png_unique(temp.path(), "screenshot.png", &[0, 0, 0, 255], 1, 1).unwrap();
+
+        assert_eq!(path, temp.path().join("screenshot_1.png"));
+        assert_eq!(std::fs::read_to_string(existing).unwrap(), "original");
+        assert!(
+            std::fs::read(path)
+                .unwrap()
+                .starts_with(b"\x89PNG\r\n\x1a\n")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn save_rgba_png_unique_skips_socket_target() {
+        let temp = tempfile::tempdir().unwrap();
+        let socket = temp.path().join("screenshot.png");
+        let _listener = std::os::unix::net::UnixListener::bind(&socket).unwrap();
+
+        let path =
+            save_rgba_png_unique(temp.path(), "screenshot.png", &[0, 0, 0, 255], 1, 1).unwrap();
+
+        assert_eq!(path, temp.path().join("screenshot_1.png"));
+        assert!(
+            std::fs::read(path)
+                .unwrap()
+                .starts_with(b"\x89PNG\r\n\x1a\n")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn save_rgba_png_unique_skips_symlink_without_writing_target() {
+        let temp = tempfile::tempdir().unwrap();
+        let target = temp.path().join("target.png");
+        let link = temp.path().join("screenshot.png");
+        std::fs::write(&target, "original").unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let path =
+            save_rgba_png_unique(temp.path(), "screenshot.png", &[0, 0, 0, 255], 1, 1).unwrap();
+
+        assert_eq!(path, temp.path().join("screenshot_1.png"));
+        assert_eq!(std::fs::read_to_string(target).unwrap(), "original");
     }
 }

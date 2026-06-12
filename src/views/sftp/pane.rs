@@ -659,7 +659,7 @@ pub fn pane_file_entry_row(
     };
 
     let path = entry.path.clone();
-    let is_dir = entry.is_dir;
+    let is_navigable_dir = entry.is_navigable_dir();
 
     let modified = entry.formatted_modified();
     let kind = entry.kind_description();
@@ -774,7 +774,7 @@ pub fn pane_file_entry_row(
 
     let btn = if context_menu_open {
         btn
-    } else if is_dir {
+    } else if is_navigable_dir {
         btn.on_press(Message::Sftp(SftpMessage::PaneNavigate(
             tab_id, pane_id, path,
         )))

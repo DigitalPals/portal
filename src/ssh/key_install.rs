@@ -4,10 +4,14 @@
 //! on a remote server by appending it to ~/.ssh/authorized_keys.
 
 use directories::BaseDirs;
+use std::path::Path;
 
 use crate::error::SshError;
+use crate::fs_utils;
 
 use super::SshSession;
+
+const PUBLIC_KEY_FILE_MAX_BYTES: u64 = 64 * 1024;
 
 /// Install the local SSH public key on the remote server.
 ///
@@ -44,8 +48,7 @@ pub async fn install_ssh_key(session: &SshSession) -> Result<bool, SshError> {
         )
     })?;
 
-    let pub_key = std::fs::read_to_string(&pub_key_path)
-        .map_err(|e| SshError::KeyInstall(format!("Failed to read public key: {}", e)))?;
+    let pub_key = read_public_key_file(&pub_key_path)?;
     let pub_key = pub_key.trim();
 
     // 2. Validate key format
@@ -80,6 +83,15 @@ pub async fn install_ssh_key(session: &SshSession) -> Result<bool, SshError> {
     Ok(true)
 }
 
+fn read_public_key_file(path: &Path) -> Result<String, SshError> {
+    fs_utils::read_regular_file_follow_symlink_to_string_limited(
+        path,
+        PUBLIC_KEY_FILE_MAX_BYTES,
+        "Public key",
+    )
+    .map_err(|error| SshError::KeyInstall(format!("Failed to read public key: {error}")))
+}
+
 fn is_supported_public_key_line(line: &str) -> bool {
     let algorithm = line.split_whitespace().next().unwrap_or_default();
     matches!(
@@ -96,7 +108,7 @@ fn is_supported_public_key_line(line: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::is_supported_public_key_line;
+    use super::{PUBLIC_KEY_FILE_MAX_BYTES, is_supported_public_key_line, read_public_key_file};
 
     #[test]
     fn recognizes_common_public_key_algorithms() {
@@ -119,5 +131,63 @@ mod tests {
             "-----BEGIN OPENSSH PRIVATE KEY-----"
         ));
         assert!(!is_supported_public_key_line(""));
+    }
+
+    #[test]
+    fn read_public_key_file_reads_regular_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("id_ed25519.pub");
+        std::fs::write(&path, "ssh-ed25519 AAAA comment\n").unwrap();
+
+        let content = read_public_key_file(&path).unwrap();
+
+        assert_eq!(content, "ssh-ed25519 AAAA comment\n");
+    }
+
+    #[test]
+    fn read_public_key_file_rejects_oversized_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("id_ed25519.pub");
+        let data = vec![b'a'; PUBLIC_KEY_FILE_MAX_BYTES as usize + 1];
+        std::fs::write(&path, data).unwrap();
+
+        let error = read_public_key_file(&path).expect_err("oversized key should be rejected");
+
+        assert!(error.to_string().contains("too large"));
+    }
+
+    #[test]
+    fn read_public_key_file_rejects_directory() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let error = read_public_key_file(dir.path()).expect_err("directory should be rejected");
+
+        assert!(error.to_string().contains("not a regular file"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn read_public_key_file_allows_symlinked_key_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("real_id_ed25519.pub");
+        let link = dir.path().join("id_ed25519.pub");
+        std::fs::write(&target, "ssh-ed25519 AAAA comment\n").unwrap();
+        std::os::unix::fs::symlink(&target, &link).unwrap();
+
+        let content = read_public_key_file(&link).unwrap();
+
+        assert_eq!(content, "ssh-ed25519 AAAA comment\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn read_public_key_file_rejects_socket() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("id_ed25519.pub");
+        let _listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+
+        let error = read_public_key_file(&path).expect_err("socket should be rejected");
+
+        assert!(error.to_string().contains("not a regular file"));
     }
 }

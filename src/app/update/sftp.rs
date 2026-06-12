@@ -5,9 +5,7 @@ use uuid::Uuid;
 
 use crate::app::{Portal, Tab, View};
 use crate::config::SettingsConfig;
-use crate::fs_utils::{
-    copy_dir_recursive, count_items_in_dir, ensure_not_same_path, ensure_not_symlink,
-};
+use crate::fs_utils::{copy_dir_recursive, copy_regular_file, count_items_in_dir};
 use crate::message::{Message, SftpMessage};
 use crate::views::sftp::state::ColumnResizeDrag;
 use crate::views::sftp::{DualPaneSftpState, PaneId, PaneSource};
@@ -642,11 +640,7 @@ fn handle_dropped_files(
                                 copy_dir_recursive(&source_path, &target_path)?;
                                 count += count_items_in_dir(&source_path)?;
                             } else {
-                                ensure_not_symlink(&source_path)?;
-                                ensure_not_same_path(&source_path, &target_path)?;
-                                std::fs::copy(&source_path, &target_path).map_err(|e| {
-                                    format!("Failed to copy {}: {}", source_path.display(), e)
-                                })?;
+                                copy_regular_file(&source_path, &target_path)?;
                                 count += 1;
                             }
                         }

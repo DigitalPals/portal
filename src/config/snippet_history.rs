@@ -339,11 +339,6 @@ impl SnippetHistoryConfig {
 
         tracing::debug!("Loading snippet history from: {:?}", path);
 
-        if !path.exists() {
-            tracing::debug!("Snippet history file does not exist: {:?}", path);
-            return Ok(Self::default());
-        }
-
         let mut config: Self = super::load_toml_or_recover(&path, "snippet history")?;
         config.trim_to_max_entries();
         Ok(config)
