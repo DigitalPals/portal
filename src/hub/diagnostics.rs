@@ -100,6 +100,12 @@ impl PortalHubDiagnosticsReport {
     }
 }
 
+impl Default for PortalHubDiagnosticsReport {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub async fn run_portal_hub_diagnostics(settings: PortalHubSettings) -> PortalHubDiagnosticsReport {
     let mut report = PortalHubDiagnosticsReport::new();
     let hub_url = settings.effective_web_url();

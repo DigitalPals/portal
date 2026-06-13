@@ -5049,7 +5049,7 @@ dependencies = [
 
 [[package]]
 name = "portal"
-version = "0.6.15"
+version = "0.6.16"
 dependencies = [
  "aes 0.8.4",
  "alacritty_terminal",
