@@ -12,7 +12,6 @@ fn host_card(host: &Host) -> HostCard {
     HostCard {
         id: host.id,
         name: host.name.clone(),
-        hostname: host.hostname.clone(),
         detected_os: host.detected_os.clone(),
         protocol: host.protocol.clone(),
         last_connected: host.last_connected,

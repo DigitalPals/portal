@@ -1,4 +1,4 @@
-use iced::widget::{Column, Row, Space, button, column, container, row, text, text_input, tooltip};
+use iced::widget::{Column, Row, Space, button, column, container, row, text, text_input};
 use iced::{Alignment, Element, Fill, Length, Padding};
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -52,7 +52,6 @@ pub struct GroupCard {
 pub struct HostCard {
     pub id: Uuid,
     pub name: String,
-    pub hostname: String,
     pub detected_os: Option<DetectedOs>,
     pub protocol: Protocol,
     pub last_connected: Option<chrono::DateTime<chrono::Utc>>,
@@ -596,7 +595,7 @@ fn host_card(
         detail_row = detail_row.push(text("·").size(fonts.label).color(theme.text_muted));
     }
     detail_row = detail_row.push(
-        text(last_connected_text.clone())
+        text(last_connected_text)
             .size(fonts.label)
             .color(theme.text_secondary),
     );
@@ -698,40 +697,7 @@ fn host_card(
     .height(Length::Fixed(CARD_HEIGHT))
     .on_press(Message::Host(HostMessage::Connect(host_id)));
 
-    let hover_content = container(
-        column![
-            text(host.name.clone())
-                .size(fonts.body)
-                .color(theme.text_primary),
-            text(format!(
-                "{}://{}",
-                protocol_label.to_lowercase(),
-                &host.hostname
-            ))
-            .size(fonts.label)
-            .color(theme.text_muted),
-            text(format!("Last connected: {}", last_connected_text))
-                .size(fonts.label)
-                .color(theme.text_secondary),
-        ]
-        .spacing(5),
-    )
-    .padding(8)
-    .width(Length::Fixed(260.0));
-
-    tooltip(card_button, hover_content, tooltip::Position::Top)
-        .delay(std::time::Duration::from_millis(650))
-        .style(move |_theme| container::Style {
-            background: Some(theme.surface.into()),
-            border: iced::Border {
-                color: theme.border,
-                width: 1.0,
-                radius: 6.0.into(),
-            },
-            ..Default::default()
-        })
-        .padding(6)
-        .into()
+    card_button.into()
 }
 
 /// Empty state when no hosts are configured
