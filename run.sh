@@ -38,12 +38,28 @@ check)
   run_cargo check
   run_cargo clippy --all-targets -- -D warnings
   ;;
+remote-build)
+  exec scripts/remote-build.sh --fetch build
+  ;;
+remote-release)
+  exec scripts/remote-build.sh --fetch release
+  ;;
+remote-check)
+  exec scripts/remote-build.sh check
+  ;;
+remote-test)
+  exec scripts/remote-build.sh test
+  ;;
 *)
-  echo "Usage: $0 {build|run|dev|check}"
+  echo "Usage: $0 {build|run|dev|check|remote-build|remote-release|remote-check|remote-test}"
   echo "  build  - Build release binary"
   echo "  run    - Build and run release (default)"
   echo "  dev    - Build and run debug"
   echo "  check  - Run cargo check and clippy"
+  echo "  remote-build    - Sync to The Beast and run cargo build"
+  echo "  remote-release  - Sync to The Beast and run cargo build --release"
+  echo "  remote-check    - Sync to The Beast and run check/clippy"
+  echo "  remote-test     - Sync to The Beast and run cargo test"
   exit 1
   ;;
 esac
