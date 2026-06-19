@@ -6,13 +6,13 @@
 
 use chrono::{DateTime, Utc};
 use data_encoding::BASE64;
-use futures::{SinkExt, StreamExt};
+use futures::{Sink, SinkExt, StreamExt};
 use secrecy::ExposeSecret;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::mpsc as std_mpsc;
 use std::time::Duration;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
@@ -22,6 +22,9 @@ use crate::config::settings::PortalHubSettings;
 use crate::config::{AuthMethod, Host};
 use crate::error::LocalError;
 use crate::hub::http;
+use crate::ssh::host_key_verification::{
+    HostKeyInfo, HostKeyVerificationRequest, HostKeyVerificationResponse,
+};
 
 const MIN_SUPPORTED_WEB_PROXY_API_VERSION: u16 = 2;
 const SESSION_LIST_PREVIEW_BYTES: u64 = 64 * 1024;
@@ -30,6 +33,7 @@ const SESSION_LIST_PREVIEW_BYTES: u64 = 64 * 1024;
 pub enum ProxyEvent {
     Data(Vec<u8>),
     Disconnected { clean: bool },
+    HostKeyVerification(Box<HostKeyVerificationRequest>),
 }
 
 #[derive(Debug, Clone)]
@@ -159,6 +163,17 @@ struct WebTerminalStart {
 #[serde(tag = "type", rename_all = "snake_case")]
 enum WebTerminalControl {
     Resize { cols: u16, rows: u16 },
+    HostKeyResponse { accepted: bool },
+}
+
+#[derive(Debug, Deserialize)]
+struct WebTerminalHostKeyVerification {
+    host: String,
+    port: u16,
+    fingerprint: String,
+    key_type: String,
+    #[serde(default)]
+    old_fingerprint: Option<String>,
 }
 
 #[derive(Debug)]
@@ -236,7 +251,7 @@ impl ProxySession {
             ));
         });
 
-        match ready_rx.recv_timeout(Duration::from_secs(15)) {
+        match ready_rx.recv_timeout(Duration::from_secs(75)) {
             Ok(Ok(())) => {}
             Ok(Err(error)) => return Err(LocalError::SpawnFailed(error)),
             Err(std_mpsc::RecvTimeoutError::Timeout) => {
@@ -347,6 +362,10 @@ async fn run_web_terminal(
                                     .to_string();
                                 return Err(message);
                             }
+                            Some("host_key_verification") => {
+                                respond_to_host_key_verification(&text, &event_tx, &mut write)
+                                    .await?;
+                            }
                             _ => {}
                         }
                     }
@@ -383,7 +402,15 @@ async fn run_web_terminal(
                                 .send(ProxyEvent::Data(format!("{}\r\n", text).into_bytes()))
                                 .await;
                         }
-                        WsMessage::Text(_) => {}
+                        WsMessage::Text(text) => {
+                            if let Ok(value) = serde_json::from_str::<Value>(&text)
+                                && value.get("type").and_then(Value::as_str)
+                                    == Some("host_key_verification")
+                            {
+                                respond_to_host_key_verification(&text, &event_tx, &mut write)
+                                    .await?;
+                            }
+                        }
                         WsMessage::Close(_) => return Ok(()),
                         WsMessage::Ping(data) => {
                             let _ = write.send(WsMessage::Pong(data)).await;
@@ -439,6 +466,60 @@ async fn run_web_terminal(
             .send(ProxyEvent::Disconnected { clean: true })
             .await;
     }
+}
+
+async fn respond_to_host_key_verification<S>(
+    text: &str,
+    event_tx: &mpsc::Sender<ProxyEvent>,
+    write: &mut S,
+) -> Result<(), String>
+where
+    S: Sink<WsMessage> + Unpin,
+    S::Error: std::fmt::Display,
+{
+    let challenge: WebTerminalHostKeyVerification =
+        serde_json::from_str(text).map_err(|error| {
+            format!("failed to parse Portal Hub host key verification request: {error}")
+        })?;
+    let (response_tx, response_rx) = oneshot::channel();
+    let info = HostKeyInfo {
+        host: challenge.host,
+        port: challenge.port,
+        fingerprint: challenge.fingerprint,
+        key_type: challenge.key_type,
+    };
+    let request = match challenge.old_fingerprint {
+        Some(old_fingerprint) => HostKeyVerificationRequest::ChangedHost {
+            info,
+            old_fingerprint,
+            responder: response_tx,
+        },
+        None => HostKeyVerificationRequest::NewHost {
+            info,
+            responder: response_tx,
+        },
+    };
+
+    event_tx
+        .send(ProxyEvent::HostKeyVerification(Box::new(request)))
+        .await
+        .map_err(|_| "failed to show host key verification dialog".to_string())?;
+
+    let accepted = match tokio::time::timeout(Duration::from_secs(60), response_rx).await {
+        Ok(Ok(HostKeyVerificationResponse::Accept)) => true,
+        Ok(Ok(HostKeyVerificationResponse::Reject)) | Ok(Err(_)) => false,
+        Err(_) => false,
+    };
+
+    let response = WebTerminalControl::HostKeyResponse { accepted };
+    write
+        .send(WsMessage::Text(serde_json::to_string(&response).map_err(
+            |error| format!("failed to serialize host key response: {error}"),
+        )?))
+        .await
+        .map_err(|error| format!("failed to send host key response to Portal Hub: {error}"))?;
+
+    Ok(())
 }
 
 fn terminal_ws_url(hub_url: &str) -> Result<String, String> {
@@ -806,6 +887,38 @@ mod tests {
 
         crate::contract_test_support::assert_portal_hub_contract(
             "terminal-start-request",
+            &instance,
+        );
+    }
+
+    #[test]
+    fn portal_hub_host_key_verification_message_matches_contract_and_deserializes() {
+        let instance = json!({
+            "type": "host_key_verification",
+            "host": "example.internal",
+            "port": 22,
+            "fingerprint": "SHA256:abc123",
+            "key_type": "ssh-ed25519",
+            "old_fingerprint": "SHA256:old123"
+        });
+
+        crate::contract_test_support::assert_portal_hub_contract(
+            "terminal-control-message",
+            &instance,
+        );
+        let request: WebTerminalHostKeyVerification = serde_json::from_value(instance).unwrap();
+
+        assert_eq!(request.host, "example.internal");
+        assert_eq!(request.old_fingerprint.as_deref(), Some("SHA256:old123"));
+    }
+
+    #[test]
+    fn portal_hub_host_key_response_message_matches_contract() {
+        let response = WebTerminalControl::HostKeyResponse { accepted: true };
+        let instance = serde_json::to_value(response).unwrap();
+
+        crate::contract_test_support::assert_portal_hub_contract(
+            "terminal-control-message",
             &instance,
         );
     }

@@ -181,6 +181,9 @@ fn proxy_event_listener(
             ProxyEvent::Disconnected { clean } => {
                 Message::Session(SessionMessage::Disconnected { session_id, clean })
             }
+            ProxyEvent::HostKeyVerification(request) => Message::Dialog(
+                DialogMessage::HostKeyVerification(VerificationRequestWrapper(Some(request))),
+            ),
         },
     )
 }
@@ -198,17 +201,23 @@ pub fn proxy_connect_tasks(
 
     let connect_task = Task::perform(
         async move {
-            let result = ProxySession::spawn(
-                &settings,
-                &host_for_task,
-                session_id,
-                terminal_size.0,
-                terminal_size.1,
-                event_tx,
-            )
-            .map(Arc::new)
-            .map_err(|error| error.to_string());
-            (session_id, host_id, host_for_task, result)
+            let host_for_result = Arc::clone(&host_for_task);
+            let result = tokio::task::spawn_blocking(move || {
+                ProxySession::spawn(
+                    &settings,
+                    &host_for_task,
+                    session_id,
+                    terminal_size.0,
+                    terminal_size.1,
+                    event_tx,
+                )
+                .map(Arc::new)
+                .map_err(|error| error.to_string())
+            })
+            .await
+            .map_err(|error| format!("Portal Hub startup task failed: {}", error))
+            .and_then(|result| result);
+            (session_id, host_id, host_for_result, result)
         },
         |(session_id, host_id, host, result)| match result {
             Ok(proxy_session) => Message::Session(SessionMessage::ProxyConnected {
@@ -250,15 +259,20 @@ pub fn proxy_resume_tasks(
 
     let connect_task = Task::perform(
         async move {
-            let result = ProxySession::spawn_target(
-                &settings,
-                &target,
-                terminal_size.0,
-                terminal_size.1,
-                event_tx,
-            )
-            .map(Arc::new)
-            .map_err(|error| error.to_string());
+            let result = tokio::task::spawn_blocking(move || {
+                ProxySession::spawn_target(
+                    &settings,
+                    &target,
+                    terminal_size.0,
+                    terminal_size.1,
+                    event_tx,
+                )
+                .map(Arc::new)
+                .map_err(|error| error.to_string())
+            })
+            .await
+            .map_err(|error| format!("Portal Hub startup task failed: {}", error))
+            .and_then(|result| result);
             (session_id, display_name, host_id, result)
         },
         move |(session_id, host_name, host_id, result)| match result {
