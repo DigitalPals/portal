@@ -102,6 +102,7 @@ lto = "thin"
 codegen-units = 16
 
 [patch.crates-io]
+iced_widget = { path = "vendor/iced_widget" }
 vnc-rs = { path = "vendor/vnc-rs" }
 
 [package.metadata.deb]
