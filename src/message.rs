@@ -14,6 +14,7 @@ use crate::sftp::{FileEntry, SharedSftpSession};
 use crate::ssh::SshSession;
 use crate::ssh::host_key_verification::HostKeyVerificationRequest;
 use crate::terminal::backend::TerminalEvent;
+use crate::terminal_paste::TerminalPastePayload;
 use crate::theme::ThemeId;
 use crate::views::file_viewer::ViewerContent;
 use crate::views::sftp::{ContextMenuAction, PaneId, PaneSource, PermissionBit, SftpColumn};
@@ -191,6 +192,14 @@ pub enum SessionMessage {
     },
     /// Terminal input from user
     Input(SessionId, Vec<u8>),
+    /// User requested a terminal paste from the local clipboard
+    Paste(SessionId),
+    /// Local clipboard payload read for a terminal paste
+    PasteClipboardLoaded(SessionId, Result<TerminalPastePayload, String>),
+    /// Iced text clipboard fallback for terminal paste
+    PasteTextFallbackLoaded(SessionId, Option<String>, String),
+    /// Uploaded clipboard image path ready to paste into terminal
+    PasteImageUploaded(SessionId, Result<String, String>),
     /// Terminal resize event
     Resize(SessionId, u16, u16),
     /// Terminal backend event (title/bell/clipboard/exit)

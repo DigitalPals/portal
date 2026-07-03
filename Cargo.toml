@@ -10,6 +10,7 @@ rust-version = "1.88"
 [dependencies]
 # GUI
 iced = { version = "0.14", features = ["tokio", "advanced", "canvas", "svg", "markdown", "highlighter", "image"] }
+arboard = { version = "3.6.1", features = ["wayland-data-control"] } # Native clipboard text/image access
 
 # Terminal emulation
 alacritty_terminal = "0.26.0"

@@ -15,12 +15,20 @@ use crate::app::{Portal, Tab, View};
 use crate::config::AuthMethod;
 use crate::message::{Message, SessionId, SessionMessage};
 use crate::platform;
+use crate::sftp::session::SftpSession;
 use crate::ssh::reconnect::ReconnectPolicy;
 use crate::terminal::backend::{TerminalEvent, paste_bytes_for_mode};
 use crate::terminal::logger::SessionLogger;
+use crate::terminal_paste::{self, TerminalPastePayload};
 use crate::views::tabs::{TabAgentActivity, TabAgentKind, TabAgentStatus, TabType};
 use crate::views::terminal_view::TerminalSession;
 use crate::views::toast::Toast;
+
+enum ClipboardImageUploadTarget {
+    Ssh(Arc<crate::ssh::SshSession>),
+    Proxy(Arc<crate::proxy::ProxySession>),
+    Local,
+}
 
 /// Maximum bytes to buffer before dropping oldest data.
 /// 16MB is generous - if we hit this, data is arriving faster than humanly readable.
@@ -826,6 +834,86 @@ fn schedule_reconnect(portal: &mut Portal, session_id: SessionId) -> Task<Messag
     )
 }
 
+fn paste_text_into_session(
+    portal: &mut Portal,
+    session_id: SessionId,
+    text: String,
+) -> Task<Message> {
+    let bytes = portal
+        .sessions
+        .get(session_id)
+        .map(|session| {
+            let term = session.terminal.term();
+            let term = term.lock();
+            paste_bytes_for_mode(&text, term.mode())
+        })
+        .unwrap_or_else(|| text.into_bytes());
+
+    handle_session(portal, SessionMessage::Input(session_id, bytes))
+}
+
+async fn upload_clipboard_image_via_sftp(
+    ssh_session: Arc<crate::ssh::SshSession>,
+    filename: String,
+    png: Vec<u8>,
+) -> Result<String, String> {
+    let sftp = SftpSession::from_ssh_session(&ssh_session)
+        .await
+        .map_err(|error| error.to_string())?;
+    let remote_dir = terminal_paste::remote_paste_dir(sftp.home_dir());
+    sftp.ensure_dir_all(&remote_dir)
+        .await
+        .map_err(|error| error.to_string())?;
+
+    let portal_dir = sftp.home_dir().join(".cache").join("portal");
+    if let Err(error) = sftp.set_permissions(&portal_dir, 0o700).await {
+        tracing::warn!(
+            "Failed to set remote Portal paste directory permissions on {}: {}",
+            portal_dir.display(),
+            error
+        );
+    }
+    if let Err(error) = sftp.set_permissions(&remote_dir, 0o700).await {
+        tracing::warn!(
+            "Failed to set remote Portal paste directory permissions on {}: {}",
+            remote_dir.display(),
+            error
+        );
+    }
+
+    let remote_path = remote_dir.join(filename);
+    sftp.upload_bytes(&png, &remote_path)
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(remote_path.to_string_lossy().to_string())
+}
+
+async fn save_clipboard_image_locally(filename: String, png: Vec<u8>) -> Result<String, String> {
+    let dir = std::env::temp_dir().join("portal-pastes");
+    tokio::fs::create_dir_all(&dir)
+        .await
+        .map_err(|error| format!("Failed to create local paste directory: {error}"))?;
+    let path = dir.join(filename);
+    let mut options = tokio::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        options.mode(0o600);
+    }
+    use tokio::io::AsyncWriteExt;
+    let mut file = options
+        .open(&path)
+        .await
+        .map_err(|error| format!("Failed to create local paste image: {error}"))?;
+    file.write_all(&png)
+        .await
+        .map_err(|error| format!("Failed to write local paste image: {error}"))?;
+    file.flush()
+        .await
+        .map_err(|error| format!("Failed to flush local paste image: {error}"))?;
+    Ok(path.to_string_lossy().to_string())
+}
+
 /// Handle terminal session messages
 pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message> {
     match msg {
@@ -1262,19 +1350,128 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
         },
         SessionMessage::ClipboardLoaded(session_id, contents) => {
             if let Some(text) = contents {
-                let bytes = portal
-                    .sessions
-                    .get(session_id)
-                    .map(|session| {
-                        let term = session.terminal.term();
-                        let term = term.lock();
-                        paste_bytes_for_mode(&text, term.mode())
-                    })
-                    .unwrap_or_else(|| text.into_bytes());
-                return handle_session(portal, SessionMessage::Input(session_id, bytes));
+                return paste_text_into_session(portal, session_id, text);
             }
             Task::none()
         }
+        SessionMessage::Paste(session_id) => {
+            if !portal.sessions.contains(session_id) {
+                return Task::none();
+            }
+            Task::perform(
+                async { terminal_paste::read_clipboard_payload() },
+                move |result| {
+                    Message::Session(SessionMessage::PasteClipboardLoaded(session_id, result))
+                },
+            )
+        }
+        SessionMessage::PasteClipboardLoaded(session_id, result) => {
+            let payload = match result {
+                Ok(payload) => payload,
+                Err(error) => {
+                    tracing::debug!(
+                        "Native clipboard paste failed, falling back to Iced text clipboard: {}",
+                        error
+                    );
+                    let native_error = error;
+                    return clipboard::read().map(move |contents| {
+                        Message::Session(SessionMessage::PasteTextFallbackLoaded(
+                            session_id,
+                            contents,
+                            native_error.clone(),
+                        ))
+                    });
+                }
+            };
+
+            match payload {
+                TerminalPastePayload::Text(text) => {
+                    paste_text_into_session(portal, session_id, text)
+                }
+                TerminalPastePayload::ImagePng {
+                    filename,
+                    png,
+                    width,
+                    height,
+                } => {
+                    let upload_target = match portal.sessions.get(session_id) {
+                        Some(session) => match &session.backend {
+                            SessionBackend::Ssh(ssh_session) => {
+                                ClipboardImageUploadTarget::Ssh(ssh_session.clone())
+                            }
+                            SessionBackend::Proxy(proxy_session) => {
+                                ClipboardImageUploadTarget::Proxy(proxy_session.clone())
+                            }
+                            SessionBackend::Local(_) => ClipboardImageUploadTarget::Local,
+                        },
+                        None => return Task::none(),
+                    };
+
+                    let status = format!("Uploading pasted image ({}x{})...", width, height);
+                    if let Some(session) = portal.sessions.get_mut(session_id) {
+                        session.status_message = Some((status, Instant::now()));
+                    }
+
+                    match upload_target {
+                        ClipboardImageUploadTarget::Ssh(ssh_session) => Task::perform(
+                            upload_clipboard_image_via_sftp(ssh_session, filename, png),
+                            move |result| {
+                                Message::Session(SessionMessage::PasteImageUploaded(
+                                    session_id, result,
+                                ))
+                            },
+                        ),
+                        ClipboardImageUploadTarget::Proxy(proxy_session) => Task::perform(
+                            async move { proxy_session.upload_file(filename, png).await },
+                            move |result| {
+                                Message::Session(SessionMessage::PasteImageUploaded(
+                                    session_id, result,
+                                ))
+                            },
+                        ),
+                        ClipboardImageUploadTarget::Local => Task::perform(
+                            save_clipboard_image_locally(filename, png),
+                            move |result| {
+                                Message::Session(SessionMessage::PasteImageUploaded(
+                                    session_id, result,
+                                ))
+                            },
+                        ),
+                    }
+                }
+            }
+        }
+        SessionMessage::PasteTextFallbackLoaded(session_id, contents, native_error) => {
+            if let Some(text) = contents {
+                return paste_text_into_session(portal, session_id, text);
+            }
+            portal.toast_manager.push(Toast::error(native_error));
+            Task::none()
+        }
+        SessionMessage::PasteImageUploaded(session_id, result) => match result {
+            Ok(path) => {
+                if let Some(session) = portal.sessions.get_mut(session_id) {
+                    session.status_message =
+                        Some(("Pasted uploaded image path".to_string(), Instant::now()));
+                }
+                paste_text_into_session(
+                    portal,
+                    session_id,
+                    terminal_paste::paste_text_for_uploaded_path(&path),
+                )
+            }
+            Err(error) => {
+                if let Some(session) = portal.sessions.get_mut(session_id) {
+                    session.status_message =
+                        Some(("Image paste failed".to_string(), Instant::now()));
+                }
+                portal.toast_manager.push(Toast::error(format!(
+                    "Failed to paste clipboard image: {}",
+                    error
+                )));
+                Task::none()
+            }
+        },
         SessionMessage::Input(session_id, bytes) => {
             tracing::debug!("Terminal input ({} bytes)", bytes.len());
             let Some(session) = portal.sessions.get_mut(session_id) else {

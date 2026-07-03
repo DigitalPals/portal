@@ -29,6 +29,7 @@ pub(crate) mod proxy;
 pub(crate) mod security_log;
 pub mod sftp;
 pub(crate) mod terminal;
+pub(crate) mod terminal_paste;
 pub(crate) mod theme;
 pub(crate) mod views;
 pub(crate) mod vnc;

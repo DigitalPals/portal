@@ -851,6 +851,7 @@ impl Portal {
                         move |_sid, cols, rows| {
                             Message::Session(SessionMessage::Resize(session_id, cols, rows))
                         },
+                        move |_sid| Message::Session(SessionMessage::Paste(session_id)),
                     )
                 } else {
                     text("Session not found").into()

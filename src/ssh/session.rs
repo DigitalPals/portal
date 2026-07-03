@@ -231,6 +231,10 @@ impl SshSession {
         Ok(())
     }
 
+    pub(crate) fn connection(&self) -> Arc<SshConnection> {
+        self._connection.clone()
+    }
+
     /// Notify the remote shell of a window size change
     pub async fn window_change(&self, cols: u16, rows: u16) -> Result<(), SshError> {
         self.command_tx

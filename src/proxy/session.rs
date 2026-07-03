@@ -28,6 +28,7 @@ use crate::ssh::host_key_verification::{
 
 const MIN_SUPPORTED_WEB_PROXY_API_VERSION: u16 = 2;
 const SESSION_LIST_PREVIEW_BYTES: u64 = 64 * 1024;
+const HUB_UPLOAD_RESPONSE_TIMEOUT: Duration = Duration::from_secs(45);
 
 #[derive(Debug)]
 pub enum ProxyEvent {
@@ -143,7 +144,15 @@ enum RawListResponse {
 
 enum ProxyCommand {
     Data(Vec<u8>),
-    Resize { cols: u16, rows: u16 },
+    Resize {
+        cols: u16,
+        rows: u16,
+    },
+    UploadFile {
+        filename: String,
+        contents: Vec<u8>,
+        response_tx: oneshot::Sender<Result<String, String>>,
+    },
 }
 
 #[derive(Debug, Serialize)]
@@ -162,8 +171,25 @@ struct WebTerminalStart {
 #[derive(Debug, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 enum WebTerminalControl {
-    Resize { cols: u16, rows: u16 },
-    HostKeyResponse { accepted: bool },
+    Resize {
+        cols: u16,
+        rows: u16,
+    },
+    HostKeyResponse {
+        accepted: bool,
+    },
+    UploadFile {
+        request_id: Uuid,
+        filename: String,
+        contents_base64: String,
+    },
+}
+
+#[derive(Debug, Deserialize)]
+struct WebTerminalUploadFileResult {
+    request_id: Uuid,
+    path: Option<String>,
+    error: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -285,6 +311,23 @@ impl ProxySession {
             .await
             .map_err(|e| LocalError::Io(e.to_string()))
     }
+
+    pub async fn upload_file(&self, filename: String, contents: Vec<u8>) -> Result<String, String> {
+        let (response_tx, response_rx) = oneshot::channel();
+        self.command_tx
+            .send(ProxyCommand::UploadFile {
+                filename,
+                contents,
+                response_tx,
+            })
+            .await
+            .map_err(|error| format!("Portal Hub terminal is not connected: {error}"))?;
+
+        tokio::time::timeout(HUB_UPLOAD_RESPONSE_TIMEOUT, response_rx)
+            .await
+            .map_err(|_| "Timed out waiting for Portal Hub upload result".to_string())?
+            .map_err(|_| "Portal Hub upload response channel closed".to_string())?
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -322,6 +365,10 @@ async fn run_web_terminal(
             .map_err(|_| "timed out connecting to Portal Hub terminal".to_string())?
             .map_err(|error| format!("failed to connect to Portal Hub terminal: {}", error))?;
         let (mut write, mut read) = stream.split();
+        let mut pending_uploads: std::collections::HashMap<
+            Uuid,
+            oneshot::Sender<Result<String, String>>,
+        > = std::collections::HashMap::new();
         let start = WebTerminalStart {
             session_id: target.session_id,
             target_host: target.target_host,
@@ -404,11 +451,21 @@ async fn run_web_terminal(
                         }
                         WsMessage::Text(text) => {
                             if let Ok(value) = serde_json::from_str::<Value>(&text)
-                                && value.get("type").and_then(Value::as_str)
-                                    == Some("host_key_verification")
+                                && let Some(message_type) = value.get("type").and_then(Value::as_str)
                             {
-                                respond_to_host_key_verification(&text, &event_tx, &mut write)
-                                    .await?;
+                                match message_type {
+                                    "host_key_verification" => {
+                                        respond_to_host_key_verification(&text, &event_tx, &mut write)
+                                            .await?;
+                                    }
+                                    "upload_file_result" => {
+                                        handle_upload_file_result(
+                                            &text,
+                                            &mut pending_uploads,
+                                        )?;
+                                    }
+                                    _ => {}
+                                }
                             }
                         }
                         WsMessage::Close(_) => return Ok(()),
@@ -441,6 +498,27 @@ async fn run_web_terminal(
                                 .await
                                 .map_err(|error| format!("Portal Hub terminal resize failed: {}", error))?;
                         }
+                        ProxyCommand::UploadFile {
+                            filename,
+                            contents,
+                            response_tx,
+                        } => {
+                            let request_id = Uuid::new_v4();
+                            let control = WebTerminalControl::UploadFile {
+                                request_id,
+                                filename,
+                                contents_base64: BASE64.encode(&contents),
+                            };
+                            write
+                                .send(WsMessage::Text(
+                                    serde_json::to_string(&control).map_err(|error| {
+                                        format!("failed to serialize terminal upload: {}", error)
+                                    })?,
+                                ))
+                                .await
+                                .map_err(|error| format!("Portal Hub terminal upload failed: {}", error))?;
+                            pending_uploads.insert(request_id, response_tx);
+                        }
                     }
                 }
             }
@@ -466,6 +544,25 @@ async fn run_web_terminal(
             .send(ProxyEvent::Disconnected { clean: true })
             .await;
     }
+}
+
+fn handle_upload_file_result(
+    text: &str,
+    pending_uploads: &mut std::collections::HashMap<Uuid, oneshot::Sender<Result<String, String>>>,
+) -> Result<(), String> {
+    let result: WebTerminalUploadFileResult = serde_json::from_str(text)
+        .map_err(|error| format!("failed to parse Portal Hub upload result: {error}"))?;
+    let Some(response_tx) = pending_uploads.remove(&result.request_id) else {
+        return Ok(());
+    };
+
+    let result = match (result.path, result.error) {
+        (Some(path), _) => Ok(path),
+        (_, Some(error)) => Err(error),
+        (None, None) => Err("Portal Hub upload result did not include a path".to_string()),
+    };
+    let _ = response_tx.send(result);
+    Ok(())
 }
 
 async fn respond_to_host_key_verification<S>(
@@ -920,6 +1017,50 @@ mod tests {
         crate::contract_test_support::assert_portal_hub_contract(
             "terminal-control-message",
             &instance,
+        );
+    }
+
+    #[test]
+    fn portal_hub_upload_file_message_matches_contract() {
+        let request_id = Uuid::new_v4();
+        let message = WebTerminalControl::UploadFile {
+            request_id,
+            filename: "portal-paste-20260703-120000-abc.png".to_string(),
+            contents_base64: BASE64.encode(b"png"),
+        };
+        let instance = serde_json::to_value(message).unwrap();
+
+        crate::contract_test_support::assert_portal_hub_contract(
+            "terminal-control-message",
+            &instance,
+        );
+        assert_eq!(instance["type"], "upload_file");
+        assert_eq!(instance["request_id"], request_id.to_string());
+    }
+
+    #[test]
+    fn portal_hub_upload_file_result_matches_contract_and_completes_pending_request() {
+        let request_id = Uuid::new_v4();
+        let instance = json!({
+            "type": "upload_file_result",
+            "request_id": request_id,
+            "path": "/home/john/.cache/portal/pastes/image.png"
+        });
+        crate::contract_test_support::assert_portal_hub_contract(
+            "terminal-control-message",
+            &instance,
+        );
+
+        let (response_tx, mut response_rx) = oneshot::channel();
+        let mut pending = std::collections::HashMap::new();
+        pending.insert(request_id, response_tx);
+
+        handle_upload_file_result(&instance.to_string(), &mut pending).unwrap();
+
+        assert!(pending.is_empty());
+        assert_eq!(
+            response_rx.try_recv().unwrap().unwrap(),
+            "/home/john/.cache/portal/pastes/image.png"
         );
     }
 

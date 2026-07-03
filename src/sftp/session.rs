@@ -3,12 +3,14 @@
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use chrono::{TimeZone, Utc};
 use russh_sftp::client::SftpSession as RusshSftpSession;
 use russh_sftp::protocol::OpenFlags;
 use tokio::fs::OpenOptions;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::time::timeout;
 
 use tokio::sync::Mutex;
 use uuid::Uuid;
@@ -16,6 +18,7 @@ use uuid::Uuid;
 use crate::error::SftpError;
 use crate::fs_utils::{ensure_dir_no_follow, open_directory_for_sync, open_read_regular_file};
 use crate::ssh::SshConnection;
+use crate::ssh::SshSession;
 
 use super::types::{FileEntry, is_safe_sftp_entry_name};
 
@@ -50,6 +53,39 @@ impl SftpSession {
     /// Get the remote home directory
     pub fn home_dir(&self) -> &Path {
         &self.home_dir
+    }
+
+    /// Open a new SFTP channel on an existing authenticated SSH terminal session.
+    pub async fn from_ssh_session(
+        ssh_session: &SshSession,
+    ) -> Result<SharedSftpSession, SftpError> {
+        let connection = ssh_session.connection();
+        let channel = {
+            let handle = connection.handle();
+            let handle_guard = handle.lock().await;
+            handle_guard.channel_open_session().await
+        }
+        .map_err(|e| SftpError::ConnectionFailed(format!("Failed to open SFTP channel: {e}")))?;
+
+        channel
+            .request_subsystem(false, "sftp")
+            .await
+            .map_err(|e| {
+                SftpError::ConnectionFailed(format!("Failed to request SFTP subsystem: {e}"))
+            })?;
+
+        let sftp = RusshSftpSession::new(channel.into_stream())
+            .await
+            .map_err(|e| {
+                SftpError::ConnectionFailed(format!("Failed to initialize SFTP session: {e}"))
+            })?;
+
+        let home_dir = match timeout(Duration::from_secs(5), sftp.canonicalize(".")).await {
+            Ok(Ok(path)) => PathBuf::from(path),
+            Ok(Err(_)) | Err(_) => PathBuf::from("/"),
+        };
+
+        Ok(Arc::new(SftpSession::new(connection, sftp, home_dir)))
     }
 
     /// List directory contents
@@ -140,6 +176,31 @@ impl SftpSession {
         sftp.create_dir(path_str.clone()).await.map_err(|e| {
             SftpError::FileOperation(format!("Failed to create directory {}: {}", path_str, e))
         })
+    }
+
+    /// Create a directory and any missing parents without following symlinks.
+    pub async fn ensure_dir_all(&self, path: &Path) -> Result<(), SftpError> {
+        let mut current = PathBuf::new();
+
+        for component in path.components() {
+            match component {
+                std::path::Component::Prefix(prefix) => current.push(prefix.as_os_str()),
+                std::path::Component::RootDir => current.push(Path::new("/")),
+                std::path::Component::CurDir => {}
+                std::path::Component::ParentDir => {
+                    return Err(SftpError::FileOperation(format!(
+                        "Refusing to create remote directory with parent traversal: {}",
+                        path.display()
+                    )));
+                }
+                std::path::Component::Normal(part) => {
+                    current.push(part);
+                    self.ensure_remote_dir(&current).await?;
+                }
+            }
+        }
+
+        Ok(())
     }
 
     async fn ensure_remote_dir(&self, path: &Path) -> Result<(), SftpError> {
@@ -422,6 +483,82 @@ impl SftpSession {
     pub async fn upload(&self, local_path: &Path, remote_path: &Path) -> Result<u64, SftpError> {
         self.upload_with_progress(local_path, remote_path, |_| {}, || false)
             .await
+    }
+
+    /// Upload bytes to a new remote file. Existing destinations are not overwritten.
+    pub async fn upload_bytes(
+        &self,
+        contents: &[u8],
+        remote_path: &Path,
+    ) -> Result<u64, SftpError> {
+        let sftp = self.sftp.lock().await;
+        let remote_str = remote_path.to_string_lossy().to_string();
+
+        let mut remote = sftp
+            .open_with_flags(
+                remote_str.clone(),
+                OpenFlags::WRITE | OpenFlags::CREATE | OpenFlags::EXCLUDE,
+            )
+            .await
+            .map_err(|e| {
+                SftpError::Transfer(format!("Failed to open remote file {}: {}", remote_str, e))
+            })?;
+
+        let mut bytes = 0u64;
+        for chunk in contents.chunks(TRANSFER_BUFFER_SIZE) {
+            if let Err(e) = remote.write_all(chunk).await {
+                let _ = remote.shutdown().await;
+                drop(remote);
+                cleanup_remote_staging(&sftp, &remote_str).await;
+                return Err(SftpError::Transfer(format!(
+                    "Failed to upload clipboard image to {}: {}",
+                    remote_str, e
+                )));
+            }
+            bytes = bytes.saturating_add(chunk.len() as u64);
+        }
+
+        if let Err(e) = remote.flush().await {
+            let _ = remote.shutdown().await;
+            drop(remote);
+            cleanup_remote_staging(&sftp, &remote_str).await;
+            return Err(SftpError::Transfer(format!(
+                "Failed to flush remote file {}: {}",
+                remote_str, e
+            )));
+        }
+
+        if let Err(e) = remote.sync_all().await {
+            let _ = remote.shutdown().await;
+            drop(remote);
+            cleanup_remote_staging(&sftp, &remote_str).await;
+            return Err(SftpError::Transfer(format!(
+                "Failed to sync remote file {}: {}",
+                remote_str, e
+            )));
+        }
+
+        if let Err(e) = remote.shutdown().await {
+            drop(remote);
+            cleanup_remote_staging(&sftp, &remote_str).await;
+            return Err(SftpError::Transfer(format!(
+                "Failed to close remote file {}: {}",
+                remote_str, e
+            )));
+        }
+
+        drop(remote);
+        drop(sftp);
+
+        if let Err(error) = self.set_permissions(remote_path, 0o600).await {
+            tracing::warn!(
+                "Failed to set clipboard image permissions on {}: {}",
+                remote_str,
+                error
+            );
+        }
+
+        Ok(bytes)
     }
 
     /// Upload a file and report cumulative bytes written.

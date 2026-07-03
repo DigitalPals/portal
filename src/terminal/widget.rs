@@ -209,6 +209,7 @@ fn push_selection_span(
 pub struct TerminalWidget<'a, Message> {
     term: Arc<Mutex<Term<EventProxy>>>,
     on_input: Box<dyn Fn(Vec<u8>) -> Message + 'a>,
+    on_paste: Option<Box<dyn Fn() -> Message + 'a>>,
     on_resize: Option<Box<dyn Fn(u16, u16) -> Message + 'a>>,
     font_size: f32,
     font: iced::Font,
@@ -230,6 +231,7 @@ impl<'a, Message> TerminalWidget<'a, Message> {
         Self {
             term,
             on_input: Box::new(on_input),
+            on_paste: None,
             on_resize: None,
             font_size: 9.0,
             font: JETBRAINS_MONO_NERD,
@@ -295,6 +297,12 @@ impl<'a, Message> TerminalWidget<'a, Message> {
     /// Set resize callback
     pub fn on_resize(mut self, callback: impl Fn(u16, u16) -> Message + 'a) -> Self {
         self.on_resize = Some(Box::new(callback));
+        self
+    }
+
+    /// Set paste callback for app-level clipboard handling.
+    pub fn on_paste(mut self, callback: impl Fn() -> Message + 'a) -> Self {
+        self.on_paste = Some(Box::new(callback));
         self
     }
 
@@ -1673,6 +1681,11 @@ where
                 }
 
                 if is_paste_shortcut {
+                    if let Some(on_paste) = &self.on_paste {
+                        shell.publish(on_paste());
+                        return;
+                    }
+
                     // Paste from clipboard
                     if let Some(text_content) =
                         clipboard.read(iced::advanced::clipboard::Kind::Standard)

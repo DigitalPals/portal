@@ -48,6 +48,7 @@ Portal is a native SSH and VNC client built for speed and simplicity. Manage you
 - **Adjustable font size** — Scale from 6px to 20px for your preference
 - **Configurable scroll speed** — Tune mouse wheel and trackpad scrollback speed
 - **SSH key installation** — Install your public key on remote servers with `Ctrl+Shift+K`
+- **Image clipboard paste** — Paste a screenshot into an SSH terminal to upload it and insert the remote image path
 - **Status bar** — See hostname and connection duration at a glance
 - **Session history** — Quick reconnect to recent servers
 - **Portal Hub beta** — Route selected SSH hosts through Portal Hub for persistent remote terminal sessions, resumable thumbnails, reconnect replay, profile sync, and encrypted key vault storage
