@@ -14,6 +14,7 @@ pub enum AppAction {
     Copy,
     Paste,
     ToggleFullscreen,
+    TerminalSearch,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -264,6 +265,8 @@ pub struct KeybindingsConfig {
     pub terminal_paste: Vec<Keybinding>,
     #[serde(default = "default_toggle_fullscreen")]
     pub toggle_fullscreen: Vec<Keybinding>,
+    #[serde(default = "default_terminal_search")]
+    pub terminal_search: Vec<Keybinding>,
 }
 
 impl Default for KeybindingsConfig {
@@ -278,6 +281,7 @@ impl Default for KeybindingsConfig {
             terminal_copy: default_terminal_copy(),
             terminal_paste: default_terminal_paste(),
             toggle_fullscreen: default_toggle_fullscreen(),
+            terminal_search: default_terminal_search(),
         }
     }
 }
@@ -294,6 +298,7 @@ impl KeybindingsConfig {
             AppAction::Copy => &self.terminal_copy,
             AppAction::Paste => &self.terminal_paste,
             AppAction::ToggleFullscreen => &self.toggle_fullscreen,
+            AppAction::TerminalSearch => &self.terminal_search,
         };
 
         bindings
@@ -335,10 +340,11 @@ fn default_terminal_paste() -> Vec<Keybinding> {
 }
 
 fn default_toggle_fullscreen() -> Vec<Keybinding> {
-    vec![
-        Keybinding::parse("Ctrl+Shift+F").expect("valid default"),
-        Keybinding::parse("F11").expect("valid default"),
-    ]
+    vec![Keybinding::parse("F11").expect("valid default")]
+}
+
+fn default_terminal_search() -> Vec<Keybinding> {
+    vec![Keybinding::parse("Ctrl+Shift+F").expect("valid default")]
 }
 
 #[cfg(test)]

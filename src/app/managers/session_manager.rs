@@ -15,6 +15,7 @@ use crate::proxy::ProxySession;
 use crate::ssh::SshSession;
 use crate::terminal::backend::EventProxy;
 use crate::terminal::logger::SessionLogger;
+use crate::terminal::search::TerminalSearchState;
 use crate::views::terminal_view::TerminalSession;
 use crate::vnc::VncSession;
 use alacritty_terminal::term::Term;
@@ -74,6 +75,8 @@ pub struct ActiveSession {
     pub resume_snapshot_protected_until: Option<Instant>,
     /// Optional session logger for terminal output
     pub logger: Option<SessionLogger>,
+    /// Scrollback search (find-in-buffer) state for this session's terminal.
+    pub search: TerminalSearchState,
 }
 
 /// Active VNC session
@@ -238,6 +241,7 @@ mod tests {
             last_terminal_notification_at: None,
             resume_snapshot_protected_until: None,
             logger: None,
+            search: TerminalSearchState::default(),
         }
     }
 

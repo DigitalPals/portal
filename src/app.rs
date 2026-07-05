@@ -888,6 +888,7 @@ impl Portal {
                         self.prefs.terminal_metric_adjustments,
                         self.prefs.keybindings.clone(),
                         self.ui.terminal_focus_token,
+                        &session.search,
                         move |_sid, bytes| {
                             Message::Session(SessionMessage::Input(session_id, bytes))
                         },

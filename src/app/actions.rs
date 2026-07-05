@@ -656,6 +656,14 @@ impl Portal {
                 View::VncViewer(_) => Task::done(Message::Vnc(VncMessage::ToggleFullscreen)),
                 _ => Task::none(),
             },
+            AppAction::TerminalSearch => match self.ui.active_view {
+                View::Terminal(session_id) if self.sessions.contains(session_id) => {
+                    Task::done(Message::Session(SessionMessage::Search(
+                        crate::message::SearchMessage::Open(session_id),
+                    )))
+                }
+                _ => Task::none(),
+            },
         }
     }
 

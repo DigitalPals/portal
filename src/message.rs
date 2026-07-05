@@ -151,6 +151,23 @@ pub enum SnippetField {
 // Nested Message Enums
 // ============================================================================
 
+/// Terminal scrollback search (find-in-buffer) messages
+#[derive(Debug, Clone)]
+pub enum SearchMessage {
+    /// Open the search bar for a terminal session (or refocus it if open)
+    Open(SessionId),
+    /// Close the search bar and return focus to the terminal
+    Close(SessionId),
+    /// Search query text changed
+    QueryChanged(SessionId, String),
+    /// Jump to the next match (wraps around)
+    NextMatch(SessionId),
+    /// Jump to the previous match (wraps around)
+    PreviousMatch(SessionId),
+    /// Toggle case-sensitive matching
+    CaseSensitiveToggled(SessionId),
+}
+
 /// Terminal session-related messages
 #[derive(Debug, Clone)]
 pub enum SessionMessage {
@@ -214,6 +231,8 @@ pub enum SessionMessage {
     InstallKey(SessionId),
     /// Result of SSH key installation (bool = was_newly_installed)
     InstallKeyResult(SessionId, Result<bool, String>),
+    /// Terminal scrollback search (find-in-buffer)
+    Search(SearchMessage),
 }
 
 /// SFTP browser messages

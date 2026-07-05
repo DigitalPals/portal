@@ -569,6 +569,49 @@ impl TerminalBackend {
         self.render_epoch.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Current render epoch value (see [`Self::render_epoch`]).
+    pub fn current_epoch(&self) -> u64 {
+        self.render_epoch.load(Ordering::Relaxed)
+    }
+
+    /// Find literal search matches in the whole buffer (scrollback + viewport).
+    pub fn search_matches(
+        &self,
+        query: &str,
+        case_sensitive: bool,
+        max_matches: usize,
+    ) -> Vec<super::search::Match> {
+        let term = self.term.lock();
+        super::search::find_matches(&term, query, case_sensitive, max_matches)
+    }
+
+    /// Bottommost visible grid line of the current viewport.
+    pub fn viewport_bottom_line(&self) -> i32 {
+        let term = self.term.lock();
+        term.screen_lines() as i32 - 1 - term.grid().display_offset() as i32
+    }
+
+    /// Scroll the display so the given grid line is visible, roughly centering
+    /// it when it is currently outside the viewport. No-op when already visible.
+    pub fn scroll_to_line(&self, line: alacritty_terminal::index::Line) {
+        let mut term = self.term.lock();
+        let screen_lines = term.screen_lines() as i32;
+        let display_offset = term.grid().display_offset() as i32;
+        let viewport_line = line.0 + display_offset;
+        if (0..screen_lines).contains(&viewport_line) {
+            return;
+        }
+
+        // viewport_line = grid_line + display_offset; center the target line.
+        // `scroll_display` clamps the resulting offset to the valid range.
+        let target_offset = screen_lines / 2 - line.0;
+        term.scroll_display(alacritty_terminal::grid::Scroll::Delta(
+            target_offset - display_offset,
+        ));
+        drop(term);
+        self.render_epoch.fetch_add(1, Ordering::Relaxed);
+    }
+
     /// Resize the terminal to new dimensions
     pub fn resize(&mut self, cols: u16, rows: u16) -> bool {
         // Enforce minimum size
@@ -871,6 +914,33 @@ mod tests {
             TerminalEvent::PtyWrite(bytes)
                 if bytes == b"\x1b]10;rgb:e6e6/e6e6/e6e6\x1b\\"
         ));
+    }
+
+    #[test]
+    fn scroll_to_line_reveals_scrollback_and_is_stable_when_visible() {
+        let (backend, _event_rx) = TerminalBackend::new(TerminalSize::new(10, 3));
+        for i in 0..10 {
+            backend.process_input(format!("line {i}\r\n").as_bytes());
+        }
+
+        let epoch_before = backend.current_epoch();
+
+        // Line -8 is the oldest history line; it must become visible.
+        backend.scroll_to_line(Line(-8));
+        {
+            let term = backend.term.lock();
+            let display_offset = term.grid().display_offset() as i32;
+            let viewport_line = -8 + display_offset;
+            assert!((0..3).contains(&viewport_line));
+        }
+        assert_ne!(backend.current_epoch(), epoch_before);
+
+        // Scrolling to an already-visible line neither moves nor re-renders.
+        let epoch = backend.current_epoch();
+        let offset = backend.term.lock().grid().display_offset();
+        backend.scroll_to_line(Line(-8));
+        assert_eq!(backend.term.lock().grid().display_offset(), offset);
+        assert_eq!(backend.current_epoch(), epoch);
     }
 
     #[test]

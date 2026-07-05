@@ -10,8 +10,8 @@ use crate::app::ActiveDialog;
 use crate::app::{FocusSection, Portal, VaultModal, View};
 use crate::keybindings::AppAction;
 use crate::message::{
-    DialogMessage, HistoryMessage, HostMessage, Message, SessionMessage, SftpMessage,
-    SidebarMenuItem, TabMessage, UiMessage, VncMessage,
+    DialogMessage, HistoryMessage, HostMessage, Message, SearchMessage, SessionMessage,
+    SftpMessage, SidebarMenuItem, TabMessage, UiMessage, VncMessage,
 };
 use crate::sftp::FileEntry;
 use crate::ssh::host_key_verification::HostKeyVerificationResponse;
@@ -235,6 +235,45 @@ pub(super) fn handle_keyboard_event(
                     pressed: true,
                 }));
             }
+        }
+    }
+
+    // Terminal scrollback search: the configured binding opens/refocuses the
+    // bar; while it is open, Enter/Shift+Enter navigate and Escape closes.
+    if let View::Terminal(session_id) = portal.ui.active_view
+        && portal.sessions.contains(session_id)
+    {
+        if portal
+            .prefs
+            .keybindings
+            .matches_action(AppAction::TerminalSearch, &key, &modifiers)
+        {
+            return portal.update(Message::Session(SessionMessage::Search(
+                SearchMessage::Open(session_id),
+            )));
+        }
+
+        let search_open = portal
+            .sessions
+            .get(session_id)
+            .is_some_and(|session| session.search.open);
+        if search_open {
+            return match &key {
+                Key::Named(keyboard::key::Named::Escape) => portal.update(Message::Session(
+                    SessionMessage::Search(SearchMessage::Close(session_id)),
+                )),
+                Key::Named(keyboard::key::Named::Enter) => {
+                    let msg = if modifiers.shift() {
+                        SearchMessage::PreviousMatch(session_id)
+                    } else {
+                        SearchMessage::NextMatch(session_id)
+                    };
+                    portal.update(Message::Session(SessionMessage::Search(msg)))
+                }
+                // Everything else belongs to the search input (or is ignored);
+                // no global shortcuts while the search bar owns the keyboard.
+                _ => Task::none(),
+            };
         }
     }
 

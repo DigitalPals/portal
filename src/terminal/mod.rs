@@ -9,6 +9,7 @@ pub mod glyph_constraints;
 pub mod logger;
 pub mod metrics;
 mod nerd_font_attributes;
+pub mod search;
 pub mod widget;
 
 pub use backend::TerminalBackend;

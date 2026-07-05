@@ -30,6 +30,7 @@ use super::colors::{DEFAULT_BG, DEFAULT_FG, ansi_to_iced_themed, cell_fg_to_iced
 use super::glyph_constraints::GlyphSize;
 use super::metrics::{TERMINAL_PADDING_LEFT, TerminalMetrics};
 use super::nerd_font_attributes;
+use super::search::Match;
 use crate::config::settings::{
     TERMINAL_SCROLL_SPEED_BASE, TERMINAL_SCROLL_SPEED_MAX, TERMINAL_SCROLL_SPEED_MIN,
     TerminalMetricAdjustments,
@@ -220,6 +221,19 @@ pub struct TerminalWidget<'a, Message> {
     keybindings: KeybindingsConfig,
     scroll_speed: f32,
     focus_token: u64,
+    /// Whether keyboard input is forwarded to the terminal. Disabled while the
+    /// search bar owns the keyboard so keystrokes are not sent to the PTY.
+    keyboard_input: bool,
+    /// Search matches to highlight, in grid coordinates.
+    search_matches: &'a [Match],
+    /// Index of the active match within `search_matches`.
+    search_current: Option<usize>,
+    /// Bumped by the app whenever search state changes; invalidates the cache.
+    search_version: u64,
+    /// Highlight color for the active match.
+    search_active_color: Color,
+    /// Highlight color for the other visible matches.
+    search_inactive_color: Color,
 }
 
 impl<'a, Message> TerminalWidget<'a, Message> {
@@ -242,6 +256,12 @@ impl<'a, Message> TerminalWidget<'a, Message> {
             keybindings: KeybindingsConfig::default(),
             scroll_speed: TERMINAL_SCROLL_SPEED_BASE,
             focus_token: 0,
+            keyboard_input: true,
+            search_matches: &[],
+            search_current: None,
+            search_version: 0,
+            search_active_color: Color::TRANSPARENT,
+            search_inactive_color: Color::TRANSPARENT,
         }
     }
 
@@ -291,6 +311,34 @@ impl<'a, Message> TerminalWidget<'a, Message> {
     /// Request keyboard focus when this token changes.
     pub fn focus_token(mut self, token: u64) -> Self {
         self.focus_token = token;
+        self
+    }
+
+    /// Enable or disable forwarding keyboard input to the terminal.
+    ///
+    /// Disable while another widget (e.g. the search bar) owns the keyboard.
+    pub fn keyboard_input(mut self, enabled: bool) -> Self {
+        self.keyboard_input = enabled;
+        self
+    }
+
+    /// Set scrollback search matches to highlight.
+    ///
+    /// `version` must change whenever the matches, active index, or highlight
+    /// state change so the render cache is invalidated.
+    pub fn search_highlights(
+        mut self,
+        matches: &'a [Match],
+        current: Option<usize>,
+        version: u64,
+        active_color: Color,
+        inactive_color: Color,
+    ) -> Self {
+        self.search_matches = matches;
+        self.search_current = current;
+        self.search_version = version;
+        self.search_active_color = active_color;
+        self.search_inactive_color = inactive_color;
         self
     }
 
@@ -453,6 +501,44 @@ impl<'a, Message> TerminalWidget<'a, Message> {
         }
 
         drop(term);
+
+        // Convert search matches (grid coordinates) into visible screen spans.
+        // Stale matches (from before the latest output) are clamped to the
+        // viewport, so they can never index out of bounds.
+        cache.search_spans.clear();
+        cache.active_search_spans.clear();
+        if !self.search_matches.is_empty() {
+            let offset = display_offset as i32;
+            for (index, regex_match) in self.search_matches.iter().enumerate() {
+                let start = *regex_match.start();
+                let end = *regex_match.end();
+                let first_line = start.line.0.max(-offset);
+                let last_line = end.line.0.min(rows as i32 - 1 - offset);
+                if first_line > last_line {
+                    continue;
+                }
+
+                let target = if Some(index) == self.search_current {
+                    &mut cache.active_search_spans
+                } else {
+                    &mut cache.search_spans
+                };
+                for line in first_line..=last_line {
+                    let screen_line = (line + offset) as usize;
+                    let start_col = if line == start.line.0 {
+                        start.column.0.min(cols - 1)
+                    } else {
+                        0
+                    };
+                    let end_col = if line == end.line.0 {
+                        end.column.0.min(cols - 1)
+                    } else {
+                        cols - 1
+                    };
+                    target.push((screen_line, start_col, end_col));
+                }
+            }
+        }
 
         // Second pass: constraint widths need the fully-populated row buffer.
         let row_chars = &cache.row_chars;
@@ -845,6 +931,12 @@ struct RenderCache {
     cursor: Option<CursorInfo>,
     /// Selection spans in screen cell coordinates: (line, start_col, end_col).
     selection_spans: Vec<(usize, usize, usize)>,
+    /// Inactive search-match spans in screen cell coordinates.
+    search_spans: Vec<(usize, usize, usize)>,
+    /// Active search-match spans in screen cell coordinates.
+    active_search_spans: Vec<(usize, usize, usize)>,
+    /// Search state version the cached spans were computed for.
+    search_version: u64,
     /// Reusable flat rows*cols scratch buffer for constraint-width lookups.
     row_chars: Vec<char>,
     /// Theme colors the cached cells were resolved with; a theme change
@@ -860,6 +952,9 @@ impl std::fmt::Debug for RenderCache {
             .field("cells", &self.cells.len())
             .field("cursor", &self.cursor)
             .field("selection_spans", &self.selection_spans)
+            .field("search_spans", &self.search_spans)
+            .field("active_search_spans", &self.active_search_spans)
+            .field("search_version", &self.search_version)
             .field("has_colors", &self.colors.is_some())
             .field("epoch", &self.epoch)
             .field("needs_refresh", &self.needs_refresh)
@@ -1015,6 +1110,10 @@ where
             {
                 needs_refresh = true;
             }
+            if cache.search_version != self.search_version {
+                cache.search_version = self.search_version;
+                needs_refresh = true;
+            }
 
             if needs_refresh {
                 self.refresh_render_cache(&mut cache, colors);
@@ -1057,6 +1156,39 @@ where
                         snap: true,
                     },
                     Background::Color(cell.bg),
+                );
+            }
+
+            // Search-match highlights sit behind glyphs, like the selection.
+            // The active match uses a stronger style than the other matches.
+            for &(line, start_col, end_col) in &render_cache.search_spans {
+                renderer.fill_quad(
+                    Quad {
+                        bounds: selection_span_rect(bounds, metrics, line, start_col, end_col),
+                        border: Border::default(),
+                        shadow: Shadow::default(),
+                        snap: true,
+                    },
+                    Background::Color(self.search_inactive_color),
+                );
+            }
+
+            for &(line, start_col, end_col) in &render_cache.active_search_spans {
+                renderer.fill_quad(
+                    Quad {
+                        bounds: selection_span_rect(bounds, metrics, line, start_col, end_col),
+                        border: Border {
+                            color: self.search_active_color,
+                            width: 1.0,
+                            radius: 2.0.into(),
+                        },
+                        shadow: Shadow::default(),
+                        snap: true,
+                    },
+                    Background::Color(Color {
+                        a: self.search_active_color.a * 0.55,
+                        ..self.search_active_color
+                    }),
                 );
             }
 
@@ -1657,7 +1789,16 @@ where
                 modifiers,
                 text,
                 ..
-            }) if state.is_focused => {
+            }) if state.is_focused && self.keyboard_input => {
+                // The search binding is handled at the app level; never forward
+                // it to the PTY (Ctrl+Shift+F would otherwise send ^F).
+                if self
+                    .keybindings
+                    .matches_action(AppAction::TerminalSearch, key, modifiers)
+                {
+                    return;
+                }
+
                 // Handle copy/paste shortcuts:
                 // - Ctrl+Insert (copy) / Shift+Insert (paste) - X11/Hyprland style
                 // - Ctrl+Shift+C/V - Linux terminal style
@@ -2127,6 +2268,76 @@ mod tests {
         assert_eq!(cache.selection_spans, vec![(0, 0, 3)]);
         assert_eq!(cache.cells.capacity(), cells_capacity);
         assert_eq!(cache.row_chars.as_ptr(), row_chars_ptr);
+    }
+
+    #[test]
+    fn refresh_cache_converts_search_matches_to_screen_spans() {
+        let (backend, _events) = TerminalBackend::new(TerminalSize::new(10, 3));
+        backend.process_input(b"hit\r\nmiss\r\nhit");
+
+        let term = backend.term();
+        let matches = {
+            let term = term.lock();
+            crate::terminal::search::find_matches(&term, "hit", false, 100)
+        };
+        assert_eq!(matches.len(), 2);
+
+        let widget = TerminalWidget::<()>::new(term, |_| ()).search_highlights(
+            &matches,
+            Some(1),
+            1,
+            Color::WHITE,
+            Color::BLACK,
+        );
+        let colors = TerminalColors {
+            foreground: DEFAULT_FG,
+            background: DEFAULT_BG,
+            cursor: DEFAULT_FG,
+            ansi: crate::terminal::colors::ANSI_COLORS,
+        };
+        let mut cache = RenderCache::default();
+        widget.refresh_render_cache(&mut cache, &colors);
+
+        // Match 0 (line 0) is inactive; match 1 (line 2) is active.
+        assert_eq!(cache.search_spans, vec![(0, 0, 2)]);
+        assert_eq!(cache.active_search_spans, vec![(2, 0, 2)]);
+    }
+
+    #[test]
+    fn refresh_cache_clamps_search_spans_to_viewport() {
+        let (backend, _events) = TerminalBackend::new(TerminalSize::new(10, 3));
+        for i in 0..10 {
+            backend.process_input(format!("hit {i}\r\n").as_bytes());
+        }
+
+        let term = backend.term();
+        let matches = {
+            let term = term.lock();
+            crate::terminal::search::find_matches(&term, "hit", false, 100)
+        };
+        assert_eq!(matches.len(), 10);
+
+        let widget = TerminalWidget::<()>::new(term, |_| ()).search_highlights(
+            &matches,
+            Some(9),
+            1,
+            Color::WHITE,
+            Color::BLACK,
+        );
+        let colors = TerminalColors {
+            foreground: DEFAULT_FG,
+            background: DEFAULT_BG,
+            cursor: DEFAULT_FG,
+            ansi: crate::terminal::colors::ANSI_COLORS,
+        };
+        let mut cache = RenderCache::default();
+        widget.refresh_render_cache(&mut cache, &colors);
+
+        // Only the three viewport lines produce spans; scrolled-out matches
+        // are dropped. The bottom viewport line holds the prompt, so lines 0
+        // and 1 contain "hit 8" / "hit 9".
+        assert_eq!(cache.search_spans, vec![(0, 0, 2)]);
+        assert_eq!(cache.active_search_spans, vec![(1, 0, 2)]);
     }
 
     #[test]

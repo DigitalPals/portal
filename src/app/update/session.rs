@@ -13,12 +13,13 @@ use crate::app::managers::{ActiveSession, SessionBackend};
 use crate::app::services::{connection, history};
 use crate::app::{Portal, Tab, View};
 use crate::config::AuthMethod;
-use crate::message::{Message, SessionId, SessionMessage};
+use crate::message::{Message, SearchMessage, SessionId, SessionMessage};
 use crate::platform;
 use crate::sftp::session::SftpSession;
 use crate::ssh::reconnect::ReconnectPolicy;
 use crate::terminal::backend::{TerminalEvent, paste_bytes_for_mode};
 use crate::terminal::logger::SessionLogger;
+use crate::terminal::search::{self as terminal_search, TerminalSearchState};
 use crate::terminal_paste::{self, TerminalPastePayload};
 use crate::views::tabs::{TabAgentActivity, TabAgentKind, TabAgentStatus, TabType};
 use crate::views::terminal_view::TerminalSession;
@@ -419,6 +420,7 @@ fn start_terminal_session(
             last_terminal_notification_at: None,
             resume_snapshot_protected_until,
             logger: None,
+            search: TerminalSearchState::default(),
         },
     );
 
@@ -1131,10 +1133,13 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
             let now = Instant::now();
             for session in portal.sessions.values_mut() {
                 process_terminal_output_tick(session, now);
+                // New output shifts buffer lines; recompute match positions.
+                refresh_search_if_stale(session);
             }
 
             Task::none()
         }
+        SessionMessage::Search(msg) => handle_search(portal, msg),
         SessionMessage::Disconnected { session_id, clean } => {
             tracing::info!("Terminal session disconnected (clean: {})", clean);
             if !portal.sessions.contains(session_id) {
@@ -1521,6 +1526,8 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                     return Task::none();
                 }
                 session.last_terminal_size = (cols, rows);
+                // Reflowed lines invalidate search match positions.
+                refresh_search_if_stale(session);
                 match &session.backend {
                     SessionBackend::Ssh(ssh_session) => {
                         let ssh_session = ssh_session.clone();
@@ -1613,6 +1620,136 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
     }
 }
 
+/// How to pick the active match after recomputing the match list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SearchSelection {
+    /// Jump to the match nearest the current viewport (query changed).
+    Reset,
+    /// Keep the previously active match if it still exists (buffer changed).
+    Preserve,
+}
+
+/// Recompute matches for the session's current query and select a match.
+///
+/// When `scroll` is set, the viewport jumps so the active match is visible.
+fn recompute_search(session: &mut ActiveSession, selection: SearchSelection, scroll: bool) {
+    let backend = &session.terminal.backend;
+    let search = &mut session.search;
+
+    let previous_match = search.current_match().cloned();
+    let previous_index = search.current;
+
+    search.matches = if search.query.is_empty() {
+        Vec::new()
+    } else {
+        backend.search_matches(
+            &search.query,
+            search.case_sensitive,
+            terminal_search::MAX_SEARCH_MATCHES,
+        )
+    };
+    search.last_epoch = backend.current_epoch();
+
+    search.current = if search.matches.is_empty() {
+        None
+    } else {
+        match selection {
+            SearchSelection::Reset => terminal_search::initial_match_index(
+                &search.matches,
+                backend.viewport_bottom_line(),
+            ),
+            SearchSelection::Preserve => previous_match
+                .and_then(|previous| search.matches.iter().position(|m| *m == previous))
+                .or_else(|| previous_index.map(|index| index.min(search.matches.len() - 1)))
+                .or(Some(0)),
+        }
+    };
+    search.bump_version();
+
+    if scroll && let Some(current) = search.current_match() {
+        backend.scroll_to_line(current.start().line);
+    }
+}
+
+/// Re-run the search when terminal output/resize invalidated match positions.
+fn refresh_search_if_stale(session: &mut ActiveSession) {
+    if session.search.open
+        && !session.search.query.is_empty()
+        && session.search.last_epoch != session.terminal.backend.current_epoch()
+    {
+        // Preserve the active match and never move the viewport: this runs on
+        // live output, and yanking the scroll position around would be jarring.
+        recompute_search(session, SearchSelection::Preserve, false);
+    }
+}
+
+/// Handle terminal scrollback search (find-in-buffer) messages.
+fn handle_search(portal: &mut Portal, msg: SearchMessage) -> Task<Message> {
+    match msg {
+        SearchMessage::Open(session_id) => {
+            let Some(session) = portal.sessions.get_mut(session_id) else {
+                return Task::none();
+            };
+            session.search.open = true;
+            session.search.bump_version();
+            // Reopening with a previous query restores its highlights.
+            if !session.search.query.is_empty() {
+                recompute_search(session, SearchSelection::Reset, true);
+            }
+            iced::widget::operation::focus(crate::views::terminal_view::terminal_search_input_id())
+        }
+        SearchMessage::Close(session_id) => {
+            if let Some(session) = portal.sessions.get_mut(session_id) {
+                session.search.open = false;
+                session.search.matches.clear();
+                session.search.current = None;
+                session.search.bump_version();
+            }
+            // Return keyboard focus to the terminal widget.
+            portal.ui.terminal_focus_token = portal.ui.terminal_focus_token.wrapping_add(1);
+            Task::none()
+        }
+        SearchMessage::QueryChanged(session_id, query) => {
+            if let Some(session) = portal.sessions.get_mut(session_id) {
+                session.search.query = query;
+                recompute_search(session, SearchSelection::Reset, true);
+            }
+            Task::none()
+        }
+        SearchMessage::NextMatch(session_id) => {
+            if let Some(session) = portal.sessions.get_mut(session_id) {
+                refresh_search_if_stale(session);
+                if session.search.select_next().is_some() {
+                    session.search.bump_version();
+                    if let Some(current) = session.search.current_match() {
+                        session.terminal.backend.scroll_to_line(current.start().line);
+                    }
+                }
+            }
+            Task::none()
+        }
+        SearchMessage::PreviousMatch(session_id) => {
+            if let Some(session) = portal.sessions.get_mut(session_id) {
+                refresh_search_if_stale(session);
+                if session.search.select_previous().is_some() {
+                    session.search.bump_version();
+                    if let Some(current) = session.search.current_match() {
+                        session.terminal.backend.scroll_to_line(current.start().line);
+                    }
+                }
+            }
+            Task::none()
+        }
+        SearchMessage::CaseSensitiveToggled(session_id) => {
+            if let Some(session) = portal.sessions.get_mut(session_id) {
+                session.search.case_sensitive = !session.search.case_sensitive;
+                recompute_search(session, SearchSelection::Reset, true);
+            }
+            Task::none()
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1644,7 +1781,51 @@ mod tests {
             last_terminal_notification_at: None,
             resume_snapshot_protected_until: None,
             logger: None,
+            search: TerminalSearchState::default(),
         }
+    }
+
+    #[test]
+    fn recompute_search_selects_nearest_match_and_survives_new_output() {
+        let mut session = create_test_session();
+        session.search.open = true;
+        session.search.query = "target".to_string();
+        session.terminal.process_output(b"target one\r\ntarget two\r\n");
+
+        recompute_search(&mut session, SearchSelection::Reset, false);
+        assert_eq!(session.search.matches.len(), 2);
+        // Reset picks the match nearest the (bottom) viewport.
+        assert_eq!(session.search.current, Some(1));
+
+        // Move to the first match, then let new output arrive: the stale
+        // refresh must re-run the search and keep the same active match.
+        session.search.current = Some(0);
+        let active_before = session.search.current_match().cloned().unwrap();
+        session.terminal.process_output(b"target three\r\n");
+        refresh_search_if_stale(&mut session);
+
+        assert_eq!(session.search.matches.len(), 3);
+        assert_eq!(session.search.current_match(), Some(&active_before));
+        assert_eq!(
+            session.search.last_epoch,
+            session.terminal.backend.current_epoch()
+        );
+    }
+
+    #[test]
+    fn recompute_search_clears_matches_for_empty_query() {
+        let mut session = create_test_session();
+        session.search.open = true;
+        session.search.query = "hit".to_string();
+        session.terminal.process_output(b"hit hit");
+
+        recompute_search(&mut session, SearchSelection::Reset, false);
+        assert_eq!(session.search.matches.len(), 2);
+
+        session.search.query.clear();
+        recompute_search(&mut session, SearchSelection::Reset, false);
+        assert!(session.search.matches.is_empty());
+        assert_eq!(session.search.current, None);
     }
 
     #[test]
