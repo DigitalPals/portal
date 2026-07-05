@@ -21,7 +21,7 @@ use crate::ssh::passphrase_cache::PassphraseCache;
 use crate::ssh::{SshClient, SshEvent};
 use crate::views::sftp::PaneId;
 
-const SSH_EVENT_CHANNEL_CAPACITY: usize = 1024;
+pub const SSH_EVENT_CHANNEL_CAPACITY: usize = 1024;
 const SSH_DATA_COALESCE_LIMIT: usize = 256 * 1024;
 const SSH_KEEPALIVE_INTERVAL_SECS: u64 = 60;
 
@@ -156,7 +156,10 @@ async fn next_coalesced_ssh_event(state: &mut SshEventStreamState) -> Option<Ssh
     Some(SshEvent::Data(data))
 }
 
-fn sftp_event_listener(event_rx: mpsc::Receiver<SshEvent>) -> Task<Message> {
+/// Forward interactive SSH events (host key verification, keyboard
+/// interactive prompts) to the dialog system, ignoring session data events.
+/// Used by connections without a terminal attached (SFTP, VNC tunnels).
+pub fn ssh_dialog_event_listener(event_rx: mpsc::Receiver<SshEvent>) -> Task<Message> {
     Task::run(
         stream::unfold(event_rx, |mut rx| async move {
             rx.recv().await.map(|event| (event, rx))
@@ -524,7 +527,7 @@ fn sftp_connect_tasks_with_auth(
     let (event_tx, event_rx) = mpsc::channel::<SshEvent>(SSH_EVENT_CHANNEL_CAPACITY);
     let known_hosts = shared_known_hosts_manager();
     let sftp_client = SftpClient::with_known_hosts(SSH_KEEPALIVE_INTERVAL_SECS, known_hosts);
-    let event_listener = sftp_event_listener(event_rx);
+    let event_listener = ssh_dialog_event_listener(event_rx);
 
     let host_for_task = Arc::clone(&host);
     let (password, passphrase) = auth.split();
@@ -760,6 +763,8 @@ mod tests {
             protocol: crate::config::Protocol::Ssh,
             vnc_port: None,
             vnc_password_id: None,
+            vnc_via_ssh_host_id: None,
+            allow_cleartext_vnc: false,
             agent_forwarding: false,
             port_forwards: Vec::new(),
             hub_routing: HubRouting::Auto,
@@ -804,6 +809,8 @@ mod tests {
             protocol: crate::config::Protocol::Ssh,
             vnc_port: None,
             vnc_password_id: None,
+            vnc_via_ssh_host_id: None,
+            allow_cleartext_vnc: false,
             agent_forwarding: false,
             port_forwards: Vec::new(),
             hub_routing: HubRouting::Auto,
@@ -847,6 +854,8 @@ mod tests {
             protocol: crate::config::Protocol::Ssh,
             vnc_port: None,
             vnc_password_id: None,
+            vnc_via_ssh_host_id: None,
+            allow_cleartext_vnc: false,
             agent_forwarding: false,
             port_forwards: Vec::new(),
             hub_routing: HubRouting::Hub,

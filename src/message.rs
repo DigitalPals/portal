@@ -75,6 +75,7 @@ pub enum HostDialogField {
     KeyPath,
     VaultKeyId,
     VncPasswordId,
+    VncViaSshHostId,
     AgentForwarding,
     HubRouting,
     JumpHostId,
@@ -408,6 +409,12 @@ pub enum DialogMessage {
     AuthPromptSubmit,
     /// Auth prompt dialog: user cancelled authentication
     AuthPromptCancel,
+    /// Unencrypted VNC warning: "don't warn again for this host" toggled
+    VncCleartextDontWarnToggled(bool),
+    /// Unencrypted VNC warning: user chose to connect anyway
+    VncCleartextConnectAnyway,
+    /// Unencrypted VNC warning: user cancelled the connection
+    VncCleartextCancel,
 }
 
 /// Context for passphrase-based SFTP connections
@@ -486,6 +493,9 @@ pub enum HostMessage {
     QuickConnect,
     /// Open local terminal (stubbed)
     LocalTerminal,
+    /// Cleartext exposure check for a VNC target finished (`warn` is true
+    /// when the target resolved to a non-private address)
+    VncCleartextCheckDone { host_id: Uuid, warn: bool },
 }
 
 /// History management messages

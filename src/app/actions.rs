@@ -667,8 +667,45 @@ impl Portal {
         }
     }
 
-    /// Connect to a VNC host
+    /// Connect to a VNC host.
+    ///
+    /// Non-tunneled targets are first checked for cleartext exposure: the
+    /// hostname is resolved asynchronously and, when any resolved address is
+    /// non-private, a warning dialog is shown before any credentials are
+    /// requested (see `HostMessage::VncCleartextCheckDone`).
     pub(super) fn connect_vnc_host(&mut self, host: &Host) -> Task<Message> {
+        let tunneled = host.vnc_via_ssh_host_id.is_some();
+        if !tunneled && !host.allow_cleartext_vnc {
+            let host_id = host.id;
+            let hostname = host.hostname.clone();
+            let port = host.effective_vnc_port();
+            return Task::perform(
+                async move {
+                    let addrs: Vec<std::net::IpAddr> =
+                        match tokio::net::lookup_host((hostname.as_str(), port)).await {
+                            Ok(addrs) => addrs.map(|addr| addr.ip()).collect(),
+                            // Resolution failures are not warned about; the
+                            // connection attempt will surface the DNS error.
+                            Err(_) => Vec::new(),
+                        };
+                    crate::vnc::net::should_warn_cleartext_vnc(&addrs, false, false)
+                },
+                move |warn| {
+                    Message::Host(crate::message::HostMessage::VncCleartextCheckDone {
+                        host_id,
+                        warn,
+                    })
+                },
+            );
+        }
+
+        self.connect_vnc_host_unchecked(host)
+    }
+
+    /// Connect to a VNC host after the cleartext exposure check has passed
+    /// (or was answered with "Connect Anyway"). Loads the saved password or
+    /// prompts for one.
+    pub(crate) fn connect_vnc_host_unchecked(&mut self, host: &Host) -> Task<Message> {
         let port = host.effective_vnc_port();
 
         if let Some(password_id) = host.vnc_password_id {
@@ -695,6 +732,34 @@ impl Portal {
         Task::none()
     }
 
+    /// Resolve the SSH chain a VNC host tunnels through: the configured SSH
+    /// host's own jump chain (outermost first) followed by the SSH host
+    /// itself. Returns `Ok(None)` when the host is not tunneled.
+    fn resolved_vnc_tunnel_chain(&mut self, host: &Host) -> Result<Option<Vec<Host>>, ()> {
+        let Some(ssh_id) = host.vnc_via_ssh_host_id else {
+            return Ok(None);
+        };
+        let Some(ssh_host) = self.config.hosts.find_host(ssh_id).cloned() else {
+            self.toast_manager.push(Toast::error(format!(
+                "SSH tunnel host configured for '{}' was not found",
+                host.name
+            )));
+            return Err(());
+        };
+        if ssh_host.protocol != crate::config::Protocol::Ssh {
+            self.toast_manager.push(Toast::error(format!(
+                "SSH tunnel host '{}' is not an SSH host",
+                ssh_host.name
+            )));
+            return Err(());
+        }
+        let Some(mut chain) = self.resolved_jump_chain(&ssh_host) else {
+            return Err(());
+        };
+        chain.push(ssh_host);
+        Ok(Some(chain))
+    }
+
     pub(super) fn connect_vnc_host_with_password(
         &mut self,
         host: &Host,
@@ -703,7 +768,19 @@ impl Portal {
         use crate::message::VncMessage;
         use crate::vnc::VncSession;
         use crate::vnc::session::VncSessionEvent;
-        use secrecy::ExposeSecret;
+
+        // Resolve the SSH tunnel chain (if configured) before spawning the
+        // connect task so configuration errors surface immediately.
+        let Ok(tunnel_chain) = self.resolved_vnc_tunnel_chain(host) else {
+            return Task::none();
+        };
+        let via_label = tunnel_chain
+            .as_deref()
+            .map(crate::ssh::tunnel::describe_chain);
+        let protocol_label = match &via_label {
+            Some(via) => format!("VNC via {}", via),
+            None => "VNC".to_string(),
+        };
 
         let session_id = Uuid::new_v4();
         let dialog_host_name = host.name.clone();
@@ -712,24 +789,76 @@ impl Portal {
         let host_name = host.name.clone();
         let host_id = host.id;
         let username = Some(host.effective_username());
-        let password_str = Some(password.expose_secret().to_string());
+        let password = Some(password);
 
         let (msg_tx, msg_rx) = mpsc::channel::<Message>(256);
         let vnc_settings = self.prefs.vnc_settings.clone();
 
+        // The SSH hops of a tunneled connection run the full auth and host
+        // key verification flow; their interactive requests (host key
+        // dialogs, keyboard-interactive prompts) are forwarded to the
+        // dialog system through this listener, exactly like terminal/SFTP
+        // connections do.
+        let (ssh_event_tx, ssh_event_rx) =
+            mpsc::channel::<crate::ssh::SshEvent>(connection::SSH_EVENT_CHANNEL_CAPACITY);
+        let ssh_dialog_listener = tunnel_chain
+            .is_some()
+            .then(|| connection::ssh_dialog_event_listener(ssh_event_rx));
+
         let connect_task = Task::perform(
             async move {
-                match VncSession::connect(
-                    host.hostname.as_str(),
-                    port,
-                    username,
-                    password_str,
-                    host_name,
-                    vnc_settings,
-                )
-                .await
-                {
-                    Ok((vnc_session, mut event_rx, detected_os)) => {
+                let result = match tunnel_chain {
+                    None => VncSession::connect(
+                        host.hostname.as_str(),
+                        port,
+                        username,
+                        password,
+                        host_name,
+                        vnc_settings,
+                    )
+                    .await
+                    .map(|connected| (connected, None)),
+                    Some(chain) => {
+                        let params = crate::ssh::tunnel::TunnelParams::new(
+                            connection::shared_known_hosts_manager(),
+                            ssh_event_tx,
+                            Duration::from_secs(30),
+                        );
+                        match crate::ssh::tunnel::open_tunneled_stream(
+                            &params,
+                            &chain,
+                            host.hostname.as_str(),
+                            port,
+                        )
+                        .await
+                        {
+                            Ok(tunneled) => VncSession::connect_stream(
+                                tunneled.stream,
+                                // Tunneled connections count as private for
+                                // the encoding heuristic: the SSH hop is
+                                // usually the bottleneck, so treat the VNC
+                                // leg as local/fast.
+                                true,
+                                host.hostname.as_str(),
+                                port,
+                                username,
+                                password,
+                                host_name,
+                                vnc_settings,
+                            )
+                            .await
+                            .map(|connected| (connected, Some(tunneled.last_hop))),
+                            Err(error) => Err(error.to_string()),
+                        }
+                    }
+                };
+
+                match result {
+                    Ok(((vnc_session, mut event_rx, detected_os), tunnel_guard)) => {
+                        // Keep the tunnel's SSH hop connection alive for the
+                        // lifetime of the VNC session: the connection pool
+                        // only holds weak references.
+                        let _tunnel_guard = tunnel_guard;
                         let _ = msg_tx
                             .send(Message::Vnc(VncMessage::Connected {
                                 session_id,
@@ -784,11 +913,16 @@ impl Portal {
             |msg| msg,
         );
 
+        let mut tasks = vec![connect_task, event_listener];
+        if let Some(listener) = ssh_dialog_listener {
+            tasks.push(listener);
+        }
+
         self.begin_connecting(
             dialog_host_name,
-            "VNC",
+            &protocol_label,
             session_id,
-            Task::batch([connect_task, event_listener]),
+            Task::batch(tasks),
         )
     }
 

@@ -31,9 +31,11 @@ struct ImageRect {
     encoding: VncEncoding,
 }
 
-impl From<[u8; 12]> for ImageRect {
-    fn from(buf: [u8; 12]) -> Self {
-        Self {
+impl TryFrom<[u8; 12]> for ImageRect {
+    type Error = VncError;
+
+    fn try_from(buf: [u8; 12]) -> Result<Self, Self::Error> {
+        Ok(Self {
             rect: Rect {
                 x: (buf[0] as u16) << 8 | buf[1] as u16,
                 y: (buf[2] as u16) << 8 | buf[3] as u16,
@@ -44,8 +46,8 @@ impl From<[u8; 12]> for ImageRect {
                 | (buf[9] as u32) << 16
                 | (buf[10] as u32) << 8
                 | (buf[11] as u32))
-                .into(),
-        }
+                .try_into()?,
+        })
     }
 }
 
@@ -56,7 +58,7 @@ impl ImageRect {
     {
         let mut rect_buf = [0_u8; 12];
         reader.read_exact(&mut rect_buf).await?;
-        Ok(rect_buf.into())
+        rect_buf.try_into()
     }
 }
 

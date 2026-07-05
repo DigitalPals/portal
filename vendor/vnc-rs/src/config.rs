@@ -18,9 +18,24 @@ pub enum VncEncoding {
     LastRectPseudo = -224,
 }
 
-impl From<u32> for VncEncoding {
-    fn from(num: u32) -> Self {
-        unsafe { std::mem::transmute(num) }
+impl TryFrom<u32> for VncEncoding {
+    type Error = VncError;
+
+    fn try_from(num: u32) -> Result<Self, Self::Error> {
+        // The encoding word in a framebuffer-update rectangle is server
+        // controlled; transmuting arbitrary values into this enum would be
+        // undefined behavior, so match the known discriminants explicitly.
+        match num as i32 {
+            0 => Ok(VncEncoding::Raw),
+            1 => Ok(VncEncoding::CopyRect),
+            7 => Ok(VncEncoding::Tight),
+            15 => Ok(VncEncoding::Trle),
+            16 => Ok(VncEncoding::Zrle),
+            -239 => Ok(VncEncoding::CursorPseudo),
+            -223 => Ok(VncEncoding::DesktopSizePseudo),
+            -224 => Ok(VncEncoding::LastRectPseudo),
+            other => Err(VncError::InvalidEncoding(other)),
+        }
     }
 }
 
@@ -248,5 +263,33 @@ impl PixelFormat {
         let mut pixel_buffer = [0_u8; 16];
         reader.read_exact(&mut pixel_buffer).await?;
         pixel_buffer.try_into()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vnc_encoding_accepts_known_wire_values() {
+        assert_eq!(VncEncoding::try_from(0u32).unwrap(), VncEncoding::Raw);
+        assert_eq!(VncEncoding::try_from(1u32).unwrap(), VncEncoding::CopyRect);
+        assert_eq!(VncEncoding::try_from(7u32).unwrap(), VncEncoding::Tight);
+        assert_eq!(VncEncoding::try_from(16u32).unwrap(), VncEncoding::Zrle);
+        assert_eq!(
+            VncEncoding::try_from(-239i32 as u32).unwrap(),
+            VncEncoding::CursorPseudo
+        );
+    }
+
+    #[test]
+    fn vnc_encoding_rejects_unknown_wire_values() {
+        // Previously transmuted (undefined behavior); must now error out.
+        for value in [2u32, 5, 8, 100, 0xdead_beef, u32::MAX] {
+            assert!(matches!(
+                VncEncoding::try_from(value),
+                Err(VncError::InvalidEncoding(_))
+            ));
+        }
     }
 }

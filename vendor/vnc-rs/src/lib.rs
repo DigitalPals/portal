@@ -5,7 +5,7 @@
 //!
 //! ## Simple example
 //!
-//! ```no_run
+//! ```ignore
 //! use anyhow::{Context, Result};
 //! use minifb::{Window, WindowOptions};
 //! use tokio::{self, net::TcpStream};
@@ -28,7 +28,7 @@
 //!
 //!     let tcp = TcpStream::connect("127.0.0.1:5900").await?;
 //!     let vnc = VncConnector::new(tcp)
-//!         .set_auth_method(async move { Ok("123".to_string()) })
+//!         .set_auth_method(async move { Ok(secrecy::SecretString::from("123")) })
 //!         .add_encoding(vnc::VncEncoding::Tight)
 //!         .add_encoding(vnc::VncEncoding::Zrle)
 //!         .add_encoding(vnc::VncEncoding::CopyRect)

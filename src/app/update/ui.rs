@@ -238,6 +238,8 @@ fn handle_search_submitted(portal: &mut Portal) -> Task<Message> {
             protocol: crate::config::Protocol::Ssh,
             vnc_port: None,
             vnc_password_id: None,
+            vnc_via_ssh_host_id: None,
+            allow_cleartext_vnc: false,
             auth: crate::config::AuthMethod::Agent,
             agent_forwarding: false,
             port_forwards: Vec::new(),

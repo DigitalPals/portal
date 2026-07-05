@@ -346,6 +346,10 @@ fn is_auto_routing(value: &HubRouting) -> bool {
     *value == HubRouting::Auto
 }
 
+fn is_false(value: &bool) -> bool {
+    !*value
+}
+
 /// Accepts the routing enum, plus the legacy `portal_hub_enabled` bool
 /// (`true` migrates to `Hub`, `false` to `Auto`).
 fn deserialize_hub_routing<'de, D>(deserializer: D) -> Result<HubRouting, D::Error>
@@ -401,6 +405,14 @@ pub struct Host {
     /// Encrypted vault secret used as the default VNC password.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vnc_password_id: Option<Uuid>,
+    /// SSH host to tunnel VNC traffic through. When set, the VNC connection
+    /// is carried over an SSH `direct-tcpip` channel instead of raw TCP.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vnc_via_ssh_host_id: Option<Uuid>,
+    /// Suppress the unencrypted-VNC warning for this host ("don't warn
+    /// again"). Only meaningful for non-tunneled VNC hosts.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub allow_cleartext_vnc: bool,
     #[serde(default)]
     pub auth: AuthMethod,
     /// Enable SSH agent forwarding for this host
@@ -652,6 +664,8 @@ mod tests {
             protocol: Protocol::Ssh,
             vnc_port: None,
             vnc_password_id: None,
+            vnc_via_ssh_host_id: None,
+            allow_cleartext_vnc: false,
             auth: AuthMethod::Agent,
             agent_forwarding: false,
             port_forwards: Vec::new(),
@@ -828,6 +842,42 @@ type = "agent"
 
         let parsed: Host = toml::from_str(&serialized).unwrap();
         assert_eq!(parsed.jump_host_id, Some(jump_id));
+    }
+
+    #[test]
+    fn legacy_host_without_vnc_security_fields_deserializes_cleanly() {
+        // Old hosts.toml files predate vnc_via_ssh_host_id and
+        // allow_cleartext_vnc entirely.
+        let host: Host = toml::from_str(HOST_TOML_TAIL).unwrap();
+
+        assert_eq!(host.vnc_via_ssh_host_id, None);
+        assert!(!host.allow_cleartext_vnc);
+    }
+
+    #[test]
+    fn default_vnc_security_fields_are_not_serialized() {
+        let host = test_host("PlainVnc");
+        let serialized = toml::to_string(&host).unwrap();
+
+        assert!(!serialized.contains("vnc_via_ssh_host_id"));
+        assert!(!serialized.contains("allow_cleartext_vnc"));
+    }
+
+    #[test]
+    fn vnc_security_fields_round_trip() {
+        let tunnel_id = Uuid::new_v4();
+        let mut host = test_host("TunneledVnc");
+        host.protocol = Protocol::Vnc;
+        host.vnc_via_ssh_host_id = Some(tunnel_id);
+        host.allow_cleartext_vnc = true;
+
+        let serialized = toml::to_string(&host).unwrap();
+        assert!(serialized.contains("vnc_via_ssh_host_id"));
+        assert!(serialized.contains("allow_cleartext_vnc"));
+
+        let parsed: Host = toml::from_str(&serialized).unwrap();
+        assert_eq!(parsed.vnc_via_ssh_host_id, Some(tunnel_id));
+        assert!(parsed.allow_cleartext_vnc);
     }
 
     #[test]

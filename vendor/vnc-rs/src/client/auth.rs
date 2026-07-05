@@ -24,9 +24,18 @@ impl TryFrom<u8> for SecurityType {
     type Error = VncError;
     fn try_from(num: u8) -> Result<Self, Self::Error> {
         match num {
-            0 | 1 | 2 | 5 | 6 | 16 | 17 | 18 | 19 | 20 | 21 | 22 => {
-                Ok(unsafe { std::mem::transmute::<u8, SecurityType>(num) })
-            }
+            0 => Ok(SecurityType::Invalid),
+            1 => Ok(SecurityType::None),
+            2 => Ok(SecurityType::VncAuth),
+            5 => Ok(SecurityType::RA2),
+            6 => Ok(SecurityType::RA2ne),
+            16 => Ok(SecurityType::Tight),
+            17 => Ok(SecurityType::Ultra),
+            18 => Ok(SecurityType::Tls),
+            19 => Ok(SecurityType::VeNCrypt),
+            20 => Ok(SecurityType::GtkVncSasl),
+            21 => Ok(SecurityType::Md5Hash),
+            22 => Ok(SecurityType::ColinDeanXvp),
             invalid => Err(VncError::InvalidSecurityTyep(invalid)),
         }
     }
@@ -91,6 +100,7 @@ impl SecurityType {
 }
 
 #[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
 pub(super) enum AuthResult {
     Ok = 0,
@@ -99,7 +109,13 @@ pub(super) enum AuthResult {
 
 impl From<u32> for AuthResult {
     fn from(num: u32) -> Self {
-        unsafe { std::mem::transmute(num) }
+        // The RFB SecurityResult word is server controlled: only 0 means
+        // success, any other value (including values that are not valid
+        // enum discriminants) must be treated as failure.
+        match num {
+            0 => AuthResult::Ok,
+            _ => AuthResult::Failed,
+        }
     }
 }
 
@@ -155,5 +171,37 @@ impl AuthHelper {
     {
         let result = reader.read_u32().await?;
         Ok(result.into())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn auth_result_zero_is_ok() {
+        assert_eq!(AuthResult::from(0u32), AuthResult::Ok);
+    }
+
+    #[test]
+    fn auth_result_one_is_failed() {
+        assert_eq!(AuthResult::from(1u32), AuthResult::Failed);
+    }
+
+    #[test]
+    fn auth_result_arbitrary_server_values_are_failed_not_ub() {
+        // Previously these values were transmuted into a two-variant enum,
+        // which is undefined behavior. They must map to Failed.
+        for value in [2u32, 3, 42, 0xdead_beef, u32::MAX] {
+            assert_eq!(AuthResult::from(value), AuthResult::Failed);
+        }
+    }
+
+    #[test]
+    fn security_type_rejects_unknown_wire_values() {
+        assert!(SecurityType::try_from(3u8).is_err());
+        assert!(SecurityType::try_from(30u8).is_err());
+        assert!(SecurityType::try_from(255u8).is_err());
+        assert_eq!(SecurityType::try_from(2u8).unwrap(), SecurityType::VncAuth);
     }
 }

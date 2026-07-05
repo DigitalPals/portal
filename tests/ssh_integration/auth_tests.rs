@@ -262,6 +262,8 @@ async fn test_connection_timeout() {
         protocol: portal::config::Protocol::Ssh,
         vnc_port: None,
         vnc_password_id: None,
+        vnc_via_ssh_host_id: None,
+        allow_cleartext_vnc: false,
         port_forwards: Vec::new(),
         hub_routing: portal::config::hosts::HubRouting::Auto,
         jump_host_id: None,

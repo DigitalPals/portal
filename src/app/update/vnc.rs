@@ -64,6 +64,15 @@ pub fn handle_vnc(portal: &mut Portal, msg: VncMessage) -> Task<Message> {
                 }
             }
 
+            // Human-readable tunnel description for the toolbar ("via ...")
+            let via = portal
+                .config
+                .hosts
+                .find_host(host_id)
+                .and_then(|host| host.vnc_via_ssh_host_id)
+                .and_then(|ssh_id| portal.config.hosts.find_host(ssh_id))
+                .map(|ssh_host| ssh_host.name.clone());
+
             // Store VNC session
             let now = std::time::Instant::now();
             portal.vnc_sessions.insert(
@@ -71,6 +80,7 @@ pub fn handle_vnc(portal: &mut Portal, msg: VncMessage) -> Task<Message> {
                 VncActiveSession {
                     session: vnc_session,
                     host_name: host_name.clone(),
+                    via,
                     session_start: now,
                     frame_count: 0,
                     fps_last_check: now,

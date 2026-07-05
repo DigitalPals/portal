@@ -49,6 +49,8 @@ pub struct HostDialogState {
     pub key_path: String,
     pub vault_key_id: Option<Uuid>,
     pub vnc_password_id: Option<Uuid>,
+    /// SSH host to tunnel VNC traffic through
+    pub vnc_via_ssh_host_id: Option<Uuid>,
     pub agent_forwarding: bool,
     pub hub_routing: HubRouting,
     /// Jump (bastion) host to tunnel through
@@ -361,6 +363,7 @@ impl HostDialogState {
             key_path: String::new(),
             vault_key_id: default_vault_key.filter(|_| prefer_vault),
             vnc_password_id: None,
+            vnc_via_ssh_host_id: None,
             agent_forwarding: false,
             hub_routing: HubRouting::Auto,
             jump_host_id: None,
@@ -408,6 +411,7 @@ impl HostDialogState {
                 _ => None,
             },
             vnc_password_id: host.vnc_password_id,
+            vnc_via_ssh_host_id: host.vnc_via_ssh_host_id,
             agent_forwarding: host.agent_forwarding,
             hub_routing: host.hub_routing,
             jump_host_id: host.jump_host_id,
@@ -562,6 +566,11 @@ impl HostDialogState {
         } else {
             None
         };
+        let vnc_via_ssh_host_id = if protocol == Protocol::Vnc {
+            self.vnc_via_ssh_host_id
+        } else {
+            None
+        };
 
         let port_forwards = if protocol == Protocol::Ssh {
             self.port_forwards.clone()
@@ -578,6 +587,8 @@ impl HostDialogState {
             protocol,
             vnc_port,
             vnc_password_id,
+            vnc_via_ssh_host_id,
+            allow_cleartext_vnc: false,
             auth,
             agent_forwarding,
             port_forwards,
@@ -850,7 +861,7 @@ pub fn host_dialog_view(
         let selected_jump_id = state.jump_host_id;
         let mut options = Vec::with_capacity(jump_host_options.len() + 1);
         options.push(JumpHostOption::none());
-        options.extend(jump_host_options);
+        options.extend(jump_host_options.iter().cloned());
         let selected = options
             .iter()
             .find(|option| option.id == selected_jump_id)
@@ -970,6 +981,40 @@ pub fn host_dialog_view(
             .cloned()
             .unwrap_or_else(VncPasswordOption::ask_every_time);
 
+        // SSH tunnel picker: carry VNC traffic over an encrypted SSH channel.
+        // Reuses the jump-host candidate list (other SSH hosts only).
+        let selected_tunnel_id = state.vnc_via_ssh_host_id;
+        let mut tunnel_options = Vec::with_capacity(jump_host_options.len() + 1);
+        tunnel_options.push(JumpHostOption {
+            id: None,
+            label: "None (direct, unencrypted)".to_string(),
+        });
+        tunnel_options.extend(jump_host_options.iter().cloned());
+        let selected_tunnel = tunnel_options
+            .iter()
+            .find(|option| option.id == selected_tunnel_id)
+            .cloned()
+            .unwrap_or_else(|| tunnel_options[0].clone());
+        let vnc_tunnel_section = column![
+            text("SSH tunnel")
+                .size(fonts.label)
+                .color(theme.text_secondary),
+            pick_list(tunnel_options, Some(selected_tunnel), |choice| {
+                Message::Dialog(DialogMessage::FieldChanged(
+                    HostDialogField::VncViaSshHostId,
+                    choice.id.map(|id| id.to_string()).unwrap_or_default(),
+                ))
+            })
+            .width(Length::Fill)
+            .padding(8)
+            .style(dialog_pick_list_style(theme))
+            .menu_style(dialog_pick_list_menu_style(theme)),
+            text("Tunnel VNC traffic through an SSH host to encrypt it.")
+                .size(fonts.small)
+                .color(theme.text_tertiary),
+        ]
+        .spacing(4);
+
         column![
             section_heading("VNC", theme, fonts),
             text("Default password")
@@ -985,6 +1030,7 @@ pub fn host_dialog_view(
             .padding(8)
             .style(dialog_pick_list_style(theme))
             .menu_style(dialog_pick_list_menu_style(theme)),
+            vnc_tunnel_section,
         ]
         .spacing(6)
         .width(Length::FillPortion(1))

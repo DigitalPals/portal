@@ -163,6 +163,31 @@ pub struct TunnelParams {
     pub connect_timeout: Duration,
 }
 
+impl TunnelParams {
+    /// Build tunnel parameters with the standard client configuration
+    /// (matching the keepalive/inactivity settings used for terminal and
+    /// SFTP connections). Used by callers that open a tunnel without going
+    /// through `SshClient`, e.g. VNC-over-SSH.
+    pub fn new(
+        known_hosts: Arc<Mutex<KnownHostsManager>>,
+        event_tx: mpsc::Sender<SshEvent>,
+        connect_timeout: Duration,
+    ) -> Self {
+        let config = client::Config {
+            inactivity_timeout: Some(Duration::from_secs(3600)),
+            keepalive_interval: Some(Duration::from_secs(60)),
+            keepalive_max: 3,
+            ..Default::default()
+        };
+        Self {
+            config: Arc::new(config),
+            known_hosts,
+            event_tx,
+            connect_timeout,
+        }
+    }
+}
+
 fn hop_error(hop: &Host, reason: String) -> SshError {
     SshError::ConnectionFailed {
         host: hop.hostname.clone(),
@@ -375,6 +400,8 @@ mod tests {
             protocol: Protocol::Ssh,
             vnc_port: None,
             vnc_password_id: None,
+            vnc_via_ssh_host_id: None,
+            allow_cleartext_vnc: false,
             auth: AuthMethod::Agent,
             agent_forwarding: false,
             port_forwards: Vec::new(),

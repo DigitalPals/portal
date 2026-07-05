@@ -9,6 +9,8 @@ pub enum VncError {
     NoEncoding,
     #[error("Unknow VNC security type: {0}")]
     InvalidSecurityTyep(u8),
+    #[error("Unknown VNC encoding: {0}")]
+    InvalidEncoding(i32),
     #[error("Wrong password")]
     WrongPassword,
     #[error("Connect error with unknown reason")]

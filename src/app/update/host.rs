@@ -13,6 +13,7 @@ use crate::views::dialogs::host_dialog::HostDialogState;
 use crate::views::dialogs::session_choice_dialog::{
     DetachedProxySessionChoice, LocalSessionChoice, SessionChoiceDialogState, SessionThumbnail,
 };
+use crate::views::dialogs::vnc_cleartext_dialog::VncCleartextDialogState;
 use crate::views::toast::Toast;
 
 /// Handle host management messages
@@ -113,6 +114,23 @@ pub fn handle_host(portal: &mut Portal, msg: HostMessage) -> Task<Message> {
         HostMessage::LocalTerminal => {
             tracing::info!("Spawning local terminal");
             portal.spawn_local_terminal()
+        }
+        HostMessage::VncCleartextCheckDone { host_id, warn } => {
+            let Some(host) = portal.config.hosts.find_host(host_id).cloned() else {
+                return Task::none();
+            };
+            if warn {
+                let target = format!("{}:{}", host.hostname, host.effective_vnc_port());
+                portal
+                    .dialogs
+                    .open_vnc_cleartext(VncCleartextDialogState::new(
+                        host.id,
+                        host.name.clone(),
+                        target,
+                    ));
+                return Task::none();
+            }
+            portal.connect_vnc_host_unchecked(&host)
         }
     }
 }
@@ -240,6 +258,8 @@ mod tests {
             protocol: Protocol::Ssh,
             vnc_port: None,
             vnc_password_id: None,
+            vnc_via_ssh_host_id: None,
+            allow_cleartext_vnc: false,
             agent_forwarding: false,
             port_forwards: Vec::new(),
             hub_routing: HubRouting::Hub,

@@ -40,6 +40,7 @@ use crate::views::dialogs::portal_hub_dialogs::{
 };
 use crate::views::dialogs::quick_connect_dialog::quick_connect_dialog_view;
 use crate::views::dialogs::session_choice_dialog::session_choice_dialog_view;
+use crate::views::dialogs::vnc_cleartext_dialog::vnc_cleartext_dialog_view;
 use crate::views::file_viewer::file_viewer_view;
 use crate::views::history_view::history_view;
 use crate::views::host_details_sheet::host_details_sheet_view;
@@ -1230,6 +1231,10 @@ impl Portal {
             }
             ActiveDialog::SessionChoice(session_choice_state) => {
                 let dialog = session_choice_dialog_view(session_choice_state, theme, fonts);
+                stack![main_layout, dialog].into()
+            }
+            ActiveDialog::VncCleartextWarning(cleartext_state) => {
+                let dialog = vnc_cleartext_dialog_view(cleartext_state, theme, fonts);
                 stack![main_layout, dialog].into()
             }
             ActiveDialog::None => main_layout,

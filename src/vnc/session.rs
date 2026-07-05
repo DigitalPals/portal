@@ -190,10 +190,15 @@ mod ard {
     use md5::{Digest, Md5};
     use num_bigint::BigUint;
     use rand::RngCore;
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    use tokio::net::TcpStream;
+    use secrecy::{ExposeSecret, SecretString};
+    use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
     const MAX_ARD_KEY_LEN: usize = 8192;
+
+    /// Minimum accepted Diffie-Hellman modulus size. Apple's own ARD
+    /// implementation uses 512-bit primes; anything smaller is trivially
+    /// breakable and indicates a tampered or malicious server.
+    const MIN_DH_MODULUS_BITS: u64 = 512;
 
     pub(super) fn validate_key_len(key_len: usize) -> Result<(), String> {
         if key_len == 0 || key_len > MAX_ARD_KEY_LEN {
@@ -202,11 +207,63 @@ mod ard {
         Ok(())
     }
 
-    pub async fn authenticate(
-        tcp: &mut TcpStream,
-        username: &str,
-        password: &str,
+    fn unsafe_dh(detail: &str) -> String {
+        format!(
+            "ARD: server sent unsafe Diffie-Hellman parameters — possible MITM ({})",
+            detail
+        )
+    }
+
+    /// Validate server-provided Diffie-Hellman parameters before using them.
+    ///
+    /// Rejects:
+    /// - moduli shorter than 512 bits (measured after stripping leading
+    ///   zeros, so zero-padding tricks cannot inflate the apparent size)
+    /// - even moduli (a valid prime modulus is odd)
+    /// - generators outside `2 <= g < p`
+    /// - server public keys outside `2 <= pk <= p - 2` (0, 1 and p-1 force
+    ///   the shared secret into a trivial subgroup)
+    pub(super) fn validate_dh_params(
+        generator: &BigUint,
+        prime: &BigUint,
+        server_pub: &BigUint,
     ) -> Result<(), String> {
+        // BigUint::bits() measures the value itself, ignoring any
+        // leading-zero padding present in the wire encoding.
+        if prime.bits() < MIN_DH_MODULUS_BITS {
+            return Err(unsafe_dh(&format!(
+                "modulus is only {} bits, need at least {}",
+                prime.bits(),
+                MIN_DH_MODULUS_BITS
+            )));
+        }
+        if !prime.bit(0) {
+            return Err(unsafe_dh("modulus is even, not a prime"));
+        }
+
+        let two = BigUint::from(2u8);
+        if generator < &two || generator >= prime {
+            return Err(unsafe_dh("generator outside the valid range [2, p)"));
+        }
+
+        let pk_max = prime - &two;
+        if server_pub < &two || server_pub > &pk_max {
+            return Err(unsafe_dh(
+                "server public key outside the valid range [2, p-2]",
+            ));
+        }
+
+        Ok(())
+    }
+
+    pub async fn authenticate<S>(
+        tcp: &mut S,
+        username: &str,
+        password: &SecretString,
+    ) -> Result<(), String>
+    where
+        S: AsyncRead + AsyncWrite + Unpin,
+    {
         // Read DH parameters from server
         let mut gen_buf = [0u8; 2];
         tcp.read_exact(&mut gen_buf)
@@ -237,6 +294,9 @@ mod ard {
         let server_pub = BigUint::from_bytes_be(&server_pub_bytes);
         let dh_gen = BigUint::from(generator);
 
+        // Reject weak or malicious DH parameters before deriving anything.
+        validate_dh_params(&dh_gen, &prime, &server_pub)?;
+
         // Generate client DH keypair
         let mut private_bytes = vec![0u8; key_len];
         rand::thread_rng().fill_bytes(&mut private_bytes);
@@ -256,14 +316,19 @@ mod ard {
         hasher.update(&secret_bytes);
         let md5_hash = hasher.finalize();
 
-        // Encrypt credentials: 64 bytes username + 64 bytes password (null-padded)
+        // Encrypt credentials: 64 bytes username + 64 bytes password
+        // (null-padded). The password secret is exposed only here, at the
+        // moment it is wire-encoded; the plaintext bytes in `credentials`
+        // are overwritten in place by the AES encryption below.
         let mut credentials = [0u8; 128];
         let user_bytes = username.as_bytes();
-        let pass_bytes = password.as_bytes();
         let user_len = user_bytes.len().min(63);
-        let pass_len = pass_bytes.len().min(63);
         credentials[..user_len].copy_from_slice(&user_bytes[..user_len]);
-        credentials[64..64 + pass_len].copy_from_slice(&pass_bytes[..pass_len]);
+        {
+            let pass_bytes = password.expose_secret().as_bytes();
+            let pass_len = pass_bytes.len().min(63);
+            credentials[64..64 + pass_len].copy_from_slice(&pass_bytes[..pass_len]);
+        }
 
         // AES-128-ECB encrypt the credentials
         let key = aes::cipher::generic_array::GenericArray::from_slice(md5_hash.as_ref());
@@ -306,15 +371,16 @@ mod ard {
     }
 }
 
-/// A wrapper around TcpStream that handles RFB version negotiation and
-/// Apple Remote Desktop authentication before passing the stream to vnc-rs.
+/// A wrapper around the transport stream (TCP or SSH tunnel) that handles
+/// RFB version negotiation and Apple Remote Desktop authentication before
+/// passing the stream to vnc-rs.
 ///
 /// For macOS Screen Sharing (RFB 003.889, security type 30), this wrapper:
 /// 1. Negotiates the RFB version on the wire
 /// 2. Performs ARD (DH + AES) authentication
 /// 3. Feeds vnc-rs a fake "no auth" prefix so it skips directly to init
-struct NegotiatedStream {
-    inner: TcpStream,
+struct NegotiatedStream<S> {
+    inner: S,
     /// Pre-buffered bytes to feed to the reader
     prefix: Vec<u8>,
     /// How many bytes of the prefix have been consumed
@@ -323,15 +389,18 @@ struct NegotiatedStream {
     drop_write_bytes: usize,
 }
 
-impl NegotiatedStream {
-    const MAX_SECURITY_FAILURE_REASON_LEN: usize = 16 * 1024;
+const MAX_SECURITY_FAILURE_REASON_LEN: usize = 16 * 1024;
 
+impl<S> NegotiatedStream<S>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
     /// Perform version + auth negotiation, then wrap the stream for vnc-rs.
     /// Returns the negotiated stream and an optional detected OS based on RFB handshake signals.
     async fn negotiate(
-        mut tcp: TcpStream,
+        mut tcp: S,
         username: &str,
-        password: &str,
+        password: &secrecy::SecretString,
     ) -> Result<(Self, Option<DetectedOs>), String> {
         // Read server's 12-byte RFB version string
         let mut server_version = [0u8; 12];
@@ -383,7 +452,7 @@ impl NegotiatedStream {
                 .await
                 .map_err(|e| format!("Failed to read error length: {}", e))?;
             let reason_len = u32::from_be_bytes(len_buf) as usize;
-            if reason_len > Self::MAX_SECURITY_FAILURE_REASON_LEN {
+            if reason_len > MAX_SECURITY_FAILURE_REASON_LEN {
                 return Err(format!(
                     "VNC server rejected connection with oversized reason ({} bytes)",
                     reason_len
@@ -478,7 +547,10 @@ impl NegotiatedStream {
     }
 }
 
-impl AsyncRead for NegotiatedStream {
+impl<S> AsyncRead for NegotiatedStream<S>
+where
+    S: AsyncRead + Unpin,
+{
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -500,7 +572,10 @@ impl AsyncRead for NegotiatedStream {
     }
 }
 
-impl AsyncWrite for NegotiatedStream {
+impl<S> AsyncWrite for NegotiatedStream<S>
+where
+    S: AsyncWrite + Unpin,
+{
     fn poll_write(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -571,14 +646,15 @@ impl std::fmt::Debug for VncSession {
 }
 
 impl VncSession {
-    /// Connect to a VNC server and start the event polling loop.
+    /// Connect to a VNC server over a direct TCP connection and start the
+    /// event polling loop.
     ///
     /// Returns the session and a receiver for VNC events to forward to the UI.
     pub async fn connect(
         hostname: &str,
         port: u16,
         username: Option<String>,
-        password: Option<String>,
+        password: Option<secrecy::SecretString>,
         host_name: String,
         vnc_settings: VncSettings,
     ) -> Result<
@@ -589,12 +665,6 @@ impl VncSession {
         ),
         String,
     > {
-        tracing::info!(
-            "VNC connect to {}:{} (user set: {})",
-            hostname,
-            port,
-            username.as_ref().map(|u| !u.is_empty()).unwrap_or(false),
-        );
         let addr = format!("{}:{}", hostname, port);
         let tcp = tokio::time::timeout(Duration::from_secs(15), TcpStream::connect(&addr))
             .await
@@ -606,13 +676,61 @@ impl VncSession {
             .map(|addr| is_private_ip(addr.ip()))
             .unwrap_or(false);
 
+        Self::connect_stream(
+            tcp,
+            is_private,
+            hostname,
+            port,
+            username,
+            password,
+            host_name,
+            vnc_settings,
+        )
+        .await
+    }
+
+    /// Connect to a VNC server over an already-established transport stream
+    /// (direct TCP or an SSH `direct-tcpip` tunnel) and start the event
+    /// polling loop.
+    ///
+    /// `is_private` feeds the encoding-selection heuristic: tunneled
+    /// connections should pass `true` (the SSH hop is usually the
+    /// bottleneck, so treat the VNC leg as local/fast).
+    #[allow(clippy::too_many_arguments)]
+    pub async fn connect_stream<S>(
+        transport: S,
+        is_private: bool,
+        hostname: &str,
+        port: u16,
+        username: Option<String>,
+        password: Option<secrecy::SecretString>,
+        host_name: String,
+        vnc_settings: VncSettings,
+    ) -> Result<
+        (
+            Arc<Self>,
+            mpsc::Receiver<VncSessionEvent>,
+            Option<DetectedOs>,
+        ),
+        String,
+    >
+    where
+        S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static,
+    {
+        tracing::info!(
+            "VNC connect to {}:{} (user set: {})",
+            hostname,
+            port,
+            username.as_ref().map(|u| !u.is_empty()).unwrap_or(false),
+        );
+
         let user = username.as_deref().unwrap_or("");
-        let pass = password.as_deref().unwrap_or("");
+        let password = password.unwrap_or_else(|| secrecy::SecretString::from(""));
 
         // Handle version negotiation + auth (including macOS ARD)
-        let (stream, detected_os) = NegotiatedStream::negotiate(tcp, user, pass).await?;
+        let (stream, detected_os) = NegotiatedStream::negotiate(transport, user, &password).await?;
 
-        let pw = password.clone().unwrap_or_default();
+        let pw = password.clone();
         let pixel_format = pixel_format_from_depth(vnc_settings.effective_color_depth());
         let allow_tight = pixel_format.bits_per_pixel == 32;
         let include_cursor = pixel_format.bits_per_pixel == 32;
@@ -1214,6 +1332,89 @@ mod tests {
         assert!(ard::validate_key_len(128).is_ok());
     }
 
+    // === ARD Diffie-Hellman parameter validation ===
+
+    /// A known 512-bit safe prime (generated with `openssl dhparam 512`).
+    const SAFE_PRIME_512_HEX: &str = "e3614a41b160ced911698fcf754bf9685c40f088140432a65ac4ce81e2\
+                                      aadfcb5189b3d2f7fa2cd2f15d39317f91911e2897933debf2342835669a74993c5287";
+
+    fn safe_prime_512() -> num_bigint::BigUint {
+        let hex: String = SAFE_PRIME_512_HEX
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        num_bigint::BigUint::parse_bytes(hex.as_bytes(), 16).unwrap()
+    }
+
+    fn big(value: u64) -> num_bigint::BigUint {
+        num_bigint::BigUint::from(value)
+    }
+
+    #[test]
+    fn ard_dh_accepts_valid_512_bit_parameters() {
+        let prime = safe_prime_512();
+        assert_eq!(prime.bits(), 512);
+        let server_pub = &prime - big(3u64); // p - 3 is within [2, p-2]
+        assert!(ard::validate_dh_params(&big(2), &prime, &server_pub).is_ok());
+    }
+
+    #[test]
+    fn ard_dh_rejects_short_modulus() {
+        // 128-bit odd modulus: trivially breakable.
+        let prime = (num_bigint::BigUint::from(1u8) << 127u32) + big(1);
+        let error = ard::validate_dh_params(&big(2), &prime, &big(4)).unwrap_err();
+        assert!(error.contains("possible MITM"), "unexpected error: {error}");
+        assert!(error.contains("bits"), "unexpected error: {error}");
+    }
+
+    #[test]
+    fn ard_dh_rejects_modulus_with_leading_zero_padding() {
+        // A value whose wire encoding could be zero-padded to 64 bytes but
+        // whose actual magnitude is below 512 bits must still be rejected:
+        // bit length is measured after stripping leading zeros.
+        let mut bytes = vec![0u8; 64];
+        bytes[1] = 0xff; // top byte zero -> 504 significant bits
+        for byte in bytes.iter_mut().skip(2) {
+            *byte = 0xff;
+        }
+        let prime = num_bigint::BigUint::from_bytes_be(&bytes);
+        assert!(prime.bits() < 512);
+        let error = ard::validate_dh_params(&big(2), &prime, &big(4)).unwrap_err();
+        assert!(error.contains("possible MITM"), "unexpected error: {error}");
+    }
+
+    #[test]
+    fn ard_dh_rejects_even_modulus() {
+        let modulus = safe_prime_512() + big(1); // even, 512+ bits
+        let error = ard::validate_dh_params(&big(2), &modulus, &big(4)).unwrap_err();
+        assert!(error.contains("even"), "unexpected error: {error}");
+    }
+
+    #[test]
+    fn ard_dh_rejects_bad_generator() {
+        let prime = safe_prime_512();
+        // g = 0 and g = 1 produce constant/trivial public keys.
+        assert!(ard::validate_dh_params(&big(0), &prime, &big(4)).is_err());
+        assert!(ard::validate_dh_params(&big(1), &prime, &big(4)).is_err());
+        // g >= p is not a valid group element.
+        assert!(ard::validate_dh_params(&prime, &prime, &big(4)).is_err());
+        assert!(ard::validate_dh_params(&(&prime + big(1)), &prime, &big(4)).is_err());
+    }
+
+    #[test]
+    fn ard_dh_rejects_small_subgroup_server_public_keys() {
+        let prime = safe_prime_512();
+        // pk = 0, 1 and p-1 force the shared secret into {0, 1, p-1}.
+        assert!(ard::validate_dh_params(&big(2), &prime, &big(0)).is_err());
+        assert!(ard::validate_dh_params(&big(2), &prime, &big(1)).is_err());
+        assert!(ard::validate_dh_params(&big(2), &prime, &(&prime - big(1))).is_err());
+        // pk >= p is not a valid group element either.
+        assert!(ard::validate_dh_params(&big(2), &prime, &prime).is_err());
+        // Boundary values 2 and p-2 are accepted.
+        assert!(ard::validate_dh_params(&big(2), &prime, &big(2)).is_ok());
+        assert!(ard::validate_dh_params(&big(2), &prime, &(&prime - big(2))).is_ok());
+    }
+
     #[tokio::test]
     async fn negotiation_rejects_oversized_security_failure_reason() {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1232,7 +1433,8 @@ mod tests {
         });
 
         let tcp = TcpStream::connect(addr).await.unwrap();
-        let result = NegotiatedStream::negotiate(tcp, "user", "pass").await;
+        let result =
+            NegotiatedStream::negotiate(tcp, "user", &secrecy::SecretString::from("pass")).await;
 
         match result {
             Err(error) => assert!(error.contains("oversized reason")),
@@ -1262,9 +1464,10 @@ mod tests {
         });
 
         let tcp = TcpStream::connect(addr).await.unwrap();
-        let (mut stream, detected_os) = NegotiatedStream::negotiate(tcp, "user", "pass")
-            .await
-            .unwrap();
+        let (mut stream, detected_os) =
+            NegotiatedStream::negotiate(tcp, "user", &secrecy::SecretString::from("pass"))
+                .await
+                .unwrap();
         assert_eq!(detected_os, Some(DetectedOs::MacOS));
 
         stream.write_all(b"RFB 003.008\n").await.unwrap();

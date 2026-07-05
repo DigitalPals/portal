@@ -120,6 +120,18 @@ pub fn vnc_viewer_view<'a>(
         .into()
     };
 
+    // Tunnel indicator: shows "via <ssh-host>" for VNC-over-SSH sessions
+    let via_label: Element<'a, Message> = match &vnc.via {
+        Some(via) => vnc_metric_label(
+            format!("via {}", via),
+            120.0,
+            theme.text_secondary,
+            theme,
+            fonts,
+        ),
+        None => iced::widget::Space::new().width(0).into(),
+    };
+
     let toolbar = container(
         row![
             // Status group: resolution, fps, scaling, quality
@@ -140,6 +152,7 @@ pub fn vnc_viewer_view<'a>(
                 theme,
                 fonts
             ),
+            via_label,
             vnc_action_button_sized(
                 scaling_label,
                 Message::Vnc(VncMessage::CycleScalingMode),

@@ -2,6 +2,7 @@ use super::{
     auth::{AuthHelper, AuthResult, SecurityType},
     connection::VncClient,
 };
+use secrecy::{ExposeSecret, SecretString};
 use std::future::Future;
 use std::pin::Pin;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
@@ -12,7 +13,7 @@ use crate::{PixelFormat, VncEncoding, VncError, VncVersion};
 pub enum VncState<S, F>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static,
-    F: Future<Output = Result<String, VncError>> + Send + Sync + 'static,
+    F: Future<Output = Result<SecretString, VncError>> + Send + Sync + 'static,
 {
     Handshake(VncConnector<S, F>),
     Authenticate(VncConnector<S, F>),
@@ -22,7 +23,7 @@ where
 impl<S, F> VncState<S, F>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static,
-    F: Future<Output = Result<String, VncError>> + Send + Sync + 'static,
+    F: Future<Output = Result<SecretString, VncError>> + Send + Sync + 'static,
 {
     pub fn try_start(
         self,
@@ -111,8 +112,11 @@ where
 
                         let credential = (connector.auth_methond.take().unwrap()).await?;
 
-                        // auth
-                        let auth = AuthHelper::read(&mut connector.stream, &credential).await?;
+                        // auth — the secret is exposed only here, at the
+                        // moment the challenge response is wire-encoded.
+                        let auth =
+                            AuthHelper::read(&mut connector.stream, credential.expose_secret())
+                                .await?;
                         auth.write(&mut connector.stream).await?;
                         let result = auth.finish(&mut connector.stream).await?;
                         if let AuthResult::Failed = result {
@@ -159,7 +163,7 @@ where
 pub struct VncConnector<S, F>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
-    F: Future<Output = Result<String, VncError>> + Send + Sync + 'static,
+    F: Future<Output = Result<SecretString, VncError>> + Send + Sync + 'static,
 {
     stream: S,
     auth_methond: Option<F>,
@@ -172,7 +176,7 @@ where
 impl<S, F> VncConnector<S, F>
 where
     S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static,
-    F: Future<Output = Result<String, VncError>> + Send + Sync + 'static,
+    F: Future<Output = Result<SecretString, VncError>> + Send + Sync + 'static,
 {
     /// To new a vnc client configuration with stream `S`
     ///
@@ -186,7 +190,7 @@ where
     /// async fn main() -> Result<(), VncError> {
     ///     let tcp = TcpStream::connect("127.0.0.1:5900").await?;
     ///     let vnc = VncConnector::new(tcp)
-    ///         .set_auth_method(async move { Ok("password".to_string()) })
+    ///         .set_auth_method(async move { Ok(secrecy::SecretString::from("password")) })
     ///         .add_encoding(vnc::VncEncoding::Tight)
     ///         .add_encoding(vnc::VncEncoding::Zrle)
     ///         .add_encoding(vnc::VncEncoding::CopyRect)
@@ -214,8 +218,11 @@ where
 
     /// An async callback which is used to query credentials if the vnc server has set
     ///
+    /// The callback returns a [`secrecy::SecretString`] so the password stays
+    /// zeroized-on-drop until the moment it is wire-encoded.
+    ///
     /// ```no_compile
-    /// connector = connector.set_auth_method(async move { Ok("password".to_string()) })
+    /// connector = connector.set_auth_method(async move { Ok(SecretString::from("password")) })
     /// ```
     ///
     /// if you're building a wasm app,

@@ -218,6 +218,8 @@ mod tests {
             protocol: Protocol::Ssh,
             vnc_port: None,
             vnc_password_id: None,
+            vnc_via_ssh_host_id: None,
+            allow_cleartext_vnc: false,
             auth: AuthMethod::Agent,
             agent_forwarding: false,
             port_forwards: Vec::new(),

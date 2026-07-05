@@ -12,6 +12,7 @@ use crate::views::dialogs::passphrase_dialog::PassphraseDialogState;
 use crate::views::dialogs::password_dialog::PasswordDialogState;
 use crate::views::dialogs::quick_connect_dialog::QuickConnectDialogState;
 use crate::views::dialogs::session_choice_dialog::SessionChoiceDialogState;
+use crate::views::dialogs::vnc_cleartext_dialog::VncCleartextDialogState;
 
 /// The currently active dialog, if any
 #[derive(Default)]
@@ -38,6 +39,8 @@ pub enum ActiveDialog {
     Connecting(ConnectingDialogState),
     /// Existing-session picker for duplicate host clicks
     SessionChoice(SessionChoiceDialogState),
+    /// Warning before connecting VNC to a non-private target without a tunnel
+    VncCleartextWarning(VncCleartextDialogState),
     /// Portal Hub onboarding wizard
     PortalHubOnboarding,
     /// Portal Hub sync conflict resolver
@@ -209,6 +212,21 @@ impl DialogManager {
     /// Open the duplicate host session choice dialog.
     pub fn open_session_choice(&mut self, state: SessionChoiceDialogState) {
         self.active = ActiveDialog::SessionChoice(state);
+    }
+
+    // ---- Unencrypted VNC warning dialog operations ----
+
+    /// Open the unencrypted-VNC warning dialog
+    pub fn open_vnc_cleartext(&mut self, state: VncCleartextDialogState) {
+        self.active = ActiveDialog::VncCleartextWarning(state);
+    }
+
+    /// Get mutable unencrypted-VNC warning dialog state if it is active
+    pub fn vnc_cleartext_mut(&mut self) -> Option<&mut VncCleartextDialogState> {
+        match &mut self.active {
+            ActiveDialog::VncCleartextWarning(state) => Some(state),
+            _ => None,
+        }
     }
 
     /// Open the Portal Hub onboarding wizard.

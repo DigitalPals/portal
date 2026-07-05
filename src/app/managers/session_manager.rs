@@ -83,6 +83,9 @@ pub struct ActiveSession {
 pub struct VncActiveSession {
     pub session: Arc<VncSession>,
     pub host_name: String,
+    /// Human-readable SSH tunnel description ("bastion -> dmz") when the
+    /// VNC connection is carried over SSH; None for direct connections.
+    pub via: Option<String>,
     pub session_start: Instant,
     /// Frame counter for FPS calculation
     pub frame_count: u32,

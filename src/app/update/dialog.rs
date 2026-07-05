@@ -135,6 +135,13 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                             value.parse().ok()
                         };
                     }
+                    HostDialogField::VncViaSshHostId => {
+                        dialog_state.vnc_via_ssh_host_id = if value.trim().is_empty() {
+                            None
+                        } else {
+                            value.parse().ok()
+                        };
+                    }
                     HostDialogField::AgentForwarding => {
                         dialog_state.agent_forwarding =
                             matches!(value.trim().to_lowercase().as_str(), "true" | "1" | "yes");
@@ -345,6 +352,45 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                 dialog.cancel();
                 tracing::info!("Keyboard-interactive authentication cancelled");
             }
+            portal.dialogs.close();
+            Task::none()
+        }
+        DialogMessage::VncCleartextDontWarnToggled(value) => {
+            if let Some(dialog) = portal.dialogs.vnc_cleartext_mut() {
+                dialog.dont_warn_again = value;
+            }
+            Task::none()
+        }
+        DialogMessage::VncCleartextConnectAnyway => {
+            let Some(dialog) = portal.dialogs.vnc_cleartext_mut() else {
+                return Task::none();
+            };
+            let host_id = dialog.host_id;
+            let dont_warn_again = dialog.dont_warn_again;
+            portal.dialogs.close();
+
+            if dont_warn_again
+                && let Some(host) = portal.config.hosts.find_host_mut(host_id)
+            {
+                host.allow_cleartext_vnc = true;
+                host.updated_at = chrono::Utc::now();
+                if let Err(error) = portal.config.hosts.save() {
+                    tracing::error!("Failed to save hosts after cleartext VNC opt-out: {}", error);
+                } else {
+                    super::ui::settings::queue_portal_hub_local_sync(portal);
+                }
+            }
+
+            let Some(host) = portal.config.hosts.find_host(host_id).cloned() else {
+                return Task::none();
+            };
+            tracing::warn!(
+                "Connecting VNC to non-private target {} without encryption (user confirmed)",
+                host.hostname
+            );
+            portal.connect_vnc_host_unchecked(&host)
+        }
+        DialogMessage::VncCleartextCancel => {
             portal.dialogs.close();
             Task::none()
         }
@@ -734,6 +780,8 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                     protocol: crate::config::Protocol::Ssh,
                     vnc_port: None,
                     vnc_password_id: None,
+                    vnc_via_ssh_host_id: None,
+                    allow_cleartext_vnc: false,
                     auth,
                     agent_forwarding: false,
                     port_forwards: Vec::new(),
@@ -762,6 +810,9 @@ fn preserve_existing_host_metadata(mut host: Host, existing: &Host) -> Host {
     host.group_id = existing.group_id;
     host.detected_os = existing.detected_os.clone();
     host.last_connected = existing.last_connected;
+    // "Don't warn again" for cleartext VNC is not edited in the dialog;
+    // keep the user's earlier decision when the host is edited.
+    host.allow_cleartext_vnc = existing.allow_cleartext_vnc;
     host
 }
 
@@ -818,6 +869,8 @@ mod tests {
             protocol: Protocol::Ssh,
             vnc_port: None,
             vnc_password_id: None,
+            vnc_via_ssh_host_id: None,
+            allow_cleartext_vnc: false,
             auth: AuthMethod::Agent,
             agent_forwarding: false,
             port_forwards: Vec::new(),
