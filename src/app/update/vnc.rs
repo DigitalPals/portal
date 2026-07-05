@@ -100,39 +100,30 @@ pub fn handle_vnc(portal: &mut Portal, msg: VncMessage) -> Task<Message> {
 
             Task::none()
         }
-        VncMessage::RenderTick => {
-            // Update FPS counter for the active VNC session
-            if let crate::app::View::VncViewer(session_id) = portal.ui.active_view
-                && let Some(vnc) = portal.vnc_sessions.get_mut(&session_id)
-            {
-                let stats = vnc.session.stats_snapshot();
-                vnc.first_frame_received = stats.first_frame_received;
-                let max_fps = portal.prefs.vnc_settings.effective_refresh_fps() as f32;
-                vnc.current_fps = if let Some(last_update_at) = stats.last_update_at {
-                    if last_update_at.elapsed().as_millis() <= 1_000 {
-                        stats.update_fps.min(max_fps)
-                    } else {
-                        0.0
-                    }
-                } else {
-                    0.0
-                };
-                vnc.status_text = if let Some(last_update_at) = stats.last_update_at {
-                    let age_ms = last_update_at.elapsed().as_millis();
-                    if age_ms > 2_000 {
-                        format!("idle {}s", age_ms / 1000)
-                    } else {
-                        "live".to_string()
-                    }
-                } else {
-                    "waiting for frame".to_string()
-                };
+        VncMessage::FrameReady(session_id) => {
+            // New framebuffer data arrived (coalesced by the session's frame
+            // notifier). Receiving this message makes Iced rebuild the view,
+            // which uploads the dirty framebuffer region and repaints.
+            let max_fps = portal.prefs.vnc_settings.effective_refresh_fps() as f32;
+            if let Some(vnc) = portal.vnc_sessions.get_mut(&session_id) {
                 vnc.frame_count += 1;
                 let elapsed = vnc.fps_last_check.elapsed();
                 if elapsed.as_secs_f32() >= 1.0 {
                     vnc.frame_count = 0;
                     vnc.fps_last_check = std::time::Instant::now();
                 }
+                refresh_session_status(vnc, max_fps);
+            }
+            Task::none()
+        }
+        VncMessage::StatusTick => {
+            // Low-frequency housekeeping for the active VNC session: keeps the
+            // idle counter and FPS decay updating while no frames arrive.
+            let max_fps = portal.prefs.vnc_settings.effective_refresh_fps() as f32;
+            if let crate::app::View::VncViewer(session_id) = portal.ui.active_view
+                && let Some(vnc) = portal.vnc_sessions.get_mut(&session_id)
+            {
+                refresh_session_status(vnc, max_fps);
             }
             Task::none()
         }
@@ -389,6 +380,31 @@ pub fn handle_vnc(portal: &mut Portal, msg: VncMessage) -> Task<Message> {
             Task::none()
         }
     }
+}
+
+/// Refresh the toolbar status text and FPS estimate from the session stats.
+fn refresh_session_status(vnc: &mut VncActiveSession, max_fps: f32) {
+    let stats = vnc.session.stats_snapshot();
+    vnc.first_frame_received = stats.first_frame_received;
+    vnc.current_fps = if let Some(last_update_at) = stats.last_update_at {
+        if last_update_at.elapsed().as_millis() <= 1_000 {
+            stats.update_fps.min(max_fps)
+        } else {
+            0.0
+        }
+    } else {
+        0.0
+    };
+    vnc.status_text = if let Some(last_update_at) = stats.last_update_at {
+        let age_ms = last_update_at.elapsed().as_millis();
+        if age_ms > 2_000 {
+            format!("idle {}s", age_ms / 1000)
+        } else {
+            "live".to_string()
+        }
+    } else {
+        "waiting for frame".to_string()
+    };
 }
 
 fn safe_filename_component(value: &str, fallback: &str) -> String {

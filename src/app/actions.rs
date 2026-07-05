@@ -734,7 +734,15 @@ impl Portal {
 
                         while let Some(event) = event_rx.recv().await {
                             let msg = match event {
-                                VncSessionEvent::ResolutionChanged(_, _) => continue,
+                                VncSessionEvent::FrameReady => {
+                                    Message::Vnc(VncMessage::FrameReady(session_id))
+                                }
+                                // No new frame arrives with a resolution change
+                                // (the framebuffer resize is not marked dirty),
+                                // so trigger a redraw for the new layout.
+                                VncSessionEvent::ResolutionChanged(_, _) => {
+                                    Message::Vnc(VncMessage::FrameReady(session_id))
+                                }
                                 VncSessionEvent::Disconnected => {
                                     Message::Vnc(VncMessage::Disconnected(session_id))
                                 }

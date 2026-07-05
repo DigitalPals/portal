@@ -29,6 +29,8 @@ use crate::vnc::net::is_private_ip;
 /// Events emitted by the VNC session to the UI layer
 #[derive(Debug, Clone)]
 pub enum VncSessionEvent {
+    /// New framebuffer data arrived (coalesced, capped at the refresh rate)
+    FrameReady,
     /// Resolution changed
     ResolutionChanged(u32, u32),
     /// Connection was closed
@@ -37,6 +39,28 @@ pub enum VncSessionEvent {
     Bell,
     /// Server sent clipboard text
     ClipboardText(String),
+}
+
+/// Forward framebuffer-update notifications to the UI, coalesced and
+/// rate-limited to at most one `FrameReady` event per `min_interval`.
+///
+/// Leading + trailing edge throttle: the first notification of a burst is
+/// forwarded immediately; notifications arriving during the cooldown sleep
+/// collapse into a single stored `Notify` permit, so the burst's final frame
+/// is always followed by one more `FrameReady` on the next interval boundary.
+/// When no frames arrive, the task parks on `notified()` with zero wakeups.
+async fn frame_notifier(
+    notify: Arc<tokio::sync::Notify>,
+    event_tx: mpsc::Sender<VncSessionEvent>,
+    min_interval: Duration,
+) {
+    loop {
+        notify.notified().await;
+        if event_tx.send(VncSessionEvent::FrameReady).await.is_err() {
+            break;
+        }
+        tokio::time::sleep(min_interval).await;
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -692,6 +716,18 @@ impl VncSession {
 
         let vnc = Arc::new(vnc);
 
+        // Notify the UI when new framebuffer data lands, throttled to the
+        // configured refresh rate so the FPS setting acts as a cap. When the
+        // remote screen is static, no events (and no UI redraws) are produced.
+        let frame_notify = Arc::new(tokio::sync::Notify::new());
+        let frame_interval =
+            Duration::from_millis((1000u64 / u64::from(refresh_fps.max(1))).max(1));
+        let notifier_handle = tokio::spawn(frame_notifier(
+            frame_notify.clone(),
+            event_tx.clone(),
+            frame_interval,
+        ));
+
         // Spawn input forwarding task — has its own access to vnc mutex
         let vnc_input = vnc.clone();
         let input_handle = tokio::spawn(async move {
@@ -797,6 +833,8 @@ impl VncSession {
                             &data,
                         );
                     }
+                    drop(fb);
+                    frame_notify.notify_one();
                 }
                 VncEvent::JpegImage(rect, data) => {
                     let rx = rect.x as u32;
@@ -833,7 +871,9 @@ impl VncSession {
                     })
                     .await
                     {
-                        Ok(Ok(())) => {}
+                        Ok(Ok(())) => {
+                            frame_notify.notify_one();
+                        }
                         Ok(Err(e)) => {
                             tracing::error!("VNC JPEG decode error: {}", e);
                         }
@@ -856,6 +896,7 @@ impl VncSession {
                         dst.width as u32,
                         dst.height as u32,
                     );
+                    frame_notify.notify_one();
                 }
                 VncEvent::Bell => {
                     stats.lock().record_bell();
@@ -874,6 +915,7 @@ impl VncSession {
 
         input_handle.abort();
         refresh_handle.abort();
+        notifier_handle.abort();
     }
 
     /// Send a mouse event to the VNC server
@@ -1131,6 +1173,38 @@ mod tests {
         assert_eq!(recv_pointer(&mut rx), (4, 5, 8));
         assert_eq!(recv_pointer(&mut rx), (4, 5, 0));
         assert!(rx.try_recv().is_err());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn frame_notifier_coalesces_bursts_and_emits_trailing_frame() {
+        let notify = Arc::new(tokio::sync::Notify::new());
+        let (tx, mut rx) = mpsc::channel(8);
+        let handle = tokio::spawn(frame_notifier(
+            notify.clone(),
+            tx,
+            Duration::from_millis(100),
+        ));
+
+        // Let the notifier task park on notified() before signalling.
+        tokio::task::yield_now().await;
+
+        // First frame of a burst is forwarded immediately (leading edge).
+        notify.notify_one();
+        assert!(matches!(rx.recv().await, Some(VncSessionEvent::FrameReady)));
+        assert!(rx.try_recv().is_err());
+
+        // Frames arriving during the cooldown collapse into a single stored
+        // permit -> exactly one trailing FrameReady after the interval.
+        notify.notify_one();
+        notify.notify_one();
+        notify.notify_one();
+        assert!(matches!(rx.recv().await, Some(VncSessionEvent::FrameReady)));
+
+        // Idle: no further frames, no further events.
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        assert!(rx.try_recv().is_err());
+
+        handle.abort();
     }
 
     #[test]

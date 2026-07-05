@@ -566,8 +566,10 @@ pub enum VncMessage {
         host_id: Uuid,
         detected_os: Option<DetectedOs>,
     },
-    /// Timer tick — re-render the VNC framebuffer
-    RenderTick,
+    /// New framebuffer data arrived — re-render the VNC framebuffer
+    FrameReady(SessionId),
+    /// Low-frequency timer tick — refresh idle/FPS status for the active session
+    StatusTick,
     /// VNC session disconnected
     Disconnected(SessionId),
     /// VNC connection failed before the session was established

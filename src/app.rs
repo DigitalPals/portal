@@ -1492,13 +1492,12 @@ impl Portal {
             );
         }
 
-        // VNC render tick, capped by the configured VNC refresh rate.
+        // VNC redraws are frame-driven (VncMessage::FrameReady from the session
+        // event channel); this low-frequency tick only keeps the idle counter
+        // and FPS decay in the toolbar updating while no frames arrive.
         if matches!(self.ui.active_view, View::VncViewer(_)) && !self.vnc_sessions.is_empty() {
-            let fps = self.prefs.vnc_settings.effective_refresh_fps();
-            let interval_ms = (1000u64 / fps as u64).max(1);
             subscriptions.push(
-                time::every(Duration::from_millis(interval_ms))
-                    .map(|_| Message::Vnc(VncMessage::RenderTick)),
+                time::every(Duration::from_secs(1)).map(|_| Message::Vnc(VncMessage::StatusTick)),
             );
         }
 
