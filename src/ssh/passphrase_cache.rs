@@ -5,11 +5,23 @@
 
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use secrecy::{ExposeSecret, SecretString};
+
+/// Default cache timeout in seconds (5 minutes).
+const DEFAULT_TIMEOUT_SECONDS: u64 = 300;
+
+static SHARED_CACHE: OnceLock<Arc<PassphraseCache>> = OnceLock::new();
+
+/// Get the process-wide shared passphrase cache instance.
+pub fn shared_cache() -> Arc<PassphraseCache> {
+    SHARED_CACHE
+        .get_or_init(|| Arc::new(PassphraseCache::new(DEFAULT_TIMEOUT_SECONDS)))
+        .clone()
+}
 
 /// Cached passphrase entry with expiration
 struct CacheEntry {

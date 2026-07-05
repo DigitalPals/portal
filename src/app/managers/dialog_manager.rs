@@ -4,6 +4,7 @@
 //! can be open at a time and simplifying state management.
 
 use crate::views::dialogs::about_dialog::AboutDialogState;
+use crate::views::dialogs::auth_prompt_dialog::AuthPromptDialogState;
 use crate::views::dialogs::connecting_dialog::ConnectingDialogState;
 use crate::views::dialogs::host_dialog::HostDialogState;
 use crate::views::dialogs::host_key_dialog::HostKeyDialogState;
@@ -23,6 +24,8 @@ pub enum ActiveDialog {
     Host(HostDialogState),
     /// SSH host key verification dialog
     HostKey(HostKeyDialogState),
+    /// Keyboard-interactive authentication prompt dialog
+    AuthPrompt(AuthPromptDialogState),
     /// About dialog
     About(AboutDialogState),
     /// Password prompt dialog for SSH/SFTP password authentication
@@ -102,6 +105,21 @@ impl DialogManager {
     pub fn host_key_mut(&mut self) -> Option<&mut HostKeyDialogState> {
         match &mut self.active {
             ActiveDialog::HostKey(state) => Some(state),
+            _ => None,
+        }
+    }
+
+    // ---- Auth prompt dialog operations ----
+
+    /// Open the keyboard-interactive auth prompt dialog
+    pub fn open_auth_prompt(&mut self, state: AuthPromptDialogState) {
+        self.active = ActiveDialog::AuthPrompt(state);
+    }
+
+    /// Get mutable auth prompt dialog state if it's the active dialog
+    pub fn auth_prompt_mut(&mut self) -> Option<&mut AuthPromptDialogState> {
+        match &mut self.active {
+            ActiveDialog::AuthPrompt(state) => Some(state),
             _ => None,
         }
     }

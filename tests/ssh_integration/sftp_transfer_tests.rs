@@ -25,6 +25,7 @@ async fn connect_password_sftp(env: &SshTestEnvironment) -> SharedSftpSession {
     client
         .connect(
             &host,
+            &[],
             event_tx,
             Duration::from_secs(10),
             Some(password),
@@ -45,6 +46,7 @@ async fn connect_password_ssh(env: &SshTestEnvironment) -> Arc<SshSession> {
     let (session, _) = client
         .connect(
             &host,
+            &[],
             (80, 24),
             event_tx,
             Duration::from_secs(10),

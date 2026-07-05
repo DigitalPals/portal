@@ -56,6 +56,9 @@ pub enum AuthMethod {
     /// SSH Agent authentication
     #[default]
     Agent,
+    /// Keyboard-interactive authentication (server-driven prompts, e.g. PAM
+    /// or 2FA/OTP); responses are collected interactively at connect time
+    KeyboardInteractive,
 }
 
 fn default_bind_host() -> String {
@@ -416,6 +419,9 @@ pub struct Host {
         skip_serializing_if = "is_auto_routing"
     )]
     pub hub_routing: HubRouting,
+    /// Jump (bastion) host to tunnel through when connecting (ProxyJump).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jump_host_id: Option<Uuid>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub group_id: Option<Uuid>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -439,9 +445,14 @@ impl Host {
     }
 
     /// Whether this host can be routed through Portal Hub at all
-    /// (SSH with agent or public-key authentication).
+    /// (SSH with agent or public-key authentication; interactive auth
+    /// methods cannot run through the Hub proxy).
     pub fn hub_eligible(&self) -> bool {
-        self.protocol == Protocol::Ssh && !matches!(self.auth, AuthMethod::Password)
+        self.protocol == Protocol::Ssh
+            && !matches!(
+                self.auth,
+                AuthMethod::Password | AuthMethod::KeyboardInteractive
+            )
     }
 
     /// Get the effective SSH username (host override or current user)
@@ -569,27 +580,51 @@ impl HostsConfig {
     /// Import hosts from the user's SSH config file.
     /// Returns the number of new hosts imported.
     pub fn import_from_ssh_config(&mut self) -> Result<usize, ConfigError> {
-        let mut imported = 0usize;
-        let existing_keys: std::collections::HashSet<(String, u16, String)> = self
-            .hosts
-            .iter()
-            .map(|host| {
-                (
-                    host.hostname.to_ascii_lowercase(),
-                    host.port,
-                    host.effective_username().to_ascii_lowercase(),
-                )
-            })
-            .collect();
-        let mut seen = existing_keys;
-
         let ssh_hosts = super::ssh_config::load_hosts_from_ssh_config()?;
-        for host in ssh_hosts {
-            let key = (
+        Ok(self.merge_imported_hosts(ssh_hosts))
+    }
+
+    /// Merge imported hosts, skipping duplicates of existing hosts while
+    /// remapping jump-host links from skipped duplicates onto the existing
+    /// host entries so ProxyJump chains stay intact.
+    fn merge_imported_hosts(&mut self, ssh_hosts: Vec<Host>) -> usize {
+        fn endpoint_key(host: &Host) -> (String, u16, String) {
+            (
                 host.hostname.to_ascii_lowercase(),
                 host.port,
                 host.effective_username().to_ascii_lowercase(),
-            );
+            )
+        }
+
+        let existing_by_key: std::collections::HashMap<(String, u16, String), Uuid> = self
+            .hosts
+            .iter()
+            .map(|host| (endpoint_key(host), host.id))
+            .collect();
+
+        // Imported host IDs that collide with existing hosts map to the
+        // existing host's ID.
+        let id_remap: std::collections::HashMap<Uuid, Uuid> = ssh_hosts
+            .iter()
+            .filter_map(|host| {
+                existing_by_key
+                    .get(&endpoint_key(host))
+                    .map(|existing_id| (host.id, *existing_id))
+            })
+            .collect();
+
+        let mut imported = 0usize;
+        let mut seen: std::collections::HashSet<(String, u16, String)> =
+            existing_by_key.keys().cloned().collect();
+
+        for mut host in ssh_hosts {
+            if let Some(jump_id) = host.jump_host_id
+                && let Some(existing_id) = id_remap.get(&jump_id)
+            {
+                host.jump_host_id = Some(*existing_id);
+            }
+
+            let key = endpoint_key(&host);
             if seen.contains(&key) {
                 continue;
             }
@@ -598,7 +633,7 @@ impl HostsConfig {
             imported += 1;
         }
 
-        Ok(imported)
+        imported
     }
 }
 
@@ -621,6 +656,7 @@ mod tests {
             agent_forwarding: false,
             port_forwards: Vec::new(),
             hub_routing: HubRouting::Auto,
+            jump_host_id: None,
             group_id: None,
             notes: None,
             tags: Vec::new(),
@@ -763,6 +799,84 @@ type = "agent"
         let host: Host = toml::from_str(HOST_TOML_TAIL).unwrap();
 
         assert_eq!(host.hub_routing, HubRouting::Auto);
+    }
+
+    #[test]
+    fn legacy_host_without_jump_host_deserializes_cleanly() {
+        // Old hosts.toml files predate the jump_host_id field entirely.
+        let host: Host = toml::from_str(HOST_TOML_TAIL).unwrap();
+
+        assert_eq!(host.jump_host_id, None);
+    }
+
+    #[test]
+    fn host_without_jump_host_serializes_without_field() {
+        let host = test_host("NoJump");
+        let serialized = toml::to_string(&host).unwrap();
+
+        assert!(!serialized.contains("jump_host_id"));
+    }
+
+    #[test]
+    fn host_jump_host_id_round_trips() {
+        let jump_id = Uuid::new_v4();
+        let mut host = test_host("Jumped");
+        host.jump_host_id = Some(jump_id);
+
+        let serialized = toml::to_string(&host).unwrap();
+        assert!(serialized.contains("jump_host_id"));
+
+        let parsed: Host = toml::from_str(&serialized).unwrap();
+        assert_eq!(parsed.jump_host_id, Some(jump_id));
+    }
+
+    #[test]
+    fn keyboard_interactive_auth_round_trips() {
+        let mut host = test_host("Interactive");
+        host.auth = AuthMethod::KeyboardInteractive;
+
+        let serialized = toml::to_string(&host).unwrap();
+        assert!(serialized.contains("keyboard_interactive"));
+
+        let parsed: Host = toml::from_str(&serialized).unwrap();
+        assert_eq!(parsed.auth, AuthMethod::KeyboardInteractive);
+    }
+
+    #[test]
+    fn keyboard_interactive_hosts_are_not_hub_eligible() {
+        let mut host = test_host("Interactive");
+        host.auth = AuthMethod::KeyboardInteractive;
+        assert!(!host.hub_eligible());
+
+        host.auth = AuthMethod::Agent;
+        assert!(host.hub_eligible());
+    }
+
+    #[test]
+    fn merge_imported_hosts_remaps_jump_links_to_existing_hosts() {
+        // Existing bastion with the same endpoint as the imported one.
+        let mut existing_bastion = test_host("bastion");
+        existing_bastion.hostname = "bastion.example.test".to_string();
+        let existing_id = existing_bastion.id;
+
+        let mut config = HostsConfig {
+            hosts: vec![existing_bastion],
+            groups: Vec::new(),
+        };
+
+        // Imported set: a duplicate bastion plus a target jumping through it.
+        let mut imported_bastion = test_host("bastion");
+        imported_bastion.hostname = "bastion.example.test".to_string();
+        let mut target = test_host("target");
+        target.jump_host_id = Some(imported_bastion.id);
+
+        let imported = config.merge_imported_hosts(vec![imported_bastion, target]);
+
+        // Duplicate bastion skipped; target imported with remapped link.
+        assert_eq!(imported, 1);
+        assert_eq!(config.hosts.len(), 2);
+        let target = config.hosts.iter().find(|h| h.name == "target").unwrap();
+        assert_eq!(target.jump_host_id, Some(existing_id));
     }
 
     #[test]

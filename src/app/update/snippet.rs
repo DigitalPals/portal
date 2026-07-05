@@ -341,15 +341,21 @@ fn handle_run(portal: &mut Portal, snippet_id: Uuid) -> Task<Message> {
 
     // Spawn parallel execution tasks for each host
     let command = snippet.command.clone();
+    let all_hosts = portal.config.hosts.hosts.clone();
     let tasks: Vec<Task<Message>> = hosts_info
         .into_iter()
         .map(|(host_id, _host_name, host)| {
             let cmd = command.clone();
+            let jump_chain =
+                crate::ssh::tunnel::resolve_jump_chain(&all_hosts, &host).map_err(|e| e.to_string());
 
             Task::perform(
                 async move {
                     let start = Instant::now();
-                    let result = execute_on_host(&host, &cmd).await;
+                    let result = match jump_chain {
+                        Ok(jump_chain) => execute_on_host(&host, &jump_chain, &cmd).await,
+                        Err(error) => Err(error),
+                    };
                     let duration = start.elapsed();
                     (snippet_id, host_id, result, duration.as_millis() as u64)
                 },
@@ -370,7 +376,11 @@ fn handle_run(portal: &mut Portal, snippet_id: Uuid) -> Task<Message> {
 
 /// Execute a command on a single host
 /// Connects via SSH, runs the command, returns stdout
-async fn execute_on_host(host: &Host, command: &str) -> Result<HostExecutionResult, String> {
+async fn execute_on_host(
+    host: &Host,
+    jump_chain: &[Host],
+    command: &str,
+) -> Result<HostExecutionResult, String> {
     use crate::app::services::connection::shared_known_hosts_manager;
     use crate::ssh::SshClient;
 
@@ -398,6 +408,16 @@ async fn execute_on_host(host: &Host, command: &str) -> Result<HostExecutionResu
                     };
                     let _ = responder.send(HostKeyVerificationResponse::Reject);
                 }
+                SshEvent::AuthPrompt(request) => {
+                    // Snippet execution is headless; cancel interactive auth
+                    // prompts so the run fails fast instead of timing out.
+                    tracing::warn!(
+                        "Interactive authentication required for snippet execution - cancelling"
+                    );
+                    let _ = request
+                        .responder
+                        .send(crate::ssh::auth_prompt::AuthPromptResponse::Cancel);
+                }
                 SshEvent::Disconnected { .. } => {
                     tracing::debug!("SSH disconnected during snippet execution");
                 }
@@ -415,6 +435,7 @@ async fn execute_on_host(host: &Host, command: &str) -> Result<HostExecutionResu
     let connection_result = client
         .connect(
             host,
+            jump_chain,
             (80, 24), // Minimal terminal size for exec
             event_tx,
             Duration::from_secs(15),

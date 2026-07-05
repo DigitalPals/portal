@@ -3,6 +3,8 @@
 //! Provides SSH connection, authentication, and session management.
 
 pub mod auth;
+pub mod auth_flow;
+pub mod auth_prompt;
 pub mod client;
 pub mod connection_pool;
 pub mod handler;
@@ -13,6 +15,7 @@ pub mod os_detect;
 pub mod passphrase_cache;
 pub mod reconnect;
 pub mod session;
+pub mod tunnel;
 
 pub use client::SshClient;
 pub use connection_pool::{SshConnection, SshConnectionKey, SshConnectionPool};
@@ -22,6 +25,7 @@ pub use session::SshSession;
 
 use std::sync::{Arc, OnceLock};
 
+use auth_prompt::AuthPromptRequest;
 use host_key_verification::HostKeyVerificationRequest;
 
 /// Events emitted by the SSH layer
@@ -37,6 +41,8 @@ pub enum SshEvent {
     Disconnected { clean: bool },
     /// Host key verification required
     HostKeyVerification(Box<HostKeyVerificationRequest>),
+    /// Server requested keyboard-interactive authentication input
+    AuthPrompt(Box<AuthPromptRequest>),
 }
 
 static SSH_CONNECTION_POOL: OnceLock<Arc<SshConnectionPool>> = OnceLock::new();

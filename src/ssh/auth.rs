@@ -15,6 +15,9 @@ pub enum ResolvedAuth {
     PublicKey(PrivateKeyWithHashAlg),
     /// SSH agent authentication (keys managed by agent)
     Agent,
+    /// Keyboard-interactive authentication; the server sends the prompts at
+    /// auth time (responses are collected interactively, never pre-stored)
+    KeyboardInteractive,
 }
 
 impl std::fmt::Debug for ResolvedAuth {
@@ -23,6 +26,9 @@ impl std::fmt::Debug for ResolvedAuth {
             ResolvedAuth::Password(_) => f.debug_tuple("Password").field(&"[REDACTED]").finish(),
             ResolvedAuth::PublicKey(_) => f.debug_tuple("PublicKey").field(&"[KEY]").finish(),
             ResolvedAuth::Agent => f.debug_struct("Agent").finish(),
+            ResolvedAuth::KeyboardInteractive => {
+                f.debug_struct("KeyboardInteractive").finish()
+            }
         }
     }
 }
@@ -72,6 +78,7 @@ impl ResolvedAuth {
                 load_key_file(&expanded_path, passphrase).await
             }
             AuthMethod::Agent => Ok(ResolvedAuth::Agent),
+            AuthMethod::KeyboardInteractive => Ok(ResolvedAuth::KeyboardInteractive),
         }
     }
 }
@@ -250,6 +257,19 @@ mod tests {
 
         assert!(result.is_ok());
         assert!(matches!(result.unwrap(), ResolvedAuth::Agent));
+    }
+
+    /// Keyboard-interactive needs no pre-collected credentials
+    #[tokio::test]
+    async fn resolve_keyboard_interactive_auth_succeeds() {
+        let method = AuthMethod::KeyboardInteractive;
+
+        let result = ResolvedAuth::resolve(&method, None, None).await;
+
+        assert!(matches!(
+            result.unwrap(),
+            ResolvedAuth::KeyboardInteractive
+        ));
     }
 
     #[test]

@@ -222,6 +222,7 @@ mod tests {
             agent_forwarding: false,
             port_forwards: Vec::new(),
             hub_routing: HubRouting::Auto,
+            jump_host_id: None,
             group_id: None,
             notes: None,
             tags: Vec::new(),

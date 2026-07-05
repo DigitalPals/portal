@@ -1233,19 +1233,25 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                 return Task::none();
             };
 
-            if matches!(host.auth, AuthMethod::Password) {
+            // Password and keyboard-interactive hosts need the user present
+            // to re-authenticate; abort auto-reconnect so they can reconnect
+            // manually (which re-prompts).
+            if matches!(
+                host.auth,
+                AuthMethod::Password | AuthMethod::KeyboardInteractive
+            ) {
                 session.reconnect_next_attempt = None;
                 portal
                     .toast_manager
-                    .push(Toast::error("Reconnect failed (password required)"));
+                    .push(Toast::error("Reconnect failed (authentication required)"));
                 finalize_disconnection(portal, session_id);
                 return Task::none();
             }
 
             let use_proxy =
                 is_proxy && connection::should_use_portal_hub(&portal.prefs.portal_hub, &host);
-            let host = Arc::new(host);
             let terminal_size = session.last_terminal_size;
+            let host = Arc::new(host);
             if use_proxy {
                 return connection::proxy_connect_tasks(
                     portal.prefs.portal_hub.clone(),
@@ -1256,6 +1262,13 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                 );
             }
 
+            // Re-resolve the jump chain so reconnects re-establish the full
+            // tunnel path with the current configuration.
+            let Some(jump_chain) = portal.resolved_jump_chain(&host) else {
+                finalize_disconnection(portal, session_id);
+                return Task::none();
+            };
+
             let should_detect_os = connection::should_detect_os(host.detected_os.as_ref());
             connection::ssh_connect_tasks(
                 host,
@@ -1264,6 +1277,7 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                 terminal_size,
                 should_detect_os,
                 portal.prefs.allow_agent_forwarding,
+                jump_chain,
             )
         }
         SessionMessage::Error(error) => {

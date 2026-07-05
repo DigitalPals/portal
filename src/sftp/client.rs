@@ -7,23 +7,28 @@ use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use russh::client::{self, Config};
-use russh::keys::HashAlg;
 use russh_sftp::client::SftpSession as RusshSftpSession;
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 use tokio::sync::mpsc;
 use tokio::time::timeout;
 
-use secrecy::{ExposeSecret, SecretString};
+use secrecy::SecretString;
 
 use crate::config::Host;
 use crate::error::SftpError;
 use crate::security_log;
 use crate::ssh::SshEvent;
 use crate::ssh::auth::ResolvedAuth;
+use crate::ssh::auth_flow::{self, AuthContext};
 use crate::ssh::handler::ClientHandler;
 use crate::ssh::known_hosts::KnownHostsManager;
+use crate::ssh::tunnel::{self, TunnelParams};
 use crate::ssh::{SshConnection, SshConnectionKey, shared_connection_pool};
+
+/// Extra budget on top of the connection timeout for interactive steps
+/// (host key verification dialogs and keyboard-interactive prompts).
+const INTERACTIVE_AUTH_GRACE: Duration = Duration::from_secs(120);
 
 use super::session::{SftpSession, SharedSftpSession};
 
@@ -84,18 +89,30 @@ impl SftpClient {
     }
 
     /// Connect to a host and establish an SFTP session
+    ///
+    /// `jump_chain` lists the jump (bastion) hosts to tunnel through,
+    /// outermost first; pass an empty slice for a direct connection.
     pub async fn connect(
         &self,
         host: &Host,
+        jump_chain: &[Host],
         event_tx: mpsc::Sender<SshEvent>,
         connection_timeout: Duration,
         password: Option<SecretString>,
         passphrase: Option<SecretString>,
     ) -> Result<SharedSftpSession, SftpError> {
-        // Wrap the rest of the connection process in a timeout
+        // Wrap the rest of the connection process in a timeout. Interactive
+        // dialogs (host key, keyboard-interactive) get a bounded grace window.
         match timeout(
-            connection_timeout,
-            self.establish_sftp_session(host, event_tx, connection_timeout, password, passphrase),
+            connection_timeout + INTERACTIVE_AUTH_GRACE,
+            self.establish_sftp_session(
+                host,
+                jump_chain,
+                event_tx,
+                connection_timeout,
+                password,
+                passphrase,
+            ),
         )
         .await
         {
@@ -111,30 +128,51 @@ impl SftpClient {
     async fn establish_sftp_session(
         &self,
         host: &Host,
+        jump_chain: &[Host],
         event_tx: mpsc::Sender<SshEvent>,
         connection_timeout: Duration,
         password: Option<SecretString>,
         passphrase: Option<SecretString>,
     ) -> Result<SharedSftpSession, SftpError> {
         let pool = shared_connection_pool();
-        let key = SshConnectionKey::new(&host.hostname, host.port, &host.username);
+        let via = tunnel::chain_via_key(jump_chain);
+        let key = SshConnectionKey::with_via(&host.hostname, host.port, &host.username, &via);
 
         for attempt in 0..2 {
             let mut connection = pool.get(&key).await;
 
             if connection.is_none() {
-                let addr = format!("{}:{}", host.hostname, host.port);
-                let stream = timeout(connection_timeout, TcpStream::connect(&addr))
+                let (stream, tunnel_parent) = if jump_chain.is_empty() {
+                    let addr = format!("{}:{}", host.hostname, host.port);
+                    let stream = timeout(connection_timeout, TcpStream::connect(&addr))
+                        .await
+                        .map_err(|_| {
+                            SftpError::ConnectionFailed(format!("Connection timed out to {}", addr))
+                        })?
+                        .map_err(|e| {
+                            SftpError::ConnectionFailed(format!(
+                                "Failed to connect to {}:{}: {}",
+                                host.hostname, host.port, e
+                            ))
+                        })?;
+                    (tunnel::TunnelStream::Tcp(stream), None)
+                } else {
+                    let params = TunnelParams {
+                        config: self.config.clone(),
+                        known_hosts: self.known_hosts.clone(),
+                        event_tx: event_tx.clone(),
+                        connect_timeout: connection_timeout,
+                    };
+                    let tunneled = tunnel::open_tunneled_stream(
+                        &params,
+                        jump_chain,
+                        &host.hostname,
+                        host.port,
+                    )
                     .await
-                    .map_err(|_| {
-                        SftpError::ConnectionFailed(format!("Connection timed out to {}", addr))
-                    })?
-                    .map_err(|e| {
-                        SftpError::ConnectionFailed(format!(
-                            "Failed to connect to {}:{}: {}",
-                            host.hostname, host.port, e
-                        ))
-                    })?;
+                    .map_err(|e| SftpError::ConnectionFailed(e.to_string()))?;
+                    (tunneled.stream, Some(tunneled.last_hop))
+                };
 
                 // SFTP doesn't need remote forwards - create empty registry
                 let remote_forwards = Arc::new(Mutex::new(HashMap::new()));
@@ -157,7 +195,7 @@ impl SftpClient {
                         ))
                     })?;
 
-                // Authenticate
+                // Authenticate (with keyboard-interactive and fallback chain)
                 let auth = ResolvedAuth::resolve(&host.auth, password.clone(), passphrase.clone())
                     .await
                     .map_err(|e| match e {
@@ -169,15 +207,28 @@ impl SftpClient {
                         }
                         _ => SftpError::ConnectionFailed(format!("Authentication failed: {}", e)),
                     })?;
-                self.authenticate(&mut handle, &host.username, auth, &host.hostname, host.port)
-                    .await?;
+                auth_flow::authenticate(
+                    &mut handle,
+                    AuthContext {
+                        hostname: &host.hostname,
+                        port: host.port,
+                        username: &host.username,
+                        event_tx: &event_tx,
+                    },
+                    auth,
+                )
+                .await
+                .map_err(|e| {
+                    SftpError::ConnectionFailed(format!("Authentication failed: {}", e))
+                })?;
 
-                connection = Some(SshConnection::new(
+                connection = Some(SshConnection::new_via(
                     handle,
                     remote_forwards,
                     agent_forwarding_enabled,
                     Arc::from(host.hostname.clone()),
                     host.port,
+                    tunnel_parent,
                 ));
 
                 if let Some(conn) = connection.as_ref() {
@@ -256,148 +307,6 @@ impl SftpClient {
         }
     }
 
-    async fn authenticate(
-        &self,
-        handle: &mut client::Handle<ClientHandler>,
-        username: &str,
-        auth: ResolvedAuth,
-        hostname: &str,
-        port: u16,
-    ) -> Result<(), SftpError> {
-        // Determine auth method name for logging
-        let method_name = match &auth {
-            ResolvedAuth::Password(_) => "password",
-            ResolvedAuth::PublicKey(_) => "publickey",
-            ResolvedAuth::Agent => "agent",
-        };
-
-        // Log authentication attempt
-        security_log::log_auth_attempt(hostname, port, username, method_name);
-
-        let auth_result = match auth {
-            ResolvedAuth::Password(password) => {
-                // Use expose_secret() only at the point of authentication
-                match handle
-                    .authenticate_password(username, password.expose_secret())
-                    .await
-                {
-                    Ok(result) => result,
-                    Err(e) => {
-                        let reason = format!("Password auth failed: {}", e);
-                        security_log::log_auth_failure(
-                            hostname,
-                            port,
-                            username,
-                            method_name,
-                            &reason,
-                        );
-                        return Err(SftpError::ConnectionFailed(reason));
-                    }
-                }
-            }
-
-            ResolvedAuth::PublicKey(key) => {
-                match handle.authenticate_publickey(username, key).await {
-                    Ok(result) => result,
-                    Err(e) => {
-                        let reason = format!("Public key auth failed: {}", e);
-                        security_log::log_auth_failure(
-                            hostname,
-                            port,
-                            username,
-                            method_name,
-                            &reason,
-                        );
-                        return Err(SftpError::ConnectionFailed(reason));
-                    }
-                }
-            }
-
-            ResolvedAuth::Agent => match self.authenticate_with_agent(handle, username).await {
-                Ok(result) if result.success() => {
-                    security_log::log_auth_success(hostname, port, username, method_name);
-                    return Ok(());
-                }
-                Ok(_) => {
-                    let reason = "Agent authentication failed - no suitable key found";
-                    security_log::log_auth_failure(hostname, port, username, method_name, reason);
-                    return Err(SftpError::ConnectionFailed(reason.to_string()));
-                }
-                Err(e) => {
-                    security_log::log_auth_failure(
-                        hostname,
-                        port,
-                        username,
-                        method_name,
-                        &e.to_string(),
-                    );
-                    return Err(e);
-                }
-            },
-        };
-
-        if !auth_result.success() {
-            let reason = "Authentication rejected by server";
-            security_log::log_auth_failure(hostname, port, username, method_name, reason);
-            return Err(SftpError::ConnectionFailed(reason.to_string()));
-        }
-
-        security_log::log_auth_success(hostname, port, username, method_name);
-        Ok(())
-    }
-
-    async fn authenticate_with_agent(
-        &self,
-        handle: &mut client::Handle<ClientHandler>,
-        username: &str,
-    ) -> Result<russh::client::AuthResult, SftpError> {
-        let agent_path = std::env::var("SSH_AUTH_SOCK").map_err(|_| {
-            SftpError::ConnectionFailed("SSH_AUTH_SOCK not set - is ssh-agent running?".to_string())
-        })?;
-
-        let stream = tokio::net::UnixStream::connect(&agent_path)
-            .await
-            .map_err(|e| {
-                SftpError::ConnectionFailed(format!("Failed to connect to SSH agent: {}", e))
-            })?;
-
-        let mut agent = russh::keys::agent::client::AgentClient::connect(stream);
-
-        let identities = agent.request_identities().await.map_err(|e| {
-            SftpError::ConnectionFailed(format!("Failed to get identities from agent: {}", e))
-        })?;
-
-        if identities.is_empty() {
-            return Err(SftpError::ConnectionFailed(
-                "No identities found in SSH agent".to_string(),
-            ));
-        }
-
-        for identity in identities {
-            let public_key = identity.public_key().into_owned();
-            let hash_alg = if public_key.algorithm().is_rsa() {
-                Some(HashAlg::Sha512)
-            } else {
-                None
-            };
-
-            match handle
-                .authenticate_publickey_with(username, public_key, hash_alg, &mut agent)
-                .await
-            {
-                Ok(result) if result.success() => return Ok(result),
-                Ok(_) => continue,
-                Err(e) => {
-                    tracing::debug!("Agent key failed: {}", e);
-                    continue;
-                }
-            }
-        }
-
-        Err(SftpError::ConnectionFailed(
-            "No agent key accepted by server".to_string(),
-        ))
-    }
 }
 
 #[cfg(test)]

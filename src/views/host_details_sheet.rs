@@ -27,6 +27,7 @@ pub fn host_details_sheet_view(
         AuthMethod::Agent => "SSH Agent",
         AuthMethod::PublicKey { vault_key_id, .. } if vault_key_id.is_some() => "Vault Key",
         AuthMethod::PublicKey { .. } => "Public Key",
+        AuthMethod::KeyboardInteractive => "Keyboard Interactive",
     };
     let os = host
         .detected_os

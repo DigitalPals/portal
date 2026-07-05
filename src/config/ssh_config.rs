@@ -19,6 +19,9 @@ struct HostBlock {
     user: Option<String>,
     port: Option<u16>,
     identity_file: Option<Option<String>>,
+    /// ProxyJump directive: `Some(None)` for "none", `Some(Some(spec))` for a
+    /// (possibly comma-separated) jump spec.
+    proxy_jump: Option<Option<String>>,
 }
 
 pub fn load_hosts_from_ssh_config() -> Result<Vec<Host>, ConfigError> {
@@ -131,6 +134,21 @@ pub fn parse_ssh_config(content: &str) -> Vec<Host> {
                     }
                 }
             }
+            "proxyjump" => {
+                if current.proxy_jump.is_none()
+                    && let Some(value) = args.first()
+                {
+                    if value.eq_ignore_ascii_case("none") {
+                        current.proxy_jump = Some(None);
+                    } else {
+                        current.proxy_jump = Some(Some(value.to_string()));
+                    }
+                }
+            }
+            "proxycommand" => {
+                // ProxyCommand cannot be represented as a jump host chain.
+                tracing::debug!("Skipping unsupported ProxyCommand directive during SSH import");
+            }
             _ => {}
         }
     }
@@ -176,6 +194,7 @@ fn flush_block(current: &mut HostBlock, blocks: &mut Vec<HostBlock>) {
 
 fn build_hosts_from_blocks(blocks: &[HostBlock]) -> Vec<Host> {
     let mut hosts = Vec::new();
+    let mut jump_specs: Vec<(Uuid, String)> = Vec::new();
 
     for block in blocks {
         for pattern in &block.patterns {
@@ -185,14 +204,20 @@ fn build_hosts_from_blocks(blocks: &[HostBlock]) -> Vec<Host> {
             if hosts.iter().any(|host: &Host| host.name == *pattern) {
                 continue;
             }
-            hosts.push(resolve_host(pattern, blocks));
+            let (host, proxy_jump) = resolve_host(pattern, blocks);
+            if let Some(spec) = proxy_jump {
+                jump_specs.push((host.id, spec));
+            }
+            hosts.push(host);
         }
     }
+
+    link_proxy_jumps(&mut hosts, &jump_specs);
 
     hosts
 }
 
-fn resolve_host(alias: &str, blocks: &[HostBlock]) -> Host {
+fn resolve_host(alias: &str, blocks: &[HostBlock]) -> (Host, Option<String>) {
     let mut resolved = HostBlock::default();
 
     for block in blocks {
@@ -210,6 +235,9 @@ fn resolve_host(alias: &str, blocks: &[HostBlock]) -> Host {
         }
         if resolved.identity_file.is_none() {
             resolved.identity_file = block.identity_file.clone();
+        }
+        if resolved.proxy_jump.is_none() {
+            resolved.proxy_jump = block.proxy_jump.clone();
         }
     }
 
@@ -230,8 +258,10 @@ fn resolve_host(alias: &str, blocks: &[HostBlock]) -> Host {
         Some(None) | None => AuthMethod::Agent,
     };
 
+    let proxy_jump = resolved.proxy_jump.flatten();
+
     let now = Utc::now();
-    Host {
+    let host = Host {
         id: Uuid::new_v4(),
         name: alias.to_string(),
         hostname,
@@ -244,6 +274,7 @@ fn resolve_host(alias: &str, blocks: &[HostBlock]) -> Host {
         agent_forwarding: false,
         port_forwards: Vec::new(),
         hub_routing: HubRouting::Auto,
+        jump_host_id: None,
         group_id: None,
         notes: None,
         tags: Vec::new(),
@@ -251,7 +282,153 @@ fn resolve_host(alias: &str, blocks: &[HostBlock]) -> Host {
         updated_at: now,
         detected_os: None,
         last_connected: None,
+    };
+
+    (host, proxy_jump)
+}
+
+/// A parsed `[user@]host[:port]` ProxyJump hop spec.
+#[derive(Debug, PartialEq, Eq)]
+struct JumpSpec {
+    user: Option<String>,
+    host: String,
+    port: Option<u16>,
+}
+
+fn parse_jump_spec(spec: &str) -> Option<JumpSpec> {
+    let spec = spec.trim();
+    if spec.is_empty() {
+        return None;
     }
+
+    let (user, rest) = match spec.split_once('@') {
+        Some((user, rest)) if !user.is_empty() => (Some(user.to_string()), rest),
+        Some((_, rest)) => (None, rest),
+        None => (None, spec),
+    };
+
+    // Bracketed IPv6: [::1]:2222
+    if let Some(stripped) = rest.strip_prefix('[') {
+        let (host, tail) = stripped.split_once(']')?;
+        let port = tail
+            .strip_prefix(':')
+            .and_then(|p| p.parse::<u16>().ok().filter(|p| *p > 0));
+        return Some(JumpSpec {
+            user,
+            host: host.to_string(),
+            port,
+        });
+    }
+
+    // host:port — only when there is exactly one colon (a bare IPv6 address
+    // contains several and is treated as a plain host).
+    if rest.matches(':').count() == 1
+        && let Some((host, port)) = rest.split_once(':')
+        && let Ok(port) = port.parse::<u16>()
+        && port > 0
+    {
+        return Some(JumpSpec {
+            user,
+            host: host.to_string(),
+            port: Some(port),
+        });
+    }
+
+    Some(JumpSpec {
+        user,
+        host: rest.to_string(),
+        port: None,
+    })
+}
+
+/// Link ProxyJump chains: for each host with a jump spec, find or synthesize
+/// the hop hosts and wire `jump_host_id` (each hop links to the previous one).
+fn link_proxy_jumps(hosts: &mut Vec<Host>, jump_specs: &[(Uuid, String)]) {
+    for (target_id, spec) in jump_specs {
+        let mut prev: Option<Uuid> = None;
+        let mut valid = true;
+
+        for hop_spec in spec.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+            let Some(hop_id) = find_or_synthesize_jump_host(hosts, hop_spec) else {
+                tracing::debug!("Skipping unparsable ProxyJump hop '{}'", hop_spec);
+                valid = false;
+                break;
+            };
+            if hop_id == *target_id {
+                tracing::debug!("Ignoring self-referential ProxyJump for host {}", target_id);
+                valid = false;
+                break;
+            }
+
+            if let Some(prev_id) = prev
+                && prev_id != hop_id
+                && let Some(hop) = hosts.iter_mut().find(|h| h.id == hop_id)
+                && hop.jump_host_id.is_none()
+            {
+                hop.jump_host_id = Some(prev_id);
+            }
+            prev = Some(hop_id);
+        }
+
+        if valid
+            && let Some(prev_id) = prev
+            && let Some(target) = hosts.iter_mut().find(|h| h.id == *target_id)
+        {
+            target.jump_host_id = Some(prev_id);
+        }
+    }
+}
+
+/// Match a jump hop spec against known hosts (by alias, then by endpoint) or
+/// synthesize a minimal agent-auth SSH host for it.
+fn find_or_synthesize_jump_host(hosts: &mut Vec<Host>, spec: &str) -> Option<Uuid> {
+    // Alias match first (e.g. `ProxyJump bastion` referring to `Host bastion`).
+    if let Some(host) = hosts.iter().find(|h| h.name == spec) {
+        return Some(host.id);
+    }
+
+    let parsed = parse_jump_spec(spec)?;
+    let port = parsed.port.unwrap_or(22);
+
+    // Endpoint match: hostname/port and, when given, the username.
+    if let Some(host) = hosts.iter().find(|h| {
+        h.hostname.eq_ignore_ascii_case(&parsed.host)
+            && h.port == port
+            && parsed
+                .user
+                .as_ref()
+                .is_none_or(|user| h.effective_username().eq_ignore_ascii_case(user))
+    }) {
+        return Some(host.id);
+    }
+
+    // Synthesize a minimal SSH host entry (default auth = agent).
+    let now = Utc::now();
+    let host = Host {
+        id: Uuid::new_v4(),
+        name: spec.to_string(),
+        hostname: parsed.host,
+        port,
+        username: parsed.user.unwrap_or_default(),
+        protocol: Protocol::Ssh,
+        vnc_port: None,
+        vnc_password_id: None,
+        auth: AuthMethod::Agent,
+        agent_forwarding: false,
+        port_forwards: Vec::new(),
+        hub_routing: HubRouting::Auto,
+        jump_host_id: None,
+        group_id: None,
+        notes: None,
+        tags: Vec::new(),
+        created_at: now,
+        updated_at: now,
+        detected_os: None,
+        last_connected: None,
+    };
+    let id = host.id;
+    hosts.push(host);
+    Some(id)
 }
 
 fn should_skip_pattern(pattern: &str) -> bool {
@@ -674,6 +851,185 @@ mod tests {
         let db = hosts.iter().find(|host| host.name == "db").unwrap();
         assert_eq!(api.username, "deploy");
         assert_ne!(db.username, "deploy");
+    }
+
+    #[test]
+    fn proxy_jump_alias_links_to_existing_host() {
+        let content = r#"
+            Host bastion
+              HostName bastion.internal
+              User jump
+
+            Host target
+              HostName target.internal
+              ProxyJump bastion
+        "#;
+        let hosts = parse_ssh_config(content);
+
+        assert_eq!(hosts.len(), 2);
+        let bastion = hosts.iter().find(|h| h.name == "bastion").unwrap();
+        let target = hosts.iter().find(|h| h.name == "target").unwrap();
+        assert_eq!(target.jump_host_id, Some(bastion.id));
+        assert_eq!(bastion.jump_host_id, None);
+    }
+
+    #[test]
+    fn proxy_jump_user_host_port_synthesizes_host() {
+        let content = r#"
+            Host target
+              HostName target.internal
+              ProxyJump admin@10.0.0.1:2222
+        "#;
+        let hosts = parse_ssh_config(content);
+
+        assert_eq!(hosts.len(), 2);
+        let target = hosts.iter().find(|h| h.name == "target").unwrap();
+        let bastion = hosts
+            .iter()
+            .find(|h| h.name == "admin@10.0.0.1:2222")
+            .unwrap();
+        assert_eq!(target.jump_host_id, Some(bastion.id));
+        assert_eq!(bastion.hostname, "10.0.0.1");
+        assert_eq!(bastion.port, 2222);
+        assert_eq!(bastion.username, "admin");
+        assert!(matches!(bastion.auth, AuthMethod::Agent));
+        assert_eq!(bastion.protocol, Protocol::Ssh);
+    }
+
+    #[test]
+    fn proxy_jump_multi_hop_builds_chain() {
+        let content = r#"
+            Host outer
+              HostName outer.internal
+
+            Host inner
+              HostName inner.internal
+
+            Host target
+              HostName target.internal
+              ProxyJump outer,inner
+        "#;
+        let hosts = parse_ssh_config(content);
+
+        let outer = hosts.iter().find(|h| h.name == "outer").unwrap();
+        let inner = hosts.iter().find(|h| h.name == "inner").unwrap();
+        let target = hosts.iter().find(|h| h.name == "target").unwrap();
+
+        // OpenSSH semantics: connect via outer first, then inner, then target.
+        assert_eq!(outer.jump_host_id, None);
+        assert_eq!(inner.jump_host_id, Some(outer.id));
+        assert_eq!(target.jump_host_id, Some(inner.id));
+    }
+
+    #[test]
+    fn proxy_jump_multi_hop_synthesizes_missing_hops() {
+        let content = r#"
+            Host target
+              HostName target.internal
+              ProxyJump one.example.com,two.example.com
+        "#;
+        let hosts = parse_ssh_config(content);
+
+        assert_eq!(hosts.len(), 3);
+        let one = hosts.iter().find(|h| h.hostname == "one.example.com").unwrap();
+        let two = hosts.iter().find(|h| h.hostname == "two.example.com").unwrap();
+        let target = hosts.iter().find(|h| h.name == "target").unwrap();
+        assert_eq!(one.jump_host_id, None);
+        assert_eq!(two.jump_host_id, Some(one.id));
+        assert_eq!(target.jump_host_id, Some(two.id));
+    }
+
+    #[test]
+    fn proxy_jump_none_leaves_host_direct() {
+        let content = r#"
+            Host target
+              HostName target.internal
+              ProxyJump none
+        "#;
+        let hosts = parse_ssh_config(content);
+
+        assert_eq!(hosts.len(), 1);
+        assert_eq!(hosts[0].jump_host_id, None);
+    }
+
+    #[test]
+    fn proxy_command_is_ignored() {
+        let content = r#"
+            Host target
+              HostName target.internal
+              ProxyCommand ssh -W %h:%p bastion
+        "#;
+        let hosts = parse_ssh_config(content);
+
+        assert_eq!(hosts.len(), 1);
+        assert_eq!(hosts[0].jump_host_id, None);
+    }
+
+    #[test]
+    fn proxy_jump_keeps_first_value_like_openssh() {
+        let content = r#"
+            Host bastion
+              HostName bastion.internal
+
+            Host other
+              HostName other.internal
+
+            Host target
+              HostName target.internal
+              ProxyJump bastion
+              ProxyJump other
+        "#;
+        let hosts = parse_ssh_config(content);
+
+        let bastion = hosts.iter().find(|h| h.name == "bastion").unwrap();
+        let target = hosts.iter().find(|h| h.name == "target").unwrap();
+        assert_eq!(target.jump_host_id, Some(bastion.id));
+    }
+
+    #[test]
+    fn jump_spec_parsing_variants() {
+        assert_eq!(
+            parse_jump_spec("bastion"),
+            Some(JumpSpec {
+                user: None,
+                host: "bastion".to_string(),
+                port: None
+            })
+        );
+        assert_eq!(
+            parse_jump_spec("admin@bastion"),
+            Some(JumpSpec {
+                user: Some("admin".to_string()),
+                host: "bastion".to_string(),
+                port: None
+            })
+        );
+        assert_eq!(
+            parse_jump_spec("bastion:2222"),
+            Some(JumpSpec {
+                user: None,
+                host: "bastion".to_string(),
+                port: Some(2222)
+            })
+        );
+        assert_eq!(
+            parse_jump_spec("admin@[::1]:2200"),
+            Some(JumpSpec {
+                user: Some("admin".to_string()),
+                host: "::1".to_string(),
+                port: Some(2200)
+            })
+        );
+        // Bare IPv6 address without brackets is a plain host.
+        assert_eq!(
+            parse_jump_spec("fe80::1"),
+            Some(JumpSpec {
+                user: None,
+                host: "fe80::1".to_string(),
+                port: None
+            })
+        );
+        assert_eq!(parse_jump_spec(""), None);
     }
 
     #[test]

@@ -77,6 +77,7 @@ pub enum HostDialogField {
     VncPasswordId,
     AgentForwarding,
     HubRouting,
+    JumpHostId,
     Tags,
     Notes,
     Protocol,
@@ -399,6 +400,14 @@ pub enum DialogMessage {
     QuickConnectSubmit,
     /// Import hosts from SSH config
     ImportFromSshConfig,
+    /// Keyboard-interactive authentication prompts received from the server
+    AuthPrompt(AuthPromptRequestWrapper),
+    /// Auth prompt dialog: response input changed (prompt index, value)
+    AuthPromptInputChanged(usize, SecretString),
+    /// Auth prompt dialog: user submitted responses
+    AuthPromptSubmit,
+    /// Auth prompt dialog: user cancelled authentication
+    AuthPromptCancel,
 }
 
 /// Context for passphrase-based SFTP connections
@@ -989,6 +998,25 @@ impl Clone for VerificationRequestWrapper {
 impl std::fmt::Debug for VerificationRequestWrapper {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("VerificationRequestWrapper")
+            .field("has_request", &self.0.is_some())
+            .finish()
+    }
+}
+
+/// Wrapper for keyboard-interactive auth prompt requests that implements
+/// Clone (by wrapping in Option). The oneshot::Sender inside is not Clone,
+/// so cloning yields None — only the original message carries the request.
+pub struct AuthPromptRequestWrapper(pub Option<Box<crate::ssh::auth_prompt::AuthPromptRequest>>);
+
+impl Clone for AuthPromptRequestWrapper {
+    fn clone(&self) -> Self {
+        AuthPromptRequestWrapper(None)
+    }
+}
+
+impl std::fmt::Debug for AuthPromptRequestWrapper {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthPromptRequestWrapper")
             .field("has_request", &self.0.is_some())
             .finish()
     }

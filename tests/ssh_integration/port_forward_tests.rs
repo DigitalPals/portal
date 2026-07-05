@@ -56,6 +56,7 @@ async fn test_local_forward_to_remote_sshd_banner() {
     let (session, _detected_os) = client
         .connect(
             &host,
+            &[],
             (80, 24),
             event_tx,
             Duration::from_secs(10),
@@ -129,6 +130,7 @@ async fn test_dynamic_forward_socks5_to_remote_sshd_banner() {
     let (session, _detected_os) = client
         .connect(
             &host,
+            &[],
             (80, 24),
             event_tx,
             Duration::from_secs(10),

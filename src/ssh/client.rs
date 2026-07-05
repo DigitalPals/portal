@@ -5,7 +5,6 @@ use std::time::Duration;
 
 use russh::Pty;
 use russh::client::{self, Config};
-use russh::keys::HashAlg;
 use tokio::net::TcpStream;
 use tokio::sync::{Mutex, mpsc};
 use tokio::time::{sleep, timeout};
@@ -16,20 +15,26 @@ use crate::security_log;
 
 use crate::config::DetectedOs;
 
-use secrecy::{ExposeSecret, SecretString};
+use secrecy::SecretString;
 
 use super::SshEvent;
 use super::auth::ResolvedAuth;
+use super::auth_flow::{self, AuthContext};
 use super::connection_pool::{SshConnection, SshConnectionKey};
 use super::handler::ClientHandler;
 use super::known_hosts::KnownHostsManager;
 use super::os_detect;
 use super::session::SshSession;
 use super::shared_connection_pool;
+use super::tunnel::{self, TunnelParams};
 
 const SSH_TERMINAL_TYPE: &str = "xterm-256color";
 const NEW_CONNECTION_TRANSPORT_ATTEMPTS: usize = 3;
 const NEW_CONNECTION_TRANSPORT_RETRY_DELAY: Duration = Duration::from_millis(250);
+/// Extra budget on top of the connection timeout for interactive steps
+/// (host key verification dialogs and keyboard-interactive prompts); each
+/// individual dialog wait is itself bounded at 60 seconds.
+const INTERACTIVE_AUTH_GRACE: Duration = Duration::from_secs(120);
 
 fn default_pty_modes() -> &'static [(Pty, u32)] {
     &[
@@ -157,10 +162,14 @@ impl SshClient {
 
     /// Connect to a host and establish an interactive PTY session
     /// Returns the session and optionally the detected OS
+    ///
+    /// `jump_chain` lists the jump (bastion) hosts to tunnel through,
+    /// outermost first; pass an empty slice for a direct connection.
     #[allow(clippy::too_many_arguments)]
     pub async fn connect(
         &self,
         host: &Host,
+        jump_chain: &[Host],
         terminal_size: (u16, u16),
         event_tx: mpsc::Sender<SshEvent>,
         connection_timeout: Duration,
@@ -171,10 +180,14 @@ impl SshClient {
     ) -> Result<(Arc<SshSession>, Option<DetectedOs>), SshError> {
         let addr = format!("{}:{}", host.hostname, host.port);
 
+        // The overall budget includes a grace window for interactive dialogs
+        // (host key verification, keyboard-interactive prompts) which are
+        // individually bounded but may exceed the plain connection timeout.
         match timeout(
-            connection_timeout,
+            connection_timeout + INTERACTIVE_AUTH_GRACE,
             self.establish_session(
                 host,
+                jump_chain,
                 terminal_size,
                 event_tx,
                 connection_timeout,
@@ -195,6 +208,7 @@ impl SshClient {
     async fn establish_session(
         &self,
         host: &Host,
+        jump_chain: &[Host],
         terminal_size: (u16, u16),
         event_tx: mpsc::Sender<SshEvent>,
         connection_timeout: Duration,
@@ -204,7 +218,8 @@ impl SshClient {
         allow_agent_forwarding: bool,
     ) -> Result<(Arc<SshSession>, Option<DetectedOs>), SshError> {
         let pool = shared_connection_pool();
-        let key = SshConnectionKey::new(&host.hostname, host.port, &host.username);
+        let via = tunnel::chain_via_key(jump_chain);
+        let key = SshConnectionKey::with_via(&host.hostname, host.port, &host.username, &via);
         let agent_forwarding_enabled = allow_agent_forwarding && host.agent_forwarding;
 
         // At most 1 reconnect attempt if we raced a stale pooled connection.
@@ -215,88 +230,19 @@ impl SshClient {
 
             if connection.is_none() {
                 created_new_connection = true;
-                let addr = format!("{}:{}", host.hostname, host.port);
 
-                let mut last_transport_error = None;
-                for transport_attempt in 0..NEW_CONNECTION_TRANSPORT_ATTEMPTS {
-                    let stream = match timeout(connection_timeout, TcpStream::connect(&addr)).await
-                    {
-                        Ok(Ok(stream)) => stream,
-                        Ok(Err(error)) => {
-                            let reason = error.to_string();
-                            if transport_attempt + 1 < NEW_CONNECTION_TRANSPORT_ATTEMPTS
-                                && is_transient_transport_error(&reason)
-                            {
-                                last_transport_error = Some(reason);
-                                sleep(NEW_CONNECTION_TRANSPORT_RETRY_DELAY).await;
-                                continue;
-                            }
-                            return Err(SshError::ConnectionFailed {
-                                host: host.hostname.clone(),
-                                port: host.port,
-                                reason,
-                            });
-                        }
-                        Err(_) => return Err(SshError::Timeout(addr.clone())),
-                    };
+                connection = Some(
+                    self.open_connection(
+                        host,
+                        jump_chain,
+                        &event_tx,
+                        connection_timeout,
+                        password.clone(),
+                        passphrase.clone(),
+                    )
+                    .await?,
+                );
 
-                    let agent_forwarding_enabled_flag = Arc::new(AtomicBool::new(false));
-                    // Create shared remote forwards registry for this connection
-                    let remote_forwards = Arc::new(Mutex::new(HashMap::new()));
-                    let handler = ClientHandler::new(
-                        host.hostname.clone(),
-                        host.port,
-                        self.known_hosts.clone(),
-                        event_tx.clone(),
-                        agent_forwarding_enabled_flag.clone(),
-                        remote_forwards.clone(),
-                    );
-
-                    let mut handle =
-                        match client::connect_stream(self.config.clone(), stream, handler).await {
-                            Ok(handle) => handle,
-                            Err(error) => {
-                                let reason = error.to_string();
-                                if transport_attempt + 1 < NEW_CONNECTION_TRANSPORT_ATTEMPTS
-                                    && is_transient_transport_error(&reason)
-                                {
-                                    last_transport_error = Some(reason);
-                                    sleep(NEW_CONNECTION_TRANSPORT_RETRY_DELAY).await;
-                                    continue;
-                                }
-                                return Err(SshError::ConnectionFailed {
-                                    host: host.hostname.clone(),
-                                    port: host.port,
-                                    reason,
-                                });
-                            }
-                        };
-
-                    // Authenticate
-                    let auth =
-                        ResolvedAuth::resolve(&host.auth, password.clone(), passphrase.clone())
-                            .await?;
-                    self.authenticate(&mut handle, &host.username, auth, &host.hostname, host.port)
-                        .await?;
-
-                    connection = Some(SshConnection::new(
-                        handle,
-                        remote_forwards,
-                        agent_forwarding_enabled_flag,
-                        Arc::from(host.hostname.clone()),
-                        host.port,
-                    ));
-                    break;
-                }
-
-                if connection.is_none() {
-                    return Err(SshError::ConnectionFailed {
-                        host: host.hostname.clone(),
-                        port: host.port,
-                        reason: last_transport_error
-                            .unwrap_or_else(|| "Failed to establish SSH transport".to_string()),
-                    });
-                }
                 if let Some(conn) = connection.as_ref() {
                     pool.put(key.clone(), conn.clone()).await;
                 }
@@ -430,158 +376,121 @@ impl SshClient {
         })
     }
 
-    async fn authenticate(
+    /// Open a new authenticated SSH connection to `host`, tunneling through
+    /// `jump_chain` when it is non-empty.
+    async fn open_connection(
         &self,
-        handle: &mut client::Handle<ClientHandler>,
-        username: &str,
-        auth: ResolvedAuth,
-        hostname: &str,
-        port: u16,
-    ) -> Result<(), SshError> {
-        // Determine auth method name for logging
-        let method_name = match &auth {
-            ResolvedAuth::Password(_) => "password",
-            ResolvedAuth::PublicKey(_) => "publickey",
-            ResolvedAuth::Agent => "agent",
-        };
+        host: &Host,
+        jump_chain: &[Host],
+        event_tx: &mpsc::Sender<SshEvent>,
+        connection_timeout: Duration,
+        password: Option<SecretString>,
+        passphrase: Option<SecretString>,
+    ) -> Result<Arc<SshConnection>, SshError> {
+        let addr = format!("{}:{}", host.hostname, host.port);
 
-        // Log authentication attempt
-        security_log::log_auth_attempt(hostname, port, username, method_name);
-
-        let auth_result = match auth {
-            ResolvedAuth::Password(password) => {
-                // Use expose_secret() only at the point of authentication
-                match handle
-                    .authenticate_password(username, password.expose_secret())
-                    .await
-                {
-                    Ok(result) => result,
-                    Err(e) => {
-                        let reason = e.to_string();
-                        security_log::log_auth_failure(
-                            hostname,
-                            port,
-                            username,
-                            method_name,
-                            &reason,
-                        );
-                        return Err(SshError::AuthenticationFailed(reason));
-                    }
-                }
-            }
-
-            ResolvedAuth::PublicKey(key) => {
-                match handle.authenticate_publickey(username, key).await {
-                    Ok(result) => result,
-                    Err(e) => {
-                        let reason = e.to_string();
-                        security_log::log_auth_failure(
-                            hostname,
-                            port,
-                            username,
-                            method_name,
-                            &reason,
-                        );
-                        return Err(SshError::AuthenticationFailed(reason));
-                    }
-                }
-            }
-
-            ResolvedAuth::Agent => {
-                // Try to use SSH agent
-                match self.authenticate_with_agent(handle, username).await {
-                    Ok(result) if result.success() => {
-                        security_log::log_auth_success(hostname, port, username, method_name);
-                        return Ok(());
-                    }
-                    Ok(_) => {
-                        let reason = "Agent authentication failed - no suitable key found";
-                        security_log::log_auth_failure(
-                            hostname,
-                            port,
-                            username,
-                            method_name,
+        let mut last_transport_error = None;
+        for transport_attempt in 0..NEW_CONNECTION_TRANSPORT_ATTEMPTS {
+            // Transport: direct TCP, or a direct-tcpip channel through the
+            // jump chain. Jump-hop failures are not retried here — they carry
+            // their own hop-specific error message.
+            let (stream, tunnel_parent) = if jump_chain.is_empty() {
+                match timeout(connection_timeout, TcpStream::connect(&addr)).await {
+                    Ok(Ok(stream)) => (tunnel::TunnelStream::Tcp(stream), None),
+                    Ok(Err(error)) => {
+                        let reason = error.to_string();
+                        if transport_attempt + 1 < NEW_CONNECTION_TRANSPORT_ATTEMPTS
+                            && is_transient_transport_error(&reason)
+                        {
+                            last_transport_error = Some(reason);
+                            sleep(NEW_CONNECTION_TRANSPORT_RETRY_DELAY).await;
+                            continue;
+                        }
+                        return Err(SshError::ConnectionFailed {
+                            host: host.hostname.clone(),
+                            port: host.port,
                             reason,
-                        );
-                        return Err(SshError::Agent(reason.to_string()));
+                        });
                     }
-                    Err(e) => {
-                        security_log::log_auth_failure(
-                            hostname,
-                            port,
-                            username,
-                            method_name,
-                            &e.to_string(),
-                        );
-                        return Err(e);
-                    }
+                    Err(_) => return Err(SshError::Timeout(addr.clone())),
                 }
-            }
-        };
+            } else {
+                let params = TunnelParams {
+                    config: self.config.clone(),
+                    known_hosts: self.known_hosts.clone(),
+                    event_tx: event_tx.clone(),
+                    connect_timeout: connection_timeout,
+                };
+                let tunneled =
+                    tunnel::open_tunneled_stream(&params, jump_chain, &host.hostname, host.port)
+                        .await?;
+                (tunneled.stream, Some(tunneled.last_hop))
+            };
 
-        if !auth_result.success() {
-            let reason = "Authentication rejected by server";
-            security_log::log_auth_failure(hostname, port, username, method_name, reason);
-            return Err(SshError::AuthenticationFailed(reason.to_string()));
-        }
+            let agent_forwarding_enabled_flag = Arc::new(AtomicBool::new(false));
+            // Create shared remote forwards registry for this connection
+            let remote_forwards = Arc::new(Mutex::new(HashMap::new()));
+            let handler = ClientHandler::new(
+                host.hostname.clone(),
+                host.port,
+                self.known_hosts.clone(),
+                event_tx.clone(),
+                agent_forwarding_enabled_flag.clone(),
+                remote_forwards.clone(),
+            );
 
-        security_log::log_auth_success(hostname, port, username, method_name);
-        Ok(())
-    }
+            let mut handle =
+                match client::connect_stream(self.config.clone(), stream, handler).await {
+                    Ok(handle) => handle,
+                    Err(error) => {
+                        let reason = error.to_string();
+                        if transport_attempt + 1 < NEW_CONNECTION_TRANSPORT_ATTEMPTS
+                            && is_transient_transport_error(&reason)
+                        {
+                            last_transport_error = Some(reason);
+                            sleep(NEW_CONNECTION_TRANSPORT_RETRY_DELAY).await;
+                            continue;
+                        }
+                        return Err(SshError::ConnectionFailed {
+                            host: host.hostname.clone(),
+                            port: host.port,
+                            reason,
+                        });
+                    }
+                };
 
-    async fn authenticate_with_agent(
-        &self,
-        handle: &mut client::Handle<ClientHandler>,
-        username: &str,
-    ) -> Result<russh::client::AuthResult, SshError> {
-        // Try to connect to SSH agent
-        let agent_path = std::env::var("SSH_AUTH_SOCK").map_err(|_| {
-            SshError::Agent("SSH_AUTH_SOCK not set - is ssh-agent running?".to_string())
-        })?;
+            // Authenticate with the configured method plus automatic
+            // fallback (publickey/agent -> keyboard-interactive -> password).
+            let auth =
+                ResolvedAuth::resolve(&host.auth, password.clone(), passphrase.clone()).await?;
+            auth_flow::authenticate(
+                &mut handle,
+                AuthContext {
+                    hostname: &host.hostname,
+                    port: host.port,
+                    username: &host.username,
+                    event_tx,
+                },
+                auth,
+            )
+            .await?;
 
-        let stream = tokio::net::UnixStream::connect(&agent_path)
-            .await
-            .map_err(|e| SshError::Agent(format!("Failed to connect to SSH agent: {}", e)))?;
-
-        let mut agent = russh::keys::agent::client::AgentClient::connect(stream);
-
-        // Get identities from agent
-        let identities = agent
-            .request_identities()
-            .await
-            .map_err(|e| SshError::Agent(format!("Failed to get identities: {}", e)))?;
-
-        if identities.is_empty() {
-            return Err(SshError::Agent(
-                "No identities found in SSH agent".to_string(),
+            return Ok(SshConnection::new_via(
+                handle,
+                remote_forwards,
+                agent_forwarding_enabled_flag,
+                Arc::from(host.hostname.clone()),
+                host.port,
+                tunnel_parent,
             ));
         }
 
-        // Try each identity with SHA-512 for RSA keys
-        for identity in identities {
-            let public_key = identity.public_key().into_owned();
-            let hash_alg = if public_key.algorithm().is_rsa() {
-                Some(HashAlg::Sha512)
-            } else {
-                None
-            };
-
-            match handle
-                .authenticate_publickey_with(username, public_key, hash_alg, &mut agent)
-                .await
-            {
-                Ok(result) if result.success() => return Ok(result),
-                Ok(_) => continue,
-                Err(e) => {
-                    tracing::debug!("Agent key failed: {}", e);
-                    continue;
-                }
-            }
-        }
-
-        Err(SshError::Agent(
-            "No agent key accepted by server".to_string(),
-        ))
+        Err(SshError::ConnectionFailed {
+            host: host.hostname.clone(),
+            port: host.port,
+            reason: last_transport_error
+                .unwrap_or_else(|| "Failed to establish SSH transport".to_string()),
+        })
     }
 }
 

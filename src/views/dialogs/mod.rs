@@ -1,4 +1,5 @@
 pub mod about_dialog;
+pub mod auth_prompt_dialog;
 pub mod common;
 pub mod connecting_dialog;
 pub mod host_dialog;

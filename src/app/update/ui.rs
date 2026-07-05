@@ -242,6 +242,7 @@ fn handle_search_submitted(portal: &mut Portal) -> Task<Message> {
             agent_forwarding: false,
             port_forwards: Vec::new(),
             hub_routing: crate::config::hosts::HubRouting::Auto,
+            jump_host_id: None,
             group_id: None,
             notes: None,
             tags: Vec::new(),

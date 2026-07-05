@@ -28,6 +28,7 @@ use crate::theme::{ScaledFonts, ThemeId, get_theme};
 use crate::views::command_palette::{available_commands, command_palette_view};
 use crate::views::components::dropzone_overlay;
 use crate::views::dialogs::about_dialog::about_dialog_view;
+use crate::views::dialogs::auth_prompt_dialog::auth_prompt_dialog_view;
 use crate::views::dialogs::connecting_dialog::connecting_dialog_view;
 use crate::views::dialogs::host_dialog::host_dialog_view;
 use crate::views::dialogs::host_key_dialog::host_key_dialog_view;
@@ -1127,6 +1128,10 @@ impl Portal {
                 let dialog = host_key_dialog_view(host_key_state, theme, fonts);
                 stack![main_layout, dialog].into()
             }
+            ActiveDialog::AuthPrompt(auth_prompt_state) => {
+                let dialog = auth_prompt_dialog_view(auth_prompt_state, theme, fonts);
+                stack![main_layout, dialog].into()
+            }
             ActiveDialog::Host(dialog_state) => {
                 let vault_keys = self
                     .config
@@ -1143,12 +1148,32 @@ impl Portal {
                     .filter(|secret| secret.kind == crate::hub::vault::VaultSecretKind::VncPassword)
                     .map(crate::views::dialogs::host_dialog::VncPasswordOption::from)
                     .collect();
+                // Jump host candidates: other SSH hosts that would not create
+                // a jump cycle through the host being edited.
+                let editing_id = dialog_state.editing_id;
+                let jump_host_options = self
+                    .config
+                    .hosts
+                    .hosts
+                    .iter()
+                    .filter(|candidate| {
+                        candidate.protocol == crate::config::Protocol::Ssh
+                            && Some(candidate.id) != editing_id
+                            && !jump_chain_contains(
+                                &self.config.hosts.hosts,
+                                candidate,
+                                editing_id,
+                            )
+                    })
+                    .map(crate::views::dialogs::host_dialog::JumpHostOption::from)
+                    .collect();
                 let dialog = host_dialog_view(
                     dialog_state,
                     theme,
                     fonts,
                     vault_keys,
                     vault_vnc_passwords,
+                    jump_host_options,
                     self.prefs.portal_hub.is_configured(),
                     self.prefs.portal_hub.default_for_new_ssh_hosts,
                 );
@@ -1669,4 +1694,33 @@ fn portal_hub_sync_event_stream(hub_url: &Arc<str>) -> stream::BoxStream<'static
     crate::hub::sync::sync_revision_event_stream(hub_url.to_string())
         .map(|result| Message::Ui(UiMessage::PortalHubRemoteRevisions(result)))
         .boxed()
+}
+
+/// Whether `candidate`'s jump chain (followed via `jump_host_id` links)
+/// includes `host_id`. Used to hide picker options that would create a jump
+/// cycle. Bounded and cycle-guarded so malformed configs cannot hang the UI.
+fn jump_chain_contains(
+    hosts: &[crate::config::Host],
+    candidate: &crate::config::Host,
+    host_id: Option<uuid::Uuid>,
+) -> bool {
+    let Some(host_id) = host_id else {
+        return false;
+    };
+
+    let mut visited = std::collections::HashSet::new();
+    let mut current = candidate.jump_host_id;
+    while let Some(jump_id) = current {
+        if jump_id == host_id {
+            return true;
+        }
+        if !visited.insert(jump_id) {
+            return false;
+        }
+        current = hosts
+            .iter()
+            .find(|h| h.id == jump_id)
+            .and_then(|h| h.jump_host_id);
+    }
+    false
 }

@@ -47,6 +47,13 @@ pub(super) fn spawn_host_key_handler(
                 SshEvent::Disconnected { .. } => {
                     break;
                 }
+                SshEvent::AuthPrompt(request) => {
+                    // Headless tests never answer interactive prompts;
+                    // cancel so auth fails fast instead of timing out.
+                    let _ = request
+                        .responder
+                        .send(portal::ssh::auth_prompt::AuthPromptResponse::Cancel);
+                }
                 SshEvent::Data(_) => {}
             }
         }
@@ -77,6 +84,7 @@ async fn test_password_auth_success() {
     let result = client
         .connect(
             &host,
+            &[],
             (80, 24),
             event_tx,
             Duration::from_secs(10),
@@ -125,6 +133,7 @@ async fn test_pubkey_auth_success() {
     let result = client
         .connect(
             &host,
+            &[],
             (80, 24),
             event_tx,
             Duration::from_secs(10),
@@ -173,6 +182,7 @@ async fn test_encrypted_key_with_passphrase() {
     let result = client
         .connect(
             &host,
+            &[],
             (80, 24),
             event_tx,
             Duration::from_secs(10),
@@ -221,6 +231,7 @@ async fn test_encrypted_key_without_passphrase() {
     let result = client
         .connect(
             &host,
+            &[],
             (80, 24),
             event_tx,
             Duration::from_secs(10),
@@ -262,6 +273,7 @@ async fn test_os_detection_on_connect() {
     let result = client
         .connect(
             &host,
+            &[],
             (80, 24),
             event_tx,
             Duration::from_secs(10),

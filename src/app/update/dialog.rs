@@ -9,6 +9,7 @@ use crate::message::{
 };
 use crate::security_log;
 use crate::ssh::host_key_verification::HostKeyVerificationResponse;
+use crate::views::dialogs::auth_prompt_dialog::AuthPromptDialogState;
 use crate::views::dialogs::host_dialog::{
     AuthMethodChoice, KeySourceChoice, PortForwardEditorState,
 };
@@ -146,6 +147,13 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                             _ => dialog_state.hub_routing,
                         };
                     }
+                    HostDialogField::JumpHostId => {
+                        dialog_state.jump_host_id = if value.trim().is_empty() {
+                            None
+                        } else {
+                            value.parse().ok()
+                        };
+                    }
                     HostDialogField::Tags => dialog_state.tags = value,
                     HostDialogField::Notes => dialog_state.notes = value,
                     HostDialogField::AuthMethod => {
@@ -153,6 +161,7 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                             "Agent" => AuthMethodChoice::Agent,
                             "Password" => AuthMethodChoice::Password,
                             "PublicKey" => AuthMethodChoice::PublicKey,
+                            "KeyboardInteractive" => AuthMethodChoice::KeyboardInteractive,
                             _ => dialog_state.auth_method,
                         };
                         if dialog_state.auth_method != AuthMethodChoice::PublicKey {
@@ -308,6 +317,37 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
             }
             Task::none()
         }
+        DialogMessage::AuthPrompt(mut wrapper) => {
+            if let Some(request) = wrapper.0.take() {
+                portal
+                    .dialogs
+                    .open_auth_prompt(AuthPromptDialogState::from_request(*request));
+                tracing::info!("Keyboard-interactive auth prompt dialog opened");
+            }
+            Task::none()
+        }
+        DialogMessage::AuthPromptInputChanged(index, value) => {
+            if let Some(dialog) = portal.dialogs.auth_prompt_mut() {
+                dialog.set_response(index, value);
+            }
+            Task::none()
+        }
+        DialogMessage::AuthPromptSubmit => {
+            if let Some(dialog) = portal.dialogs.auth_prompt_mut() {
+                dialog.submit();
+                tracing::info!("Keyboard-interactive responses submitted");
+            }
+            portal.dialogs.close();
+            Task::none()
+        }
+        DialogMessage::AuthPromptCancel => {
+            if let Some(dialog) = portal.dialogs.auth_prompt_mut() {
+                dialog.cancel();
+                tracing::info!("Keyboard-interactive authentication cancelled");
+            }
+            portal.dialogs.close();
+            Task::none()
+        }
         DialogMessage::HostKeyVerification(mut wrapper) => {
             if let Some(request) = wrapper.0.take() {
                 portal
@@ -391,10 +431,15 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
 
                     match connection_kind {
                         PasswordConnectionKind::Ssh => {
+                            let Some(jump_chain) = portal.resolved_jump_chain(&host) else {
+                                return Task::none();
+                            };
                             let session_id = uuid::Uuid::new_v4();
                             let should_detect_os =
                                 connection::should_detect_os(host.detected_os.as_ref());
                             let dialog_host_name = host.name.clone();
+                            let protocol_label =
+                                crate::app::actions::ssh_protocol_label(&jump_chain);
                             let task = connection::ssh_connect_tasks_with_password(
                                 host,
                                 session_id,
@@ -402,17 +447,21 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                                 portal.terminal_initial_size(),
                                 should_detect_os,
                                 portal.prefs.allow_agent_forwarding,
+                                jump_chain,
                                 password,
                             );
                             return portal.begin_connecting(
                                 dialog_host_name,
-                                "SSH",
+                                &protocol_label,
                                 session_id,
                                 task,
                             );
                         }
                         PasswordConnectionKind::Sftp => {
                             if let Some(ctx) = sftp_context {
+                                let Some(jump_chain) = portal.resolved_jump_chain(&host) else {
+                                    return Task::none();
+                                };
                                 let sftp_session_id = uuid::Uuid::new_v4();
                                 portal.sftp.set_pending_connection(Some((
                                     ctx.tab_id,
@@ -426,6 +475,7 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                                     ctx.pane_id,
                                     sftp_session_id,
                                     host_id,
+                                    jump_chain,
                                     password,
                                 );
                             }
@@ -491,8 +541,13 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                     );
                     if let Some(host) = portal.config.hosts.find_host(request.host_id) {
                         let host = std::sync::Arc::new(host.clone());
+                        let Some(jump_chain) = portal.resolved_jump_chain(&host) else {
+                            return Task::none();
+                        };
                         if request.is_ssh {
                             if let Some(session_id) = request.session_id {
+                                let protocol_label =
+                                    crate::app::actions::ssh_protocol_label(&jump_chain);
                                 let task = connection::ssh_connect_tasks_with_passphrase(
                                     host,
                                     session_id,
@@ -500,11 +555,12 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                                     portal.terminal_initial_size(),
                                     request.should_detect_os,
                                     portal.prefs.allow_agent_forwarding,
+                                    jump_chain,
                                     cached_passphrase,
                                 );
                                 return portal.begin_connecting(
                                     request.host_name.clone(),
-                                    "SSH",
+                                    &protocol_label,
                                     session_id,
                                     task,
                                 );
@@ -516,6 +572,7 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                                 ctx.pane_id,
                                 ctx.sftp_session_id,
                                 request.host_id,
+                                jump_chain,
                                 cached_passphrase,
                             );
                         }
@@ -574,9 +631,15 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                     let host = std::sync::Arc::new(host.clone());
                     portal.dialogs.close();
 
+                    let Some(jump_chain) = portal.resolved_jump_chain(&host) else {
+                        return Task::none();
+                    };
+
                     if is_ssh {
                         if let Some(session_id) = session_id {
                             let dialog_host_name = host.name.clone();
+                            let protocol_label =
+                                crate::app::actions::ssh_protocol_label(&jump_chain);
                             let task = connection::ssh_connect_tasks_with_passphrase(
                                 host,
                                 session_id,
@@ -584,11 +647,12 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                                 portal.terminal_initial_size(),
                                 should_detect_os,
                                 portal.prefs.allow_agent_forwarding,
+                                jump_chain,
                                 passphrase,
                             );
                             return portal.begin_connecting(
                                 dialog_host_name,
-                                "SSH",
+                                &protocol_label,
                                 session_id,
                                 task,
                             );
@@ -600,6 +664,7 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                             ctx.pane_id,
                             ctx.sftp_session_id,
                             host_id,
+                            jump_chain,
                             passphrase,
                         );
                     }
@@ -629,6 +694,7 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                             "Agent" => AuthMethodChoice::Agent,
                             "Password" => AuthMethodChoice::Password,
                             "PublicKey" => AuthMethodChoice::PublicKey,
+                            "KeyboardInteractive" => AuthMethodChoice::KeyboardInteractive,
                             _ => dialog_state.auth_method,
                         };
                     }
@@ -655,6 +721,7 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                         key_path: None,
                         vault_key_id: None,
                     },
+                    AuthMethodChoice::KeyboardInteractive => AuthMethod::KeyboardInteractive,
                 };
 
                 let now = chrono::Utc::now();
@@ -671,6 +738,7 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                     agent_forwarding: false,
                     port_forwards: Vec::new(),
                     hub_routing: HubRouting::Auto,
+                    jump_host_id: None,
                     group_id: None,
                     notes: None,
                     tags: vec![],
@@ -754,6 +822,7 @@ mod tests {
             agent_forwarding: false,
             port_forwards: Vec::new(),
             hub_routing: HubRouting::Auto,
+            jump_host_id: None,
             group_id: Some(Uuid::new_v4()),
             notes: None,
             tags: Vec::new(),

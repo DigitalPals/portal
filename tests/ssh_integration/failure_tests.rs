@@ -48,6 +48,7 @@ async fn test_stale_pooled_connection_is_invalidated_after_server_restart() {
     let (session1, _detected_os1) = client
         .connect(
             &host,
+            &[],
             (80, 24),
             event_tx1,
             Duration::from_secs(10),
@@ -71,6 +72,7 @@ async fn test_stale_pooled_connection_is_invalidated_after_server_restart() {
     let (session2, _detected_os2) = client
         .connect(
             &host,
+            &[],
             (80, 24),
             event_tx2,
             Duration::from_secs(10),

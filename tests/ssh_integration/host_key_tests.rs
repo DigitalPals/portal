@@ -67,6 +67,7 @@ async fn test_unknown_host_prompts_verification() {
     let result = client
         .connect(
             &host,
+            &[],
             (80, 24),
             event_tx,
             Duration::from_secs(10),
@@ -130,6 +131,7 @@ async fn test_known_host_no_prompt() {
         let result = client
             .connect(
                 &host,
+                &[],
                 (80, 24),
                 event_tx,
                 Duration::from_secs(10),
@@ -166,6 +168,7 @@ async fn test_known_host_no_prompt() {
         let result = client
             .connect(
                 &host,
+                &[],
                 (80, 24),
                 event_tx,
                 Duration::from_secs(10),
@@ -226,6 +229,7 @@ async fn test_host_key_rejection_aborts() {
     let result = client
         .connect(
             &host,
+            &[],
             (80, 24),
             event_tx,
             Duration::from_secs(10),
@@ -310,6 +314,7 @@ async fn test_changed_host_key_detection() {
     let result = client
         .connect(
             &host,
+            &[],
             (80, 24),
             event_tx,
             Duration::from_secs(10),
@@ -378,6 +383,7 @@ async fn test_accepting_changed_key_updates_known_hosts() {
     let result = client
         .connect(
             &host,
+            &[],
             (80, 24),
             event_tx,
             Duration::from_secs(10),

@@ -17,6 +17,10 @@ pub struct SshConnectionKey {
     pub host: Arc<str>,
     pub port: u16,
     pub username: Arc<str>,
+    /// Jump-chain discriminator: direct connections use "", tunneled
+    /// connections use a stable description of the chain so a direct and a
+    /// tunneled connection to the same endpoint never share a pool slot.
+    pub via: Arc<str>,
 }
 
 impl PartialEq for SshConnectionKey {
@@ -24,6 +28,7 @@ impl PartialEq for SshConnectionKey {
         self.port == other.port
             && self.host.as_ref() == other.host.as_ref()
             && self.username.as_ref() == other.username.as_ref()
+            && self.via.as_ref() == other.via.as_ref()
     }
 }
 
@@ -32,15 +37,21 @@ impl Hash for SshConnectionKey {
         self.host.as_ref().hash(state);
         self.port.hash(state);
         self.username.as_ref().hash(state);
+        self.via.as_ref().hash(state);
     }
 }
 
 impl SshConnectionKey {
     pub fn new(host: &str, port: u16, username: &str) -> Self {
+        Self::with_via(host, port, username, "")
+    }
+
+    pub fn with_via(host: &str, port: u16, username: &str, via: &str) -> Self {
         Self {
             host: Arc::from(host),
             port,
             username: Arc::from(username),
+            via: Arc::from(via),
         }
     }
 }
@@ -51,6 +62,11 @@ pub struct SshConnection {
     agent_forwarding_enabled: Arc<AtomicBool>,
     host: Arc<str>,
     port: u16,
+    /// The jump-host connection this connection is tunneled through, if any.
+    /// Held (not read) to keep the tunnel transport alive for as long as
+    /// this connection lives (the pool only holds weak references).
+    #[allow(dead_code)]
+    tunnel_parent: Option<Arc<SshConnection>>,
 }
 
 impl std::fmt::Debug for SshConnection {
@@ -70,12 +86,34 @@ impl SshConnection {
         host: Arc<str>,
         port: u16,
     ) -> Arc<Self> {
+        Self::new_via(
+            handle,
+            remote_forwards,
+            agent_forwarding_enabled,
+            host,
+            port,
+            None,
+        )
+    }
+
+    /// Create a connection that is tunneled through `tunnel_parent` (a jump
+    /// host connection). The parent is kept alive for this connection's
+    /// entire lifetime.
+    pub fn new_via(
+        handle: Handle<ClientHandler>,
+        remote_forwards: Arc<Mutex<HashMap<uuid::Uuid, PortForward>>>,
+        agent_forwarding_enabled: Arc<AtomicBool>,
+        host: Arc<str>,
+        port: u16,
+        tunnel_parent: Option<Arc<SshConnection>>,
+    ) -> Arc<Self> {
         Arc::new(Self {
             handle: Arc::new(Mutex::new(handle)),
             remote_forwards,
             agent_forwarding_enabled,
             host,
             port,
+            tunnel_parent,
         })
     }
 
@@ -198,6 +236,18 @@ mod tests {
         assert_ne!(a, c);
         assert_ne!(a, d);
         assert_ne!(a, e);
+    }
+
+    #[test]
+    fn tunneled_and_direct_keys_are_distinct() {
+        let direct = SshConnectionKey::new("example.com", 22, "user");
+        let tunneled = SshConnectionKey::with_via("example.com", 22, "user", "bastion-id");
+        let tunneled_same = SshConnectionKey::with_via("example.com", 22, "user", "bastion-id");
+        let tunneled_other = SshConnectionKey::with_via("example.com", 22, "user", "other-id");
+
+        assert_ne!(direct, tunneled);
+        assert_eq!(tunneled, tunneled_same);
+        assert_ne!(tunneled, tunneled_other);
     }
 
     #[tokio::test]

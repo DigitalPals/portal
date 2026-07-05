@@ -840,6 +840,11 @@ impl Portal {
             return Task::none();
         }
 
+        // Resolve the ProxyJump chain (cycle/depth guarded) up front.
+        let Some(jump_chain) = self.resolved_jump_chain(host) else {
+            return Task::none();
+        };
+
         // Use Arc to avoid multiple deep clones of Host data
         let dialog_host_name = host.name.clone();
         let host = Arc::new(host.clone());
@@ -848,6 +853,7 @@ impl Portal {
 
         let should_detect_os = connection::should_detect_os(host.detected_os.as_ref());
         let terminal_size = self.terminal_initial_size();
+        let protocol_label = ssh_protocol_label(&jump_chain);
 
         let task = connection::ssh_connect_tasks(
             host,
@@ -856,9 +862,22 @@ impl Portal {
             terminal_size,
             should_detect_os,
             self.prefs.allow_agent_forwarding,
+            jump_chain,
         );
 
-        self.begin_connecting(dialog_host_name, "SSH", session_id, task)
+        self.begin_connecting(dialog_host_name, &protocol_label, session_id, task)
+    }
+
+    /// Resolve the jump-host chain for `host`, surfacing configuration errors
+    /// (missing hosts, cycles, excessive depth) as an error toast.
+    pub(crate) fn resolved_jump_chain(&mut self, host: &Host) -> Option<Vec<Host>> {
+        match crate::ssh::tunnel::resolve_jump_chain(&self.config.hosts.hosts, host) {
+            Ok(chain) => Some(chain),
+            Err(error) => {
+                self.toast_manager.push(Toast::error(error.to_string()));
+                None
+            }
+        }
     }
 
     /// Spawn a local terminal session
@@ -981,6 +1000,11 @@ impl Portal {
             return Task::none();
         }
 
+        // Resolve the ProxyJump chain (cycle/depth guarded) up front.
+        let Some(jump_chain) = self.resolved_jump_chain(host) else {
+            return Task::none();
+        };
+
         // Use Arc to avoid multiple deep clones of Host data
         let host = Arc::new(host.clone());
         let sftp_session_id = Uuid::new_v4();
@@ -990,7 +1014,7 @@ impl Portal {
         self.sftp
             .set_pending_connection(Some((tab_id, pane_id, host_id)));
 
-        connection::sftp_connect_tasks(host, tab_id, pane_id, sftp_session_id, host_id)
+        connection::sftp_connect_tasks(host, tab_id, pane_id, sftp_session_id, host_id, jump_chain)
     }
 
     /// Handle context menu actions for SFTP panes
@@ -1473,6 +1497,18 @@ impl Portal {
         let task = sftp_transfer_task(transfer_id, request, cancel_requested);
         let (task, _handle) = task.abortable();
         task
+    }
+}
+
+/// Label for the connecting dialog: "SSH" or "SSH via <jump chain>".
+pub(crate) fn ssh_protocol_label(jump_chain: &[Host]) -> String {
+    if jump_chain.is_empty() {
+        "SSH".to_string()
+    } else {
+        format!(
+            "SSH via {}",
+            crate::ssh::tunnel::describe_chain(jump_chain)
+        )
     }
 }
 

@@ -122,6 +122,7 @@ pub fn portal_hub_onboarding_dialog_view(
                 crate::config::AuthMethod::Agent => "SSH Agent",
                 crate::config::AuthMethod::PublicKey { .. } => "Public Key",
                 crate::config::AuthMethod::Password => "Password",
+                crate::config::AuthMethod::KeyboardInteractive => "Keyboard Interactive",
             };
             host_rows = host_rows.push(
                 row![

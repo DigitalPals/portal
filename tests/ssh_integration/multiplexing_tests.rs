@@ -33,6 +33,7 @@ async fn test_reuse_connection_ignores_bad_password_for_second_session() {
     let (session1, _detected_os1) = client
         .connect(
             &host,
+            &[],
             (80, 24),
             event_tx1,
             Duration::from_secs(10),
@@ -51,6 +52,7 @@ async fn test_reuse_connection_ignores_bad_password_for_second_session() {
     let result = client
         .connect(
             &host,
+            &[],
             (80, 24),
             event_tx2,
             Duration::from_secs(10),
@@ -93,6 +95,7 @@ async fn test_ssh_and_sftp_share_connection_pool() {
     let (ssh_session, _detected_os) = ssh_client
         .connect(
             &host,
+            &[],
             (80, 24),
             event_tx,
             Duration::from_secs(10),
@@ -112,6 +115,7 @@ async fn test_ssh_and_sftp_share_connection_pool() {
     let result = sftp_client
         .connect(
             &host,
+            &[],
             sftp_event_tx,
             Duration::from_secs(10),
             Some(password_bad),

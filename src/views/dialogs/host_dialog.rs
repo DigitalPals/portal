@@ -51,6 +51,8 @@ pub struct HostDialogState {
     pub vnc_password_id: Option<Uuid>,
     pub agent_forwarding: bool,
     pub hub_routing: HubRouting,
+    /// Jump (bastion) host to tunnel through
+    pub jump_host_id: Option<Uuid>,
     pub tags: String,
     pub notes: String,
     /// Connection protocol
@@ -154,6 +156,7 @@ pub enum AuthMethodChoice {
     Agent,
     Password,
     PublicKey,
+    KeyboardInteractive,
 }
 
 impl std::fmt::Display for AuthMethodChoice {
@@ -162,16 +165,49 @@ impl std::fmt::Display for AuthMethodChoice {
             AuthMethodChoice::Agent => write!(f, "SSH Agent"),
             AuthMethodChoice::Password => write!(f, "Password"),
             AuthMethodChoice::PublicKey => write!(f, "Public Key"),
+            AuthMethodChoice::KeyboardInteractive => write!(f, "Keyboard Interactive"),
         }
     }
 }
 
 impl AuthMethodChoice {
-    pub const ALL: [AuthMethodChoice; 3] = [
+    pub const ALL: [AuthMethodChoice; 4] = [
         AuthMethodChoice::Agent,
         AuthMethodChoice::Password,
         AuthMethodChoice::PublicKey,
+        AuthMethodChoice::KeyboardInteractive,
     ];
+}
+
+/// Option entry for the jump host picker ("None" or another SSH host)
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JumpHostOption {
+    pub id: Option<Uuid>,
+    pub label: String,
+}
+
+impl JumpHostOption {
+    pub fn none() -> Self {
+        Self {
+            id: None,
+            label: "None (direct)".to_string(),
+        }
+    }
+}
+
+impl From<&Host> for JumpHostOption {
+    fn from(host: &Host) -> Self {
+        Self {
+            id: Some(host.id),
+            label: host.name.clone(),
+        }
+    }
+}
+
+impl std::fmt::Display for JumpHostOption {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.label)
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -327,6 +363,7 @@ impl HostDialogState {
             vnc_password_id: None,
             agent_forwarding: false,
             hub_routing: HubRouting::Auto,
+            jump_host_id: None,
             tags: String::new(),
             notes: String::new(),
             protocol: ProtocolChoice::Ssh,
@@ -350,6 +387,7 @@ impl HostDialogState {
                 AuthMethod::Agent => AuthMethodChoice::Agent,
                 AuthMethod::Password => AuthMethodChoice::Password,
                 AuthMethod::PublicKey { .. } => AuthMethodChoice::PublicKey,
+                AuthMethod::KeyboardInteractive => AuthMethodChoice::KeyboardInteractive,
             },
             key_source: match &host.auth {
                 AuthMethod::PublicKey {
@@ -372,6 +410,7 @@ impl HostDialogState {
             vnc_password_id: host.vnc_password_id,
             agent_forwarding: host.agent_forwarding,
             hub_routing: host.hub_routing,
+            jump_host_id: host.jump_host_id,
             tags: host.tags.join(", "),
             notes: host.notes.clone().unwrap_or_default(),
             protocol: match host.protocol {
@@ -449,6 +488,7 @@ impl HostDialogState {
         let auth = match self.auth_method {
             AuthMethodChoice::Agent => AuthMethod::Agent,
             AuthMethodChoice::Password => AuthMethod::Password,
+            AuthMethodChoice::KeyboardInteractive => AuthMethod::KeyboardInteractive,
             AuthMethodChoice::PublicKey => AuthMethod::PublicKey {
                 key_path: if self.key_source == KeySourceChoice::Local
                     && !self.key_path.trim().is_empty()
@@ -496,10 +536,20 @@ impl HostDialogState {
             false
         };
 
-        let hub_routing = if protocol == Protocol::Ssh && !matches!(auth, AuthMethod::Password) {
+        let hub_routing = if protocol == Protocol::Ssh
+            && !matches!(
+                auth,
+                AuthMethod::Password | AuthMethod::KeyboardInteractive
+            ) {
             self.hub_routing
         } else {
             HubRouting::Auto
+        };
+
+        let jump_host_id = if protocol == Protocol::Ssh {
+            self.jump_host_id.filter(|id| Some(*id) != self.editing_id)
+        } else {
+            None
         };
 
         let vnc_port = if protocol == Protocol::Vnc && port != 5900 {
@@ -532,6 +582,7 @@ impl HostDialogState {
             agent_forwarding,
             port_forwards,
             hub_routing,
+            jump_host_id,
             group_id: None,
             notes,
             tags,
@@ -567,6 +618,7 @@ pub fn host_dialog_view(
     fonts: ScaledFonts,
     vault_keys: Vec<VaultKeyOption>,
     vault_vnc_passwords: Vec<VncPasswordOption>,
+    jump_host_options: Vec<JumpHostOption>,
     hub_configured: bool,
     hub_default_on: bool,
 ) -> Element<'static, Message> {
@@ -793,8 +845,47 @@ pub fn host_dialog_view(
     // Routing group: Auto / Direct / Always Hub segmented control with a
     // live explanation line. Transport routing is separated from security
     // decisions (agent forwarding) below.
+    // Jump host picker: connect through another SSH host first (ProxyJump)
+    let jump_host_section: Element<'static, Message> = if !is_vnc {
+        let selected_jump_id = state.jump_host_id;
+        let mut options = Vec::with_capacity(jump_host_options.len() + 1);
+        options.push(JumpHostOption::none());
+        options.extend(jump_host_options);
+        let selected = options
+            .iter()
+            .find(|option| option.id == selected_jump_id)
+            .cloned()
+            .unwrap_or_else(JumpHostOption::none);
+
+        column![
+            text("Jump Host")
+                .size(fonts.label)
+                .color(theme.text_secondary),
+            pick_list(options, Some(selected), |choice| {
+                Message::Dialog(DialogMessage::FieldChanged(
+                    HostDialogField::JumpHostId,
+                    choice.id.map(|id| id.to_string()).unwrap_or_default(),
+                ))
+            })
+            .width(Length::Fill)
+            .padding(8)
+            .style(dialog_pick_list_style(theme))
+            .menu_style(dialog_pick_list_menu_style(theme)),
+            text("Tunnel this connection through another SSH host (ProxyJump).")
+                .size(fonts.small)
+                .color(theme.text_tertiary),
+        ]
+        .spacing(4)
+        .into()
+    } else {
+        column![].into()
+    };
+
     let routing_section: Element<'static, Message> = if !is_vnc {
-        if auth_method == AuthMethodChoice::Password {
+        if matches!(
+            auth_method,
+            AuthMethodChoice::Password | AuthMethodChoice::KeyboardInteractive
+        ) {
             column![
                 text("Routing")
                     .size(fonts.label)
@@ -1268,6 +1359,7 @@ pub fn host_dialog_view(
         section_heading("SSH", theme, fonts),
         auth_picker,
         key_path_section,
+        jump_host_section,
         routing_section,
         security_section,
     ]

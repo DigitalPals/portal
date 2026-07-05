@@ -231,6 +231,7 @@ impl SshTestEnvironment {
             vnc_password_id: None,
             port_forwards: Vec::new(),
             hub_routing: portal::config::hosts::HubRouting::Auto,
+            jump_host_id: None,
             group_id: None,
             notes: None,
             tags: vec![],

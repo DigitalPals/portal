@@ -54,6 +54,7 @@ async fn test_wrong_password() {
     let result = client
         .connect(
             &host,
+            &[],
             (80, 24),
             event_tx,
             Duration::from_secs(10),
@@ -95,6 +96,7 @@ async fn test_nonexistent_user() {
     let result = client
         .connect(
             &host,
+            &[],
             (80, 24),
             event_tx,
             Duration::from_secs(10),
@@ -137,6 +139,7 @@ async fn test_invalid_key_path() {
     let result = client
         .connect(
             &host,
+            &[],
             (80, 24),
             event_tx,
             Duration::from_secs(10),
@@ -180,6 +183,7 @@ async fn test_wrong_passphrase() {
     let result = client
         .connect(
             &host,
+            &[],
             (80, 24),
             event_tx,
             Duration::from_secs(10),
@@ -226,6 +230,7 @@ async fn test_connection_refused() {
     let result = client
         .connect(
             &host,
+            &[],
             (80, 24),
             event_tx,
             Duration::from_secs(5),
@@ -259,6 +264,7 @@ async fn test_connection_timeout() {
         vnc_password_id: None,
         port_forwards: Vec::new(),
         hub_routing: portal::config::hosts::HubRouting::Auto,
+        jump_host_id: None,
         group_id: None,
         notes: None,
         tags: vec![],
@@ -282,6 +288,7 @@ async fn test_connection_timeout() {
     let result = client
         .connect(
             &host,
+            &[],
             (80, 24),
             event_tx,
             Duration::from_secs(2), // Short timeout

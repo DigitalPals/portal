@@ -11,8 +11,8 @@ use crate::config::hosts::HubRouting;
 use crate::config::settings::PortalHubSettings;
 use crate::config::{DetectedOs, Host, PortForwardKind};
 use crate::message::{
-    DialogMessage, Message, PassphraseRequest, PassphraseSftpContext, SessionId, SessionMessage,
-    SftpMessage, VerificationRequestWrapper,
+    AuthPromptRequestWrapper, DialogMessage, Message, PassphraseRequest, PassphraseSftpContext,
+    SessionId, SessionMessage, SftpMessage, VerificationRequestWrapper,
 };
 use crate::proxy::{ListedProxySession, ProxyEvent, ProxySession, ProxySessionTarget};
 use crate::sftp::SftpClient;
@@ -24,10 +24,8 @@ use crate::views::sftp::PaneId;
 const SSH_EVENT_CHANNEL_CAPACITY: usize = 1024;
 const SSH_DATA_COALESCE_LIMIT: usize = 256 * 1024;
 const SSH_KEEPALIVE_INTERVAL_SECS: u64 = 60;
-const DEFAULT_CREDENTIAL_TIMEOUT: u64 = 300; // 5 minutes
 
 static KNOWN_HOSTS_MANAGER: OnceLock<Arc<Mutex<KnownHostsManager>>> = OnceLock::new();
-static PASSPHRASE_CACHE: OnceLock<Arc<PassphraseCache>> = OnceLock::new();
 
 enum SshAuth {
     None,
@@ -67,22 +65,16 @@ pub fn shared_known_hosts_manager() -> Arc<Mutex<KnownHostsManager>> {
         .clone()
 }
 
-/// Get the shared passphrase cache instance
+/// Get the shared passphrase cache instance (shared with the SSH layer so
+/// jump-host connections can reuse cached key passphrases).
 pub fn shared_passphrase_cache() -> Arc<PassphraseCache> {
-    PASSPHRASE_CACHE
-        .get_or_init(|| Arc::new(PassphraseCache::new(DEFAULT_CREDENTIAL_TIMEOUT)))
-        .clone()
+    crate::ssh::passphrase_cache::shared_cache()
 }
 
 /// Initialize the passphrase cache with a custom timeout
 pub fn init_passphrase_cache(timeout_seconds: u64) {
-    if let Some(cache) = PASSPHRASE_CACHE.get() {
-        // Apply updates at runtime; this only affects new entries.
-        cache.set_timeout(timeout_seconds);
-        return;
-    }
-
-    let _ = PASSPHRASE_CACHE.get_or_init(|| Arc::new(PassphraseCache::new(timeout_seconds)));
+    // Apply updates at runtime; this only affects new entries.
+    shared_passphrase_cache().set_timeout(timeout_seconds);
 }
 
 pub fn should_detect_os(detected_os: Option<&DetectedOs>) -> bool {
@@ -118,6 +110,9 @@ fn ssh_event_listener(session_id: SessionId, event_rx: mpsc::Receiver<SshEvent>)
             SshEvent::HostKeyVerification(request) => Message::Dialog(
                 DialogMessage::HostKeyVerification(VerificationRequestWrapper(Some(request))),
             ),
+            SshEvent::AuthPrompt(request) => Message::Dialog(DialogMessage::AuthPrompt(
+                AuthPromptRequestWrapper(Some(request)),
+            )),
             SshEvent::Connected => Message::Noop,
         },
     )
@@ -170,6 +165,9 @@ fn sftp_event_listener(event_rx: mpsc::Receiver<SshEvent>) -> Task<Message> {
             SshEvent::HostKeyVerification(request) => Message::Dialog(
                 DialogMessage::HostKeyVerification(VerificationRequestWrapper(Some(request))),
             ),
+            SshEvent::AuthPrompt(request) => Message::Dialog(DialogMessage::AuthPrompt(
+                AuthPromptRequestWrapper(Some(request)),
+            )),
             _ => Message::Noop,
         },
     )
@@ -301,6 +299,7 @@ pub fn proxy_resume_tasks(
     Task::batch([event_listener, connect_task])
 }
 
+#[allow(clippy::too_many_arguments)]
 fn ssh_connect_tasks_with_auth(
     host: Arc<Host>,
     session_id: SessionId,
@@ -308,6 +307,7 @@ fn ssh_connect_tasks_with_auth(
     terminal_size: (u16, u16),
     should_detect_os: bool,
     allow_agent_forwarding: bool,
+    jump_chain: Vec<Host>,
     auth: SshAuth,
 ) -> Task<Message> {
     let (event_tx, event_rx) = mpsc::channel::<SshEvent>(SSH_EVENT_CHANNEL_CAPACITY);
@@ -322,6 +322,7 @@ fn ssh_connect_tasks_with_auth(
             let result = ssh_client
                 .connect(
                     &host_for_task,
+                    &jump_chain,
                     terminal_size,
                     event_tx,
                     Duration::from_secs(30),
@@ -388,6 +389,7 @@ pub fn ssh_connect_tasks(
     terminal_size: (u16, u16),
     should_detect_os: bool,
     allow_agent_forwarding: bool,
+    jump_chain: Vec<Host>,
 ) -> Task<Message> {
     ssh_connect_tasks_with_auth(
         host,
@@ -396,11 +398,13 @@ pub fn ssh_connect_tasks(
         terminal_size,
         should_detect_os,
         allow_agent_forwarding,
+        jump_chain,
         SshAuth::None,
     )
 }
 
 /// SSH connection tasks with password authentication
+#[allow(clippy::too_many_arguments)]
 pub fn ssh_connect_tasks_with_password(
     host: Arc<Host>,
     session_id: SessionId,
@@ -408,6 +412,7 @@ pub fn ssh_connect_tasks_with_password(
     terminal_size: (u16, u16),
     should_detect_os: bool,
     allow_agent_forwarding: bool,
+    jump_chain: Vec<Host>,
     password: SecretString,
 ) -> Task<Message> {
     ssh_connect_tasks_with_auth(
@@ -417,11 +422,13 @@ pub fn ssh_connect_tasks_with_password(
         terminal_size,
         should_detect_os,
         allow_agent_forwarding,
+        jump_chain,
         SshAuth::Password(password),
     )
 }
 
 /// SSH connection tasks with key passphrase authentication
+#[allow(clippy::too_many_arguments)]
 pub fn ssh_connect_tasks_with_passphrase(
     host: Arc<Host>,
     session_id: SessionId,
@@ -429,6 +436,7 @@ pub fn ssh_connect_tasks_with_passphrase(
     terminal_size: (u16, u16),
     should_detect_os: bool,
     allow_agent_forwarding: bool,
+    jump_chain: Vec<Host>,
     passphrase: SecretString,
 ) -> Task<Message> {
     ssh_connect_tasks_with_auth(
@@ -438,6 +446,7 @@ pub fn ssh_connect_tasks_with_passphrase(
         terminal_size,
         should_detect_os,
         allow_agent_forwarding,
+        jump_chain,
         SshAuth::Passphrase(passphrase),
     )
 }
@@ -448,6 +457,7 @@ pub fn sftp_connect_tasks(
     pane_id: PaneId,
     sftp_session_id: SessionId,
     host_id: Uuid,
+    jump_chain: Vec<Host>,
 ) -> Task<Message> {
     sftp_connect_tasks_with_auth(
         host,
@@ -455,6 +465,7 @@ pub fn sftp_connect_tasks(
         pane_id,
         sftp_session_id,
         host_id,
+        jump_chain,
         SftpAuth::None,
     )
 }
@@ -466,6 +477,7 @@ pub fn sftp_connect_tasks_with_password(
     pane_id: PaneId,
     sftp_session_id: SessionId,
     host_id: Uuid,
+    jump_chain: Vec<Host>,
     password: SecretString,
 ) -> Task<Message> {
     sftp_connect_tasks_with_auth(
@@ -474,6 +486,7 @@ pub fn sftp_connect_tasks_with_password(
         pane_id,
         sftp_session_id,
         host_id,
+        jump_chain,
         SftpAuth::Password(password),
     )
 }
@@ -485,6 +498,7 @@ pub fn sftp_connect_tasks_with_passphrase(
     pane_id: PaneId,
     sftp_session_id: SessionId,
     host_id: Uuid,
+    jump_chain: Vec<Host>,
     passphrase: SecretString,
 ) -> Task<Message> {
     sftp_connect_tasks_with_auth(
@@ -493,6 +507,7 @@ pub fn sftp_connect_tasks_with_passphrase(
         pane_id,
         sftp_session_id,
         host_id,
+        jump_chain,
         SftpAuth::Passphrase(passphrase),
     )
 }
@@ -503,6 +518,7 @@ fn sftp_connect_tasks_with_auth(
     pane_id: PaneId,
     sftp_session_id: SessionId,
     host_id: Uuid,
+    jump_chain: Vec<Host>,
     auth: SftpAuth,
 ) -> Task<Message> {
     let (event_tx, event_rx) = mpsc::channel::<SshEvent>(SSH_EVENT_CHANNEL_CAPACITY);
@@ -517,6 +533,7 @@ fn sftp_connect_tasks_with_auth(
             let result = sftp_client
                 .connect(
                     &host_for_task,
+                    &jump_chain,
                     event_tx,
                     Duration::from_secs(30),
                     password,
@@ -746,6 +763,7 @@ mod tests {
             agent_forwarding: false,
             port_forwards: Vec::new(),
             hub_routing: HubRouting::Auto,
+            jump_host_id: None,
             group_id: None,
             notes: None,
             tags: vec![],
@@ -789,6 +807,7 @@ mod tests {
             agent_forwarding: false,
             port_forwards: Vec::new(),
             hub_routing: HubRouting::Auto,
+            jump_host_id: None,
             group_id: None,
             notes: None,
             tags: vec![],
@@ -831,6 +850,7 @@ mod tests {
             agent_forwarding: false,
             port_forwards: Vec::new(),
             hub_routing: HubRouting::Hub,
+            jump_host_id: None,
             group_id: None,
             notes: None,
             tags: vec![],
