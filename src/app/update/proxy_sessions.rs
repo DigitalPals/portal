@@ -8,6 +8,9 @@ use crate::message::{Message, ProxySessionsMessage};
 use crate::proxy;
 use crate::views::toast::Toast;
 
+const ACTIVE_REFRESH_INTERVAL: Duration = Duration::from_secs(3);
+const IDLE_REFRESH_INTERVAL: Duration = Duration::from_secs(15);
+
 pub fn handle_proxy_sessions(portal: &mut Portal, msg: ProxySessionsMessage) -> Task<Message> {
     match msg {
         ProxySessionsMessage::RefreshDue(generation) => {
@@ -33,13 +36,16 @@ pub fn handle_proxy_sessions(portal: &mut Portal, msg: ProxySessionsMessage) -> 
             )
         }
         ProxySessionsMessage::Loaded(result) => {
-            match result {
+            let changed = match result {
                 Ok(sessions) => portal
                     .proxy_sessions
                     .set_sessions(sessions, &portal.config.hosts),
-                Err(error) => portal.proxy_sessions.set_error(error),
-            }
-            schedule_next_refresh(portal)
+                Err(error) => {
+                    portal.proxy_sessions.set_error(error);
+                    false
+                }
+            };
+            schedule_next_refresh(portal, changed)
         }
         ProxySessionsMessage::Resume(session_id) => {
             if portal.sessions.contains(session_id) {
@@ -131,7 +137,7 @@ pub fn handle_proxy_sessions(portal: &mut Portal, msg: ProxySessionsMessage) -> 
     }
 }
 
-fn schedule_next_refresh(portal: &Portal) -> Task<Message> {
+fn schedule_next_refresh(portal: &Portal, changed: bool) -> Task<Message> {
     if !matches!(portal.ui.active_view, View::ProxySessions)
         || !portal.prefs.portal_hub.is_configured()
     {
@@ -139,9 +145,20 @@ fn schedule_next_refresh(portal: &Portal) -> Task<Message> {
     }
 
     let generation = portal.proxy_sessions.refresh_generation;
+    let interval = if changed {
+        ACTIVE_REFRESH_INTERVAL
+    } else {
+        IDLE_REFRESH_INTERVAL
+    };
+    tracing::debug!(
+        generation,
+        changed,
+        refresh_after_ms = interval.as_millis(),
+        "scheduled Portal Hub sessions refresh"
+    );
     Task::perform(
         async move {
-            tokio::time::sleep(Duration::from_secs(3)).await;
+            tokio::time::sleep(interval).await;
             generation
         },
         |generation| Message::ProxySessions(ProxySessionsMessage::RefreshDue(generation)),

@@ -11,7 +11,7 @@ use secrecy::ExposeSecret;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::mpsc as std_mpsc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, oneshot};
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
@@ -27,7 +27,10 @@ use crate::ssh::host_key_verification::{
 };
 
 const MIN_SUPPORTED_WEB_PROXY_API_VERSION: u16 = 2;
-const SESSION_LIST_PREVIEW_BYTES: u64 = 64 * 1024;
+// Keep the dashboard cheap: previews are only thumbnails. Full-ish replay is
+// requested when actually resuming a session.
+const SESSION_LIST_PREVIEW_BYTES: u64 = 16 * 1024;
+const SESSION_RESUME_REPLAY_BYTES: u64 = 64 * 1024;
 const HUB_UPLOAD_RESPONSE_TIMEOUT: Duration = Duration::from_secs(45);
 
 #[derive(Debug)]
@@ -224,7 +227,7 @@ impl ProxySession {
             target_user: host.effective_username(),
         };
         let private_key = proxy_private_key(&host.auth)?;
-        Self::spawn_web_target(settings, &target, cols, rows, event_tx, private_key)
+        Self::spawn_web_target(settings, &target, cols, rows, event_tx, private_key, 0)
     }
 
     pub fn spawn_target(
@@ -234,7 +237,15 @@ impl ProxySession {
         rows: u16,
         event_tx: mpsc::Sender<ProxyEvent>,
     ) -> Result<Self, LocalError> {
-        Self::spawn_web_target(settings, target, cols, rows, event_tx, None)
+        Self::spawn_web_target(
+            settings,
+            target,
+            cols,
+            rows,
+            event_tx,
+            None,
+            SESSION_RESUME_REPLAY_BYTES,
+        )
     }
 
     fn spawn_web_target(
@@ -244,6 +255,7 @@ impl ProxySession {
         rows: u16,
         event_tx: mpsc::Sender<ProxyEvent>,
         private_key: Option<String>,
+        replay_bytes: u64,
     ) -> Result<Self, LocalError> {
         let (command_tx, command_rx) = mpsc::channel::<ProxyCommand>(256);
         let (ready_tx, ready_rx) = std_mpsc::sync_channel::<Result<(), String>>(1);
@@ -271,6 +283,7 @@ impl ProxySession {
                 cols,
                 rows,
                 private_key,
+                replay_bytes,
                 command_rx,
                 event_tx,
                 Some(ready_tx),
@@ -337,6 +350,7 @@ async fn run_web_terminal(
     cols: u16,
     rows: u16,
     private_key: Option<String>,
+    replay_bytes: u64,
     mut command_rx: mpsc::Receiver<ProxyCommand>,
     event_tx: mpsc::Sender<ProxyEvent>,
     mut ready_tx: Option<std_mpsc::SyncSender<Result<(), String>>>,
@@ -376,7 +390,7 @@ async fn run_web_terminal(
             target_user: target.target_user,
             cols,
             rows,
-            replay_bytes: 0,
+            replay_bytes,
             private_key,
         };
         write
@@ -660,6 +674,7 @@ fn proxy_private_key(auth: &AuthMethod) -> Result<Option<String>, LocalError> {
 pub async fn list_active_sessions(
     settings: &PortalHubSettings,
 ) -> Result<Vec<ListedProxySession>, String> {
+    let started = Instant::now();
     let hub_url = settings.effective_web_url();
     let url = format!(
         "{}/api/sessions?active=true&include_preview=true&preview_bytes={}",
@@ -690,7 +705,14 @@ pub async fn list_active_sessions(
         }
     };
 
-    raw_sessions_to_listed(raw)
+    let sessions = raw_sessions_to_listed(raw)?;
+    tracing::debug!(
+        sessions = sessions.len(),
+        preview_bytes = SESSION_LIST_PREVIEW_BYTES,
+        elapsed_ms = started.elapsed().as_millis(),
+        "listed Portal Hub sessions"
+    );
+    Ok(sessions)
 }
 
 pub async fn kill_session(settings: &PortalHubSettings, session_id: Uuid) -> Result<(), String> {
@@ -772,29 +794,49 @@ pub async fn check_proxy_status(settings: &PortalHubSettings) -> Result<ProxySta
 fn raw_sessions_to_listed(
     raw: Vec<RawListedProxySession>,
 ) -> Result<Vec<ListedProxySession>, String> {
-    raw.into_iter()
-        .filter(|session| session.active)
-        .map(|session| {
-            let preview = match session.preview_base64 {
-                Some(encoded) => BASE64
-                    .decode(encoded.as_bytes())
-                    .map_err(|error| format!("failed to decode session preview: {}", error))?,
-                None => Vec::new(),
-            };
+    let started = Instant::now();
+    let raw_count = raw.len();
+    let mut active_count = 0usize;
+    let mut preview_count = 0usize;
+    let mut preview_bytes = 0usize;
+    let mut sessions = Vec::new();
 
-            Ok(ListedProxySession {
-                session_id: session.session_id,
-                target_host: session.target_host,
-                target_port: session.target_port,
-                target_user: session.target_user,
-                created_at: session.created_at,
-                updated_at: session.updated_at,
-                last_output_at: session.last_output_at,
-                preview,
-                preview_truncated: session.preview_truncated,
-            })
-        })
-        .collect()
+    for session in raw.into_iter().filter(|session| session.active) {
+        active_count += 1;
+        let preview = match session.preview_base64 {
+            Some(encoded) => BASE64
+                .decode(encoded.as_bytes())
+                .map_err(|error| format!("failed to decode session preview: {}", error))?,
+            None => Vec::new(),
+        };
+        if !preview.is_empty() {
+            preview_count += 1;
+            preview_bytes += preview.len();
+        }
+
+        sessions.push(ListedProxySession {
+            session_id: session.session_id,
+            target_host: session.target_host,
+            target_port: session.target_port,
+            target_user: session.target_user,
+            created_at: session.created_at,
+            updated_at: session.updated_at,
+            last_output_at: session.last_output_at,
+            preview,
+            preview_truncated: session.preview_truncated,
+        });
+    }
+
+    tracing::debug!(
+        raw_sessions = raw_count,
+        active_sessions = active_count,
+        previews = preview_count,
+        preview_bytes,
+        elapsed_ms = started.elapsed().as_millis(),
+        "decoded Portal Hub session previews"
+    );
+
+    Ok(sessions)
 }
 
 async fn refreshed_portal_hub_access_token(hub_url: &str) -> Result<String, String> {

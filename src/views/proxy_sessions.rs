@@ -1,5 +1,6 @@
 use iced::widget::{Column, Row, Space, button, column, container, row, scrollable, text};
 use iced::{Alignment, Element, Fill, Length, Padding};
+use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 use crate::app::managers::{ProxySessionsState, TerminalPreviewHandle};
@@ -50,11 +51,11 @@ pub fn proxy_sessions_view<'a>(
         .last_loaded_at
         .map(|time| {
             format!(
-                "Auto-refreshes every 3s - Refreshed {}",
+                "Auto-refresh enabled - Refreshed {}",
                 time.with_timezone(&chrono::Local).format("%H:%M:%S")
             )
         })
-        .unwrap_or_else(|| "Auto-refreshes every 3s".to_string());
+        .unwrap_or_else(|| "Auto-refresh enabled".to_string());
 
     let refresh = button(row![
         icon_with_color(icons::ui::REFRESH, 14, theme.text_primary),
@@ -295,6 +296,7 @@ fn destructive_session_button<'a>(
 }
 
 pub fn terminal_thumbnail(term: TerminalPreviewHandle, theme: Theme) -> Element<'static, Message> {
+    let started = Instant::now();
     let terminal = TerminalWidget::new(term, |_| Message::Noop)
         .font_size(THUMBNAIL_FONT_SIZE)
         .font(TerminalFont::default())
@@ -302,7 +304,7 @@ pub fn terminal_thumbnail(term: TerminalPreviewHandle, theme: Theme) -> Element<
         .keybindings(KeybindingsConfig::default())
         .terminal_colors(theme.terminal);
 
-    container(terminal)
+    let thumbnail = container(terminal)
         .height(Length::Fixed(THUMBNAIL_HEIGHT))
         .width(Fill)
         .style(move |_theme| container::Style {
@@ -314,7 +316,15 @@ pub fn terminal_thumbnail(term: TerminalPreviewHandle, theme: Theme) -> Element<
             },
             ..Default::default()
         })
-        .into()
+        .into();
+    let elapsed = started.elapsed();
+    if elapsed >= Duration::from_millis(8) {
+        tracing::debug!(
+            elapsed_ms = elapsed.as_millis(),
+            "built Portal Hub session thumbnail"
+        );
+    }
+    thumbnail
 }
 
 #[cfg(test)]

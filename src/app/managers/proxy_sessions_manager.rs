@@ -1,4 +1,6 @@
 use chrono::{DateTime, Utc};
+use std::collections::HashMap;
+use std::time::Instant;
 use uuid::Uuid;
 
 use crate::config::{HostsConfig, Protocol};
@@ -54,11 +56,52 @@ impl ProxySessionsState {
         self.last_loaded_at = Some(Utc::now());
     }
 
-    pub fn set_sessions(&mut self, sessions: Vec<ListedProxySession>, hosts: &HostsConfig) {
-        self.sessions = sessions
-            .into_iter()
-            .map(|session| ProxySessionCard::from_listed(session, hosts))
+    /// Replace the session list while preserving preview terminal state for
+    /// cards whose rendered preview has not changed. Returns true when the
+    /// dashboard contents changed enough to justify fast follow-up polling.
+    pub fn set_sessions(&mut self, sessions: Vec<ListedProxySession>, hosts: &HostsConfig) -> bool {
+        let started = Instant::now();
+        let previous_order: Vec<Uuid> = self
+            .sessions
+            .iter()
+            .map(|session| session.session_id)
             .collect();
+        let incoming_order: Vec<Uuid> = sessions.iter().map(|session| session.session_id).collect();
+        let mut existing_by_id: HashMap<Uuid, ProxySessionCard> = self
+            .sessions
+            .drain(..)
+            .map(|session| (session.session_id, session))
+            .collect();
+        let previous_count = existing_by_id.len();
+        let incoming_count = sessions.len();
+        let mut changed = previous_count != incoming_count || previous_order != incoming_order;
+        let mut rebuilt_previews = 0usize;
+        let mut reused_previews = 0usize;
+
+        let mut next_sessions = Vec::with_capacity(incoming_count);
+        for session in sessions {
+            if let Some(mut existing) = existing_by_id.remove(&session.session_id) {
+                if existing.preview_needs_rebuild(&session) {
+                    rebuilt_previews += 1;
+                    changed = true;
+                    next_sessions.push(ProxySessionCard::from_listed(session, hosts));
+                } else {
+                    reused_previews += 1;
+                    changed |= existing.update_metadata(session, hosts);
+                    next_sessions.push(existing);
+                }
+            } else {
+                rebuilt_previews += 1;
+                changed = true;
+                next_sessions.push(ProxySessionCard::from_listed(session, hosts));
+            }
+        }
+
+        if !existing_by_id.is_empty() {
+            changed = true;
+        }
+
+        self.sessions = next_sessions;
         self.loading = false;
         self.error = None;
         if self
@@ -68,6 +111,15 @@ impl ProxySessionsState {
             self.kill_requested = None;
         }
         self.last_loaded_at = Some(Utc::now());
+        tracing::debug!(
+            sessions = self.sessions.len(),
+            changed,
+            rebuilt_previews,
+            reused_previews,
+            elapsed_ms = started.elapsed().as_millis(),
+            "updated Portal Hub session cards"
+        );
+        changed
     }
 
     pub fn get(&self, session_id: Uuid) -> Option<&ProxySessionCard> {
@@ -116,6 +168,38 @@ impl ProxySessionCard {
             terminal,
         }
     }
+
+    fn preview_needs_rebuild(&self, session: &ListedProxySession) -> bool {
+        self.updated_at != session.updated_at
+            || self.last_output_at != session.last_output_at
+            || self.preview_truncated != session.preview_truncated
+            || self.preview != session.preview
+    }
+
+    fn update_metadata(&mut self, session: ListedProxySession, hosts: &HostsConfig) -> bool {
+        let (display_name, host_id) = display_name_for_session(&session, hosts);
+        let changed = self.host_id != host_id
+            || self.display_name != display_name
+            || self.target_host != session.target_host
+            || self.target_port != session.target_port
+            || self.target_user != session.target_user
+            || self.created_at != session.created_at
+            || self.updated_at != session.updated_at
+            || self.last_output_at != session.last_output_at
+            || self.preview_truncated != session.preview_truncated;
+
+        self.host_id = host_id;
+        self.display_name = display_name;
+        self.target_host = session.target_host;
+        self.target_port = session.target_port;
+        self.target_user = session.target_user;
+        self.created_at = session.created_at;
+        self.updated_at = session.updated_at;
+        self.last_output_at = session.last_output_at;
+        self.preview_truncated = session.preview_truncated;
+
+        changed
+    }
 }
 
 fn display_name_for_session(
@@ -145,6 +229,7 @@ fn display_name_for_session(
 #[cfg(test)]
 mod tests {
     use chrono::Utc;
+    use std::sync::Arc;
 
     use super::*;
     use crate::config::hosts::HubRouting;
@@ -231,5 +316,64 @@ mod tests {
         let card = ProxySessionCard::from_listed(session, &hosts);
 
         assert_eq!(card.preview, b"shell output");
+    }
+
+    #[test]
+    fn set_sessions_reuses_unchanged_preview_terminal() {
+        let hosts = HostsConfig::default();
+        let session = listed_session("192.0.2.206", 22, "john");
+        let mut state = ProxySessionsState::new();
+
+        assert!(state.set_sessions(vec![session.clone()], &hosts));
+        let terminal_before = state.sessions[0].terminal.term();
+
+        assert!(!state.set_sessions(vec![session], &hosts));
+        let terminal_after = state.sessions[0].terminal.term();
+
+        assert!(Arc::ptr_eq(&terminal_before, &terminal_after));
+    }
+
+    #[test]
+    fn set_sessions_rebuilds_preview_when_output_changes() {
+        let hosts = HostsConfig::default();
+        let session = listed_session("192.0.2.206", 22, "john");
+        let mut state = ProxySessionsState::new();
+
+        assert!(state.set_sessions(vec![session.clone()], &hosts));
+        let terminal_before = state.sessions[0].terminal.term();
+
+        let mut changed_session = session;
+        changed_session.last_output_at = changed_session
+            .last_output_at
+            .map(|time| time + chrono::Duration::seconds(1));
+        changed_session.updated_at += chrono::Duration::seconds(1);
+        changed_session.preview = b"new output".to_vec();
+
+        assert!(state.set_sessions(vec![changed_session], &hosts));
+        let terminal_after = state.sessions[0].terminal.term();
+
+        assert!(!Arc::ptr_eq(&terminal_before, &terminal_after));
+    }
+
+    #[test]
+    fn set_sessions_updates_display_name_without_rebuilding_preview() {
+        let mut host = ssh_host("Hermes", "192.0.2.206", 22, "john");
+        let mut hosts = HostsConfig {
+            hosts: vec![host.clone()],
+            groups: Vec::new(),
+        };
+        let session = listed_session("192.0.2.206", 22, "john");
+        let mut state = ProxySessionsState::new();
+
+        assert!(state.set_sessions(vec![session.clone()], &hosts));
+        let terminal_before = state.sessions[0].terminal.term();
+
+        host.name = "Hermes Renamed".to_string();
+        hosts.hosts = vec![host];
+        assert!(state.set_sessions(vec![session], &hosts));
+        let terminal_after = state.sessions[0].terminal.term();
+
+        assert_eq!(state.sessions[0].display_name, "Hermes Renamed");
+        assert!(Arc::ptr_eq(&terminal_before, &terminal_after));
     }
 }
