@@ -880,6 +880,7 @@ impl Portal {
                     terminal_view_with_status(
                         theme,
                         fonts,
+                        session_id,
                         &session.terminal,
                         session.session_start,
                         &session.host_name,

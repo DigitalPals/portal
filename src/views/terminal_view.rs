@@ -8,7 +8,6 @@ use std::time::Instant;
 use iced::widget::{button, column, container, row, stack, text, text_input};
 use iced::{Alignment, Color, Element, Fill};
 use parking_lot::Mutex;
-use uuid::Uuid;
 
 use crate::config::settings::TerminalMetricAdjustments;
 use crate::fonts::TerminalFont;
@@ -34,7 +33,6 @@ pub fn terminal_search_input_id() -> iced::widget::Id {
 
 /// Terminal session state
 pub struct TerminalSession {
-    pub id: SessionId,
     pub backend: TerminalBackend,
 }
 
@@ -52,13 +50,7 @@ impl TerminalSession {
     ) -> (Self, mpsc::Receiver<TerminalEvent>) {
         let size = TerminalSize::new(columns, rows);
         let (backend, event_rx) = TerminalBackend::new(size);
-        (
-            Self {
-                id: Uuid::new_v4(),
-                backend,
-            },
-            event_rx,
-        )
+        (Self { backend }, event_rx)
     }
 
     /// Get the terminal for rendering
@@ -105,6 +97,7 @@ impl TerminalSession {
 pub fn terminal_view_with_status<'a>(
     theme: Theme,
     fonts: ScaledFonts,
+    session_id: SessionId,
     session: &'a TerminalSession,
     session_start: Instant,
     host_name: &'a str,
@@ -120,7 +113,6 @@ pub fn terminal_view_with_status<'a>(
     on_resize: impl Fn(SessionId, u16, u16) -> Message + 'a,
     on_paste: impl Fn(SessionId) -> Message + 'a,
 ) -> Element<'a, Message> {
-    let session_id = session.id;
     session.set_terminal_colors(theme.terminal);
     let metrics = TerminalMetrics::for_font_with_adjustments(
         terminal_font,
@@ -332,4 +324,82 @@ fn terminal_search_bar<'a>(
         ..Default::default()
     })
     .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::theme::{ThemeId, get_theme};
+    use iced::Point;
+
+    // Regression test setup for the search bar: its buttons must publish
+    // messages carrying the SessionManager key passed into the view, not some
+    // other id, or the handlers silently drop them (phantom-session bug).
+    fn search_bar_click_messages(offset_from_case_button: f32) -> (SessionId, Vec<Message>) {
+        let session_id = uuid::Uuid::new_v4();
+        let (session, _events) = TerminalSession::new("test");
+        let search = TerminalSearchState {
+            open: true,
+            query: "ls".to_string(),
+            ..Default::default()
+        };
+
+        let element = terminal_view_with_status(
+            get_theme(ThemeId::default()),
+            ScaledFonts::new(1.0),
+            session_id,
+            &session,
+            Instant::now(),
+            "host",
+            None,
+            16.0,
+            4.0,
+            TerminalFont::default(),
+            TerminalMetricAdjustments::default(),
+            KeybindingsConfig::default(),
+            0,
+            &search,
+            |id, bytes| Message::Session(SessionMessage::Input(id, bytes)),
+            |id, cols, rows| Message::Session(SessionMessage::Resize(id, cols, rows)),
+            |id| Message::Session(SessionMessage::Paste(id)),
+        );
+
+        let mut ui = iced_test::simulator(element);
+        let case_button = ui.find("Aa").expect("case button should be present");
+        let center = case_button
+            .visible_bounds()
+            .expect("case button should be visible")
+            .center();
+        ui.point_at(Point::new(center.x + offset_from_case_button, center.y));
+        let _ = ui.simulate(iced_test::simulator::click());
+        (session_id, ui.into_messages().collect())
+    }
+
+    #[test]
+    fn search_bar_case_button_click_toggles_case_for_the_right_session() {
+        let (session_id, messages) = search_bar_click_messages(0.0);
+        assert!(
+            messages.iter().any(|message| matches!(
+                message,
+                Message::Session(SessionMessage::Search(
+                    SearchMessage::CaseSensitiveToggled(id)
+                )) if *id == session_id
+            )),
+            "expected CaseSensitiveToggled({session_id}), got: {messages:?}"
+        );
+    }
+
+    #[test]
+    fn search_bar_close_button_click_closes_search_for_the_right_session() {
+        // The close button sits one slot (22px button + 6px spacing) right of "Aa".
+        let (session_id, messages) = search_bar_click_messages(28.0);
+        assert!(
+            messages.iter().any(|message| matches!(
+                message,
+                Message::Session(SessionMessage::Search(SearchMessage::Close(id)))
+                    if *id == session_id
+            )),
+            "expected Close({session_id}), got: {messages:?}"
+        );
+    }
 }
