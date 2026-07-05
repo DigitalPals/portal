@@ -11,8 +11,9 @@ use alacritty_terminal::grid::Dimensions;
 use alacritty_terminal::term::Config as TermConfig;
 use alacritty_terminal::term::cell::Flags as CellFlags;
 use alacritty_terminal::term::{Term, TermMode};
-use alacritty_terminal::vte::ansi::{Color as AnsiColor, CursorShape, NamedColor, Processor, Rgb};
+use alacritty_terminal::vte::ansi::{CursorShape, NamedColor, Processor, Rgb};
 use iced::Color;
+use iced::advanced::text::Shaping;
 use parking_lot::Mutex;
 use tokio::sync::mpsc;
 
@@ -242,17 +243,29 @@ impl Dimensions for TerminalSize {
     }
 }
 
-/// Information about a cell to render
+/// Information about a cell to render.
+///
+/// Colors are fully resolved (theme palette, DIM, and INVERSE swap applied) at
+/// cache-refresh time so the draw passes can read them without conversions.
 #[derive(Debug, Clone)]
 pub struct RenderCell {
     pub column: usize,
     pub line: usize,
     pub character: char,
-    pub zerowidth: String,
-    pub fg: AnsiColor,
-    pub bg: AnsiColor,
+    /// Composed display content (`character` followed by zerowidth combining
+    /// chars). `None` for the common case of a plain single-`char` cell.
+    pub content: Option<String>,
+    /// Resolved foreground color (INVERSE already applied).
+    pub fg: Color,
+    /// Resolved background color (INVERSE already applied).
+    pub bg: Color,
+    /// Whether `bg` differs from the default terminal background.
+    pub draw_bg: bool,
     pub flags: CellFlags,
     pub constraint_width: u8,
+    /// Precomputed shaping strategy: `Basic` for plain ASCII content,
+    /// `Advanced` when non-ASCII or zerowidth chars require it.
+    pub shaping: Shaping,
 }
 
 /// Cursor information for rendering

@@ -15,6 +15,7 @@ use alacritty_terminal::vte::ansi::CursorShape;
 use iced::advanced::graphics::geometry::{Frame, LineCap, Path, Stroke};
 use iced::advanced::layout::{self, Layout};
 use iced::advanced::renderer::{self, Quad};
+use iced::advanced::text::Shaping;
 use iced::advanced::widget::{self, Tree, Widget};
 use iced::advanced::{Clipboard, Shell};
 use iced::keyboard::{self, Key, Modifiers};
@@ -189,20 +190,19 @@ fn draw_text_decorations<Renderer>(
     }
 }
 
-fn push_selection_span(
-    rects: &mut Vec<Rectangle>,
+fn selection_span_rect(
     bounds: Rectangle,
     metrics: TerminalMetrics,
     line: usize,
     start_col: usize,
     end_col: usize,
-) {
-    rects.push(Rectangle {
+) -> Rectangle {
+    Rectangle {
         x: bounds.x + TERMINAL_PADDING_LEFT + start_col as f32 * metrics.cell_width,
         y: bounds.y + line as f32 * metrics.cell_height,
         width: (end_col - start_col + 1) as f32 * metrics.cell_width,
         height: metrics.cell_height,
-    });
+    }
 }
 
 /// Terminal widget for iced
@@ -324,17 +324,42 @@ impl<'a, Message> TerminalWidget<'a, Message> {
         self.cell_metrics().cell_height
     }
 
-    /// Get renderable cells from the terminal
-    fn get_cells(&self) -> Vec<RenderCell> {
+    /// Rebuild the cached render data from a single terminal snapshot.
+    ///
+    /// Takes the terminal lock once and walks the visible grid once, deriving
+    /// renderable cells (with theme colors, DIM, and INVERSE fully resolved),
+    /// cursor info, and selection spans. Reuses the cache's buffers so a
+    /// steady-state refresh performs no per-cell allocations (except the rare
+    /// zerowidth combining-char content).
+    fn refresh_render_cache(&self, cache: &mut RenderCache, colors: &TerminalColors) {
         use alacritty_terminal::vte::ansi::NamedColor;
 
         let term = self.term.lock();
         let content = term.renderable_content();
         let display_offset = content.display_offset;
+        let cursor = content.cursor;
+        let selection = content.selection;
         let rows = term.screen_lines();
         let cols = term.columns();
-        let mut row_chars = vec![vec!['\0'; cols]; rows];
-        let mut pending = Vec::new();
+
+        // Cursor: convert grid line to screen line by adding display_offset.
+        // Skip cursor if outside visible screen (scrolled out of view).
+        let cursor_screen_line = cursor.point.line.0 + display_offset as i32;
+        cache.cursor = (cursor_screen_line >= 0).then(|| CursorInfo {
+            column: cursor.point.column.0,
+            line: cursor_screen_line as usize,
+            shape: cursor.shape,
+            visible: cursor.shape != CursorShape::Hidden,
+        });
+
+        cache.cells.clear();
+        cache.selection_spans.clear();
+        // Flat rows*cols scratch buffer for nerd-font constraint lookups,
+        // reused across refreshes instead of allocating nested Vecs.
+        cache.row_chars.clear();
+        cache.row_chars.resize(rows * cols, '\0');
+
+        let mut active_span: Option<(usize, usize, usize)> = None;
 
         for indexed in content.display_iter {
             let cell = &indexed.cell;
@@ -357,7 +382,27 @@ impl<'a, Message> TerminalWidget<'a, Message> {
                 continue;
             }
 
-            row_chars[line][column] = cell.c;
+            cache.row_chars[line * cols + column] = cell.c;
+
+            // Track contiguous selection spans (in screen cell coordinates).
+            if let Some(selection) = &selection {
+                if selection.contains_cell(&indexed, cursor.point, cursor.shape) {
+                    match active_span {
+                        Some((span_line, start_col, end_col))
+                            if span_line == line && column == end_col + 1 =>
+                        {
+                            active_span = Some((span_line, start_col, column));
+                        }
+                        Some(span) => {
+                            cache.selection_spans.push(span);
+                            active_span = Some((line, column, column));
+                        }
+                        None => active_span = Some((line, column, column)),
+                    }
+                } else if let Some(span) = active_span.take() {
+                    cache.selection_spans.push(span);
+                }
+            }
 
             // Skip wide character spacer cells (placeholder for 2nd column of wide chars)
             if cell.flags.contains(CellFlags::WIDE_CHAR_SPACER) {
@@ -369,113 +414,78 @@ impl<'a, Message> TerminalWidget<'a, Message> {
                 || cell.bg != alacritty_terminal::vte::ansi::Color::Named(NamedColor::Background)
                 || !cell.flags.is_empty()
             {
-                pending.push(RenderCell {
+                // Resolve final colors once: theme palette + DIM, then INVERSE swap.
+                let mut fg = cell_fg_to_iced(cell.fg, cell.flags, colors);
+                let mut bg = ansi_to_iced_themed(cell.bg, colors);
+                if cell.flags.contains(CellFlags::INVERSE) {
+                    std::mem::swap(&mut fg, &mut bg);
+                }
+
+                let cell_content = cell.zerowidth().map(|chars| {
+                    let mut composed = String::with_capacity((chars.len() + 1) * 4);
+                    composed.push(cell.c);
+                    composed.extend(chars.iter().copied());
+                    composed
+                });
+                let shaping = if cell_content.is_none() && cell.c.is_ascii() {
+                    Shaping::Basic
+                } else {
+                    Shaping::Advanced
+                };
+
+                cache.cells.push(RenderCell {
                     column,
                     line,
                     character: cell.c,
-                    zerowidth: cell
-                        .zerowidth()
-                        .map(|chars| chars.iter().copied().collect())
-                        .unwrap_or_default(),
-                    fg: cell.fg,
-                    bg: cell.bg,
+                    content: cell_content,
+                    fg,
+                    bg,
+                    draw_bg: bg != colors.background,
                     flags: cell.flags,
                     constraint_width: 1,
+                    shaping,
                 });
             }
         }
 
-        pending
-            .into_iter()
-            .map(|mut cell| {
-                let grid_width = if cell.flags.contains(CellFlags::WIDE_CHAR) {
-                    2
-                } else {
-                    1
-                };
-                cell.constraint_width = nerd_font_attributes::constraint_width(
-                    &row_chars[cell.line],
-                    cell.column,
-                    grid_width,
-                );
-                cell
+        if let Some(span) = active_span {
+            cache.selection_spans.push(span);
+        }
+
+        drop(term);
+
+        // Second pass: constraint widths need the fully-populated row buffer.
+        let row_chars = &cache.row_chars;
+        for cell in &mut cache.cells {
+            let grid_width = if cell.flags.contains(CellFlags::WIDE_CHAR) {
+                2
+            } else {
+                1
+            };
+            let row = &row_chars[cell.line * cols..(cell.line + 1) * cols];
+            cell.constraint_width =
+                nerd_font_attributes::constraint_width(row, cell.column, grid_width);
+        }
+    }
+
+    /// Compute selection rectangles from a fresh terminal snapshot.
+    #[cfg(test)]
+    fn selection_rects(&self, bounds: Rectangle, metrics: TerminalMetrics) -> Vec<Rectangle> {
+        let colors = TerminalColors {
+            foreground: DEFAULT_FG,
+            background: DEFAULT_BG,
+            cursor: DEFAULT_FG,
+            ansi: super::colors::ANSI_COLORS,
+        };
+        let mut cache = RenderCache::default();
+        self.refresh_render_cache(&mut cache, &colors);
+        cache
+            .selection_spans
+            .iter()
+            .map(|&(line, start_col, end_col)| {
+                selection_span_rect(bounds, metrics, line, start_col, end_col)
             })
             .collect()
-    }
-
-    /// Get cursor information
-    fn get_cursor(&self) -> Option<CursorInfo> {
-        let term = self.term.lock();
-        let content = term.renderable_content();
-        let cursor = content.cursor;
-
-        // Convert grid line to screen line by adding display_offset
-        let screen_line = cursor.point.line.0 + content.display_offset as i32;
-
-        // Skip cursor if outside visible screen (scrolled out of view)
-        if screen_line < 0 {
-            return None;
-        }
-
-        Some(CursorInfo {
-            column: cursor.point.column.0,
-            line: screen_line as usize,
-            shape: cursor.shape,
-            visible: cursor.shape != CursorShape::Hidden,
-        })
-    }
-
-    fn selection_rects(&self, bounds: Rectangle, metrics: TerminalMetrics) -> Vec<Rectangle> {
-        let term = self.term.lock();
-        let content = term.renderable_content();
-        let selection = match content.selection {
-            Some(selection) => selection,
-            None => return Vec::new(),
-        };
-
-        let display_offset = content.display_offset as i32;
-        let cursor = content.cursor;
-        let rows = term.screen_lines();
-        let cols = term.columns();
-
-        let mut rects = Vec::new();
-        let mut active_span: Option<(usize, usize, usize)> = None;
-
-        for indexed in content.display_iter {
-            let screen_line = indexed.point.line.0 + display_offset;
-            if screen_line < 0 {
-                continue;
-            }
-
-            let screen_line = screen_line as usize;
-            let col = indexed.point.column.0;
-            if screen_line >= rows || col >= cols {
-                continue;
-            }
-
-            if selection.contains_cell(&indexed, cursor.point, cursor.shape) {
-                match active_span {
-                    Some((line, start_col, end_col))
-                        if line == screen_line && col == end_col + 1 =>
-                    {
-                        active_span = Some((line, start_col, col));
-                    }
-                    Some((line, start_col, end_col)) => {
-                        push_selection_span(&mut rects, bounds, metrics, line, start_col, end_col);
-                        active_span = Some((screen_line, col, col));
-                    }
-                    None => active_span = Some((screen_line, col, col)),
-                }
-            } else if let Some((line, start_col, end_col)) = active_span.take() {
-                push_selection_span(&mut rects, bounds, metrics, line, start_col, end_col);
-            }
-        }
-
-        if let Some((line, start_col, end_col)) = active_span {
-            push_selection_span(&mut rects, bounds, metrics, line, start_col, end_col);
-        }
-
-        rects
     }
 
     /// Convert pixel coordinates to terminal cell coordinates (screen-relative)
@@ -829,12 +839,39 @@ struct TerminalState {
     mouse_button: Option<u8>,
 }
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 struct RenderCache {
     cells: Vec<RenderCell>,
     cursor: Option<CursorInfo>,
+    /// Selection spans in screen cell coordinates: (line, start_col, end_col).
+    selection_spans: Vec<(usize, usize, usize)>,
+    /// Reusable flat rows*cols scratch buffer for constraint-width lookups.
+    row_chars: Vec<char>,
+    /// Theme colors the cached cells were resolved with; a theme change
+    /// invalidates the cache.
+    colors: Option<TerminalColors>,
     epoch: u64,
     needs_refresh: bool,
+}
+
+impl std::fmt::Debug for RenderCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RenderCache")
+            .field("cells", &self.cells.len())
+            .field("cursor", &self.cursor)
+            .field("selection_spans", &self.selection_spans)
+            .field("has_colors", &self.colors.is_some())
+            .field("epoch", &self.epoch)
+            .field("needs_refresh", &self.needs_refresh)
+            .finish()
+    }
+}
+
+fn terminal_colors_eq(a: &TerminalColors, b: &TerminalColors) -> bool {
+    a.foreground == b.foreground
+        && a.background == b.background
+        && a.cursor == b.cursor
+        && a.ansi == b.ansi
 }
 
 impl Default for TerminalState {
@@ -958,7 +995,7 @@ where
             let cell_width = metrics.cell_width;
             let cell_height = metrics.cell_height;
 
-            // Refresh cached render data if terminal content changed.
+            // Refresh cached render data if terminal content or theme changed.
             let mut cache = state.render_cache.borrow_mut();
             let mut needs_refresh = cache.needs_refresh;
             if let Some(epoch) = self.render_epoch.as_ref() {
@@ -970,10 +1007,18 @@ where
             } else {
                 needs_refresh = true;
             }
+            if !needs_refresh
+                && !cache
+                    .colors
+                    .as_ref()
+                    .is_some_and(|cached| terminal_colors_eq(cached, colors))
+            {
+                needs_refresh = true;
+            }
 
             if needs_refresh {
-                cache.cells = self.get_cells();
-                cache.cursor = self.get_cursor();
+                self.refresh_render_cache(&mut cache, colors);
+                cache.colors = Some(*colors);
                 cache.needs_refresh = false;
             }
 
@@ -986,45 +1031,39 @@ where
             // separators, Nerd Font icons) intentionally overhang their cell.
             // Painting backgrounds in the same pass can cover those overhangs.
             for cell in &render_cache.cells {
+                // Draw cell background if not default (inverse swap already applied)
+                if !cell.draw_bg {
+                    continue;
+                }
+
                 let x = bounds.x + TERMINAL_PADDING_LEFT + cell.column as f32 * cell_width;
                 let y = bounds.y + cell.line as f32 * cell_height;
+                let bg_width = if cell.flags.contains(CellFlags::WIDE_CHAR) {
+                    cell_width * 2.0
+                } else {
+                    cell_width
+                };
 
-                let mut fg_color = cell_fg_to_iced(cell.fg, cell.flags, colors);
-                let mut bg_color = ansi_to_iced_themed(cell.bg, colors);
-
-                if cell.flags.contains(CellFlags::INVERSE) {
-                    std::mem::swap(&mut fg_color, &mut bg_color);
-                }
-
-                // Draw cell background if not default (after inverse swap)
-                if bg_color != colors.background {
-                    let bg_width = if cell.flags.contains(CellFlags::WIDE_CHAR) {
-                        cell_width * 2.0
-                    } else {
-                        cell_width
-                    };
-
-                    renderer.fill_quad(
-                        Quad {
-                            bounds: Rectangle {
-                                x,
-                                y,
-                                width: bg_width,
-                                height: cell_height,
-                            },
-                            border: Border::default(),
-                            shadow: Shadow::default(),
-                            snap: true,
-                        },
-                        Background::Color(bg_color),
-                    );
-                }
-            }
-
-            for rect in self.selection_rects(bounds, metrics) {
                 renderer.fill_quad(
                     Quad {
-                        bounds: rect,
+                        bounds: Rectangle {
+                            x,
+                            y,
+                            width: bg_width,
+                            height: cell_height,
+                        },
+                        border: Border::default(),
+                        shadow: Shadow::default(),
+                        snap: true,
+                    },
+                    Background::Color(cell.bg),
+                );
+            }
+
+            for &(line, start_col, end_col) in &render_cache.selection_spans {
+                renderer.fill_quad(
+                    Quad {
+                        bounds: selection_span_rect(bounds, metrics, line, start_col, end_col),
                         border: Border::default(),
                         shadow: Shadow::default(),
                         snap: true,
@@ -1038,13 +1077,7 @@ where
             for cell in &render_cache.cells {
                 let x = bounds.x + TERMINAL_PADDING_LEFT + cell.column as f32 * cell_width;
                 let y = bounds.y + cell.line as f32 * cell_height;
-
-                let mut fg_color = cell_fg_to_iced(cell.fg, cell.flags, colors);
-                let mut bg_color = ansi_to_iced_themed(cell.bg, colors);
-
-                if cell.flags.contains(CellFlags::INVERSE) {
-                    std::mem::swap(&mut fg_color, &mut bg_color);
-                }
+                let fg_color = cell.fg;
 
                 // Draw character
                 if cell.character != ' ' && !cell.flags.contains(CellFlags::HIDDEN) {
@@ -1105,10 +1138,9 @@ where
 
                         // Draw the character using text renderer.
                         let text = iced::advanced::Text {
-                            content: {
-                                let mut content = cell.character.to_string();
-                                content.push_str(&cell.zerowidth);
-                                content
+                            content: match &cell.content {
+                                Some(content) => content.clone(),
+                                None => cell.character.to_string(),
                             },
                             bounds: Size::new(text_width, cell_height),
                             size: iced::Pixels(text_size),
@@ -1118,7 +1150,7 @@ where
                             font,
                             align_x: iced::alignment::Horizontal::Left.into(),
                             align_y: iced::alignment::Vertical::Top,
-                            shaping: iced::advanced::text::Shaping::Advanced,
+                            shaping: cell.shaping,
                             wrapping: iced::advanced::text::Wrapping::None,
                         };
 
@@ -1162,12 +1194,7 @@ where
 
                 let x = bounds.x + TERMINAL_PADDING_LEFT + cell.column as f32 * cell_width;
                 let y = bounds.y + cell.line as f32 * cell_height;
-                let mut fg_color = cell_fg_to_iced(cell.fg, cell.flags, colors);
-                let mut bg_color = ansi_to_iced_themed(cell.bg, colors);
-
-                if cell.flags.contains(CellFlags::INVERSE) {
-                    std::mem::swap(&mut fg_color, &mut bg_color);
-                }
+                let fg_color = cell.fg;
 
                 let decoration_width = if cell.flags.contains(CellFlags::WIDE_CHAR) {
                     cell_width * 2.0
@@ -1435,6 +1462,7 @@ where
                         _ => SelectionType::Simple,
                     };
                     self.begin_selection(selection_type, point, side);
+                    state.render_cache.borrow_mut().needs_refresh = true;
                     state.is_selecting = true;
                     state.last_drag_anchor = Some((point, side));
                     state.last_drag_update = None;
@@ -1451,6 +1479,7 @@ where
                     shell.publish((self.on_input)(bytes));
                 }
                 self.clear_selection();
+                state.render_cache.borrow_mut().needs_refresh = true;
                 state.is_selecting = false;
                 state.click_count = 0;
                 state.last_drag_anchor = None;
@@ -1554,6 +1583,7 @@ where
                         state.last_drag_anchor = Some((point, side));
                         state.last_drag_update = Some(std::time::Instant::now());
                         self.update_selection(point, side);
+                        state.render_cache.borrow_mut().needs_refresh = true;
                         shell.request_redraw();
                     }
                 }
@@ -1703,6 +1733,7 @@ where
 
                 if is_select_all {
                     self.select_visible_content();
+                    state.render_cache.borrow_mut().needs_refresh = true;
                     shell.request_redraw();
                     return;
                 }
@@ -1731,6 +1762,7 @@ where
                     );
                     if !is_nav_key {
                         self.clear_selection();
+                        state.render_cache.borrow_mut().needs_refresh = true;
                     }
                 }
 
@@ -2003,6 +2035,98 @@ mod tests {
         assert_eq!(rects[0].y, 0.0);
         assert_eq!(rects[0].width, metrics.cell_width * 4.0);
         assert_eq!(rects[0].height, metrics.cell_height);
+    }
+
+    #[test]
+    fn refresh_cache_resolves_colors_content_and_shaping() {
+        let (backend, _events) = TerminalBackend::new(TerminalSize::new(10, 3));
+        // Inverse 'A', reset, wide CJK char, then 'e' with a combining acute accent.
+        backend.process_input(b"\x1b[7mA\x1b[0m\xe4\xbd\xa0");
+        backend.process_input("e\u{0301}".as_bytes());
+
+        let widget = TerminalWidget::<()>::new(backend.term(), |_| ());
+        let colors = TerminalColors {
+            foreground: DEFAULT_FG,
+            background: DEFAULT_BG,
+            cursor: DEFAULT_FG,
+            ansi: crate::terminal::colors::ANSI_COLORS,
+        };
+        let mut cache = RenderCache::default();
+        widget.refresh_render_cache(&mut cache, &colors);
+
+        // INVERSE swaps the resolved colors at refresh time.
+        let inverse = cache
+            .cells
+            .iter()
+            .find(|c| c.character == 'A')
+            .expect("inverse cell");
+        assert_eq!(inverse.fg, colors.background);
+        assert_eq!(inverse.bg, colors.foreground);
+        assert!(inverse.draw_bg);
+        assert_eq!(inverse.shaping, Shaping::Basic);
+        assert!(inverse.content.is_none());
+
+        // Wide chars keep their grid width and need advanced shaping.
+        let wide = cache
+            .cells
+            .iter()
+            .find(|c| c.character == '你')
+            .expect("wide cell");
+        assert!(wide.flags.contains(CellFlags::WIDE_CHAR));
+        assert_eq!(wide.constraint_width, 2);
+        assert_eq!(wide.shaping, Shaping::Advanced);
+        assert!(!wide.draw_bg);
+        assert_eq!(wide.fg, colors.foreground);
+
+        // Zerowidth combining chars are composed into cached content.
+        let combined = cache
+            .cells
+            .iter()
+            .find(|c| c.character == 'e')
+            .expect("combining cell");
+        assert_eq!(combined.content.as_deref(), Some("e\u{0301}"));
+        assert_eq!(combined.shaping, Shaping::Advanced);
+
+        // The refresh also captures the cursor from the same snapshot.
+        assert!(cache.cursor.is_some());
+    }
+
+    #[test]
+    fn refresh_cache_reuses_buffers_and_tracks_selection_spans() {
+        let (backend, _events) = TerminalBackend::new(TerminalSize::new(10, 3));
+        backend.process_input(b"test");
+
+        let term = backend.term();
+        {
+            let mut term = term.lock();
+            term.selection = Some(Selection::new(
+                SelectionType::Semantic,
+                Point::new(Line(0), Column(1)),
+                Side::Left,
+            ));
+        }
+
+        let widget = TerminalWidget::<()>::new(term, |_| ());
+        let colors = TerminalColors {
+            foreground: DEFAULT_FG,
+            background: DEFAULT_BG,
+            cursor: DEFAULT_FG,
+            ansi: crate::terminal::colors::ANSI_COLORS,
+        };
+        let mut cache = RenderCache::default();
+        widget.refresh_render_cache(&mut cache, &colors);
+
+        assert_eq!(cache.selection_spans, vec![(0, 0, 3)]);
+        assert_eq!(cache.row_chars.len(), 10 * 3);
+
+        let cells_capacity = cache.cells.capacity();
+        let row_chars_ptr = cache.row_chars.as_ptr();
+
+        // A second refresh reuses the existing buffers.
+        widget.refresh_render_cache(&mut cache, &colors);
+        assert_eq!(cache.selection_spans, vec![(0, 0, 3)]);
+        assert_eq!(cache.cells.capacity(), cells_capacity);
+        assert_eq!(cache.row_chars.as_ptr(), row_chars_ptr);
     }
 
     #[test]
