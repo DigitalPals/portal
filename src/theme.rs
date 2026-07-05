@@ -83,6 +83,9 @@ pub struct Theme {
     pub accent: Color,
     pub text_primary: Color,
     pub text_secondary: Color,
+    /// Lowest-contrast text that still meets AA at small sizes (metadata,
+    /// fingerprints, timestamps). Use `text_muted` for decoration only.
+    pub text_tertiary: Color,
     pub text_muted: Color,
     pub border: Color,
     pub hover: Color,
@@ -120,6 +123,7 @@ impl Theme {
             accent: Color::from_rgb8(0x32, 0x36, 0x4A),
             text_primary: Color::from_rgb8(0xe8, 0xe8, 0xe8),
             text_secondary: Color::from_rgb8(0x9a, 0xa0, 0xb0),
+            text_tertiary: Color::from_rgb8(0x76, 0x7D, 0x93),
             text_muted: Color::from_rgb8(0x5B, 0x5F, 0x74),
             border: Color::from_rgb8(0x3a, 0x40, 0x55),
             hover: Color::from_rgb8(0x35, 0x3d, 0x50),
@@ -163,6 +167,7 @@ impl Theme {
             accent: Color::from_rgb8(0x1e, 0x66, 0xf5),     // Blue
             text_primary: Color::from_rgb8(0x4c, 0x4f, 0x69), // Text
             text_secondary: Color::from_rgb8(0x5c, 0x5f, 0x77), // Subtext1
+            text_tertiary: Color::from_rgb8(0x6c, 0x6f, 0x85), // Subtext0
             text_muted: Color::from_rgb8(0x6c, 0x6f, 0x85), // Subtext0
             border: Color::from_rgb8(0xcc, 0xd0, 0xda),     // Surface0
             hover: Color::from_rgb8(0xbc, 0xc0, 0xcc),      // Surface1
@@ -206,6 +211,7 @@ impl Theme {
             accent: Color::from_rgb8(0xba, 0xbb, 0xf1),     // Lavender
             text_primary: Color::from_rgb8(0xc6, 0xd0, 0xf5), // Text
             text_secondary: Color::from_rgb8(0xb5, 0xbf, 0xe2), // Subtext1
+            text_tertiary: Color::from_rgb8(0xa5, 0xad, 0xce), // Subtext0
             text_muted: Color::from_rgb8(0xa5, 0xad, 0xce), // Subtext0
             border: Color::from_rgb8(0x41, 0x45, 0x59),     // Surface0
             hover: Color::from_rgb8(0x51, 0x57, 0x6d),      // Surface1
@@ -249,6 +255,7 @@ impl Theme {
             accent: Color::from_rgb8(0xc6, 0xa0, 0xf6),     // Mauve
             text_primary: Color::from_rgb8(0xca, 0xd3, 0xf5), // Text
             text_secondary: Color::from_rgb8(0xb8, 0xc0, 0xe0), // Subtext1
+            text_tertiary: Color::from_rgb8(0xa5, 0xad, 0xcb), // Subtext0
             text_muted: Color::from_rgb8(0xa5, 0xad, 0xcb), // Subtext0
             border: Color::from_rgb8(0x36, 0x3a, 0x4f),     // Surface0
             hover: Color::from_rgb8(0x49, 0x4d, 0x64),      // Surface1
@@ -292,6 +299,7 @@ impl Theme {
             accent: Color::from_rgb8(0xfa, 0xb3, 0x87),     // Peach
             text_primary: Color::from_rgb8(0xcd, 0xd6, 0xf4), // Text
             text_secondary: Color::from_rgb8(0xba, 0xc2, 0xde), // Subtext1
+            text_tertiary: Color::from_rgb8(0xa6, 0xad, 0xc8), // Subtext0
             text_muted: Color::from_rgb8(0xa6, 0xad, 0xc8), // Subtext0
             border: Color::from_rgb8(0x31, 0x32, 0x44),     // Surface0
             hover: Color::from_rgb8(0x45, 0x47, 0x5a),      // Surface1
@@ -335,6 +343,7 @@ impl Theme {
             accent: Color::from_rgb8(0xf5, 0xc2, 0xe7),
             text_primary: Color::from_rgb8(0xcd, 0xd6, 0xf4),
             text_secondary: Color::from_rgb8(0xba, 0xc2, 0xde),
+            text_tertiary: Color::from_rgb8(0xa6, 0xad, 0xc8),
             text_muted: Color::from_rgb8(0xa6, 0xad, 0xc8),
             border: Color::from_rgb8(0x31, 0x32, 0x44),
             hover: Color::from_rgb8(0x45, 0x47, 0x5a),
@@ -410,6 +419,25 @@ pub const BORDER_RADIUS: f32 = 8.0;
 
 /// Border radius for cards
 pub const CARD_BORDER_RADIUS: f32 = 12.0;
+
+// Radius scale tokens (v2 polish): prefer these over per-widget literals.
+
+/// Small radius: chips, kbd hints, tiny controls
+pub const RADIUS_SM: f32 = 4.0;
+
+/// Medium radius: inputs, list rows, nested segments
+pub const RADIUS_MD: f32 = 6.0;
+
+/// Large radius: buttons, cards' inner controls
+#[allow(dead_code)]
+pub const RADIUS_LG: f32 = 10.0;
+
+/// Extra-large radius: dialogs, top-level cards
+#[allow(dead_code)]
+pub const RADIUS_XL: f32 = 14.0;
+
+/// Pill radius: badges, toggles, fully rounded controls
+pub const RADIUS_PILL: f32 = 999.0;
 
 /// Minimum card width for responsive grid
 pub const MIN_CARD_WIDTH: f32 = 260.0;

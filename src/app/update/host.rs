@@ -75,10 +75,20 @@ pub fn handle_host(portal: &mut Portal, msg: HostMessage) -> Task<Message> {
             handle_detached_proxy_sessions_loaded(portal, host_id, result)
         }
         HostMessage::Add => {
+            let prefer_vault = portal.prefs.portal_hub.is_configured()
+                && portal.prefs.portal_hub.prefer_vault_keys
+                && !portal.config.vault.keys.is_empty();
+            let default_key = portal
+                .prefs
+                .portal_hub
+                .default_vault_key_id
+                .filter(|id| portal.config.vault.keys.iter().any(|key| key.id == *id))
+                .or_else(|| portal.config.vault.keys.first().map(|key| key.id));
             portal
                 .dialogs
-                .open_host(HostDialogState::new_host_with_proxy_default(
-                    portal.prefs.portal_hub.default_for_new_ssh_hosts,
+                .open_host(HostDialogState::new_host_with_defaults(
+                    prefer_vault,
+                    default_key,
                 ));
             Task::none()
         }
@@ -216,6 +226,7 @@ mod tests {
 
     use super::*;
     use crate::config::AuthMethod;
+    use crate::config::hosts::HubRouting;
 
     fn ssh_host() -> Host {
         let now = Utc::now();
@@ -231,7 +242,7 @@ mod tests {
             vnc_password_id: None,
             agent_forwarding: false,
             port_forwards: Vec::new(),
-            portal_hub_enabled: true,
+            hub_routing: HubRouting::Hub,
             group_id: None,
             notes: None,
             tags: Vec::new(),

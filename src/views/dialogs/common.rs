@@ -95,6 +95,14 @@ pub fn primary_button_style(
     move |_iced_theme, status| {
         let (background, text_color) = match status {
             button::Status::Disabled => (theme.surface, theme.text_muted),
+            button::Status::Hovered => {
+                let bg = shift_lightness(theme.accent, 0.08);
+                (bg, theme.text_on(bg))
+            }
+            button::Status::Pressed => {
+                let bg = shift_lightness(theme.accent, -0.08);
+                (bg, theme.text_on(bg))
+            }
             _ => (theme.accent, theme.text_on_accent()),
         };
         button::Style {
@@ -106,6 +114,16 @@ pub fn primary_button_style(
             },
             ..Default::default()
         }
+    }
+}
+
+/// Shift a color's lightness by `amount` (-1.0..1.0) for hover/pressed states.
+fn shift_lightness(color: iced::Color, amount: f32) -> iced::Color {
+    iced::Color {
+        r: (color.r + amount).clamp(0.0, 1.0),
+        g: (color.g + amount).clamp(0.0, 1.0),
+        b: (color.b + amount).clamp(0.0, 1.0),
+        a: color.a,
     }
 }
 

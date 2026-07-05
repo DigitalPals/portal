@@ -251,7 +251,50 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
             }
         }
         UiMessage::PortalHubOpenOnboarding => {
+            init_portal_hub_wizard(portal);
             portal.dialogs.open_portal_hub_onboarding();
+        }
+        UiMessage::PortalHubOpenDefaultsReview => {
+            init_portal_hub_wizard(portal);
+            portal.ui.portal_hub_wizard.route_default = true;
+            portal.dialogs.open_portal_hub_onboarding();
+        }
+        UiMessage::PortalHubDefaultsPromptDismiss => {
+            portal.ui.hub_prompt_dismissed = true;
+        }
+        UiMessage::PortalHubPreferVaultKeys(enabled) => {
+            portal.prefs.portal_hub.prefer_vault_keys = enabled;
+            save_settings_and_queue_sync(portal);
+        }
+        UiMessage::PortalHubWizardToggleHost(host_id) => {
+            let excluded = &mut portal.ui.portal_hub_wizard.excluded_hosts;
+            if !excluded.remove(&host_id) {
+                excluded.insert(host_id);
+            }
+        }
+        UiMessage::PortalHubWizardToggleAdvanced => {
+            portal.ui.portal_hub_wizard.advanced_open = !portal.ui.portal_hub_wizard.advanced_open;
+        }
+        UiMessage::PortalHubWizardRouteDefault(enabled) => {
+            portal.ui.portal_hub_wizard.route_default = enabled;
+        }
+        UiMessage::PortalHubWizardPreferVault(enabled) => {
+            portal.ui.portal_hub_wizard.prefer_vault = enabled;
+        }
+        UiMessage::PortalHubWizardSyncAll(enabled) => {
+            portal.ui.portal_hub_wizard.sync_all = enabled;
+        }
+        UiMessage::PortalHubWizardApply => {
+            return apply_portal_hub_wizard(portal);
+        }
+        UiMessage::PortalHubWizardSkip => {
+            portal.prefs.portal_hub.default_for_new_ssh_hosts = false;
+            save_settings_and_queue_sync(portal);
+            portal.ui.hub_prompt_dismissed = false;
+            portal.dialogs.close();
+            portal.toast_manager.push(Toast::success(
+                "Signed in to Portal Hub — hosts still connect directly",
+            ));
         }
         UiMessage::PortalHubOpenGithub => {
             if let Err(error) = open::that("https://github.com/DigitalPals/portal-hub") {
@@ -733,6 +776,82 @@ pub(crate) fn portal_hub_sync_task(
     )
 }
 
+/// Reset the onboarding Defaults state: every eligible host selected, toggles
+/// seeded from current preferences.
+fn init_portal_hub_wizard(portal: &mut Portal) {
+    let wizard = &mut portal.ui.portal_hub_wizard;
+    wizard.excluded_hosts.clear();
+    wizard.route_default = portal.prefs.portal_hub.default_for_new_ssh_hosts
+        || !portal.prefs.portal_hub.is_configured();
+    wizard.prefer_vault = portal.prefs.portal_hub.prefer_vault_keys;
+    wizard.sync_all = portal.prefs.portal_hub.hosts_sync_enabled
+        && portal.prefs.portal_hub.settings_sync_enabled
+        && portal.prefs.portal_hub.snippets_sync_enabled
+        && portal.prefs.portal_hub.key_vault_enabled;
+    wizard.advanced_open = false;
+}
+
+/// Apply the onboarding Defaults step: write routing for every eligible host
+/// (selected hosts follow Auto, unchecked hosts become Direct) and persist the
+/// global defaults the user consented to.
+fn apply_portal_hub_wizard(portal: &mut Portal) -> Task<Message> {
+    let route_default = portal.ui.portal_hub_wizard.route_default;
+    let prefer_vault = portal.ui.portal_hub_wizard.prefer_vault;
+    let sync_all = portal.ui.portal_hub_wizard.sync_all;
+    let excluded = portal.ui.portal_hub_wizard.excluded_hosts.clone();
+
+    portal.prefs.portal_hub.default_for_new_ssh_hosts = route_default;
+    portal.prefs.portal_hub.prefer_vault_keys = prefer_vault;
+    portal.prefs.portal_hub.hosts_sync_enabled = sync_all;
+    portal.prefs.portal_hub.settings_sync_enabled = sync_all;
+    portal.prefs.portal_hub.snippets_sync_enabled = sync_all;
+    portal.prefs.portal_hub.key_vault_enabled = sync_all;
+
+    let now = chrono::Utc::now();
+    let mut enabled_count = 0usize;
+    for host in &mut portal.config.hosts.hosts {
+        if !host.hub_eligible() {
+            continue;
+        }
+        let routing = if excluded.contains(&host.id) {
+            crate::config::hosts::HubRouting::Direct
+        } else {
+            crate::config::hosts::HubRouting::Auto
+        };
+        if host.hub_routing != routing {
+            host.hub_routing = routing;
+            host.updated_at = now;
+        }
+        if routing == crate::config::hosts::HubRouting::Auto && route_default {
+            enabled_count += 1;
+        }
+    }
+    if let Err(error) = portal.config.hosts.save() {
+        tracing::error!("Failed to save hosts after Hub defaults: {}", error);
+        portal
+            .toast_manager
+            .push(Toast::error("Could not save host routing changes"));
+    }
+    save_settings_and_queue_sync(portal);
+
+    portal.ui.hub_prompt_dismissed = true;
+    portal.dialogs.close();
+    portal.toast_manager.push(Toast::success(if route_default {
+        format!(
+            "Portal Hub enabled — {} host{} now connect via Hub",
+            enabled_count,
+            if enabled_count == 1 { "" } else { "s" }
+        )
+    } else {
+        "Portal Hub defaults saved — hosts still connect directly".to_string()
+    }));
+
+    if portal.prefs.portal_hub.sync_configured() {
+        return Task::done(Message::Ui(UiMessage::PortalHubSyncNow));
+    }
+    Task::none()
+}
+
 pub(crate) fn queue_portal_hub_local_sync(portal: &mut Portal) {
     if portal.ui.portal_hub_auth_user.is_some()
         && portal.prefs.portal_hub.sync_configured()
@@ -742,7 +861,7 @@ pub(crate) fn queue_portal_hub_local_sync(portal: &mut Portal) {
     }
 }
 
-fn save_settings_and_queue_sync(portal: &mut Portal) {
+pub(crate) fn save_settings_and_queue_sync(portal: &mut Portal) {
     portal.save_settings();
     queue_portal_hub_local_sync(portal);
 }

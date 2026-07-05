@@ -14,8 +14,9 @@ use crate::icons::{self, icon_with_color};
 use crate::message::{HostMessage, Message, UiMessage};
 use crate::theme::{
     BORDER_RADIUS, CARD_BORDER_RADIUS, CARD_HEIGHT, GRID_PADDING, GRID_SPACING, MIN_CARD_WIDTH,
-    SIDEBAR_WIDTH, SIDEBAR_WIDTH_COLLAPSED, ScaledFonts, Theme,
+    RADIUS_SM, SIDEBAR_WIDTH, SIDEBAR_WIDTH_COLLAPSED, ScaledFonts, Theme,
 };
+use crate::views::components::hub_pill;
 
 /// Format a timestamp as a relative time string (e.g. "2h ago", "3d ago")
 fn format_relative_time(dt: &chrono::DateTime<chrono::Utc>) -> String {
@@ -56,6 +57,8 @@ pub struct HostCard {
     pub protocol: Protocol,
     pub last_connected: Option<chrono::DateTime<chrono::Utc>>,
     pub group_id: Option<Uuid>,
+    /// Sessions for this host currently route through Portal Hub.
+    pub via_hub: bool,
 }
 
 /// Calculate the number of columns based on available width
@@ -92,11 +95,12 @@ fn build_action_bar(
     theme: Theme,
     fonts: ScaledFonts,
 ) -> Element<'static, Message> {
-    // Search input - pill-shaped, auto-focused
+    // Omnibox: search hosts, or type user@host and press Enter to connect
     let search_input: iced::widget::TextInput<'static, Message> =
-        text_input("Search hosts...", search_query)
+        text_input("Search hosts or user@host — Enter connects", search_query)
             .id(search_input_id())
             .on_input(|s| Message::Ui(UiMessage::SearchChanged(s)))
+            .on_submit(Message::Ui(UiMessage::SearchSubmitted))
             .padding([12, 20])
             .width(Length::Fill)
             .style(move |_theme, status| {
@@ -118,36 +122,6 @@ fn build_action_bar(
                     selection: theme.selected,
                 }
             });
-
-    // Connect button - pill-shaped with border (matches New Host styling)
-    let connect_btn = button(
-        row![
-            icon_with_color(icons::ui::ZAP, 14, theme.text_primary),
-            text("Connect")
-                .size(fonts.button_small)
-                .color(theme.text_primary),
-        ]
-        .spacing(6)
-        .align_y(Alignment::Center),
-    )
-    .style(move |_theme, status| {
-        let bg = match status {
-            button::Status::Hovered => theme.hover,
-            _ => theme.background,
-        };
-        button::Style {
-            background: Some(bg.into()),
-            text_color: theme.text_primary,
-            border: iced::Border {
-                color: theme.border,
-                width: 1.0,
-                radius: 22.0.into(),
-            },
-            ..Default::default()
-        }
-    })
-    .padding([12, 20])
-    .on_press(Message::Host(HostMessage::QuickConnect));
 
     // New Host button - pill-shaped with border
     let new_host_btn = button(
@@ -213,8 +187,6 @@ fn build_action_bar(
     let bar_content = row![
         search_input,
         Space::new().width(12),
-        connect_btn,
-        Space::new().width(12),
         new_host_btn,
         Space::new().width(8),
         terminal_btn,
@@ -244,11 +216,18 @@ pub fn host_grid_view(
     fonts: ScaledFonts,
     focus_section: FocusSection,
     focus_index: Option<usize>,
+    hovered_host: Option<Uuid>,
+    live_counts: &HashMap<Uuid, usize>,
+    hub_prompt_direct_count: Option<usize>,
 ) -> Element<'static, Message> {
     // Main scrollable content
     let mut content = Column::new()
         .spacing(24)
         .padding(Padding::new(24.0).top(16.0).bottom(24.0));
+
+    if let Some(direct_count) = hub_prompt_direct_count {
+        content = content.push(hub_defaults_banner(direct_count, theme, fonts));
+    }
 
     let groups_empty = groups.is_empty();
     let hosts_empty = hosts.is_empty();
@@ -282,6 +261,8 @@ pub fn host_grid_view(
                     focus_section,
                     focus_index,
                     global_idx,
+                    hovered_host,
+                    live_counts,
                 );
                 content = content.push(section);
             }
@@ -306,6 +287,8 @@ pub fn host_grid_view(
                 focus_section,
                 focus_index,
                 global_idx,
+                hovered_host,
+                live_counts,
             );
             content = content.push(section);
         }
@@ -451,6 +434,8 @@ fn build_host_cards_grid(
     focus_section: FocusSection,
     focus_index: Option<usize>,
     global_offset: usize,
+    hovered_host: Option<Uuid>,
+    live_counts: &HashMap<Uuid, usize>,
 ) -> Element<'static, Message> {
     let mut rows: Vec<Element<'static, Message>> = Vec::new();
     let mut current_row: Vec<Element<'static, Message>> = Vec::new();
@@ -458,7 +443,11 @@ fn build_host_cards_grid(
     for (idx, host) in hosts.iter().enumerate() {
         let global_idx = global_offset + idx;
         let is_focused = focus_section == FocusSection::Content && focus_index == Some(global_idx);
-        current_row.push(host_card(host, theme, fonts, is_focused));
+        let is_hovered = hovered_host == Some(host.id);
+        let live_count = live_counts.get(&host.id).copied().unwrap_or(0);
+        current_row.push(host_card(
+            host, theme, fonts, is_focused, is_hovered, live_count,
+        ));
 
         if current_row.len() >= column_count {
             rows.push(
@@ -531,6 +520,8 @@ fn host_card(
     theme: Theme,
     fonts: ScaledFonts,
     is_focused: bool,
+    is_hovered: bool,
+    live_count: usize,
 ) -> Element<'static, Message> {
     let host_id = host.id;
 
@@ -555,29 +546,16 @@ fn host_card(
             ..Default::default()
         });
 
-    // Host info
-    let protocol_label = match &host.protocol {
-        Protocol::Ssh => "SSH",
-        Protocol::Vnc => "VNC",
-    };
-    let badge_color = match &host.protocol {
-        Protocol::Ssh => iced::Color::from_rgb8(59, 130, 246),
-        Protocol::Vnc => iced::Color::from_rgb8(139, 92, 246),
-    };
-    let badge = container(
-        text(protocol_label)
-            .size(fonts.label)
-            .color(iced::Color::WHITE),
-    )
-    .padding(Padding::from([2, 8]))
-    .style(move |_| container::Style {
-        background: Some(badge_color.into()),
-        border: iced::Border {
-            radius: 4.0.into(),
-            ..Default::default()
-        },
-        ..Default::default()
-    });
+    // Name row: host name, then a Hub pill on routed hosts. Protocol chips
+    // mark exceptions only (VNC) so color is reserved for what differs.
+    let mut name_row = Row::new().spacing(8).align_y(Alignment::Center).push(
+        text(host.name.clone())
+            .size(fonts.section)
+            .color(theme.text_primary),
+    );
+    if host.via_hub {
+        name_row = name_row.push(hub_pill(theme, fonts));
+    }
 
     // Detail row with OS and last connected
     let last_connected_text = match &host.last_connected {
@@ -599,17 +577,16 @@ fn host_card(
             .size(fonts.label)
             .color(theme.text_secondary),
     );
+    if live_count > 0 {
+        detail_row = detail_row.push(text("·").size(fonts.label).color(theme.text_muted));
+        detail_row = detail_row.push(
+            text(format!("{} live", live_count))
+                .size(fonts.label)
+                .color(theme.focus_ring),
+        );
+    }
 
-    let info = column![
-        text(host.name.clone())
-            .size(fonts.section)
-            .color(iced::Color::WHITE),
-        detail_row,
-    ]
-    .spacing(4);
-
-    // Protocol badge (top-right)
-    let top_right = column![badge].align_x(Alignment::End);
+    let info = column![name_row, detail_row].spacing(4);
 
     let icon_button = |icon: &'static [u8], message: Message| {
         button(icon_with_color(icon, 16, theme.text_secondary))
@@ -634,21 +611,46 @@ fn host_card(
             .on_press(message)
     };
 
-    let details_button: Element<'static, Message> = icon_button(
-        icons::ui::INFO,
-        Message::Host(HostMessage::DetailsOpen(host_id)),
-    )
-    .into();
-
-    let edit_button: Element<'static, Message> =
-        icon_button(icons::ui::PENCIL, Message::Host(HostMessage::Edit(host_id))).into();
-
-    // Right side: badge at top, edit button below
-    let right_side: Element<'static, Message> =
-        column![top_right, row![details_button, edit_button].spacing(2)]
-            .spacing(4)
-            .align_x(Alignment::End)
-            .into();
+    // Right side, top: VNC chip (exceptions only). Bottom: actions revealed
+    // on hover/focus to keep the resting grid quiet.
+    let mut right_side = Column::new().spacing(4).align_x(Alignment::End);
+    if host.protocol == Protocol::Vnc {
+        let vnc_color = iced::Color::from_rgb8(0xB7, 0x9A, 0xF5);
+        right_side = right_side.push(
+            container(text("VNC").size(fonts.small).color(vnc_color))
+                .padding(Padding::from([1, 8]))
+                .style(move |_| container::Style {
+                    background: Some(
+                        iced::Color {
+                            a: 0.14,
+                            ..vnc_color
+                        }
+                        .into(),
+                    ),
+                    border: iced::Border {
+                        color: iced::Color {
+                            a: 0.5,
+                            ..vnc_color
+                        },
+                        width: 1.0,
+                        radius: RADIUS_SM.into(),
+                    },
+                    ..Default::default()
+                }),
+        );
+    }
+    if is_hovered || is_focused {
+        right_side = right_side.push(
+            row![
+                icon_button(
+                    icons::ui::INFO,
+                    Message::Host(HostMessage::DetailsOpen(host_id)),
+                ),
+                icon_button(icons::ui::PENCIL, Message::Host(HostMessage::Edit(host_id))),
+            ]
+            .spacing(2),
+        );
+    }
 
     let card_content = row![icon_widget, container(info).width(Length::Fill), right_side,]
         .spacing(14)
@@ -693,11 +695,96 @@ fn host_card(
         }
     })
     .padding(0)
-    .width(Length::FillPortion(1))
+    .width(Length::Fill)
     .height(Length::Fixed(CARD_HEIGHT))
     .on_press(Message::Host(HostMessage::Connect(host_id)));
 
-    card_button.into()
+    iced::widget::mouse_area(
+        container(card_button)
+            .width(Length::FillPortion(1))
+            .height(Length::Fixed(CARD_HEIGHT)),
+    )
+    .on_enter(Message::Ui(UiMessage::HostCardHovered(Some(host_id))))
+    .on_exit(Message::Ui(UiMessage::HostCardHovered(None)))
+    .into()
+}
+
+/// Prompt shown when Portal Hub is signed in but eligible hosts still
+/// connect directly and the Hub default is off.
+fn hub_defaults_banner(
+    direct_count: usize,
+    theme: Theme,
+    fonts: ScaledFonts,
+) -> Element<'static, Message> {
+    let accent = theme.focus_ring;
+    let message = format!(
+        "{} eligible host{} still connect{} directly — Portal Hub can make their sessions persistent.",
+        direct_count,
+        if direct_count == 1 { "" } else { "s" },
+        if direct_count == 1 { "s" } else { "" },
+    );
+
+    let review_button = button(text("Review").size(fonts.label).color(accent))
+        .padding([5, 12])
+        .style(move |_theme, status| {
+            let bg = match status {
+                button::Status::Hovered => iced::Color { a: 0.22, ..accent },
+                _ => iced::Color { a: 0.12, ..accent },
+            };
+            button::Style {
+                background: Some(bg.into()),
+                text_color: accent,
+                border: iced::Border {
+                    color: iced::Color { a: 0.5, ..accent },
+                    width: 1.0,
+                    radius: BORDER_RADIUS.into(),
+                },
+                ..Default::default()
+            }
+        })
+        .on_press(Message::Ui(UiMessage::PortalHubOpenDefaultsReview));
+
+    let dismiss_button = button(icon_with_color(icons::ui::X, 12, theme.text_secondary))
+        .padding(6)
+        .style(move |_theme, status| {
+            let bg = match status {
+                button::Status::Hovered => Some(theme.hover.into()),
+                _ => None,
+            };
+            button::Style {
+                background: bg,
+                border: iced::Border {
+                    radius: RADIUS_SM.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+        })
+        .on_press(Message::Ui(UiMessage::PortalHubDefaultsPromptDismiss));
+
+    container(
+        row![
+            icon_with_color(icons::ui::INFO, 16, accent),
+            text(message).size(fonts.label).color(theme.text_primary),
+            Space::new().width(Length::Fill),
+            review_button,
+            dismiss_button,
+        ]
+        .spacing(10)
+        .align_y(Alignment::Center),
+    )
+    .padding([10, 14])
+    .width(Length::Fill)
+    .style(move |_| container::Style {
+        background: Some(iced::Color { a: 0.08, ..accent }.into()),
+        border: iced::Border {
+            color: iced::Color { a: 0.4, ..accent },
+            width: 1.0,
+            radius: BORDER_RADIUS.into(),
+        },
+        ..Default::default()
+    })
+    .into()
 }
 
 /// Empty state when no hosts are configured
@@ -722,7 +809,7 @@ fn empty_state(theme: Theme, fonts: ScaledFonts) -> Element<'static, Message> {
         )
         .style(move |_theme, status| {
             let bg = match status {
-                button::Status::Hovered => iced::Color::from_rgb8(0x00, 0x8B, 0xE8),
+                button::Status::Hovered => theme.focus_ring,
                 _ => theme.accent,
             };
             button::Style {

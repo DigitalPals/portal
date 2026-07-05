@@ -314,8 +314,69 @@ fn default_port() -> u16 {
     22
 }
 
-fn is_false(value: &bool) -> bool {
-    !*value
+/// How SSH terminal sessions for a host are routed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum HubRouting {
+    /// Follow the global Portal Hub default for eligible hosts.
+    #[default]
+    Auto,
+    /// Always connect directly, even while Hub is the default.
+    Direct,
+    /// Always route through Portal Hub, regardless of the default.
+    Hub,
+}
+
+impl HubRouting {
+    pub const ALL: [HubRouting; 3] = [HubRouting::Auto, HubRouting::Direct, HubRouting::Hub];
+
+    pub const fn label(self) -> &'static str {
+        match self {
+            HubRouting::Auto => "Auto",
+            HubRouting::Direct => "Direct",
+            HubRouting::Hub => "Always Hub",
+        }
+    }
+}
+
+fn is_auto_routing(value: &HubRouting) -> bool {
+    *value == HubRouting::Auto
+}
+
+/// Accepts the routing enum, plus the legacy `portal_hub_enabled` bool
+/// (`true` migrates to `Hub`, `false` to `Auto`).
+fn deserialize_hub_routing<'de, D>(deserializer: D) -> Result<HubRouting, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    struct RoutingVisitor;
+
+    impl serde::de::Visitor<'_> for RoutingVisitor {
+        type Value = HubRouting;
+
+        fn expecting(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            formatter.write_str("\"auto\", \"direct\", \"hub\", or a legacy bool")
+        }
+
+        fn visit_bool<E: serde::de::Error>(self, value: bool) -> Result<HubRouting, E> {
+            Ok(if value {
+                HubRouting::Hub
+            } else {
+                HubRouting::Auto
+            })
+        }
+
+        fn visit_str<E: serde::de::Error>(self, value: &str) -> Result<HubRouting, E> {
+            match value {
+                "auto" => Ok(HubRouting::Auto),
+                "direct" => Ok(HubRouting::Direct),
+                "hub" => Ok(HubRouting::Hub),
+                other => Err(E::unknown_variant(other, &["auto", "direct", "hub"])),
+            }
+        }
+    }
+
+    deserializer.deserialize_any(RoutingVisitor)
 }
 
 /// Single host configuration (SSH or VNC)
@@ -345,9 +406,16 @@ pub struct Host {
     /// SSH port forwards (-L and -R)
     #[serde(default)]
     pub port_forwards: Vec<PortForward>,
-    /// Route SSH terminal sessions for this host through Portal Hub.
-    #[serde(default, skip_serializing_if = "is_false")]
-    pub portal_hub_enabled: bool,
+    /// How SSH terminal sessions for this host are routed (Auto follows the
+    /// global Portal Hub default). Legacy `portal_hub_enabled = true` migrates
+    /// to `Hub`.
+    #[serde(
+        default,
+        alias = "portal_hub_enabled",
+        deserialize_with = "deserialize_hub_routing",
+        skip_serializing_if = "is_auto_routing"
+    )]
+    pub hub_routing: HubRouting,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub group_id: Option<Uuid>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -368,6 +436,12 @@ impl Host {
     /// Get the effective VNC port (vnc_port or default 5900)
     pub fn effective_vnc_port(&self) -> u16 {
         self.vnc_port.unwrap_or(5900)
+    }
+
+    /// Whether this host can be routed through Portal Hub at all
+    /// (SSH with agent or public-key authentication).
+    pub fn hub_eligible(&self) -> bool {
+        self.protocol == Protocol::Ssh && !matches!(self.auth, AuthMethod::Password)
     }
 
     /// Get the effective SSH username (host override or current user)
@@ -546,7 +620,7 @@ mod tests {
             auth: AuthMethod::Agent,
             agent_forwarding: false,
             port_forwards: Vec::new(),
-            portal_hub_enabled: false,
+            hub_routing: HubRouting::Auto,
             group_id: None,
             notes: None,
             tags: Vec::new(),
@@ -667,10 +741,7 @@ mod tests {
         assert!(matches!(os, DetectedOs::Unknown(s) if s.is_empty()));
     }
 
-    #[test]
-    fn host_portal_hub_enabled_defaults_false() {
-        let host: Host = toml::from_str(
-            r#"
+    const HOST_TOML_TAIL: &str = r#"
 id = "11111111-2222-4333-8444-555555555555"
 name = "Test"
 hostname = "example.com"
@@ -685,11 +756,35 @@ updated_at = "2026-04-25T00:00:00Z"
 
 [auth]
 type = "agent"
-"#,
-        )
-        .unwrap();
+"#;
 
-        assert!(!host.portal_hub_enabled);
+    #[test]
+    fn host_hub_routing_defaults_to_auto() {
+        let host: Host = toml::from_str(HOST_TOML_TAIL).unwrap();
+
+        assert_eq!(host.hub_routing, HubRouting::Auto);
+    }
+
+    #[test]
+    fn host_hub_routing_migrates_legacy_bool() {
+        let enabled: Host =
+            toml::from_str(&format!("portal_hub_enabled = true\n{}", HOST_TOML_TAIL)).unwrap();
+        let disabled: Host =
+            toml::from_str(&format!("portal_hub_enabled = false\n{}", HOST_TOML_TAIL)).unwrap();
+
+        assert_eq!(enabled.hub_routing, HubRouting::Hub);
+        assert_eq!(disabled.hub_routing, HubRouting::Auto);
+    }
+
+    #[test]
+    fn host_hub_routing_roundtrips_enum_values() {
+        for routing in HubRouting::ALL {
+            let mut host = test_host("Routing");
+            host.hub_routing = routing;
+            let serialized = toml::to_string(&host).unwrap();
+            let parsed: Host = toml::from_str(&serialized).unwrap();
+            assert_eq!(parsed.hub_routing, routing);
+        }
     }
 
     #[test]

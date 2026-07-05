@@ -50,6 +50,10 @@ pub struct SettingsPageContext {
     pub portal_hub_sync_error: Option<String>,
     pub portal_hub_sync_status: Option<String>,
     pub portal_hub_conflict_count: usize,
+    /// Hosts eligible for Hub routing (SSH + agent/public-key auth).
+    pub hub_eligible_hosts: usize,
+    /// Eligible hosts that currently resolve to Hub routing.
+    pub hub_routed_hosts: usize,
     /// Credential cache timeout in seconds (0 = disabled)
     pub credential_timeout: u64,
     pub security_audit_enabled: bool,
@@ -940,7 +944,10 @@ fn portal_hub_status_setting(
 
     let control = row![
         status_badge(badge_label, badge_tone, theme, fonts),
-        selectable_read_only_value(status_text, Length::Fixed(240.0), theme, fonts),
+        text(status_text)
+            .size(fonts.label)
+            .color(theme.text_tertiary)
+            .width(Length::Fixed(240.0)),
         check_button,
     ]
     .spacing(10)
@@ -994,7 +1001,80 @@ fn portal_hub_sections(
                 ),
             ],
         ),
+        settings_section(
+            "Defaults",
+            theme,
+            fonts,
+            portal_hub_defaults_settings(context, theme, fonts),
+        ),
         portal_hub_diagnostics_section(context, theme, fonts),
+    ]
+}
+
+/// The Defaults card: exposes `default_for_new_ssh_hosts` (previously UI-less)
+/// and the new "Prefer Vault keys" preference.
+fn portal_hub_defaults_settings(
+    context: &SettingsPageContext,
+    theme: Theme,
+    fonts: ScaledFonts,
+) -> Vec<Element<'static, Message>> {
+    let default_on = context.portal_hub.default_for_new_ssh_hosts;
+    let direct_eligible = context
+        .hub_eligible_hosts
+        .saturating_sub(context.hub_routed_hosts);
+
+    let route_caption = if default_on {
+        format!(
+            "{} eligible host{} connect via Hub · sessions persist",
+            context.hub_routed_hosts,
+            if context.hub_routed_hosts == 1 {
+                ""
+            } else {
+                "s"
+            }
+        )
+    } else {
+        "Off — hosts connect directly unless set to \"Always Hub\"".to_string()
+    };
+
+    let mut route_control = Row::new().spacing(10).align_y(Alignment::Center);
+    if default_on && direct_eligible > 0 {
+        route_control = route_control.push(
+            small_settings_button(
+                format!("{} still direct — review", direct_eligible),
+                theme,
+                fonts,
+            )
+            .on_press(Message::Ui(UiMessage::PortalHubOpenDefaultsReview)),
+        );
+    }
+    route_control = route_control.push(switch_button(
+        default_on,
+        |enabled| Message::Ui(UiMessage::PortalHubDefaultForNewHosts(enabled)),
+        theme,
+        fonts,
+    ));
+
+    vec![
+        field(
+            "Connect eligible hosts via Portal Hub",
+            route_caption,
+            route_control,
+            theme,
+            fonts,
+        ),
+        field(
+            "Prefer Vault keys",
+            "New public-key hosts start on the Vault key source with your default key preselected.",
+            switch_button(
+                context.portal_hub.prefer_vault_keys,
+                |enabled| Message::Ui(UiMessage::PortalHubPreferVaultKeys(enabled)),
+                theme,
+                fonts,
+            ),
+            theme,
+            fonts,
+        ),
     ]
 }
 
@@ -1092,7 +1172,7 @@ fn portal_hub_account_summary(
             ]
             .spacing(8)
             .align_y(Alignment::Center),
-            selectable_read_only_value(user, Length::Fixed(280.0), theme, fonts),
+            text(user).size(fonts.label).color(theme.text_tertiary),
         ]
         .spacing(4),
         Space::new().width(Length::Fill),
@@ -1214,11 +1294,18 @@ where
     } else {
         theme.border
     };
+    // Off-state knob must stay visible on the dark track (contrast bug on
+    // dark themes) — use a light knob when off, dark knob on the accent track.
+    let thumb_color = if enabled {
+        theme.background
+    } else {
+        theme.text_secondary
+    };
     let thumb = container(Space::new().width(20).height(20))
         .width(20)
         .height(20)
         .style(move |_theme| iced::widget::container::Style {
-            background: Some(theme.background.into()),
+            background: Some(thumb_color.into()),
             border: iced::Border {
                 color: iced::Color::TRANSPARENT,
                 width: 0.0,
@@ -1468,15 +1555,19 @@ fn portal_hub_diagnostic_row(
 }
 
 fn small_settings_button<'a>(
-    label: &'static str,
+    label: impl Into<String>,
     theme: Theme,
     fonts: ScaledFonts,
 ) -> iced::widget::Button<'a, Message> {
     button(
-        container(text(label).size(fonts.label).color(theme.text_primary))
-            .padding([6, 12])
-            .align_x(Alignment::Center)
-            .align_y(Alignment::Center),
+        container(
+            text(label.into())
+                .size(fonts.label)
+                .color(theme.text_primary),
+        )
+        .padding([6, 12])
+        .align_x(Alignment::Center)
+        .align_y(Alignment::Center),
     )
     .padding(0)
     .style(move |_theme, status| {

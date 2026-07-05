@@ -244,7 +244,27 @@ pub struct UiState {
     pub portal_hub_remote_sync_pending: bool,
     pub portal_hub_conflicts: Vec<SyncConflict>,
     pub portal_hub_conflict_choices: Vec<ConflictChoice>,
+    pub portal_hub_wizard: PortalHubWizardState,
+    /// True once the "eligible hosts still direct" prompt was dismissed this session.
+    pub hub_prompt_dismissed: bool,
+    /// Host card currently under the pointer (reveals per-card actions).
+    pub hovered_host_card: Option<Uuid>,
     pub hovered_drop_files: Vec<std::path::PathBuf>,
+}
+
+/// State for the Portal Hub onboarding Defaults step.
+#[derive(Debug, Default)]
+pub struct PortalHubWizardState {
+    /// Eligible hosts excluded from the bulk enable (checked by default).
+    pub excluded_hosts: std::collections::HashSet<Uuid>,
+    /// "Route eligible hosts via Portal Hub" toggle.
+    pub route_default: bool,
+    /// "Prefer Vault keys" toggle.
+    pub prefer_vault: bool,
+    /// "Enable all sync services" toggle.
+    pub sync_all: bool,
+    /// Show the host/port advanced fields in the connection step.
+    pub advanced_open: bool,
 }
 
 /// User preference state (theme, fonts, sizing).
@@ -616,6 +636,9 @@ impl Portal {
                 portal_hub_remote_sync_pending: false,
                 portal_hub_conflicts: Vec::new(),
                 portal_hub_conflict_choices: Vec::new(),
+                portal_hub_wizard: PortalHubWizardState::default(),
+                hub_prompt_dismissed: false,
+                hovered_host_card: None,
                 hovered_drop_files: Vec::new(),
             },
             tabs: Vec::new(),
@@ -746,6 +769,7 @@ impl Portal {
             self.ui.focus_section,
             self.ui.sidebar_focus_index,
             self.prefs.portal_hub.is_configured(),
+            self.proxy_sessions.sessions.len(),
         );
 
         // Main content - prioritize active sessions over sidebar selection
@@ -782,6 +806,25 @@ impl Portal {
                     portal_hub_sync_error: self.ui.portal_hub_sync_error.clone(),
                     portal_hub_sync_status: self.ui.portal_hub_sync_status.clone(),
                     portal_hub_conflict_count: self.ui.portal_hub_conflicts.len(),
+                    hub_eligible_hosts: self
+                        .config
+                        .hosts
+                        .hosts
+                        .iter()
+                        .filter(|host| host.hub_eligible())
+                        .count(),
+                    hub_routed_hosts: self
+                        .config
+                        .hosts
+                        .hosts
+                        .iter()
+                        .filter(|host| {
+                            crate::app::services::connection::should_use_portal_hub(
+                                &self.prefs.portal_hub,
+                                host,
+                            )
+                        })
+                        .count(),
                     credential_timeout: self.prefs.credential_timeout,
                     security_audit_enabled: self.prefs.security_audit_enabled,
                     security_audit_log_location: self
@@ -949,13 +992,43 @@ impl Portal {
                 state: &self.vault_ui,
                 portal_hub_configured: self.prefs.portal_hub.sync_configured(),
                 portal_hub_vault_enabled: self.prefs.portal_hub.key_vault_enabled,
+                default_key_id: self.prefs.portal_hub.default_vault_key_id,
                 theme,
                 fonts,
             }),
             View::HostGrid => {
                 let mut host_grid_cache = self.ui.host_grid_cache.borrow_mut();
-                let host_grid_cards =
-                    host_grid_cache.cards(&self.ui.search_query, &self.config.hosts);
+                let host_grid_cards = host_grid_cache.cards(
+                    &self.ui.search_query,
+                    &self.config.hosts,
+                    &self.prefs.portal_hub,
+                );
+
+                let live_session_counts = self.sessions.session_counts_by_host();
+                // Prompt when signed in to the Hub, the Hub default is off,
+                // and eligible hosts still connect directly.
+                let hub_prompt_direct_count = if self.ui.portal_hub_auth_user.is_some()
+                    && self.prefs.portal_hub.is_configured()
+                    && !self.prefs.portal_hub.default_for_new_ssh_hosts
+                    && !self.ui.hub_prompt_dismissed
+                {
+                    let direct_eligible = self
+                        .config
+                        .hosts
+                        .hosts
+                        .iter()
+                        .filter(|host| {
+                            host.hub_eligible()
+                                && !crate::app::services::connection::should_use_portal_hub(
+                                    &self.prefs.portal_hub,
+                                    host,
+                                )
+                        })
+                        .count();
+                    (direct_eligible > 0).then_some(direct_eligible)
+                } else {
+                    None
+                };
 
                 // Calculate responsive column count
                 let column_count =
@@ -977,6 +1050,9 @@ impl Portal {
                             fonts,
                             self.ui.focus_section,
                             self.ui.host_grid_focus_index,
+                            self.ui.hovered_host_card,
+                            &live_session_counts,
+                            hub_prompt_direct_count,
                         )
                     }
                     SidebarMenuItem::History => history_view(
@@ -1000,6 +1076,9 @@ impl Portal {
                             fonts,
                             self.ui.focus_section,
                             self.ui.host_grid_focus_index,
+                            self.ui.hovered_host_card,
+                            &live_session_counts,
+                            hub_prompt_direct_count,
                         )
                     }
                 }
@@ -1063,8 +1142,15 @@ impl Portal {
                     .filter(|secret| secret.kind == crate::hub::vault::VaultSecretKind::VncPassword)
                     .map(crate::views::dialogs::host_dialog::VncPasswordOption::from)
                     .collect();
-                let dialog =
-                    host_dialog_view(dialog_state, theme, fonts, vault_keys, vault_vnc_passwords);
+                let dialog = host_dialog_view(
+                    dialog_state,
+                    theme,
+                    fonts,
+                    vault_keys,
+                    vault_vnc_passwords,
+                    self.prefs.portal_hub.is_configured(),
+                    self.prefs.portal_hub.default_for_new_ssh_hosts,
+                );
                 stack![main_layout, dialog].into()
             }
             ActiveDialog::About(about_state) => {
@@ -1088,6 +1174,8 @@ impl Portal {
                     self.ui.portal_hub_auth_user.as_deref(),
                     self.ui.portal_hub_auth_error.as_deref(),
                     self.ui.portal_hub_auth_loading,
+                    &self.ui.portal_hub_wizard,
+                    &self.config.hosts,
                     theme,
                     fonts,
                 );

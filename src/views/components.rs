@@ -4,8 +4,8 @@ use iced::widget::{Column, Row, Space, button, column, container, row, text, too
 use iced::{Alignment, Element, Fill, Length, Padding};
 
 use crate::theme::{
-    BORDER_RADIUS, CARD_BORDER_RADIUS, STATUS_FAILURE, STATUS_PARTIAL, STATUS_SUCCESS, ScaledFonts,
-    Theme,
+    BORDER_RADIUS, CARD_BORDER_RADIUS, RADIUS_PILL, STATUS_FAILURE, STATUS_PARTIAL, STATUS_SUCCESS,
+    ScaledFonts, Theme,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -363,6 +363,64 @@ fn toggle_group_button<'a, Message: Clone + 'a>(
 
 fn translucent(color: iced::Color, alpha: f32) -> iced::Color {
     iced::Color { a: alpha, ..color }
+}
+
+/// The Portal Hub mark: a ring with a centered dot.
+///
+/// Single source of truth for the Hub identity glyph — stroke is ~15% of the
+/// diameter and the dot ~25%, so the mark stays crisp at every placement
+/// (host cards, tabs, settings, sidebar).
+pub fn hub_mark<'a, Message: 'a>(size: f32, color: iced::Color) -> Element<'a, Message> {
+    let stroke = (size * 0.15).max(1.0);
+    let dot = (size * 0.25).max(2.0);
+
+    let dot_widget =
+        container(Space::new().width(dot).height(dot)).style(move |_| container::Style {
+            background: Some(color.into()),
+            border: iced::Border {
+                radius: RADIUS_PILL.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+    container(dot_widget)
+        .width(size)
+        .height(size)
+        .align_x(Alignment::Center)
+        .align_y(Alignment::Center)
+        .style(move |_| container::Style {
+            border: iced::Border {
+                color,
+                width: stroke,
+                radius: RADIUS_PILL.into(),
+            },
+            ..Default::default()
+        })
+        .into()
+}
+
+/// Small pill badge marking a Hub-routed host or session.
+pub fn hub_pill<'a, Message: 'a>(theme: Theme, fonts: ScaledFonts) -> Element<'a, Message> {
+    container(
+        row![
+            hub_mark(fonts.small * 0.8, theme.focus_ring),
+            text("Hub").size(fonts.small).color(theme.focus_ring),
+        ]
+        .spacing(4)
+        .align_y(Alignment::Center),
+    )
+    .padding([1, 7])
+    .style(move |_| container::Style {
+        background: Some(translucent(theme.focus_ring, 0.12).into()),
+        border: iced::Border {
+            color: translucent(theme.focus_ring, 0.45),
+            width: 1.0,
+            radius: RADIUS_PILL.into(),
+        },
+        ..Default::default()
+    })
+    .into()
 }
 
 fn skeleton_block<'a, Message: 'a>(

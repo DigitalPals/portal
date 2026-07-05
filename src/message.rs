@@ -76,7 +76,7 @@ pub enum HostDialogField {
     VaultKeyId,
     VncPasswordId,
     AgentForwarding,
-    PortalHubEnabled,
+    HubRouting,
     Tags,
     Notes,
     Protocol,
@@ -101,6 +101,8 @@ pub enum VaultMessage {
     EditDeleteRequested,
     EditDeleteConfirm,
     EditCancel,
+    /// Make this key the default preselected for new public-key hosts.
+    SetDefaultKey(Uuid),
     CopyPublicKey(Uuid),
     CopyFingerprint(Uuid),
     EnrollmentRefresh,
@@ -703,6 +705,30 @@ pub enum UiMessage {
     PortalHubEnabled(bool),
     /// Portal Hub default for newly-created SSH hosts
     PortalHubDefaultForNewHosts(bool),
+    /// Prefer Vault keys when adding public-key hosts
+    PortalHubPreferVaultKeys(bool),
+    /// Toggle a host's inclusion in the onboarding bulk-enable list
+    PortalHubWizardToggleHost(Uuid),
+    /// Show/hide the advanced host/port fields in onboarding
+    PortalHubWizardToggleAdvanced,
+    /// Toggle "route eligible hosts via Hub" in the onboarding Defaults step
+    PortalHubWizardRouteDefault(bool),
+    /// Toggle "prefer Vault keys" in the onboarding Defaults step
+    PortalHubWizardPreferVault(bool),
+    /// Toggle "enable all sync services" in the onboarding Defaults step
+    PortalHubWizardSyncAll(bool),
+    /// Apply the onboarding Defaults step (bulk-write host routing)
+    PortalHubWizardApply,
+    /// Skip the onboarding Defaults step (hosts stay direct)
+    PortalHubWizardSkip,
+    /// Open the onboarding dialog directly at the Defaults step
+    PortalHubOpenDefaultsReview,
+    /// Dismiss the "eligible hosts still direct" prompt on the hosts view
+    PortalHubDefaultsPromptDismiss,
+    /// Host card hover changed (reveals per-card actions)
+    HostCardHovered(Option<Uuid>),
+    /// Submit the hosts omnibox (user@host quick connect)
+    SearchSubmitted,
     /// Portal Hub host/IP changed
     PortalHubHostChanged(String),
     /// Portal Hub web port changed

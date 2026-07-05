@@ -1,9 +1,13 @@
 //! Portal Hub onboarding and sync conflict dialogs.
 
 use iced::widget::Id;
-use iced::widget::{Column, Space, button, column, container, row, scrollable, text, text_input};
+use iced::widget::{
+    Column, Space, button, checkbox, column, container, row, scrollable, text, text_input,
+};
 use iced::{Alignment, Element, Length};
 
+use crate::app::PortalHubWizardState;
+use crate::config::HostsConfig;
 use crate::config::settings::PortalHubSettings;
 use crate::hub::sync::{ConflictChoice, PortalHubSyncService, SyncConflict};
 use crate::message::{DialogMessage, Message, UiMessage};
@@ -23,6 +27,8 @@ pub fn portal_hub_onboarding_dialog_view(
     auth_user: Option<&str>,
     auth_error: Option<&str>,
     auth_loading: bool,
+    wizard: &PortalHubWizardState,
+    hosts: &HostsConfig,
     theme: Theme,
     fonts: ScaledFonts,
 ) -> Element<'static, Message> {
@@ -95,20 +101,109 @@ pub fn portal_hub_onboarding_dialog_view(
                     .then_some(Message::Ui(UiMessage::PortalHubAuthenticate)),
             );
 
+    // Defaults step: explicit consent for routing, vault preference, and
+    // sync — nothing switches on silently. Includes a bulk host review.
     let finish_section = if auth_user.is_some() {
-        column![
-            text("All Portal Hub sync services are enabled automatically.")
+        let eligible: Vec<_> = hosts
+            .hosts
+            .iter()
+            .filter(|host| host.hub_eligible())
+            .collect();
+        let selected_count = eligible
+            .iter()
+            .filter(|host| !wizard.excluded_hosts.contains(&host.id))
+            .count();
+
+        let mut host_rows = Column::new().spacing(4);
+        for host in &eligible {
+            let host_id = host.id;
+            let selected = !wizard.excluded_hosts.contains(&host_id);
+            let auth_label = match &host.auth {
+                crate::config::AuthMethod::Agent => "SSH Agent",
+                crate::config::AuthMethod::PublicKey { .. } => "Public Key",
+                crate::config::AuthMethod::Password => "Password",
+            };
+            host_rows = host_rows.push(
+                row![
+                    checkbox(selected)
+                        .label(host.name.clone())
+                        .on_toggle(move |_| Message::Ui(UiMessage::PortalHubWizardToggleHost(
+                            host_id
+                        )))
+                        .spacing(8),
+                    Space::new().width(Length::Fill),
+                    text(auth_label)
+                        .size(fonts.small)
+                        .color(theme.text_tertiary),
+                ]
+                .spacing(8)
+                .align_y(Alignment::Center),
+            );
+        }
+
+        let host_list: Element<'static, Message> = if eligible.is_empty() {
+            text("No eligible hosts yet — SSH hosts using Agent or Public Key auth appear here.")
                 .size(fonts.label)
-                .color(theme.text_muted),
+                .color(theme.text_tertiary)
+                .into()
+        } else {
+            container(scrollable(host_rows).height(Length::Fixed(160.0)))
+                .padding(10)
+                .width(Length::Fill)
+                .style(move |_| container::Style {
+                    background: Some(theme.background.into()),
+                    border: iced::Border {
+                        color: theme.border,
+                        width: 1.0,
+                        radius: 8.0.into(),
+                    },
+                    ..Default::default()
+                })
+                .into()
+        };
+
+        let apply_label = if wizard.route_default && selected_count > 0 {
+            format!(
+                "Enable Hub on {} host{}",
+                selected_count,
+                if selected_count == 1 { "" } else { "s" }
+            )
+        } else {
+            "Save defaults".to_string()
+        };
+
+        column![
+            section_title("Defaults", theme, fonts),
+            checkbox(wizard.route_default)
+                .label("Route eligible hosts via Portal Hub — sessions survive crashes and sleep")
+                .on_toggle(|value| Message::Ui(UiMessage::PortalHubWizardRouteDefault(value)))
+                .spacing(8),
+            checkbox(wizard.prefer_vault)
+                .label("Prefer Vault keys for new public-key hosts")
+                .on_toggle(|value| Message::Ui(UiMessage::PortalHubWizardPreferVault(value)))
+                .spacing(8),
+            checkbox(wizard.sync_all)
+                .label("Sync hosts, settings, snippets, and key vault between devices")
+                .on_toggle(|value| Message::Ui(UiMessage::PortalHubWizardSyncAll(value)))
+                .spacing(8),
+            host_list,
+            text(format!(
+                "{} of {} eligible hosts selected — unchecked hosts stay Direct",
+                selected_count,
+                eligible.len()
+            ))
+            .size(fonts.small)
+            .color(theme.text_tertiary),
             row![
-                button(text("Finish").size(fonts.body))
-                    .padding([8, 18])
-                    .style(primary_button_style(theme))
-                    .on_press(Message::Ui(UiMessage::PortalHubSyncNow)),
-                button(text("Close").size(fonts.body))
+                button(text("Skip for now").size(fonts.body))
                     .padding([8, 18])
                     .style(secondary_button_style(theme))
-                    .on_press(Message::Dialog(DialogMessage::Close)),
+                    .on_press(Message::Ui(UiMessage::PortalHubWizardSkip)),
+                Space::new().width(Length::Fill),
+                button(text(apply_label).size(fonts.body))
+                    .padding([8, 18])
+                    .style(primary_button_style(theme))
+                    .on_press(Message::Ui(UiMessage::PortalHubWizardApply)),
             ]
             .spacing(10)
             .align_y(Alignment::Center)
@@ -135,22 +230,7 @@ pub fn portal_hub_onboarding_dialog_view(
             theme,
             fonts
         ),
-        labeled_input(
-            PortalHubOnboardingField::Host,
-            "Detected host / fallback host",
-            host,
-            UiMessage::PortalHubHostChanged,
-            theme,
-            fonts
-        ),
-        labeled_input(
-            PortalHubOnboardingField::WebPort,
-            "Fallback web port",
-            web_port,
-            UiMessage::PortalHubWebPortChanged,
-            theme,
-            fonts
-        ),
+        advanced_connection_section(wizard.advanced_open, host, web_port, theme, fonts),
         text(format!("Portal will authenticate through {}", web_url))
             .size(fonts.label)
             .color(theme.text_muted),
@@ -331,6 +411,54 @@ pub fn portal_hub_onboarding_field_from_id(id: &Id) -> Option<PortalHubOnboardin
     ]
     .into_iter()
     .find(|field| portal_hub_onboarding_field_id(*field) == *id)
+}
+
+/// One URL is enough — the host and port fields derive from it and live
+/// behind an Advanced disclosure for unusual setups.
+fn advanced_connection_section(
+    open: bool,
+    host: String,
+    web_port: String,
+    theme: Theme,
+    fonts: ScaledFonts,
+) -> Element<'static, Message> {
+    let toggle = button(
+        text(if open { "Advanced ▾" } else { "Advanced ▸" })
+            .size(fonts.small)
+            .color(theme.text_secondary),
+    )
+    .padding([2, 4])
+    .style(|_theme, _status| iced::widget::button::Style {
+        background: None,
+        ..Default::default()
+    })
+    .on_press(Message::Ui(UiMessage::PortalHubWizardToggleAdvanced));
+
+    if !open {
+        return column![toggle].into();
+    }
+
+    column![
+        toggle,
+        labeled_input(
+            PortalHubOnboardingField::Host,
+            "Detected host / fallback host",
+            host,
+            UiMessage::PortalHubHostChanged,
+            theme,
+            fonts
+        ),
+        labeled_input(
+            PortalHubOnboardingField::WebPort,
+            "Fallback web port",
+            web_port,
+            UiMessage::PortalHubWebPortChanged,
+            theme,
+            fonts
+        ),
+    ]
+    .spacing(8)
+    .into()
 }
 
 fn labeled_input(

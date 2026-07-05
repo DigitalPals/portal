@@ -147,7 +147,7 @@ pub fn session_choice_dialog_view(
     }
 
     if !state.proxy_sessions.is_empty() {
-        rows.push(section_label("Detached Portal Hub sessions", theme, fonts));
+        rows.push(section_label("Live on Portal Hub", theme, fonts));
         let mut cards = state
             .proxy_sessions
             .iter()
@@ -172,7 +172,9 @@ pub fn session_choice_dialog_view(
     }
 
     if state.proxy_loading {
-        rows.push(status_row("Loading Portal Hub sessions...", theme, fonts));
+        // Skeleton placeholders keep layout continuity while Hub sessions load.
+        rows.push(section_label("Live on Portal Hub", theme, fonts));
+        rows.push(crate::views::components::skeleton_rows(2, theme, fonts));
     }
 
     if let Some(error) = &state.proxy_error {

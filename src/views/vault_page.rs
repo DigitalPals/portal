@@ -19,6 +19,8 @@ pub struct VaultPageContext<'a> {
     pub state: &'a VaultUiState,
     pub portal_hub_configured: bool,
     pub portal_hub_vault_enabled: bool,
+    /// Key preselected for new public-key hosts.
+    pub default_key_id: Option<Uuid>,
     pub theme: Theme,
     pub fonts: ScaledFonts,
 }
@@ -112,7 +114,8 @@ pub fn vault_page_view(ctx: VaultPageContext<'_>) -> Element<'static, Message> {
         ));
     } else {
         for key in keys {
-            content = content.push(key_card(key, ctx.hosts, ctx.theme, ctx.fonts));
+            let is_default = ctx.default_key_id == Some(key.id);
+            content = content.push(key_card(key, ctx.hosts, is_default, ctx.theme, ctx.fonts));
         }
         for secret in vnc_passwords {
             content = content.push(vnc_password_card(secret, ctx.hosts, ctx.theme, ctx.fonts));
@@ -594,6 +597,7 @@ fn filtered_vnc_passwords<'a>(vault: &'a HubVaultConfig, query: &str) -> Vec<&'a
 fn key_card(
     key: &VaultKey,
     hosts: &HostsConfig,
+    is_default: bool,
     theme: Theme,
     fonts: ScaledFonts,
 ) -> Element<'static, Message> {
@@ -613,10 +617,57 @@ fn key_card(
         .format("%Y-%m-%d %H:%M")
         .to_string();
     let host_text = if referenced.is_empty() {
-        "Not used by any host".to_string()
+        "Unused — not referenced by any host".to_string()
     } else {
-        format!("Used by {}", referenced.join(", "))
+        format!(
+            "Used by {} host{}: {}",
+            referenced.len(),
+            if referenced.len() == 1 { "" } else { "s" },
+            referenced.join(", ")
+        )
     };
+
+    // Default-key star: feeds the new-host dialog preselection.
+    let star_color = if is_default {
+        theme.focus_ring
+    } else {
+        theme.text_secondary
+    };
+    let star_button = button(
+        text(if is_default {
+            "★ Default"
+        } else {
+            "☆ Make default"
+        })
+        .size(fonts.small)
+        .color(star_color),
+    )
+    .padding([3, 10])
+    .style(move |_theme, status| {
+        let focus = theme.focus_ring;
+        let background = if is_default {
+            Some(iced::Color { a: 0.12, ..focus }.into())
+        } else if matches!(status, button::Status::Hovered) {
+            Some(theme.hover.into())
+        } else {
+            Some(theme.background.into())
+        };
+        button::Style {
+            background,
+            text_color: star_color,
+            border: iced::Border {
+                color: if is_default {
+                    iced::Color { a: 0.5, ..focus }
+                } else {
+                    theme.border
+                },
+                width: 1.0,
+                radius: 999.0.into(),
+            },
+            ..Default::default()
+        }
+    })
+    .on_press(Message::Vault(VaultMessage::SetDefaultKey(key_id)));
 
     let card = column![
         row![
@@ -630,13 +681,15 @@ fn key_card(
             .spacing(8)
             .align_y(Alignment::Center),
             Space::new().width(Fill),
-            text(updated).size(fonts.label).color(theme.text_muted),
+            star_button,
+            text(updated).size(fonts.label).color(theme.text_tertiary),
         ]
+        .spacing(10)
         .align_y(Alignment::Center),
         text(fingerprint)
             .size(fonts.label)
             .color(theme.text_secondary),
-        text(host_text).size(fonts.label).color(theme.text_muted),
+        text(host_text).size(fonts.label).color(theme.text_tertiary),
     ]
     .spacing(10);
 

@@ -18,6 +18,11 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
             portal.ui.search_query = query;
             Task::none()
         }
+        UiMessage::SearchSubmitted => handle_search_submitted(portal),
+        UiMessage::HostCardHovered(host_id) => {
+            portal.ui.hovered_host_card = host_id;
+            Task::none()
+        }
         UiMessage::FolderToggle(id) => {
             if let Some(group) = portal.config.hosts.find_group_mut(id) {
                 group.collapsed = !group.collapsed;
@@ -101,6 +106,16 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
         | UiMessage::PortalHubDisableSyncKeepData(_)
         | UiMessage::PortalHubDisableSyncDeleteData(_)
         | UiMessage::PortalHubDisableSyncDeleteDone(_, _)
+        | UiMessage::PortalHubPreferVaultKeys(_)
+        | UiMessage::PortalHubWizardToggleHost(_)
+        | UiMessage::PortalHubWizardToggleAdvanced
+        | UiMessage::PortalHubWizardRouteDefault(_)
+        | UiMessage::PortalHubWizardPreferVault(_)
+        | UiMessage::PortalHubWizardSyncAll(_)
+        | UiMessage::PortalHubWizardApply
+        | UiMessage::PortalHubWizardSkip
+        | UiMessage::PortalHubOpenDefaultsReview
+        | UiMessage::PortalHubDefaultsPromptDismiss
         | UiMessage::PortalHubOpenOnboarding
         | UiMessage::PortalHubOpenGithub
         | UiMessage::PortalHubCheckStatus
@@ -191,6 +206,72 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
             keyboard::handle_key_released(portal, key, modifiers)
         }
     }
+}
+
+/// Omnibox submit: `user@host[:port]` connects directly; otherwise, when the
+/// filter matches exactly one host, connect to it.
+fn handle_search_submitted(portal: &mut Portal) -> Task<Message> {
+    let query = portal.ui.search_query.trim().to_string();
+    if query.is_empty() {
+        return Task::none();
+    }
+
+    if let Some((user, rest)) = query.split_once('@') {
+        let (hostname, port) = match rest.rsplit_once(':') {
+            Some((host, port_str)) => match port_str.parse::<u16>() {
+                Ok(port) => (host, port),
+                Err(_) => (rest, 22),
+            },
+            None => (rest, 22),
+        };
+        if user.is_empty() || hostname.is_empty() {
+            return Task::none();
+        }
+
+        let now = chrono::Utc::now();
+        let temp_host = crate::config::Host {
+            id: uuid::Uuid::new_v4(),
+            name: format!("{}@{}", user, hostname),
+            hostname: hostname.to_string(),
+            port,
+            username: user.to_string(),
+            protocol: crate::config::Protocol::Ssh,
+            vnc_port: None,
+            vnc_password_id: None,
+            auth: crate::config::AuthMethod::Agent,
+            agent_forwarding: false,
+            port_forwards: Vec::new(),
+            hub_routing: crate::config::hosts::HubRouting::Auto,
+            group_id: None,
+            notes: None,
+            tags: Vec::new(),
+            created_at: now,
+            updated_at: now,
+            detected_os: None,
+            last_connected: None,
+        };
+        portal.ui.search_query.clear();
+        tracing::info!("Omnibox quick connect requested");
+        return portal.connect_to_host(&temp_host);
+    }
+
+    let query_lower = query.to_lowercase();
+    let matches: Vec<uuid::Uuid> = portal
+        .config
+        .hosts
+        .hosts
+        .iter()
+        .filter(|host| {
+            host.name.to_lowercase().contains(&query_lower)
+                || host.hostname.to_lowercase().contains(&query_lower)
+        })
+        .map(|host| host.id)
+        .collect();
+    if let [host_id] = matches.as_slice() {
+        return Task::done(Message::Host(HostMessage::Connect(*host_id)));
+    }
+
+    Task::none()
 }
 
 fn should_apply_responsive_sidebar_state(

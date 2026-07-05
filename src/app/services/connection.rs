@@ -7,8 +7,9 @@ use secrecy::SecretString;
 use tokio::sync::{Mutex, mpsc};
 use uuid::Uuid;
 
+use crate::config::hosts::HubRouting;
 use crate::config::settings::PortalHubSettings;
-use crate::config::{DetectedOs, Host, PortForwardKind, Protocol};
+use crate::config::{DetectedOs, Host, PortForwardKind};
 use crate::message::{
     DialogMessage, Message, PassphraseRequest, PassphraseSftpContext, SessionId, SessionMessage,
     SftpMessage, VerificationRequestWrapper,
@@ -93,7 +94,13 @@ pub fn should_detect_os(detected_os: Option<&DetectedOs>) -> bool {
 }
 
 pub fn should_use_portal_hub(settings: &PortalHubSettings, host: &Host) -> bool {
-    settings.is_configured() && host.portal_hub_enabled && host.protocol == Protocol::Ssh
+    settings.is_configured()
+        && host.hub_eligible()
+        && match host.hub_routing {
+            HubRouting::Hub => true,
+            HubRouting::Direct => false,
+            HubRouting::Auto => settings.default_for_new_ssh_hosts,
+        }
 }
 
 fn ssh_event_listener(session_id: SessionId, event_rx: mpsc::Receiver<SshEvent>) -> Task<Message> {
@@ -738,7 +745,7 @@ mod tests {
             vnc_password_id: None,
             agent_forwarding: false,
             port_forwards: Vec::new(),
-            portal_hub_enabled: false,
+            hub_routing: HubRouting::Auto,
             group_id: None,
             notes: None,
             tags: vec![],
@@ -781,7 +788,7 @@ mod tests {
             vnc_password_id: None,
             agent_forwarding: false,
             port_forwards: Vec::new(),
-            portal_hub_enabled: false,
+            hub_routing: HubRouting::Auto,
             group_id: None,
             notes: None,
             tags: vec![],
@@ -823,7 +830,7 @@ mod tests {
             vnc_password_id: None,
             agent_forwarding: false,
             port_forwards: Vec::new(),
-            portal_hub_enabled: true,
+            hub_routing: HubRouting::Hub,
             group_id: None,
             notes: None,
             tags: vec![],
@@ -842,6 +849,8 @@ mod tests {
             snippets_sync_enabled: true,
             key_vault_enabled: true,
             default_for_new_ssh_hosts: false,
+            prefer_vault_keys: true,
+            default_vault_key_id: None,
             host: "proxy.example.com".to_string(),
             web_port: 8080,
             port: 22,
@@ -861,17 +870,24 @@ mod tests {
 
         assert!(should_use_portal_hub(&settings, &host));
 
-        host.portal_hub_enabled = false;
+        host.hub_routing = HubRouting::Direct;
         assert!(!should_use_portal_hub(&settings, &host));
 
-        host.portal_hub_enabled = true;
+        // Auto follows the global default.
+        host.hub_routing = HubRouting::Auto;
+        assert!(!should_use_portal_hub(&settings, &host));
+        let mut default_on = settings.clone();
+        default_on.default_for_new_ssh_hosts = true;
+        assert!(should_use_portal_hub(&default_on, &host));
+
+        host.hub_routing = HubRouting::Hub;
         let mut disabled = settings.clone();
         disabled.enabled = false;
         assert!(!should_use_portal_hub(&disabled, &host));
     }
 
     #[test]
-    fn portal_hub_routing_supports_any_ssh_auth_method() {
+    fn portal_hub_routing_supports_agent_and_key_auth_only() {
         let settings = configured_proxy_settings();
 
         assert!(should_use_portal_hub(
@@ -892,7 +908,8 @@ mod tests {
                 vault_key_id: None,
             })
         ));
-        assert!(should_use_portal_hub(
+        // Password-auth hosts are never Hub-eligible.
+        assert!(!should_use_portal_hub(
             &settings,
             &proxy_test_host(AuthMethod::Password)
         ));

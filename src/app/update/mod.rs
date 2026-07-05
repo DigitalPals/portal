@@ -12,7 +12,7 @@ mod session;
 mod sftp;
 mod snippet;
 mod tab;
-mod ui;
+pub(crate) mod ui;
 mod vault;
 mod vnc;
 

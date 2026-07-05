@@ -1,4 +1,6 @@
+use crate::app::services::connection::should_use_portal_hub;
 use crate::config::hosts::HostGroup;
+use crate::config::settings::PortalHubSettings;
 use crate::config::{DetectedOs, Host, HostsConfig, Protocol};
 use crate::views::host_grid::{GroupCard, HostCard};
 use std::collections::hash_map::DefaultHasher;
@@ -8,7 +10,7 @@ use std::time::{Duration, Instant};
 const HOST_GRID_CACHE_LOG_ITEM_THRESHOLD: usize = 200;
 const HOST_GRID_CACHE_LOG_DURATION_THRESHOLD: Duration = Duration::from_millis(8);
 
-fn host_card(host: &Host) -> HostCard {
+fn host_card(host: &Host, hub_settings: &PortalHubSettings) -> HostCard {
     HostCard {
         id: host.id,
         name: host.name.clone(),
@@ -16,6 +18,7 @@ fn host_card(host: &Host) -> HostCard {
         protocol: host.protocol.clone(),
         last_connected: host.last_connected,
         group_id: host.group_id,
+        via_hub: should_use_portal_hub(hub_settings, host),
     }
 }
 
@@ -33,15 +36,26 @@ pub(super) fn group_cards(hosts_config: &HostsConfig) -> Vec<GroupCard> {
 }
 
 /// Create host cards from hosts config
-pub(super) fn host_cards(hosts_config: &HostsConfig) -> Vec<HostCard> {
-    hosts_config.hosts.iter().map(host_card).collect()
+pub(super) fn host_cards(
+    hosts_config: &HostsConfig,
+    hub_settings: &PortalHubSettings,
+) -> Vec<HostCard> {
+    hosts_config
+        .hosts
+        .iter()
+        .map(|host| host_card(host, hub_settings))
+        .collect()
 }
 
 /// Create host cards after applying the search filter, avoiding clones for filtered-out hosts.
-pub(super) fn filtered_host_cards(query: &str, hosts_config: &HostsConfig) -> Vec<HostCard> {
+pub(super) fn filtered_host_cards(
+    query: &str,
+    hosts_config: &HostsConfig,
+    hub_settings: &PortalHubSettings,
+) -> Vec<HostCard> {
     let query = normalize_query(query);
     if query.is_empty() {
-        return host_cards(hosts_config);
+        return host_cards(hosts_config, hub_settings);
     }
 
     hosts_config
@@ -51,7 +65,7 @@ pub(super) fn filtered_host_cards(query: &str, hosts_config: &HostsConfig) -> Ve
             host.name.to_lowercase().contains(&query)
                 || host.hostname.to_lowercase().contains(&query)
         })
-        .map(host_card)
+        .map(|host| host_card(host, hub_settings))
         .collect()
 }
 
@@ -89,17 +103,22 @@ pub(crate) struct HostGridCache {
 }
 
 impl HostGridCache {
-    pub fn cards(&mut self, query: &str, hosts_config: &HostsConfig) -> &HostGridCards {
+    pub fn cards(
+        &mut self,
+        query: &str,
+        hosts_config: &HostsConfig,
+        hub_settings: &PortalHubSettings,
+    ) -> &HostGridCards {
         let key = HostGridCacheKey {
             query: normalize_query(query),
-            signature: hosts_signature(hosts_config),
+            signature: hosts_signature(hosts_config, hub_settings),
         };
 
         if self.key.as_ref() != Some(&key) {
             let started = Instant::now();
             self.cards = HostGridCards {
                 groups: filtered_group_cards(&key.query, hosts_config),
-                hosts: filtered_host_cards(&key.query, hosts_config),
+                hosts: filtered_host_cards(&key.query, hosts_config, hub_settings),
             };
             let elapsed = started.elapsed();
             let item_count = hosts_config.hosts.len() + hosts_config.groups.len();
@@ -127,16 +146,20 @@ fn normalize_query(query: &str) -> String {
     query.trim().to_lowercase()
 }
 
-fn hosts_signature(hosts_config: &HostsConfig) -> u64 {
+fn hosts_signature(hosts_config: &HostsConfig, hub_settings: &PortalHubSettings) -> u64 {
     let mut hasher = DefaultHasher::new();
     hosts_config.hosts.len().hash(&mut hasher);
     hosts_config.groups.len().hash(&mut hasher);
+    // Hub routing feeds the per-card badge, so cache must refresh with it.
+    hub_settings.is_configured().hash(&mut hasher);
+    hub_settings.default_for_new_ssh_hosts.hash(&mut hasher);
 
     for host in &hosts_config.hosts {
         host.id.hash(&mut hasher);
         host.name.hash(&mut hasher);
         host.hostname.hash(&mut hasher);
         protocol_key(&host.protocol).hash(&mut hasher);
+        host.hub_routing.hash(&mut hasher);
         host.group_id.hash(&mut hasher);
         hash_datetime(host.updated_at, &mut hasher);
         if let Some(last_connected) = host.last_connected {
@@ -179,6 +202,7 @@ fn hash_detected_os(os: &DetectedOs, hasher: &mut DefaultHasher) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::hosts::HubRouting;
     use crate::config::{AuthMethod, DetectedOs, Protocol};
     use chrono::Utc;
     use uuid::Uuid;
@@ -197,7 +221,7 @@ mod tests {
             auth: AuthMethod::Agent,
             agent_forwarding: false,
             port_forwards: Vec::new(),
-            portal_hub_enabled: false,
+            hub_routing: HubRouting::Auto,
             group_id: None,
             notes: None,
             tags: Vec::new(),
@@ -224,7 +248,7 @@ mod tests {
             hosts: vec![host("Production", "prod.example.com")],
             groups: Vec::new(),
         };
-        let filtered = filtered_host_cards(" prod ", &config);
+        let filtered = filtered_host_cards(" prod ", &config, &PortalHubSettings::default());
 
         assert_eq!(filtered.len(), 1);
     }
@@ -248,10 +272,10 @@ mod tests {
         };
         let mut cache = HostGridCache::default();
 
-        cache.cards(" prod ", &config);
+        cache.cards(" prod ", &config, &PortalHubSettings::default());
         let first_key = cache.key.clone();
 
-        cache.cards("prod", &config);
+        cache.cards("prod", &config, &PortalHubSettings::default());
 
         assert_eq!(cache.key, first_key);
         assert_eq!(cache.cards.hosts.len(), 1);
@@ -265,13 +289,13 @@ mod tests {
         };
         let mut cache = HostGridCache::default();
 
-        cache.cards("prod", &config);
+        cache.cards("prod", &config, &PortalHubSettings::default());
         let first_key = cache.key.clone();
 
         config
             .hosts
             .push(host("Production Backup", "prod-b.example.com"));
-        cache.cards("prod", &config);
+        cache.cards("prod", &config, &PortalHubSettings::default());
 
         assert_ne!(cache.key, first_key);
         assert_eq!(cache.cards.hosts.len(), 2);

@@ -933,6 +933,7 @@ fn web_url(settings: &crate::config::settings::PortalHubSettings) -> Result<Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::hosts::HubRouting;
     use crate::config::{AuthMethod, Host, Protocol};
 
     #[test]
@@ -971,7 +972,7 @@ mod tests {
             auth: AuthMethod::Agent,
             agent_forwarding: false,
             port_forwards: Vec::new(),
-            portal_hub_enabled: true,
+            hub_routing: HubRouting::Hub,
             group_id: None,
             notes: None,
             tags: Vec::new(),

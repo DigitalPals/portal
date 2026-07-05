@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use chrono::Utc;
 use uuid::Uuid;
 
-use crate::config::hosts::default_username;
+use crate::config::hosts::{HubRouting, default_username};
 use crate::config::paths::{expand_tilde, ssh_dir};
 use crate::config::{AuthMethod, Host, Protocol};
 use crate::error::ConfigError;
@@ -243,7 +243,7 @@ fn resolve_host(alias: &str, blocks: &[HostBlock]) -> Host {
         auth,
         agent_forwarding: false,
         port_forwards: Vec::new(),
-        portal_hub_enabled: false,
+        hub_routing: HubRouting::Auto,
         group_id: None,
         notes: None,
         tags: Vec::new(),

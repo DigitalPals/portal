@@ -155,6 +155,17 @@ impl SessionManager {
             .any(|session| session.pending_output_bytes > 0)
     }
 
+    /// Count active terminal sessions per host.
+    pub fn session_counts_by_host(&self) -> std::collections::HashMap<Uuid, usize> {
+        let mut counts = std::collections::HashMap::new();
+        for session in self.sessions.values() {
+            if let Some(host_id) = session.host_id {
+                *counts.entry(host_id).or_insert(0) += 1;
+            }
+        }
+        counts
+    }
+
     /// Return active terminal sessions associated with a host.
     pub fn sessions_for_host(
         &self,

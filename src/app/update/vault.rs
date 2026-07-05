@@ -186,6 +186,17 @@ pub fn handle_vault(portal: &mut Portal, msg: VaultMessage) -> Task<Message> {
             reset_edit_key_state(portal);
             portal.vault_ui.modal = VaultModal::None;
         }
+        VaultMessage::SetDefaultKey(id) => {
+            if let Some(key) = portal.config.vault.find_key(id) {
+                let name = key.name.clone();
+                portal.prefs.portal_hub.default_vault_key_id = Some(id);
+                crate::app::update::ui::settings::save_settings_and_queue_sync(portal);
+                portal.toast_manager.push(Toast::success(format!(
+                    "{} is now the default key for new hosts",
+                    name
+                )));
+            }
+        }
         VaultMessage::CopyPublicKey(id) => {
             if let Some(value) = portal
                 .config

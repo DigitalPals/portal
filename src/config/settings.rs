@@ -219,9 +219,19 @@ pub struct PortalHubSettings {
     #[serde(default = "default_portal_hub_service_enabled")]
     pub key_vault_enabled: bool,
 
-    /// Enable Portal Hub automatically when creating new SSH hosts.
+    /// Route eligible hosts (SSH + agent/public-key auth) through Portal Hub
+    /// when their routing is set to Auto, and default new SSH hosts to Hub.
     #[serde(default)]
     pub default_for_new_ssh_hosts: bool,
+
+    /// Prefer Vault keys when adding public-key hosts: the key source starts
+    /// at Vault with the default key preselected.
+    #[serde(default = "default_prefer_vault_keys")]
+    pub prefer_vault_keys: bool,
+
+    /// Vault key preselected for new public-key hosts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_vault_key_id: Option<uuid::Uuid>,
 
     /// Tailscale DNS name or IP of the Portal Hub LXC.
     #[serde(default)]
@@ -248,6 +258,10 @@ pub struct PortalHubSettings {
     pub web_url: String,
 }
 
+fn default_prefer_vault_keys() -> bool {
+    true
+}
+
 impl Default for PortalHubSettings {
     fn default() -> Self {
         Self {
@@ -257,6 +271,8 @@ impl Default for PortalHubSettings {
             snippets_sync_enabled: true,
             key_vault_enabled: true,
             default_for_new_ssh_hosts: false,
+            prefer_vault_keys: default_prefer_vault_keys(),
+            default_vault_key_id: None,
             host: String::new(),
             web_port: default_portal_hub_web_port(),
             port: default_portal_hub_port(),

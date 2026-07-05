@@ -2,17 +2,17 @@ use std::collections::HashMap;
 
 use iced::widget::{
     Row, Space, button, checkbox, column, container, pick_list, row, scrollable, text, text_input,
-    tooltip,
 };
 use iced::{Alignment, Element, Length};
 use uuid::Uuid;
 
-use crate::config::hosts::default_username;
+use crate::config::hosts::{HubRouting, default_username};
 use crate::config::{AuthMethod, Host, PortForward, PortForwardKind, Protocol};
 use crate::hub::vault::{VaultKey, VaultSecret};
 use crate::message::{DialogMessage, HostDialogField, Message};
 use crate::theme::{BORDER_RADIUS, ScaledFonts, Theme};
 use crate::validation::{validate_hostname, validate_port, validate_username};
+use crate::views::components::toggle_group;
 
 use super::common::{
     ERROR_COLOR, destructive_button_style, dialog_input_style, dialog_input_style_with_error,
@@ -50,7 +50,7 @@ pub struct HostDialogState {
     pub vault_key_id: Option<Uuid>,
     pub vnc_password_id: Option<Uuid>,
     pub agent_forwarding: bool,
-    pub portal_hub_enabled: bool,
+    pub hub_routing: HubRouting,
     pub tags: String,
     pub notes: String,
     /// Connection protocol
@@ -303,11 +303,13 @@ fn validate_forward_bind_port(port_str: &str) -> Result<u16, String> {
 impl HostDialogState {
     /// Create a new empty dialog for adding a host
     pub fn new_host() -> Self {
-        Self::new_host_with_proxy_default(false)
+        Self::new_host_with_defaults(false, None)
     }
 
-    /// Create a new host dialog with the caller's Portal Hub default.
-    pub fn new_host_with_proxy_default(portal_hub_enabled: bool) -> Self {
+    /// Create a new host dialog honoring the global Portal Hub defaults:
+    /// routing starts at Auto, and when "Prefer Vault keys" is on the key
+    /// source starts at Vault with the default key preselected.
+    pub fn new_host_with_defaults(prefer_vault: bool, default_vault_key: Option<Uuid>) -> Self {
         Self {
             editing_id: None,
             name: String::new(),
@@ -315,12 +317,16 @@ impl HostDialogState {
             port: "22".to_string(),
             username: String::new(),
             auth_method: AuthMethodChoice::Agent,
-            key_source: KeySourceChoice::Local,
+            key_source: if prefer_vault && default_vault_key.is_some() {
+                KeySourceChoice::Vault
+            } else {
+                KeySourceChoice::Local
+            },
             key_path: String::new(),
-            vault_key_id: None,
+            vault_key_id: default_vault_key.filter(|_| prefer_vault),
             vnc_password_id: None,
             agent_forwarding: false,
-            portal_hub_enabled,
+            hub_routing: HubRouting::Auto,
             tags: String::new(),
             notes: String::new(),
             protocol: ProtocolChoice::Ssh,
@@ -365,7 +371,7 @@ impl HostDialogState {
             },
             vnc_password_id: host.vnc_password_id,
             agent_forwarding: host.agent_forwarding,
-            portal_hub_enabled: host.portal_hub_enabled,
+            hub_routing: host.hub_routing,
             tags: host.tags.join(", "),
             notes: host.notes.clone().unwrap_or_default(),
             protocol: match host.protocol {
@@ -490,9 +496,11 @@ impl HostDialogState {
             false
         };
 
-        let portal_hub_enabled = protocol == Protocol::Ssh
-            && !matches!(auth, AuthMethod::Password)
-            && self.portal_hub_enabled;
+        let hub_routing = if protocol == Protocol::Ssh && !matches!(auth, AuthMethod::Password) {
+            self.hub_routing
+        } else {
+            HubRouting::Auto
+        };
 
         let vnc_port = if protocol == Protocol::Vnc && port != 5900 {
             Some(port)
@@ -523,7 +531,7 @@ impl HostDialogState {
             auth,
             agent_forwarding,
             port_forwards,
-            portal_hub_enabled,
+            hub_routing,
             group_id: None,
             notes,
             tags,
@@ -552,12 +560,15 @@ impl HostDialogState {
 }
 
 /// Build the host dialog view
+#[allow(clippy::too_many_arguments)]
 pub fn host_dialog_view(
     state: &HostDialogState,
     theme: Theme,
     fonts: ScaledFonts,
     vault_keys: Vec<VaultKeyOption>,
     vault_vnc_passwords: Vec<VncPasswordOption>,
+    hub_configured: bool,
+    hub_default_on: bool,
 ) -> Element<'static, Message> {
     let title = if state.editing_id.is_some() {
         "Edit Host"
@@ -575,7 +586,7 @@ pub fn host_dialog_view(
     let selected_vault_key_id = state.vault_key_id;
     let selected_vnc_password_id = state.vnc_password_id;
     let agent_forwarding = state.agent_forwarding;
-    let portal_hub_enabled = state.portal_hub_enabled;
+    let hub_routing = state.hub_routing;
     let tags_value = state.tags.clone();
     let notes_value = state.notes.clone();
     let auth_method = state.auth_method;
@@ -779,62 +790,84 @@ pub fn host_dialog_view(
         column![].into()
     };
 
-    let agent_forwarding_section: Element<'static, Message> = if !is_vnc {
-        let checkbox_control = checkbox(agent_forwarding)
-            .label("Enable SSH Agent Forwarding")
-            .on_toggle(|value| {
-                Message::Dialog(DialogMessage::FieldChanged(
-                    HostDialogField::AgentForwarding,
-                    value.to_string(),
-                ))
-            })
-            .spacing(8);
-
-        let tooltip_text =
-            text("Forwards your local SSH agent to this host. Only enable for trusted systems.")
-                .size(fonts.small)
-                .color(theme.text_secondary);
-
-        tooltip(checkbox_control, tooltip_text, tooltip::Position::Top)
-            .style(move |_theme| iced::widget::container::Style {
-                background: Some(theme.surface.into()),
-                border: iced::Border {
-                    color: theme.border,
-                    width: 1.0,
-                    radius: 4.0.into(),
-                },
-                ..Default::default()
-            })
-            .padding(8)
-            .into()
-    } else {
-        column![].into()
-    };
-
-    let portal_hub_section: Element<'static, Message> = if !is_vnc {
+    // Routing group: Auto / Direct / Always Hub segmented control with a
+    // live explanation line. Transport routing is separated from security
+    // decisions (agent forwarding) below.
+    let routing_section: Element<'static, Message> = if !is_vnc {
         if auth_method == AuthMethodChoice::Password {
             column![
-                text("Portal Hub")
+                text("Routing")
                     .size(fonts.label)
                     .color(theme.text_secondary),
-                text("Portal Hub requires SSH Agent or Public Key authentication")
+                text("Portal Hub routing requires SSH Agent or Public Key authentication.")
                     .size(fonts.small)
-                    .color(theme.text_secondary)
+                    .color(theme.text_tertiary)
             ]
             .spacing(4)
             .into()
         } else {
-            checkbox(portal_hub_enabled)
-                .label("Use Portal Hub")
+            let caption = match hub_routing {
+                HubRouting::Auto => {
+                    if !hub_configured {
+                        "Auto — connects directly until Portal Hub is set up."
+                    } else if hub_default_on {
+                        "Auto — follows your default: connects via Portal Hub, session persists."
+                    } else {
+                        "Auto — follows your default: connects directly (Hub default is off)."
+                    }
+                }
+                HubRouting::Direct => "Always connects directly, even while Hub is the default.",
+                HubRouting::Hub => "Always routes through Portal Hub, regardless of the default.",
+            };
+            let options: Vec<(HubRouting, &'static str)> = HubRouting::ALL
+                .iter()
+                .map(|routing| (*routing, routing.label()))
+                .collect();
+            column![
+                text("Routing")
+                    .size(fonts.label)
+                    .color(theme.text_secondary),
+                toggle_group(
+                    hub_routing,
+                    &options,
+                    |routing| Message::Dialog(DialogMessage::FieldChanged(
+                        HostDialogField::HubRouting,
+                        format!("{:?}", routing),
+                    )),
+                    theme,
+                    fonts,
+                ),
+                text(caption).size(fonts.small).color(theme.text_tertiary),
+            ]
+            .spacing(6)
+            .into()
+        }
+    } else {
+        column![].into()
+    };
+
+    // Security group: agent forwarding is a security decision and gets its
+    // own section with caution copy instead of sitting beside routing.
+    let security_section: Element<'static, Message> = if !is_vnc {
+        column![
+            text("Security")
+                .size(fonts.label)
+                .color(theme.text_secondary),
+            checkbox(agent_forwarding)
+                .label("Enable SSH Agent Forwarding")
                 .on_toggle(|value| {
                     Message::Dialog(DialogMessage::FieldChanged(
-                        HostDialogField::PortalHubEnabled,
+                        HostDialogField::AgentForwarding,
                         value.to_string(),
                     ))
                 })
-                .spacing(8)
-                .into()
-        }
+                .spacing(8),
+            text("Forwards your local SSH agent to this host. Only enable for trusted systems.")
+                .size(fonts.small)
+                .color(theme.text_tertiary),
+        ]
+        .spacing(6)
+        .into()
     } else {
         column![].into()
     };
@@ -1235,12 +1268,8 @@ pub fn host_dialog_view(
         section_heading("SSH", theme, fonts),
         auth_picker,
         key_path_section,
-        row![
-            column![agent_forwarding_section].width(Length::FillPortion(1)),
-            column![portal_hub_section].width(Length::FillPortion(1)),
-        ]
-        .spacing(12)
-        .align_y(Alignment::Start),
+        routing_section,
+        security_section,
     ]
     .spacing(10)
     .width(Length::FillPortion(1));

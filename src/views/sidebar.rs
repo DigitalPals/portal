@@ -4,7 +4,9 @@ use iced::{Alignment, Element, Fill, Length};
 use crate::app::{FocusSection, SidebarState};
 use crate::icons::{self, icon_with_color};
 use crate::message::{Message, SidebarMenuItem, UiMessage};
-use crate::theme::{BORDER_RADIUS, SIDEBAR_WIDTH, SIDEBAR_WIDTH_COLLAPSED, ScaledFonts, Theme};
+use crate::theme::{
+    BORDER_RADIUS, RADIUS_MD, SIDEBAR_WIDTH, SIDEBAR_WIDTH_COLLAPSED, ScaledFonts, Theme,
+};
 
 /// Menu item definition
 struct MenuItem {
@@ -66,6 +68,7 @@ pub fn sidebar_view(
     focus_section: FocusSection,
     focus_index: usize,
     show_sessions: bool,
+    session_count: usize,
 ) -> Element<'static, Message> {
     // Completely hide sidebar when hidden
     if state == SidebarState::Hidden {
@@ -92,6 +95,11 @@ pub fn sidebar_view(
     {
         let is_selected = selected == menu_item.item;
         let is_focused = focus_section == FocusSection::Sidebar && idx == focus_index;
+        let badge_count = if menu_item.item == SidebarMenuItem::Sessions {
+            session_count
+        } else {
+            0
+        };
         let item_element = menu_item_button(
             menu_item,
             is_selected,
@@ -99,7 +107,7 @@ pub fn sidebar_view(
             icons_only,
             theme,
             fonts,
-            0,
+            badge_count,
         );
         menu_items = menu_items.push(item_element);
     }
@@ -140,7 +148,7 @@ fn menu_item_button(
     fonts: ScaledFonts,
     badge_count: usize,
 ) -> Element<'static, Message> {
-    let icon_widget = icon_with_color(menu_item.icon, 18, iced::Color::WHITE);
+    let icon_widget = icon_with_color(menu_item.icon, 18, theme.text_primary);
 
     let content: Element<'static, Message> = if collapsed {
         // Collapsed: just icon, centered
@@ -166,7 +174,7 @@ fn menu_item_button(
             container(icon_widget).width(32).align_x(Alignment::Center),
             text(menu_item.label)
                 .size(fonts.body)
-                .color(iced::Color::WHITE),
+                .color(theme.text_primary),
         ]
         .spacing(8)
         .align_y(Alignment::Center);
@@ -253,7 +261,7 @@ fn badge(count: usize, theme: Theme, fonts: ScaledFonts) -> Element<'static, Mes
     .style(move |_theme| container::Style {
         background: Some(theme.accent.into()),
         border: iced::Border {
-            radius: 6.0.into(),
+            radius: RADIUS_MD.into(),
             ..Default::default()
         },
         ..Default::default()

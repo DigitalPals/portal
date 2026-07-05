@@ -2,6 +2,7 @@
 
 use crate::app::Portal;
 use crate::app::services::connection;
+use crate::config::hosts::HubRouting;
 use crate::config::{AuthMethod, Host, PortForwardKind};
 use crate::message::{
     DialogMessage, HostDialogField, Message, PortForwardField, QuickConnectField,
@@ -137,9 +138,13 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                         dialog_state.agent_forwarding =
                             matches!(value.trim().to_lowercase().as_str(), "true" | "1" | "yes");
                     }
-                    HostDialogField::PortalHubEnabled => {
-                        dialog_state.portal_hub_enabled =
-                            matches!(value.trim().to_lowercase().as_str(), "true" | "1" | "yes");
+                    HostDialogField::HubRouting => {
+                        dialog_state.hub_routing = match value.as_str() {
+                            "Auto" => HubRouting::Auto,
+                            "Direct" => HubRouting::Direct,
+                            "Hub" => HubRouting::Hub,
+                            _ => dialog_state.hub_routing,
+                        };
                     }
                     HostDialogField::Tags => dialog_state.tags = value,
                     HostDialogField::Notes => dialog_state.notes = value,
@@ -150,9 +155,6 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                             "PublicKey" => AuthMethodChoice::PublicKey,
                             _ => dialog_state.auth_method,
                         };
-                        if dialog_state.auth_method == AuthMethodChoice::Password {
-                            dialog_state.portal_hub_enabled = false;
-                        }
                         if dialog_state.auth_method != AuthMethodChoice::PublicKey {
                             dialog_state.key_source = KeySourceChoice::Local;
                             dialog_state.vault_key_id = None;
@@ -168,7 +170,7 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                                     dialog_state.port = "5900".to_string();
                                 }
                                 dialog_state.agent_forwarding = false;
-                                dialog_state.portal_hub_enabled = false;
+                                dialog_state.hub_routing = HubRouting::Auto;
                                 ProtocolChoice::Vnc
                             }
                             _ => dialog_state.protocol,
@@ -668,7 +670,7 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                     auth,
                     agent_forwarding: false,
                     port_forwards: Vec::new(),
-                    portal_hub_enabled: false,
+                    hub_routing: HubRouting::Auto,
                     group_id: None,
                     notes: None,
                     tags: vec![],
@@ -751,7 +753,7 @@ mod tests {
             auth: AuthMethod::Agent,
             agent_forwarding: false,
             port_forwards: Vec::new(),
-            portal_hub_enabled: false,
+            hub_routing: HubRouting::Auto,
             group_id: Some(Uuid::new_v4()),
             notes: None,
             tags: Vec::new(),
