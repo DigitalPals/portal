@@ -346,8 +346,8 @@ fn handle_run(portal: &mut Portal, snippet_id: Uuid) -> Task<Message> {
         .into_iter()
         .map(|(host_id, _host_name, host)| {
             let cmd = command.clone();
-            let jump_chain =
-                crate::ssh::tunnel::resolve_jump_chain(&all_hosts, &host).map_err(|e| e.to_string());
+            let jump_chain = crate::ssh::tunnel::resolve_jump_chain(&all_hosts, &host)
+                .map_err(|e| e.to_string());
 
             Task::perform(
                 async move {

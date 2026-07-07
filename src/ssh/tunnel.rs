@@ -297,16 +297,15 @@ async fn connect_chain(
         // which lets the server prompt through the auth dialog. Encrypted
         // key passphrases are honored from the in-memory passphrase cache.
         let resolved = resolve_hop_auth(hop).await.map_err(|e| match e {
-            SshError::KeyFilePassphraseRequired(path) | SshError::KeyFilePassphraseInvalid(path) => {
-                hop_error(
-                    hop,
-                    format!(
-                        "key {} requires a passphrase — connect to '{}' directly first to unlock it",
-                        path.display(),
-                        hop.name
-                    ),
-                )
-            }
+            SshError::KeyFilePassphraseRequired(path)
+            | SshError::KeyFilePassphraseInvalid(path) => hop_error(
+                hop,
+                format!(
+                    "key {} requires a passphrase — connect to '{}' directly first to unlock it",
+                    path.display(),
+                    hop.name
+                ),
+            ),
             other => hop_error(hop, other.to_string()),
         })?;
 

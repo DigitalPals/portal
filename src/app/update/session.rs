@@ -1736,7 +1736,10 @@ fn handle_search(portal: &mut Portal, msg: SearchMessage) -> Task<Message> {
                 if session.search.select_next().is_some() {
                     session.search.bump_version();
                     if let Some(current) = session.search.current_match() {
-                        session.terminal.backend.scroll_to_line(current.start().line);
+                        session
+                            .terminal
+                            .backend
+                            .scroll_to_line(current.start().line);
                     }
                 }
             }
@@ -1748,7 +1751,10 @@ fn handle_search(portal: &mut Portal, msg: SearchMessage) -> Task<Message> {
                 if session.search.select_previous().is_some() {
                     session.search.bump_version();
                     if let Some(current) = session.search.current_match() {
-                        session.terminal.backend.scroll_to_line(current.start().line);
+                        session
+                            .terminal
+                            .backend
+                            .scroll_to_line(current.start().line);
                     }
                 }
             }
@@ -1804,7 +1810,9 @@ mod tests {
         let mut session = create_test_session();
         session.search.open = true;
         session.search.query = "target".to_string();
-        session.terminal.process_output(b"target one\r\ntarget two\r\n");
+        session
+            .terminal
+            .process_output(b"target one\r\ntarget two\r\n");
 
         recompute_search(&mut session, SearchSelection::Reset, false);
         assert_eq!(session.search.matches.len(), 2);

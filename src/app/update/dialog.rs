@@ -369,13 +369,14 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
             let dont_warn_again = dialog.dont_warn_again;
             portal.dialogs.close();
 
-            if dont_warn_again
-                && let Some(host) = portal.config.hosts.find_host_mut(host_id)
-            {
+            if dont_warn_again && let Some(host) = portal.config.hosts.find_host_mut(host_id) {
                 host.allow_cleartext_vnc = true;
                 host.updated_at = chrono::Utc::now();
                 if let Err(error) = portal.config.hosts.save() {
-                    tracing::error!("Failed to save hosts after cleartext VNC opt-out: {}", error);
+                    tracing::error!(
+                        "Failed to save hosts after cleartext VNC opt-out: {}",
+                        error
+                    );
                 } else {
                     super::ui::settings::queue_portal_hub_local_sync(portal);
                 }

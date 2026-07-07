@@ -103,12 +103,9 @@ pub fn auth_prompt_dialog_view(
         .size(fonts.heading)
         .color(theme.text_primary);
 
-    let connection_info = text(format!(
-        "{}@{}:{}",
-        state.username, state.host, state.port
-    ))
-    .size(fonts.body)
-    .color(theme.text_secondary);
+    let connection_info = text(format!("{}@{}:{}", state.username, state.host, state.port))
+        .size(fonts.body)
+        .color(theme.text_secondary);
 
     let mut content_items: Vec<Element<'static, Message>> = vec![
         row![key_icon, title]

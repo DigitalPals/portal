@@ -1161,11 +1161,7 @@ impl Portal {
                     .filter(|candidate| {
                         candidate.protocol == crate::config::Protocol::Ssh
                             && Some(candidate.id) != editing_id
-                            && !jump_chain_contains(
-                                &self.config.hosts.hosts,
-                                candidate,
-                                editing_id,
-                            )
+                            && !jump_chain_contains(&self.config.hosts.hosts, candidate, editing_id)
                     })
                     .map(crate::views::dialogs::host_dialog::JumpHostOption::from)
                     .collect();

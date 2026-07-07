@@ -935,8 +935,14 @@ mod tests {
         let hosts = parse_ssh_config(content);
 
         assert_eq!(hosts.len(), 3);
-        let one = hosts.iter().find(|h| h.hostname == "one.example.com").unwrap();
-        let two = hosts.iter().find(|h| h.hostname == "two.example.com").unwrap();
+        let one = hosts
+            .iter()
+            .find(|h| h.hostname == "one.example.com")
+            .unwrap();
+        let two = hosts
+            .iter()
+            .find(|h| h.hostname == "two.example.com")
+            .unwrap();
         let target = hosts.iter().find(|h| h.name == "target").unwrap();
         assert_eq!(one.jump_host_id, None);
         assert_eq!(two.jump_host_id, Some(one.id));

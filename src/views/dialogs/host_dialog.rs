@@ -541,10 +541,8 @@ impl HostDialogState {
         };
 
         let hub_routing = if protocol == Protocol::Ssh
-            && !matches!(
-                auth,
-                AuthMethod::Password | AuthMethod::KeyboardInteractive
-            ) {
+            && !matches!(auth, AuthMethod::Password | AuthMethod::KeyboardInteractive)
+        {
             self.hub_routing
         } else {
             HubRouting::Auto

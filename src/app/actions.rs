@@ -1639,10 +1639,7 @@ pub(crate) fn ssh_protocol_label(jump_chain: &[Host]) -> String {
     if jump_chain.is_empty() {
         "SSH".to_string()
     } else {
-        format!(
-            "SSH via {}",
-            crate::ssh::tunnel::describe_chain(jump_chain)
-        )
+        format!("SSH via {}", crate::ssh::tunnel::describe_chain(jump_chain))
     }
 }
 

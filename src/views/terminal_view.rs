@@ -231,8 +231,7 @@ fn terminal_search_bar<'a>(
     theme: Theme,
     fonts: ScaledFonts,
 ) -> Element<'a, Message> {
-    let search_message =
-        |message: SearchMessage| Message::Session(SessionMessage::Search(message));
+    let search_message = |message: SearchMessage| Message::Session(SessionMessage::Search(message));
 
     let input = text_input("Find", &search.query)
         .id(terminal_search_input_id())

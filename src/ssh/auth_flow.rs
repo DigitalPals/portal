@@ -85,18 +85,15 @@ pub fn next_auth_method(
     attempted: &[AuthKind],
     remaining: Option<&MethodSet>,
 ) -> Option<AuthKind> {
-    chain
-        .iter()
-        .copied()
-        .find(|kind| {
-            if attempted.contains(kind) {
-                return false;
-            }
-            match remaining {
-                Some(methods) => methods.iter().any(|m| *m == kind.wire_kind()),
-                None => true,
-            }
-        })
+    chain.iter().copied().find(|kind| {
+        if attempted.contains(kind) {
+            return false;
+        }
+        match remaining {
+            Some(methods) => methods.iter().any(|m| *m == kind.wire_kind()),
+            None => true,
+        }
+    })
 }
 
 /// Context shared by all auth attempts for one connection.
@@ -272,8 +269,8 @@ async fn authenticate_keyboard_interactive<H: Handler>(
                 let responses: Vec<String> = if prompts.is_empty() {
                     Vec::new()
                 } else {
-                    let answers = request_prompt_responses(ctx, name, instructions, &prompts)
-                        .await?;
+                    let answers =
+                        request_prompt_responses(ctx, name, instructions, &prompts).await?;
                     // Expose secrets only at the point of sending to the server.
                     answers
                         .iter()
@@ -465,10 +462,7 @@ mod tests {
     #[test]
     fn next_method_without_server_hint_takes_chain_order() {
         let chain = auth_fallback_chain(AuthKind::Agent, false);
-        assert_eq!(
-            next_auth_method(&chain, &[], None),
-            Some(AuthKind::Agent)
-        );
+        assert_eq!(next_auth_method(&chain, &[], None), Some(AuthKind::Agent));
         assert_eq!(
             next_auth_method(&chain, &[AuthKind::Agent], None),
             Some(AuthKind::KeyboardInteractive)

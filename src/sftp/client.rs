@@ -306,7 +306,6 @@ impl SftpClient {
             }
         }
     }
-
 }
 
 #[cfg(test)]
