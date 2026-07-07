@@ -5121,7 +5121,7 @@ dependencies = [
 
 [[package]]
 name = "portal"
-version = "0.6.17"
+version = "0.6.18"
 dependencies = [
  "aes 0.8.4",
  "alacritty_terminal",

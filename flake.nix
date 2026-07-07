@@ -16,7 +16,7 @@
           pname = "portal";
           version = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).package.version;
           src = ./.;
-          cargoHash = "sha256-mlfYftTF+NP0PnC4oZRyG+eEdlXA+mFsEA1+PrI2sj4=";
+          cargoHash = "sha256-RvBY6PwFqXgX7aPJL9WpSufeeotmwt+I619yQ0wmrJk=";
           nativeBuildInputs = [ pkgs.pkg-config pkgs.makeWrapper ];
           buildInputs = [
             pkgs.wayland
