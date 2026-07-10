@@ -21,6 +21,10 @@ pub fn handle_tab(portal: &mut Portal, msg: TabMessage) -> Task<Message> {
             portal.close_tab(tab_id);
             Task::none()
         }
+        TabMessage::Reorder { from, to } => {
+            portal.move_tab(from, to);
+            Task::none()
+        }
         TabMessage::New => {
             tracing::info!("New tab requested");
             portal.restore_sidebar_after_session();

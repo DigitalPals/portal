@@ -450,6 +450,8 @@ pub enum TabMessage {
     Close(Uuid),
     /// Open new tab (go to host grid)
     New,
+    /// Move a tab from one position to another (drag-to-reorder)
+    Reorder { from: usize, to: usize },
     /// Show terminal tab context menu at position
     ShowContextMenu(Uuid, f32, f32),
     /// Hide terminal tab context menu

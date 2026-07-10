@@ -498,6 +498,17 @@ impl Portal {
         }
     }
 
+    pub(super) fn move_tab(&mut self, from: usize, to: usize) {
+        if from == to || from >= self.tabs.len() || to >= self.tabs.len() {
+            return;
+        }
+        let tab = self.tabs.remove(from);
+        let tab_id = tab.id;
+        self.tabs.insert(to, tab);
+        // Dragging a tab also activates it, like browser tab bars.
+        self.set_active_tab(tab_id);
+    }
+
     pub(super) fn close_tab(&mut self, tab_id: Uuid) {
         self.transfers.cancel_for_tab(tab_id);
         let sftp_sessions_to_close = self.sftp.remove_tab_and_collect_sessions(tab_id);

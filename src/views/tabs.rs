@@ -11,6 +11,7 @@ use crate::icons::{self, icon_with_color};
 use crate::message::{Message, TabMessage, UiMessage};
 use crate::theme::{ScaledFonts, Theme};
 use crate::views::host_grid::os_icon_data;
+use crate::widgets::drag_tab_row;
 use crate::widgets::mouse_area as capture_mouse_area;
 
 /// Represents a single tab
@@ -186,6 +187,10 @@ pub fn tab_bar_view<'a>(
     let tabs_row = Row::with_children(tab_elements)
         .spacing(4)
         .align_y(Alignment::Center);
+
+    // Only the tabs themselves are draggable, not the trailing "+" button.
+    let tabs_row = drag_tab_row(tabs_row, tabs.len())
+        .on_reorder(|from, to| Message::Tab(TabMessage::Reorder { from, to }));
 
     container(
         row![
@@ -498,4 +503,104 @@ fn new_tab_button(theme: Theme, fonts: ScaledFonts) -> Element<'static, Message>
     .padding(0)
     .on_press(Message::Tab(TabMessage::New))
     .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::theme::{ThemeId, get_theme};
+    use iced::advanced::mouse;
+    use iced::{Event, Point};
+
+    fn make_tabs() -> Vec<Tab> {
+        ["alpha", "beta", "gamma"]
+            .into_iter()
+            .enumerate()
+            .map(|(i, title)| Tab::new_terminal(Uuid::new_v4(), title.to_string(), None, i + 1))
+            .collect()
+    }
+
+    fn tab_bar_element<'a>(tabs: &'a [Tab], hosts: &'a HostsConfig) -> Element<'a, Message> {
+        tab_bar_view(
+            tabs,
+            Some(tabs[0].id),
+            SidebarState::Expanded,
+            get_theme(ThemeId::default()),
+            ScaledFonts::new(1.0),
+            FocusSection::Content,
+            0,
+            &View::HostGrid,
+            hosts,
+        )
+    }
+
+    /// Dragging the first tab past the last tab's midpoint must publish a
+    /// reorder from index 0 to index 2, while a release without movement
+    /// must keep publishing plain Select.
+    #[test]
+    fn dragging_a_tab_across_its_siblings_publishes_reorder() {
+        let tabs = make_tabs();
+        let hosts = HostsConfig::default();
+        let mut ui = iced_test::simulator(tab_bar_element(&tabs, &hosts));
+
+        let start = ui
+            .find("alpha")
+            .expect("first tab should be present")
+            .visible_bounds()
+            .expect("first tab should be visible")
+            .center();
+        let gamma_bounds = ui
+            .find("gamma")
+            .expect("last tab should be present")
+            .visible_bounds()
+            .expect("last tab should be visible");
+        // Well past the last tab's midpoint.
+        let end = Point::new(gamma_bounds.x + gamma_bounds.width + 10.0, start.y);
+
+        ui.point_at(start);
+        let _ = ui.simulate([Event::Mouse(mouse::Event::ButtonPressed(
+            mouse::Button::Left,
+        ))]);
+        ui.point_at(end);
+        let _ = ui.simulate([
+            Event::Mouse(mouse::Event::CursorMoved { position: end }),
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+        ]);
+
+        let messages: Vec<Message> = ui.into_messages().collect();
+        assert!(
+            messages.iter().any(|message| matches!(
+                message,
+                Message::Tab(TabMessage::Reorder { from: 0, to: 2 })
+            )),
+            "expected Reorder {{ from: 0, to: 2 }}, got: {messages:?}"
+        );
+    }
+
+    #[test]
+    fn clicking_a_tab_without_dragging_still_selects_it() {
+        let tabs = make_tabs();
+        let beta_id = tabs[1].id;
+        let hosts = HostsConfig::default();
+        let mut ui = iced_test::simulator(tab_bar_element(&tabs, &hosts));
+
+        let _ = ui.click("beta").expect("second tab should be clickable");
+
+        let messages: Vec<Message> = ui.into_messages().collect();
+        assert!(
+            messages
+                .iter()
+                .any(|message| matches!(
+                    message,
+                    Message::Tab(TabMessage::Select(id)) if *id == beta_id
+                )),
+            "expected Select({beta_id}), got: {messages:?}"
+        );
+        assert!(
+            !messages
+                .iter()
+                .any(|message| matches!(message, Message::Tab(TabMessage::Reorder { .. }))),
+            "a plain click must not reorder, got: {messages:?}"
+        );
+    }
 }
