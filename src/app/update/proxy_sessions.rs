@@ -62,6 +62,9 @@ pub fn handle_proxy_sessions(portal: &mut Portal, msg: ProxySessionsMessage) -> 
 
             let display_name = session.display_name.clone();
             let host_id = session.host_id;
+            let detect_os = host_id
+                .and_then(|host_id| portal.config.hosts.find_host(host_id))
+                .is_some_and(|host| connection::should_detect_os(host.detected_os.as_ref()));
             let session_id = session.session_id;
             let listed_session = crate::proxy::ListedProxySession {
                 session_id: session.session_id,
@@ -79,6 +82,7 @@ pub fn handle_proxy_sessions(portal: &mut Portal, msg: ProxySessionsMessage) -> 
                 portal.prefs.portal_hub.clone(),
                 listed_session,
                 host_id,
+                detect_os,
                 display_name.clone(),
                 portal.terminal_initial_size(),
             );

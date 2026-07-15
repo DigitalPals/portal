@@ -19,7 +19,7 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use uuid::Uuid;
 
 use crate::config::settings::PortalHubSettings;
-use crate::config::{AuthMethod, Host};
+use crate::config::{AuthMethod, DetectedOs, Host};
 use crate::error::LocalError;
 use crate::hub::http;
 use crate::ssh::host_key_verification::{
@@ -38,6 +38,7 @@ pub enum ProxyEvent {
     Data(Vec<u8>),
     Disconnected { clean: bool },
     HostKeyVerification(Box<HostKeyVerificationRequest>),
+    OsDetected(DetectedOs),
 }
 
 #[derive(Debug, Clone)]
@@ -167,6 +168,7 @@ struct WebTerminalStart {
     cols: u16,
     rows: u16,
     replay_bytes: u64,
+    detect_os: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     private_key: Option<String>,
 }
@@ -211,6 +213,14 @@ pub struct ProxySession {
     child_killer: Option<Box<dyn portable_pty::ChildKiller + Send + Sync>>,
 }
 
+struct WebTerminalSpawnOptions {
+    cols: u16,
+    rows: u16,
+    detect_os: bool,
+    private_key: Option<String>,
+    replay_bytes: u64,
+}
+
 impl ProxySession {
     pub fn spawn(
         settings: &PortalHubSettings,
@@ -218,6 +228,7 @@ impl ProxySession {
         session_id: Uuid,
         cols: u16,
         rows: u16,
+        detect_os: bool,
         event_tx: mpsc::Sender<ProxyEvent>,
     ) -> Result<Self, LocalError> {
         let target = ProxySessionTarget {
@@ -227,7 +238,18 @@ impl ProxySession {
             target_user: host.effective_username(),
         };
         let private_key = proxy_private_key(&host.auth)?;
-        Self::spawn_web_target(settings, &target, cols, rows, event_tx, private_key, 0)
+        Self::spawn_web_target(
+            settings,
+            &target,
+            event_tx,
+            WebTerminalSpawnOptions {
+                cols,
+                rows,
+                detect_os,
+                private_key,
+                replay_bytes: 0,
+            },
+        )
     }
 
     pub fn spawn_target(
@@ -235,28 +257,36 @@ impl ProxySession {
         target: &ProxySessionTarget,
         cols: u16,
         rows: u16,
+        detect_os: bool,
         event_tx: mpsc::Sender<ProxyEvent>,
     ) -> Result<Self, LocalError> {
         Self::spawn_web_target(
             settings,
             target,
-            cols,
-            rows,
             event_tx,
-            None,
-            SESSION_RESUME_REPLAY_BYTES,
+            WebTerminalSpawnOptions {
+                cols,
+                rows,
+                detect_os,
+                private_key: None,
+                replay_bytes: SESSION_RESUME_REPLAY_BYTES,
+            },
         )
     }
 
     fn spawn_web_target(
         settings: &PortalHubSettings,
         target: &ProxySessionTarget,
-        cols: u16,
-        rows: u16,
         event_tx: mpsc::Sender<ProxyEvent>,
-        private_key: Option<String>,
-        replay_bytes: u64,
+        options: WebTerminalSpawnOptions,
     ) -> Result<Self, LocalError> {
+        let WebTerminalSpawnOptions {
+            cols,
+            rows,
+            detect_os,
+            private_key,
+            replay_bytes,
+        } = options;
         let (command_tx, command_rx) = mpsc::channel::<ProxyCommand>(256);
         let (ready_tx, ready_rx) = std_mpsc::sync_channel::<Result<(), String>>(1);
         let settings = settings.clone();
@@ -282,6 +312,7 @@ impl ProxySession {
                 target,
                 cols,
                 rows,
+                detect_os,
                 private_key,
                 replay_bytes,
                 command_rx,
@@ -349,6 +380,7 @@ async fn run_web_terminal(
     target: ProxySessionTarget,
     cols: u16,
     rows: u16,
+    detect_os: bool,
     private_key: Option<String>,
     replay_bytes: u64,
     mut command_rx: mpsc::Receiver<ProxyCommand>,
@@ -391,6 +423,7 @@ async fn run_web_terminal(
             cols,
             rows,
             replay_bytes,
+            detect_os,
             private_key,
         };
         write
@@ -478,6 +511,11 @@ async fn run_web_terminal(
                                             &mut pending_uploads,
                                         )?;
                                     }
+                                    "os_detected" => {
+                                        if let Some(os) = detected_os_from_message(&value) {
+                                            let _ = event_tx.send(ProxyEvent::OsDetected(os)).await;
+                                        }
+                                    }
                                     _ => {}
                                 }
                             }
@@ -558,6 +596,22 @@ async fn run_web_terminal(
             .send(ProxyEvent::Disconnected { clean: true })
             .await;
     }
+}
+
+fn detected_os_from_message(value: &Value) -> Option<DetectedOs> {
+    let uname = value.get("uname")?.as_str()?.trim();
+    if uname.is_empty() {
+        return None;
+    }
+
+    let mut detected_os = DetectedOs::from_uname(uname);
+    if detected_os.is_linux()
+        && let Some(os_release) = value.get("os_release").and_then(Value::as_str)
+        && let Some(distribution) = DetectedOs::from_os_release(os_release)
+    {
+        detected_os = distribution;
+    }
+    Some(detected_os)
 }
 
 fn handle_upload_file_result(
@@ -1020,6 +1074,7 @@ mod tests {
             cols: 120,
             rows: 30,
             replay_bytes: 0,
+            detect_os: true,
             private_key: Some("-----BEGIN OPENSSH PRIVATE KEY-----\n...\n".to_string()),
         };
         let instance = serde_json::to_value(start).unwrap();
@@ -1049,6 +1104,37 @@ mod tests {
 
         assert_eq!(request.host, "example.internal");
         assert_eq!(request.old_fingerprint.as_deref(), Some("SHA256:old123"));
+    }
+
+    #[test]
+    fn portal_hub_os_detected_message_matches_contract_and_maps_distribution() {
+        let instance = json!({
+            "type": "os_detected",
+            "uname": "Linux",
+            "os_release": "NAME=Ubuntu\nID=ubuntu\nID_LIKE=debian\n"
+        });
+
+        crate::contract_test_support::assert_portal_hub_contract(
+            "terminal-control-message",
+            &instance,
+        );
+        assert_eq!(
+            detected_os_from_message(&instance),
+            Some(DetectedOs::Ubuntu)
+        );
+    }
+
+    #[test]
+    fn portal_hub_os_detected_message_maps_non_linux_family() {
+        let instance = json!({
+            "type": "os_detected",
+            "uname": "FreeBSD"
+        });
+
+        assert_eq!(
+            detected_os_from_message(&instance),
+            Some(DetectedOs::FreeBSD)
+        );
     }
 
     #[test]

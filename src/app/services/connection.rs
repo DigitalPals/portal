@@ -178,6 +178,7 @@ pub fn ssh_dialog_event_listener(event_rx: mpsc::Receiver<SshEvent>) -> Task<Mes
 
 fn proxy_event_listener(
     session_id: SessionId,
+    host_id: Option<Uuid>,
     event_rx: mpsc::Receiver<ProxyEvent>,
 ) -> Task<Message> {
     Task::run(
@@ -192,6 +193,12 @@ fn proxy_event_listener(
             ProxyEvent::HostKeyVerification(request) => Message::Dialog(
                 DialogMessage::HostKeyVerification(VerificationRequestWrapper(Some(request))),
             ),
+            ProxyEvent::OsDetected(detected_os) => {
+                Message::Session(SessionMessage::ProxyOsDetected {
+                    host_id,
+                    detected_os,
+                })
+            }
         },
     )
 }
@@ -204,8 +211,9 @@ pub fn proxy_connect_tasks(
     terminal_size: (u16, u16),
 ) -> Task<Message> {
     let (event_tx, event_rx) = mpsc::channel::<ProxyEvent>(SSH_EVENT_CHANNEL_CAPACITY);
-    let event_listener = proxy_event_listener(session_id, event_rx);
+    let event_listener = proxy_event_listener(session_id, Some(host_id), event_rx);
     let host_for_task = Arc::clone(&host);
+    let detect_os = should_detect_os(host.detected_os.as_ref());
 
     let connect_task = Task::perform(
         async move {
@@ -217,6 +225,7 @@ pub fn proxy_connect_tasks(
                     session_id,
                     terminal_size.0,
                     terminal_size.1,
+                    detect_os,
                     event_tx,
                 )
                 .map(Arc::new)
@@ -250,6 +259,7 @@ pub fn proxy_resume_tasks(
     settings: PortalHubSettings,
     listed_session: ListedProxySession,
     host_id: Option<Uuid>,
+    detect_os: bool,
     display_name: String,
     terminal_size: (u16, u16),
 ) -> Task<Message> {
@@ -263,7 +273,7 @@ pub fn proxy_resume_tasks(
         target_user: listed_session.target_user,
     };
     let (event_tx, event_rx) = mpsc::channel::<ProxyEvent>(SSH_EVENT_CHANNEL_CAPACITY);
-    let event_listener = proxy_event_listener(session_id, event_rx);
+    let event_listener = proxy_event_listener(session_id, host_id, event_rx);
 
     let connect_task = Task::perform(
         async move {
@@ -273,6 +283,7 @@ pub fn proxy_resume_tasks(
                     &target,
                     terminal_size.0,
                     terminal_size.1,
+                    detect_os,
                     event_tx,
                 )
                 .map(Arc::new)

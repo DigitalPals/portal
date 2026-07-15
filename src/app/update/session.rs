@@ -1110,6 +1110,32 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                 ),
             )
         }
+        SessionMessage::ProxyOsDetected {
+            host_id,
+            detected_os,
+        } => {
+            let Some(host_id) = host_id else {
+                return Task::none();
+            };
+            let Some(host) = portal.config.hosts.find_host_mut(host_id) else {
+                return Task::none();
+            };
+            if host.detected_os.as_ref() == Some(&detected_os) {
+                return Task::none();
+            }
+
+            tracing::info!(
+                host_id = %host_id,
+                os = ?detected_os,
+                "Detected target OS through Portal Hub"
+            );
+            host.detected_os = Some(detected_os);
+            host.updated_at = chrono::Utc::now();
+            if let Err(error) = portal.config.hosts.save() {
+                tracing::error!("Failed to save Portal Hub detected OS: {}", error);
+            }
+            Task::none()
+        }
         SessionMessage::Data(session_id, data) => {
             let now = Instant::now();
 

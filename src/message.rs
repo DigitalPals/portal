@@ -195,6 +195,11 @@ pub enum SessionMessage {
         session_started_at: Option<DateTime<Utc>>,
         resume_preview: Vec<u8>,
     },
+    /// Operating system detected through a Portal Hub SSH session
+    ProxyOsDetected {
+        host_id: Option<Uuid>,
+        detected_os: DetectedOs,
+    },
     /// Data received from terminal (SSH or local)
     Data(SessionId, Vec<u8>),
     /// Process buffered terminal output in time-sliced chunks

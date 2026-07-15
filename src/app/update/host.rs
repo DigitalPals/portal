@@ -59,6 +59,9 @@ pub fn handle_host(portal: &mut Portal, msg: HostMessage) -> Task<Message> {
             };
 
             let host_id = portal.dialogs.session_choice().map(|state| state.host_id);
+            let detect_os = host_id
+                .and_then(|host_id| portal.config.hosts.find_host(host_id))
+                .is_some_and(|host| connection::should_detect_os(host.detected_os.as_ref()));
             let terminal_size = portal.terminal_initial_size();
             let display_name = choice.display_name;
             let session_id = choice.session.session_id;
@@ -67,6 +70,7 @@ pub fn handle_host(portal: &mut Portal, msg: HostMessage) -> Task<Message> {
                 portal.prefs.portal_hub.clone(),
                 choice.session,
                 host_id,
+                detect_os,
                 display_name.clone(),
                 terminal_size,
             );
