@@ -1,8 +1,8 @@
 //! Tab bar component for managing multiple sessions
 
-use iced::widget::{Row, Space, button, column, container, row, text, tooltip};
+use iced::widget::{Column, Row, Space, button, column, container, row, text, text_input, tooltip};
 use iced::{Alignment, Color, Element, Length, Padding};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
 use crate::app::{FocusSection, SidebarState, View};
@@ -11,8 +11,8 @@ use crate::icons::{self, icon_with_color};
 use crate::message::{Message, TabMessage, UiMessage};
 use crate::theme::{ScaledFonts, Theme};
 use crate::views::host_grid::os_icon_data;
-use crate::widgets::drag_tab_row;
 use crate::widgets::mouse_area as capture_mouse_area;
+use crate::widgets::{animated_width, drag_tab_row};
 
 /// Represents a single tab
 #[derive(Debug, Clone)]
@@ -28,11 +28,16 @@ pub struct Tab {
     pub agent_status: Option<TabAgentStatus>,
     /// Stable per-host terminal session number.
     pub session_number: Option<usize>,
+    /// Inline rename editor contents while this tab is being renamed.
+    pub rename_value: Option<String>,
+    /// Creation time used by the tab-entry animation.
+    pub opened_at: Instant,
 }
 
 /// Type of content in a tab
 #[derive(Debug, Clone, PartialEq)]
 pub enum TabType {
+    NewConnection,
     Terminal,
     Sftp,
     FileViewer,
@@ -68,6 +73,22 @@ impl TabAgentStatus {
 }
 
 impl Tab {
+    pub const ENTRY_ANIMATION_DURATION: Duration = Duration::from_millis(220);
+
+    pub fn new_connection(id: Uuid) -> Self {
+        Self {
+            id,
+            title: "New connection".to_string(),
+            tab_type: TabType::NewConnection,
+            host_id: None,
+            needs_attention: false,
+            agent_status: None,
+            session_number: None,
+            rename_value: None,
+            opened_at: Instant::now(),
+        }
+    }
+
     pub fn new_terminal(
         id: Uuid,
         title: String,
@@ -82,6 +103,8 @@ impl Tab {
             needs_attention: false,
             agent_status: None,
             session_number: Some(session_number),
+            rename_value: None,
+            opened_at: Instant::now(),
         }
     }
 
@@ -94,6 +117,8 @@ impl Tab {
             needs_attention: false,
             agent_status: None,
             session_number: None,
+            rename_value: None,
+            opened_at: Instant::now(),
         }
     }
 
@@ -106,6 +131,8 @@ impl Tab {
             needs_attention: false,
             agent_status: None,
             session_number: None,
+            rename_value: None,
+            opened_at: Instant::now(),
         }
     }
 
@@ -118,8 +145,38 @@ impl Tab {
             needs_attention: false,
             agent_status: None,
             session_number: None,
+            rename_value: None,
+            opened_at: Instant::now(),
         }
     }
+
+    pub fn entry_progress(&self) -> f32 {
+        let linear = (self.opened_at.elapsed().as_secs_f32()
+            / Self::ENTRY_ANIMATION_DURATION.as_secs_f32())
+        .clamp(0.0, 1.0);
+        1.0 - (1.0 - linear).powi(3)
+    }
+
+    pub fn is_entering(&self) -> bool {
+        self.opened_at.elapsed() < Self::ENTRY_ANIMATION_DURATION
+    }
+}
+
+pub fn tab_rename_input_id(tab_id: Uuid) -> iced::widget::Id {
+    iced::widget::Id::from(format!("tab-rename-{tab_id}"))
+}
+
+/// Replaces the draft tab that launched a connection while preserving its
+/// position and entry-animation age.
+pub fn promote_connection_tab(tabs: &mut [Tab], draft_tab_id: Uuid, mut connected: Tab) -> bool {
+    let Some(index) = tabs.iter().position(|candidate| {
+        candidate.id == draft_tab_id && candidate.tab_type == TabType::NewConnection
+    }) else {
+        return false;
+    };
+    connected.opened_at = tabs[index].opened_at;
+    tabs[index] = connected;
+    true
 }
 
 /// Build the tab bar view
@@ -170,7 +227,7 @@ pub fn tab_bar_view<'a>(
         let is_active = active_tab == Some(tab.id);
         let is_focused = focus_section == FocusSection::TabBar && idx == focus_index;
         let show_session_number = should_show_session_number(tabs, tab);
-        tab_elements.push(tab_button(
+        let tab_button = tab_button(
             tab,
             is_active,
             is_focused,
@@ -178,7 +235,8 @@ pub fn tab_bar_view<'a>(
             theme,
             fonts,
             hosts_config,
-        ));
+        );
+        tab_elements.push(animated_width(tab_button, tab.entry_progress()).into());
     }
 
     // Add "+" button for new connection
@@ -255,6 +313,7 @@ fn tab_button<'a>(
     } else {
         // No host_id - use type-based icon
         match tab.tab_type {
+            TabType::NewConnection => icons::ui::PLUS,
             TabType::Terminal => icons::ui::TERMINAL,
             TabType::Sftp => icons::ui::FOLDER_CLOSED,
             TabType::FileViewer => icons::files::FILE_TEXT,
@@ -263,8 +322,39 @@ fn tab_button<'a>(
     };
     let icon = icon_with_color(icon_data, 14, text_icon_color);
 
-    // Truncate title if too long
-    let title = truncate_title(&tab.title, 20);
+    let title: Element<'_, Message> = if let Some(rename_value) = &tab.rename_value {
+        text_input("Tab name", rename_value)
+            .id(tab_rename_input_id(tab_id))
+            .on_input(move |value| Message::Tab(TabMessage::RenameChanged(tab_id, value)))
+            .on_submit(Message::Tab(TabMessage::RenameSubmit(tab_id)))
+            .padding([2, 5])
+            .size(fonts.body)
+            .width(Length::Fixed(150.0))
+            .style(move |_theme, status| {
+                let border_color = match status {
+                    text_input::Status::Focused { .. } => theme.focus_ring,
+                    _ => theme.border,
+                };
+                text_input::Style {
+                    background: Color::from_rgb8(0x1e, 0x1e, 0x2e).into(),
+                    border: iced::Border {
+                        color: border_color,
+                        width: 1.0,
+                        radius: 5.0.into(),
+                    },
+                    icon: text_icon_color,
+                    placeholder: theme.text_muted,
+                    value: Color::from_rgb8(0xCD, 0xD6, 0xF4),
+                    selection: theme.selected,
+                }
+            })
+            .into()
+    } else {
+        text(truncate_title(&tab.title, 20))
+            .size(fonts.body)
+            .color(text_icon_color)
+            .into()
+    };
 
     let session_number = if show_session_number {
         tab.session_number
@@ -301,7 +391,7 @@ fn tab_button<'a>(
     let content = row![
         status_indicator,
         icon,
-        text(title).size(fonts.body).color(text_icon_color),
+        title,
         text(session_number)
             .size(fonts.caption)
             .color(Color::from_rgb8(0xa6, 0xad, 0xc8)),
@@ -346,12 +436,14 @@ fn tab_button<'a>(
         .padding(0)
         .on_press(Message::Tab(TabMessage::Select(tab_id)));
 
+    let mouse_area = capture_mouse_area(tab_button)
+        .on_double_click(Message::Tab(TabMessage::RenameStart(tab_id)));
     if tab.tab_type == TabType::Terminal {
-        capture_mouse_area(tab_button)
+        mouse_area
             .on_right_press(move |x, y| Message::Tab(TabMessage::ShowContextMenu(tab_id, x, y)))
             .into()
     } else {
-        tab_button.into()
+        mouse_area.into()
     }
 }
 
@@ -413,27 +505,37 @@ fn agent_status_indicator<'a>(
         TabAgentActivity::NeedsInput => Color::from_rgb8(0xf9, 0xe2, 0xaf),
         _ => agent_accent(status.kind),
     };
-    let alpha = match status.activity {
-        TabAgentActivity::Working => pulse_alpha(2400, 0.45, 1.0),
-        TabAgentActivity::Ready => 1.0,
-        TabAgentActivity::NeedsInput => pulse_alpha(1200, 0.45, 1.0),
-    };
-    let dot_color = Color { a: alpha, ..base };
+    const CELL_SIZE: f32 = 1.5;
+    let now_ms = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0);
+    let rows = (0..5)
+        .map(|y| {
+            let cells = (0..5)
+                .map(|x| {
+                    let alpha = agent_cell_alpha(status.activity, x, y, now_ms);
+                    let color = Color { a: alpha, ..base };
+                    container(Space::new())
+                        .width(Length::Fixed(CELL_SIZE))
+                        .height(Length::Fixed(CELL_SIZE))
+                        .style(move |_| container::Style {
+                            background: Some(color.into()),
+                            border: iced::Border {
+                                radius: 0.5.into(),
+                                ..Default::default()
+                            },
+                            ..Default::default()
+                        })
+                        .into()
+                })
+                .collect::<Vec<Element<'a, Message>>>();
+            Row::with_children(cells).spacing(0.75).into()
+        })
+        .collect::<Vec<Element<'a, Message>>>();
+    let grid = Column::with_children(rows).spacing(0.75);
 
-    const DOT_SIZE: f32 = 8.0;
-    let dot = container(Space::new())
-        .width(Length::Fixed(DOT_SIZE))
-        .height(Length::Fixed(DOT_SIZE))
-        .style(move |_| container::Style {
-            background: Some(dot_color.into()),
-            border: iced::Border {
-                radius: (DOT_SIZE / 2.0).into(),
-                ..Default::default()
-            },
-            ..Default::default()
-        });
-
-    let indicator = container(dot)
+    let indicator = container(grid)
         .width(14.0)
         .height(14.0)
         .align_x(Alignment::Center)
@@ -469,14 +571,28 @@ fn agent_accent(kind: TabAgentKind) -> Color {
     }
 }
 
-fn pulse_alpha(period_ms: u128, min: f32, max: f32) -> f32 {
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis())
-        .unwrap_or(0);
-    let phase = ((now % period_ms) as f32) / (period_ms as f32);
-    let normalized = (1.0 - (phase * std::f32::consts::TAU).cos()) * 0.5;
-    min + (max - min) * normalized
+fn agent_cell_alpha(activity: TabAgentActivity, x: usize, y: usize, now_ms: u128) -> f32 {
+    match activity {
+        TabAgentActivity::Ready => {
+            if x == 2 && y == 2 {
+                1.0
+            } else {
+                0.16
+            }
+        }
+        TabAgentActivity::Working | TabAgentActivity::NeedsInput => {
+            let period_ms = if activity == TabAgentActivity::NeedsInput {
+                850
+            } else {
+                1200
+            };
+            let phase = ((now_ms % period_ms) as f32) / period_ms as f32;
+            let offset = ((x + y) as f32) / 8.0;
+            let distance = ((phase - offset + 0.5).rem_euclid(1.0) - 0.5).abs();
+            let wave = (1.0 - distance * 4.0).clamp(0.0, 1.0).powi(2);
+            0.12 + 0.88 * wave
+        }
+    }
 }
 
 /// New tab "+" button
@@ -516,7 +632,11 @@ mod tests {
         ["alpha", "beta", "gamma"]
             .into_iter()
             .enumerate()
-            .map(|(i, title)| Tab::new_terminal(Uuid::new_v4(), title.to_string(), None, i + 1))
+            .map(|(i, title)| {
+                let mut tab = Tab::new_terminal(Uuid::new_v4(), title.to_string(), None, i + 1);
+                tab.opened_at = Instant::now() - Tab::ENTRY_ANIMATION_DURATION;
+                tab
+            })
             .collect()
     }
 
@@ -588,12 +708,10 @@ mod tests {
 
         let messages: Vec<Message> = ui.into_messages().collect();
         assert!(
-            messages
-                .iter()
-                .any(|message| matches!(
-                    message,
-                    Message::Tab(TabMessage::Select(id)) if *id == beta_id
-                )),
+            messages.iter().any(|message| matches!(
+                message,
+                Message::Tab(TabMessage::Select(id)) if *id == beta_id
+            )),
             "expected Select({beta_id}), got: {messages:?}"
         );
         assert!(
@@ -602,5 +720,60 @@ mod tests {
                 .any(|message| matches!(message, Message::Tab(TabMessage::Reorder { .. }))),
             "a plain click must not reorder, got: {messages:?}"
         );
+    }
+
+    #[test]
+    fn double_clicking_a_tab_starts_inline_rename() {
+        let tabs = make_tabs();
+        let beta_id = tabs[1].id;
+        let hosts = HostsConfig::default();
+        let mut ui = iced_test::simulator(tab_bar_element(&tabs, &hosts));
+        let point = ui
+            .find("beta")
+            .expect("second tab should be present")
+            .visible_bounds()
+            .expect("second tab should be visible")
+            .center();
+        ui.point_at(point);
+        let _ = ui.simulate([
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)),
+        ]);
+
+        let messages: Vec<Message> = ui.into_messages().collect();
+        assert!(messages.iter().any(|message| matches!(
+            message,
+            Message::Tab(TabMessage::RenameStart(id)) if *id == beta_id
+        )));
+    }
+
+    #[test]
+    fn new_tabs_ease_from_zero_to_full_width() {
+        let mut tab = Tab::new_connection(Uuid::new_v4());
+        assert!(tab.is_entering());
+        assert!(tab.entry_progress() < 0.5);
+
+        tab.opened_at = Instant::now() - Tab::ENTRY_ANIMATION_DURATION;
+        assert!(!tab.is_entering());
+        assert_eq!(tab.entry_progress(), 1.0);
+    }
+
+    #[test]
+    fn connected_session_promotes_its_draft_in_place() {
+        let first = Tab::new_terminal(Uuid::new_v4(), "first".to_string(), None, 1);
+        let draft = Tab::new_connection(Uuid::new_v4());
+        let draft_id = draft.id;
+        let opened_at = draft.opened_at;
+        let third = Tab::new_terminal(Uuid::new_v4(), "third".to_string(), None, 1);
+        let session_id = Uuid::new_v4();
+        let connected = Tab::new_terminal(session_id, "production".to_string(), None, 1);
+        let mut tabs = vec![first, draft, third];
+
+        assert!(promote_connection_tab(&mut tabs, draft_id, connected));
+        assert_eq!(tabs[1].id, session_id);
+        assert_eq!(tabs[1].title, "production");
+        assert_eq!(tabs[1].opened_at, opened_at);
     }
 }

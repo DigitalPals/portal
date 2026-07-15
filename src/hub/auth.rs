@@ -46,6 +46,8 @@ pub struct HubCapabilities {
     #[serde(default)]
     pub web_proxy: bool,
     #[serde(default)]
+    pub session_titles: bool,
+    #[serde(default)]
     pub vault_enrollment: bool,
 }
 
@@ -334,6 +336,7 @@ mod tests {
                 "sync_v2": true,
                 "sync_events": true,
                 "web_proxy": true,
+                "session_titles": true,
                 "key_vault": true,
                 "vault_enrollment": true
             },
@@ -348,6 +351,7 @@ mod tests {
         assert!(info.capabilities.sync_v2);
         assert!(info.capabilities.sync_events);
         assert!(info.capabilities.web_proxy);
+        assert!(info.capabilities.session_titles);
         assert!(info.capabilities.key_vault);
         assert!(info.capabilities.vault_enrollment);
         assert_eq!(info.ssh_port, Some(2222));

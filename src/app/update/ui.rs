@@ -199,6 +199,10 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
             // No-op: drives animated tab agent indicators.
             Task::none()
         }
+        UiMessage::TabAnimationTick => {
+            // No-op: drives the short tab-entry width reveal.
+            Task::none()
+        }
         UiMessage::KeyboardEvent(key, modifiers, shortcut_key) => {
             keyboard::handle_keyboard_event(portal, key, modifiers, shortcut_key)
         }

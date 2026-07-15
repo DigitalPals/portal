@@ -8,7 +8,9 @@ use iced::{Element, Event, Length, Rectangle, Size, Vector};
 
 /// Local state of the [`MouseArea`].
 #[derive(Default)]
-struct State;
+struct State {
+    previous_click: Option<mouse::Click>,
+}
 
 /// A wrapper widget that detects mouse clicks and modifier keys
 pub struct MouseArea<'a, Message, Theme = iced::Theme, Renderer = iced::Renderer>
@@ -17,6 +19,7 @@ where
 {
     content: Element<'a, Message, Theme, Renderer>,
     on_press: Option<Message>,
+    on_double_click: Option<Message>,
     on_right_press: Option<Box<dyn Fn(f32, f32) -> Message + 'a>>,
     on_ctrl_press: Option<Message>,
     on_shift_press: Option<Message>,
@@ -34,6 +37,7 @@ where
         Self {
             content: content.into(),
             on_press: None,
+            on_double_click: None,
             on_right_press: None,
             on_ctrl_press: None,
             on_shift_press: None,
@@ -58,6 +62,12 @@ where
     /// Sets the message to emit on left click
     pub fn on_press(mut self, message: Message) -> Self {
         self.on_press = Some(message);
+        self
+    }
+
+    /// Sets the message to emit on a double left click.
+    pub fn on_double_click(mut self, message: Message) -> Self {
+        self.on_double_click = Some(message);
         self
     }
 
@@ -100,7 +110,7 @@ where
     }
 
     fn state(&self) -> widget::tree::State {
-        widget::tree::State::new(State)
+        widget::tree::State::new(State::default())
     }
 
     fn children(&self) -> Vec<widget::Tree> {
@@ -158,6 +168,21 @@ where
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
+        // Buttons inside this wrapper capture presses, so double-click
+        // recognition must happen before the child sees the event.
+        if let Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) = event
+            && cursor.is_over(layout.bounds())
+            && let Some(message) = &self.on_double_click
+            && let Some(position) = cursor.position()
+        {
+            let state = tree.state.downcast_mut::<State>();
+            let click = mouse::Click::new(position, mouse::Button::Left, state.previous_click);
+            if click.kind() == mouse::click::Kind::Double {
+                shell.publish(message.clone());
+            }
+            state.previous_click = Some(click);
+        }
+
         // First, let the content handle the event
         self.content.as_widget_mut().update(
             &mut tree.children[0],

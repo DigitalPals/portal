@@ -455,6 +455,21 @@ pub enum TabMessage {
     Close(Uuid),
     /// Open new tab (go to host grid)
     New,
+    /// Begin inline renaming for a tab.
+    RenameStart(Uuid),
+    /// Update inline tab rename text.
+    RenameChanged(Uuid, String),
+    /// Commit an inline tab rename.
+    RenameSubmit(Uuid),
+    /// Cancel an inline tab rename.
+    RenameCancel(Uuid),
+    /// Portal Hub persistence result for an optimistic rename.
+    RenamePersisted {
+        tab_id: Uuid,
+        requested_title: String,
+        previous_title: String,
+        result: Result<(), String>,
+    },
     /// Move a tab from one position to another (drag-to-reorder)
     Reorder { from: usize, to: usize },
     /// Show terminal tab context menu at position
@@ -468,6 +483,7 @@ pub enum TabMessage {
 /// Context menu actions for terminal tabs
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TabContextMenuAction {
+    Rename,
     OpenLogFile,
     OpenLogDirectory,
 }
@@ -868,6 +884,8 @@ pub enum UiMessage {
     ToastTick,
     /// Timer tick for animated tab agent indicators.
     AgentStatusTick,
+    /// Drives the short width-reveal animation for newly opened tabs.
+    TabAnimationTick,
     /// Keyboard event
     KeyboardEvent(iced::keyboard::Key, iced::keyboard::Modifiers, Option<char>),
     /// Key released event (used for VNC)

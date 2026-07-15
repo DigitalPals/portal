@@ -52,6 +52,7 @@ pub struct ProxySessionTarget {
 #[derive(Debug, Clone)]
 pub struct ListedProxySession {
     pub session_id: Uuid,
+    pub display_name: Option<String>,
     pub target_host: String,
     pub target_port: u16,
     pub target_user: String,
@@ -73,6 +74,7 @@ pub struct ProxyStatus {
     pub sync_v2: bool,
     pub sync_events: bool,
     pub web_proxy: bool,
+    pub session_titles: bool,
     pub key_vault: bool,
     pub vault_enrollment: bool,
 }
@@ -98,6 +100,8 @@ struct ProxyCapabilities {
     #[serde(default)]
     web_proxy: bool,
     #[serde(default)]
+    session_titles: bool,
+    #[serde(default)]
     sync_v2: bool,
     #[serde(default)]
     sync_events: bool,
@@ -110,6 +114,8 @@ struct ProxyCapabilities {
 #[derive(Debug, Deserialize)]
 struct RawListedProxySession {
     session_id: Uuid,
+    #[serde(default)]
+    display_name: Option<String>,
     target_host: String,
     target_port: u16,
     target_user: String,
@@ -782,6 +788,29 @@ pub async fn kill_session(settings: &PortalHubSettings, session_id: Uuid) -> Res
     .await
 }
 
+#[derive(Debug, Serialize)]
+struct SessionUpdateRequest<'a> {
+    display_name: Option<&'a str>,
+}
+
+pub async fn rename_session(
+    settings: &PortalHubSettings,
+    session_id: Uuid,
+    display_name: Option<&str>,
+) -> Result<(), String> {
+    let hub_url = settings.effective_web_url();
+    let url = format!("{}/api/sessions/{}", hub_url, session_id);
+    let request = SessionUpdateRequest { display_name };
+    http::authenticated_empty(
+        &hub_url,
+        true,
+        |client, token| client.patch(&url).bearer_auth(token).json(&request),
+        "failed to rename Portal Hub session",
+        "Portal Hub session rename failed",
+    )
+    .await
+}
+
 pub async fn check_terminal_websocket(settings: &PortalHubSettings) -> Result<(), String> {
     let hub_url = settings.effective_web_url();
     if hub_url.is_empty() {
@@ -840,6 +869,7 @@ pub async fn check_proxy_status(settings: &PortalHubSettings) -> Result<ProxySta
         sync_v2: raw.capabilities.sync_v2,
         sync_events: raw.capabilities.sync_events,
         web_proxy: raw.capabilities.web_proxy,
+        session_titles: raw.capabilities.session_titles,
         key_vault: raw.capabilities.key_vault,
         vault_enrollment: raw.capabilities.vault_enrollment,
     })
@@ -870,6 +900,7 @@ fn raw_sessions_to_listed(
 
         sessions.push(ListedProxySession {
             session_id: session.session_id,
+            display_name: session.display_name,
             target_host: session.target_host,
             target_port: session.target_port,
             target_user: session.target_user,
@@ -923,6 +954,7 @@ mod tests {
         let raw = vec![
             RawListedProxySession {
                 session_id: Uuid::new_v4(),
+                display_name: Some("Production deploy".to_string()),
                 target_host: "example.com".to_string(),
                 target_port: 22,
                 target_user: "john".to_string(),
@@ -935,6 +967,7 @@ mod tests {
             },
             RawListedProxySession {
                 session_id: Uuid::new_v4(),
+                display_name: None,
                 target_host: "old.example.com".to_string(),
                 target_port: 22,
                 target_user: "john".to_string(),
@@ -950,6 +983,10 @@ mod tests {
         let sessions = raw_sessions_to_listed(raw).unwrap();
 
         assert_eq!(sessions.len(), 1);
+        assert_eq!(
+            sessions[0].display_name.as_deref(),
+            Some("Production deploy")
+        );
         assert_eq!(sessions[0].preview, b"screen");
         assert!(sessions[0].preview_truncated);
     }
@@ -964,6 +1001,7 @@ mod tests {
                 "sync_v2": true,
                 "sync_events": true,
                 "web_proxy": true,
+                "session_titles": true,
                 "key_vault": true,
                 "vault_enrollment": true
             },
@@ -981,6 +1019,7 @@ mod tests {
         assert_eq!(raw.ssh_port, Some(2222));
         assert_eq!(raw.ssh_username.as_deref(), Some("portal-hub"));
         assert!(raw.capabilities.web_proxy);
+        assert!(raw.capabilities.session_titles);
         assert!(raw.capabilities.sync_v2);
         assert!(raw.capabilities.sync_events);
         assert!(raw.capabilities.key_vault);
@@ -1033,6 +1072,7 @@ mod tests {
                 "schema_version": 1,
                 "session_id": session_id,
                 "session_name": format!("portal-{session_id}"),
+                "display_name": "Production deploy",
                 "target_host": "example.internal",
                 "target_port": 22,
                 "target_user": "john",
@@ -1058,10 +1098,24 @@ mod tests {
                 let listed = raw_sessions_to_listed(sessions).unwrap();
                 assert_eq!(listed.len(), 1);
                 assert_eq!(listed[0].session_id, session_id);
+                assert_eq!(listed[0].display_name.as_deref(), Some("Production deploy"));
                 assert_eq!(listed[0].preview, b"screen");
             }
             RawListResponse::Legacy(_) => panic!("expected v1 sessions response"),
         }
+    }
+
+    #[test]
+    fn portal_hub_session_update_request_matches_contract() {
+        let instance = serde_json::to_value(SessionUpdateRequest {
+            display_name: Some("Production deploy"),
+        })
+        .unwrap();
+
+        crate::contract_test_support::assert_portal_hub_contract(
+            "session-update-request",
+            &instance,
+        );
     }
 
     #[test]

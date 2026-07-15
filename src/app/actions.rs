@@ -23,7 +23,7 @@ use crate::sftp::{SharedSftpSession, is_safe_sftp_entry_name};
 use crate::views::dialogs::password_dialog::PasswordDialogState;
 use crate::views::file_viewer::{FileSource, FileType};
 use crate::views::sftp::{ContextMenuAction, PaneId, PaneSource, PermissionBits, SftpDialogType};
-use crate::views::tabs::Tab;
+use crate::views::tabs::{Tab, TabType};
 use crate::views::toast::Toast;
 
 use super::managers::{
@@ -387,14 +387,26 @@ impl Portal {
         session_id: SessionId,
         task: Task<Message>,
     ) -> Task<Message> {
+        let draft_tab_id = self.active_new_connection_tab_id();
         if let Some(pending) = self.pending_connect.take() {
             pending.handle.abort();
             self.pre_session_terminal_output.remove(&pending.session_id);
         }
 
         let (task, handle) = task.abortable();
-        self.pending_connect = Some(crate::app::PendingConnect::new(session_id, handle));
+        self.pending_connect = Some(crate::app::PendingConnect::new(
+            session_id,
+            draft_tab_id,
+            handle,
+        ));
         task
+    }
+
+    pub(super) fn pending_connect_draft_for(&self, session_id: SessionId) -> Option<Uuid> {
+        self.pending_connect
+            .as_ref()
+            .filter(|pending| pending.is_for(session_id))
+            .and_then(|pending| pending.draft_tab_id)
     }
 
     pub(super) fn finish_pending_connect(&mut self) {
@@ -442,6 +454,24 @@ impl Portal {
     pub(super) fn enter_host_grid(&mut self) {
         self.ui.active_view = View::HostGrid;
         self.ui.terminal_captured = false;
+    }
+
+    pub(super) fn open_new_tab(&mut self) {
+        let tab = Tab::new_connection(Uuid::new_v4());
+        let tab_id = tab.id;
+        self.tabs.push(tab);
+        self.active_tab = Some(tab_id);
+        self.restore_sidebar_after_session();
+        self.enter_host_grid();
+        self.ui.focus_section = FocusSection::Content;
+    }
+
+    pub(super) fn active_new_connection_tab_id(&self) -> Option<Uuid> {
+        let active_tab = self.active_tab?;
+        self.tabs
+            .iter()
+            .find(|tab| tab.id == active_tab && tab.tab_type == TabType::NewConnection)
+            .map(|tab| tab.id)
     }
 
     pub(super) fn enter_terminal_view(&mut self, tab_id: Uuid, auto_hide_sidebar: bool) {
@@ -495,6 +525,15 @@ impl Portal {
             self.enter_file_viewer_view(tab_id);
         } else if self.vnc_sessions.contains_key(&tab_id) {
             self.enter_vnc_view(tab_id);
+        } else if self
+            .tabs
+            .iter()
+            .any(|tab| tab.id == tab_id && tab.tab_type == TabType::NewConnection)
+        {
+            self.active_tab = Some(tab_id);
+            self.restore_sidebar_after_session();
+            self.enter_host_grid();
+            self.ui.focus_section = FocusSection::Content;
         }
     }
 
@@ -510,6 +549,13 @@ impl Portal {
     }
 
     pub(super) fn close_tab(&mut self, tab_id: Uuid) {
+        if self
+            .pending_connect
+            .as_ref()
+            .is_some_and(|pending| pending.is_for_draft(tab_id))
+        {
+            self.cancel_pending_connect();
+        }
         self.transfers.cancel_for_tab(tab_id);
         let sftp_sessions_to_close = self.sftp.remove_tab_and_collect_sessions(tab_id);
         let mut history_changed = false;
@@ -649,9 +695,7 @@ impl Portal {
                 Task::none()
             }
             AppAction::NewTab => {
-                self.restore_sidebar_after_session();
-                self.enter_host_grid();
-                self.ui.focus_section = FocusSection::Content;
+                self.open_new_tab();
                 Task::none()
             }
             AppAction::NextSession => {
@@ -1937,11 +1981,14 @@ mod tests {
     #[test]
     fn pending_connect_matches_only_its_session() {
         let session_id = Uuid::new_v4();
+        let draft_tab_id = Uuid::new_v4();
         let (_task, handle) = Task::<Message>::none().abortable();
-        let pending = PendingConnect::new(session_id, handle);
+        let pending = PendingConnect::new(session_id, Some(draft_tab_id), handle);
 
         assert!(pending.is_for(session_id));
         assert!(!pending.is_for(Uuid::new_v4()));
+        assert!(pending.is_for_draft(draft_tab_id));
+        assert!(!pending.is_for_draft(Uuid::new_v4()));
     }
 
     #[test]

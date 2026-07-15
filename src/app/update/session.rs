@@ -21,7 +21,9 @@ use crate::terminal::backend::{TerminalEvent, paste_bytes_for_mode};
 use crate::terminal::logger::SessionLogger;
 use crate::terminal::search::{self as terminal_search, TerminalSearchState};
 use crate::terminal_paste::{self, TerminalPastePayload};
-use crate::views::tabs::{TabAgentActivity, TabAgentKind, TabAgentStatus, TabType};
+use crate::views::tabs::{
+    TabAgentActivity, TabAgentKind, TabAgentStatus, TabType, promote_connection_tab,
+};
 use crate::views::terminal_view::TerminalSession;
 use crate::views::toast::Toast;
 
@@ -376,6 +378,7 @@ impl TerminalSessionStart {
 fn start_terminal_session(
     portal: &mut Portal,
     session_id: SessionId,
+    draft_tab_id: Option<Uuid>,
     backend: SessionBackend,
     host_name: String,
     host_id: Option<Uuid>,
@@ -427,7 +430,11 @@ fn start_terminal_session(
     // Create a new tab for this session
     let session_number = next_terminal_session_number(&portal.tabs, &host_name);
     let tab = Tab::new_terminal(session_id, host_name, host_id, session_number);
-    portal.tabs.push(tab);
+    if !draft_tab_id.is_some_and(|draft_tab_id| {
+        promote_connection_tab(&mut portal.tabs, draft_tab_id, tab.clone())
+    }) {
+        portal.tabs.push(tab);
+    }
 
     // Switch to terminal view and hide sidebar
     portal.enter_terminal_view(session_id, true);
@@ -928,6 +935,9 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
         } => {
             tracing::info!("SSH connected");
             let existing_session = portal.sessions.contains(session_id);
+            let draft_tab_id = (!existing_session)
+                .then(|| portal.pending_connect_draft_for(session_id))
+                .flatten();
             if !existing_session && !portal.finish_pending_connect_for(session_id) {
                 tracing::warn!("Ignoring stale SSH connection for session {}", session_id);
                 return Task::none();
@@ -1003,6 +1013,7 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
             start_terminal_session(
                 portal,
                 session_id,
+                draft_tab_id,
                 SessionBackend::Ssh(ssh_session),
                 host_name,
                 Some(host_id),
@@ -1014,6 +1025,7 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
             local_session,
         } => {
             tracing::info!("Local terminal session started");
+            let draft_tab_id = portal.active_new_connection_tab_id();
 
             // Create history entry for this local session
             let entry = crate::config::HistoryEntry::new_local();
@@ -1026,6 +1038,7 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
             start_terminal_session(
                 portal,
                 session_id,
+                draft_tab_id,
                 SessionBackend::Local(local_session),
                 "Local Terminal".to_string(),
                 None,
@@ -1042,6 +1055,9 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
         } => {
             tracing::info!("Portal Hub connected");
             let existing_session = portal.sessions.contains(session_id);
+            let draft_tab_id = (!existing_session)
+                .then(|| portal.pending_connect_draft_for(session_id))
+                .flatten();
             if !existing_session && !portal.finish_pending_connect_for(session_id) {
                 tracing::warn!(
                     "Ignoring stale Portal Hub connection for session {}",
@@ -1100,6 +1116,7 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
             start_terminal_session(
                 portal,
                 session_id,
+                draft_tab_id,
                 SessionBackend::Proxy(proxy_session),
                 host_name,
                 host_id,

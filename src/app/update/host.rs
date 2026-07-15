@@ -282,6 +282,7 @@ mod tests {
         let now = Utc::now();
         ListedProxySession {
             session_id: Uuid::new_v4(),
+            display_name: None,
             target_host: target_host.to_string(),
             target_port,
             target_user: target_user.to_string(),

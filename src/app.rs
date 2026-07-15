@@ -453,16 +453,25 @@ pub struct Portal {
 
 pub(crate) struct PendingConnect {
     session_id: SessionId,
+    draft_tab_id: Option<Uuid>,
     handle: iced::task::Handle,
 }
 
 impl PendingConnect {
-    fn new(session_id: SessionId, handle: iced::task::Handle) -> Self {
-        Self { session_id, handle }
+    fn new(session_id: SessionId, draft_tab_id: Option<Uuid>, handle: iced::task::Handle) -> Self {
+        Self {
+            session_id,
+            draft_tab_id,
+            handle,
+        }
     }
 
     fn is_for(&self, session_id: SessionId) -> bool {
         self.session_id == session_id
+    }
+
+    fn is_for_draft(&self, tab_id: Uuid) -> bool {
+        self.draft_tab_id == Some(tab_id)
     }
 }
 
@@ -1552,6 +1561,13 @@ impl Portal {
             subscriptions.push(
                 time::every(Duration::from_millis(80))
                     .map(|_| Message::Ui(UiMessage::AgentStatusTick)),
+            );
+        }
+
+        if self.tabs.iter().any(crate::views::tabs::Tab::is_entering) {
+            subscriptions.push(
+                time::every(Duration::from_millis(16))
+                    .map(|_| Message::Ui(UiMessage::TabAnimationTick)),
             );
         }
 

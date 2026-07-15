@@ -213,15 +213,26 @@ fn display_name_for_session(
             && host.effective_username() == session.target_user
     });
 
+    let custom_name = session
+        .display_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty());
+
     if let Some(host) = matching_host {
-        return (host.name.clone(), Some(host.id));
+        return (
+            custom_name.unwrap_or(host.name.as_str()).to_string(),
+            Some(host.id),
+        );
     }
 
     (
-        format!(
-            "{}@{}:{}",
-            session.target_user, session.target_host, session.target_port
-        ),
+        custom_name.map(str::to_string).unwrap_or_else(|| {
+            format!(
+                "{}@{}:{}",
+                session.target_user, session.target_host, session.target_port
+            )
+        }),
         None,
     )
 }
@@ -243,6 +254,7 @@ mod tests {
         let now = Utc::now();
         ListedProxySession {
             session_id: Uuid::new_v4(),
+            display_name: None,
             target_host: target_host.to_string(),
             target_port,
             target_user: target_user.to_string(),
@@ -294,6 +306,22 @@ mod tests {
         let card = ProxySessionCard::from_listed(session, &hosts);
 
         assert_eq!(card.display_name, "Hermes");
+        assert_eq!(card.host_id, Some(host.id));
+    }
+
+    #[test]
+    fn session_card_prefers_persisted_display_name_and_keeps_host_match() {
+        let host = ssh_host("Hermes", "192.0.2.206", 22, "john");
+        let hosts = HostsConfig {
+            hosts: vec![host.clone()],
+            groups: Vec::new(),
+        };
+        let mut session = listed_session("192.0.2.206", 22, "john");
+        session.display_name = Some("Production deploy".to_string());
+
+        let card = ProxySessionCard::from_listed(session, &hosts);
+
+        assert_eq!(card.display_name, "Production deploy");
         assert_eq!(card.host_id, Some(host.id));
     }
 

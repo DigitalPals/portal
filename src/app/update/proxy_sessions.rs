@@ -68,6 +68,7 @@ pub fn handle_proxy_sessions(portal: &mut Portal, msg: ProxySessionsMessage) -> 
             let session_id = session.session_id;
             let listed_session = crate::proxy::ListedProxySession {
                 session_id: session.session_id,
+                display_name: Some(session.display_name.clone()),
                 target_host: session.target_host.clone(),
                 target_port: session.target_port,
                 target_user: session.target_user.clone(),

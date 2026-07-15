@@ -10,7 +10,7 @@ use crate::theme::{ScaledFonts, Theme};
 use crate::widgets::mouse_area;
 
 const CONTEXT_MENU_WIDTH: f32 = 220.0;
-const ESTIMATED_MENU_HEIGHT: f32 = 96.0;
+const ESTIMATED_MENU_HEIGHT: f32 = 136.0;
 
 /// State for the terminal tab context menu
 #[derive(Debug, Clone)]
@@ -99,6 +99,14 @@ pub fn tab_context_menu_overlay(
     };
 
     let items: Vec<Element<'_, Message>> = vec![
+        context_menu_item(
+            "Rename Tab",
+            TabContextMenuAction::Rename,
+            tab_id,
+            true,
+            theme,
+            fonts,
+        ),
         context_menu_item(
             "Open Log File",
             TabContextMenuAction::OpenLogFile,

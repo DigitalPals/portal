@@ -7,7 +7,7 @@ use crate::app::managers::session_manager::VncActiveSession;
 use crate::config::settings::VncScalingMode;
 use crate::fs_utils;
 use crate::message::{Message, VncMessage};
-use crate::views::tabs::Tab;
+use crate::views::tabs::{Tab, promote_connection_tab};
 use crate::views::toast::Toast;
 
 /// Handle VNC session messages
@@ -29,6 +29,7 @@ pub fn handle_vnc(portal: &mut Portal, msg: VncMessage) -> Task<Message> {
                 vnc_session.disconnect();
                 return Task::none();
             }
+            let draft_tab_id = portal.pending_connect_draft_for(session_id);
             if !portal.finish_pending_connect_for(session_id) {
                 tracing::warn!("Ignoring stale VNC connection for session {}", session_id);
                 vnc_session.disconnect();
@@ -105,7 +106,11 @@ pub fn handle_vnc(portal: &mut Portal, msg: VncMessage) -> Task<Message> {
 
             // Create tab
             let tab = Tab::new_vnc(session_id, host_name, Some(host_id));
-            portal.tabs.push(tab);
+            if !draft_tab_id.is_some_and(|draft_tab_id| {
+                promote_connection_tab(&mut portal.tabs, draft_tab_id, tab.clone())
+            }) {
+                portal.tabs.push(tab);
+            }
             portal.enter_vnc_view(session_id);
 
             Task::none()

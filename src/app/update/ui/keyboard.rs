@@ -107,6 +107,20 @@ pub(super) fn handle_keyboard_event(
         return Task::none();
     }
 
+    if let Some(tab_id) = portal
+        .tabs
+        .iter()
+        .find(|tab| tab.rename_value.is_some())
+        .map(|tab| tab.id)
+    {
+        if let Key::Named(keyboard::key::Named::Escape) = key {
+            return Task::done(Message::Tab(TabMessage::RenameCancel(tab_id)));
+        }
+        // The text input handles editing and Enter. Do not let an uncaptured
+        // key also trigger application or terminal shortcuts while renaming.
+        return Task::none();
+    }
+
     // Priority 2: VNC viewer — forward all keys to remote (except Ctrl+Shift combos for UI)
     if let View::VncViewer(session_id) = portal.ui.active_view {
         let passthrough = portal
