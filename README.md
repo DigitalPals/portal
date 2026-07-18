@@ -296,9 +296,12 @@ To use it:
 
 Typing `exit` in the remote shell closes the real session. Closing the Portal tab or losing connectivity only detaches Portal from the proxy session.
 
-For SSH hosts that use a local private key, Portal keeps the key on the laptop.
-When connecting through Portal Hub it starts a managed local `ssh-agent` when
-needed, loads the selected or default key, and forwards that agent to the proxy.
+For SSH hosts that authenticate with a private key (key file or vault key),
+Portal sends the decrypted key to Portal Hub over TLS when the proxied session
+starts; the Hub uses it to open the SSH connection to the target. Only route
+key-based hosts through a Hub you trust with those keys — each transmission is
+recorded in the security audit log, and the host dialog warns when this
+applies. SSH Agent authentication does not transmit key material.
 
 Vault private keys are encrypted locally before sync. Portal Hub stores the
 encrypted blobs but does not receive the vault passphrase or decrypted key

@@ -923,7 +923,24 @@ pub fn host_dialog_view(
                 .iter()
                 .map(|routing| (*routing, routing.label()))
                 .collect();
-            column![
+            // Key-disclosure warning: Hub-routed sessions for key-file and
+            // vault-key hosts send the private key to the Hub at session
+            // start (see proxy_private_key). Agent auth sends no key.
+            let hub_may_route = match hub_routing {
+                HubRouting::Hub => true,
+                HubRouting::Auto => hub_configured && hub_default_on,
+                HubRouting::Direct => false,
+            };
+            let key_warning = (hub_may_route && matches!(auth_method, AuthMethodChoice::PublicKey))
+                .then(|| {
+                    text(
+                        "Hub sessions send this host's private key to your Portal Hub \
+                     over TLS at session start. Use SSH Agent auth to keep keys local.",
+                    )
+                    .size(fonts.small)
+                    .color(theme.text_tertiary)
+                });
+            let mut section = column![
                 text("Routing")
                     .size(fonts.label)
                     .color(theme.text_secondary),
@@ -939,8 +956,11 @@ pub fn host_dialog_view(
                 ),
                 text(caption).size(fonts.small).color(theme.text_tertiary),
             ]
-            .spacing(6)
-            .into()
+            .spacing(6);
+            if let Some(warning) = key_warning {
+                section = section.push(warning);
+            }
+            section.into()
         }
     } else {
         column![].into()

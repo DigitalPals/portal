@@ -225,6 +225,23 @@ pub fn log_agent_forwarding_enabled(host: &str, port: u16, username: &str) {
     ));
 }
 
+/// Log when a host's private key is sent to Portal Hub to start a proxied
+/// session (key-file and vault-key auth; agent auth sends no key).
+pub fn log_hub_private_key_sent(host: &str, port: u16, username: &str) {
+    warn!(
+        target: "security",
+        event = "hub_private_key_sent",
+        host = %host,
+        port = port,
+        username = %username,
+        "Private key sent to Portal Hub to start a proxied session - key exposed to hub"
+    );
+    write_audit_entry(&format!(
+        "HUB_PRIVATE_KEY_SENT host={}:{} user={} WARNING: key exposed to hub",
+        host, port, username
+    ));
+}
+
 /// Log when a cached passphrase is used.
 pub fn log_passphrase_cache_hit(key_path: &str) {
     info!(

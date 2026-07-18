@@ -7,7 +7,7 @@
 use chrono::{DateTime, Utc};
 use data_encoding::BASE64;
 use futures::{Sink, SinkExt, StreamExt};
-use secrecy::ExposeSecret;
+use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::mpsc as std_mpsc;
@@ -175,8 +175,25 @@ struct WebTerminalStart {
     rows: u16,
     replay_bytes: u64,
     detect_os: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    private_key: Option<String>,
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "serialize_exposed_key"
+    )]
+    private_key: Option<SecretString>,
+}
+
+/// Expose the proxied private key only at wire serialization. Everywhere else
+/// the key stays wrapped in `SecretString` (redacted `Debug`, zeroized on
+/// drop). The Hub still receives the raw key material — the host dialog warns
+/// about this when Hub routing is combined with key-based auth.
+fn serialize_exposed_key<S>(key: &Option<SecretString>, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    match key {
+        Some(key) => serializer.serialize_some(key.expose_secret()),
+        None => serializer.serialize_none(),
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -223,7 +240,7 @@ struct WebTerminalSpawnOptions {
     cols: u16,
     rows: u16,
     detect_os: bool,
-    private_key: Option<String>,
+    private_key: Option<SecretString>,
     replay_bytes: u64,
 }
 
@@ -244,6 +261,13 @@ impl ProxySession {
             target_user: host.effective_username(),
         };
         let private_key = proxy_private_key(&host.auth)?;
+        if private_key.is_some() {
+            crate::security_log::log_hub_private_key_sent(
+                &target.target_host,
+                target.target_port,
+                &target.target_user,
+            );
+        }
         Self::spawn_web_target(
             settings,
             &target,
@@ -387,7 +411,7 @@ async fn run_web_terminal(
     cols: u16,
     rows: u16,
     detect_os: bool,
-    private_key: Option<String>,
+    private_key: Option<SecretString>,
     replay_bytes: u64,
     mut command_rx: mpsc::Receiver<ProxyCommand>,
     event_tx: mpsc::Sender<ProxyEvent>,
@@ -709,7 +733,7 @@ fn terminal_ws_url(hub_url: &str) -> Result<String, String> {
     }
 }
 
-fn proxy_private_key(auth: &AuthMethod) -> Result<Option<String>, LocalError> {
+fn proxy_private_key(auth: &AuthMethod) -> Result<Option<SecretString>, LocalError> {
     match auth {
         AuthMethod::PublicKey {
             key_path,
@@ -719,13 +743,13 @@ fn proxy_private_key(auth: &AuthMethod) -> Result<Option<String>, LocalError> {
             *vault_key_id,
             key_path.as_deref(),
         )
-        .map(|key| Some(key.expose_secret().to_string()))
+        .map(Some)
         .map_err(LocalError::SpawnFailed),
         AuthMethod::PublicKey {
             key_path: Some(key_path),
             ..
         } => crate::hub::vault::read_private_key_file(key_path)
-            .map(Some)
+            .map(|key| Some(SecretString::from(key)))
             .map_err(|error| LocalError::SpawnFailed(error.to_string())),
         _ => Ok(None),
     }
@@ -1039,7 +1063,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            private_key.as_deref(),
+            private_key.as_ref().map(|key| key.expose_secret()),
             Some("-----BEGIN OPENSSH PRIVATE KEY-----\nexample\n")
         );
     }
@@ -1129,7 +1153,9 @@ mod tests {
             rows: 30,
             replay_bytes: 0,
             detect_os: true,
-            private_key: Some("-----BEGIN OPENSSH PRIVATE KEY-----\n...\n".to_string()),
+            private_key: Some(SecretString::from(
+                "-----BEGIN OPENSSH PRIVATE KEY-----\n...\n".to_string(),
+            )),
         };
         let instance = serde_json::to_value(start).unwrap();
 
