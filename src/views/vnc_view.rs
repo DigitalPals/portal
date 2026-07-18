@@ -7,7 +7,7 @@ use iced::{Element, Fill, Length};
 
 use crate::app::managers::session_manager::VncActiveSession;
 use crate::config::settings::{VncQualityPreset, VncScalingMode};
-use crate::message::{Message, SessionId, VncMessage};
+use crate::message::{HostMessage, Message, SessionId, VncMessage};
 use crate::theme::{ScaledFonts, Theme};
 use crate::vnc::session::VncStatsSnapshot;
 use crate::vnc::widget::vnc_framebuffer_interactive;
@@ -120,7 +120,11 @@ pub fn vnc_viewer_view<'a>(
         .into()
     };
 
-    // Tunnel indicator: shows "via <ssh-host>" for VNC-over-SSH sessions
+    // Transport indicator: tunneled sessions show the SSH path; direct
+    // sessions always show an Unencrypted warning, since RFB traffic
+    // (including keystrokes) is plaintext on the wire regardless of how the
+    // connection authenticated. Clicking it opens the host dialog where a
+    // VNC-over-SSH tunnel can be configured.
     let via_label: Element<'a, Message> = match &vnc.via {
         Some(via) => vnc_metric_label(
             format!("via {}", via),
@@ -129,7 +133,7 @@ pub fn vnc_viewer_view<'a>(
             theme,
             fonts,
         ),
-        None => iced::widget::Space::new().width(0).into(),
+        None => vnc_unencrypted_chip(vnc.host_id, theme, fonts),
     };
 
     let toolbar = container(
@@ -457,6 +461,39 @@ fn vnc_action_button_inner<'a>(
                     color: theme.border,
                 },
                 text_color: theme.text_secondary,
+                ..Default::default()
+            }
+        })
+        .into()
+}
+
+/// Warning chip shown while a VNC session runs without an SSH tunnel.
+/// Clicking it opens the host dialog, where "VNC via SSH" adds one.
+fn vnc_unencrypted_chip<'a>(
+    host_id: uuid::Uuid,
+    theme: Theme,
+    fonts: ScaledFonts,
+) -> Element<'a, Message> {
+    let warning = iced::Color::from_rgb8(0xff, 0x98, 0x00);
+    let label = container(text("Unencrypted").size(fonts.small).color(warning))
+        .align_x(iced::Alignment::Center);
+
+    button(label)
+        .on_press(Message::Host(HostMessage::Edit(host_id)))
+        .padding([2, 6])
+        .style(move |_t, status| {
+            let bg = match status {
+                button::Status::Hovered => theme.hover,
+                _ => theme.surface,
+            };
+            button::Style {
+                background: Some(bg.into()),
+                border: iced::Border {
+                    radius: 3.0.into(),
+                    width: 1.0,
+                    color: warning,
+                },
+                text_color: warning,
                 ..Default::default()
             }
         })

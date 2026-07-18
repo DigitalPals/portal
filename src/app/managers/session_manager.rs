@@ -85,6 +85,9 @@ pub struct ActiveSession {
 /// Active VNC session
 pub struct VncActiveSession {
     pub session: Arc<VncSession>,
+    /// Saved host this session belongs to (for the toolbar's transport
+    /// indicator to open the host dialog).
+    pub host_id: uuid::Uuid,
     pub host_name: String,
     /// Human-readable SSH tunnel description ("bastion -> dmz") when the
     /// VNC connection is carried over SSH; None for direct connections.

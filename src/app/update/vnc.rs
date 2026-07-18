@@ -80,6 +80,7 @@ pub fn handle_vnc(portal: &mut Portal, msg: VncMessage) -> Task<Message> {
                 session_id,
                 VncActiveSession {
                     session: vnc_session,
+                    host_id,
                     host_name: host_name.clone(),
                     via,
                     session_start: now,
