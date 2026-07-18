@@ -6,6 +6,7 @@ pub mod backend;
 mod block_elements;
 mod colors;
 pub mod glyph_constraints;
+pub mod links;
 pub mod logger;
 pub mod metrics;
 mod nerd_font_attributes;

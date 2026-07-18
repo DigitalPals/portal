@@ -122,6 +122,13 @@ The terminal widget (`src/terminal/widget.rs`) is a custom Iced component built 
 - Ctrl+Shift+V / Shift+Insert: paste from clipboard
 - Ctrl+Shift+A: select all visible content
 
+**Clickable Links (Ctrl+hover / Ctrl+click)**:
+- Detection in `src/terminal/links.rs`: regex scan of the visible viewport for URLs and file paths (`src/foo.rs:123`, `/abs/path`, `~/file`, `./rel`, bare `name.ext`), plus explicit OSC 8 hyperlinks on cells
+- Holding Ctrl underlines the link under the cursor; Ctrl+click opens it (works even when the TUI enables mouse reporting)
+- URLs open in the default browser (http/https/mailto only); file paths open in the built-in file viewer, scrolled to the `:line` suffix
+- Remote paths open over a fresh SFTP channel on the session's existing SSH connection (registered in the SFTP pool so viewer Save works; dropped when the viewer tab closes); relative paths resolve against the shell's OSC 7 cwd (`TerminalEvent::CwdChanged`), falling back to the home directory
+- Portal Hub proxy sessions show a "not supported yet" toast for file links
+
 **Scrollback**:
 - Mouse wheel scrolling through terminal history
 - Trackpad pixel-perfect smooth scrolling

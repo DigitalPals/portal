@@ -14,6 +14,7 @@ use crate::sftp::{FileEntry, SharedSftpSession};
 use crate::ssh::SshSession;
 use crate::ssh::host_key_verification::HostKeyVerificationRequest;
 use crate::terminal::backend::TerminalEvent;
+use crate::terminal::links::TerminalLink;
 use crate::terminal_paste::TerminalPastePayload;
 use crate::theme::ThemeId;
 use crate::views::file_viewer::ViewerContent;
@@ -238,8 +239,30 @@ pub enum SessionMessage {
     InstallKey(SessionId),
     /// Result of SSH key installation (bool = was_newly_installed)
     InstallKeyResult(SessionId, Result<bool, String>),
+    /// User Ctrl+clicked a link (URL or file path) in the terminal
+    OpenLink(SessionId, TerminalLink),
+    /// A Ctrl+clicked file path was resolved (or failed to resolve)
+    LinkFileResolved {
+        session_id: SessionId,
+        /// 1-based line number to scroll the viewer to
+        line: Option<u32>,
+        result: Result<ResolvedLinkFile, String>,
+    },
     /// Terminal scrollback search (find-in-buffer)
     Search(SearchMessage),
+}
+
+/// Resolved target of a Ctrl+clicked terminal file path
+#[derive(Debug, Clone)]
+pub enum ResolvedLinkFile {
+    /// File on the local machine (local terminal sessions)
+    Local(PathBuf),
+    /// File on the session's remote host, reachable over a fresh SFTP
+    /// channel opened on the existing SSH connection
+    Remote {
+        sftp: SharedSftpSession,
+        path: PathBuf,
+    },
 }
 
 /// SFTP browser messages

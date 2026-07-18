@@ -54,6 +54,9 @@ pub struct FileViewerState {
     pub is_modified: bool,
     /// Whether a save operation is in progress
     pub is_saving: bool,
+    /// 1-based line to scroll to once text content loads (from a Ctrl+clicked
+    /// `path:line` terminal link)
+    pub pending_goto_line: Option<usize>,
 }
 
 impl FileViewerState {
@@ -72,6 +75,7 @@ impl FileViewerState {
             content: ViewerContent::Loading,
             is_modified: false,
             is_saving: false,
+            pending_goto_line: None,
         }
     }
 

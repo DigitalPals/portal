@@ -5,22 +5,25 @@ use futures::stream;
 use iced::Task;
 use iced::clipboard;
 use std::collections::VecDeque;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use uuid::Uuid;
 
 use crate::app::managers::{ActiveSession, SessionBackend};
-use crate::app::services::{connection, history};
+use crate::app::services::{connection, file_viewer, history};
 use crate::app::{Portal, Tab, View};
 use crate::config::AuthMethod;
-use crate::message::{Message, SearchMessage, SessionId, SessionMessage};
+use crate::message::{Message, ResolvedLinkFile, SearchMessage, SessionId, SessionMessage};
 use crate::platform;
 use crate::sftp::session::SftpSession;
 use crate::ssh::reconnect::ReconnectPolicy;
 use crate::terminal::backend::{TerminalEvent, paste_bytes_for_mode};
+use crate::terminal::links::TerminalLink;
 use crate::terminal::logger::SessionLogger;
 use crate::terminal::search::{self as terminal_search, TerminalSearchState};
 use crate::terminal_paste::{self, TerminalPastePayload};
+use crate::views::file_viewer::FileType;
 use crate::views::tabs::{
     TabAgentActivity, TabAgentKind, TabAgentStatus, TabType, promote_connection_tab,
 };
@@ -422,6 +425,7 @@ fn start_terminal_session(
             terminal_agent_turn_started_at: None,
             last_terminal_notification_at: None,
             resume_snapshot_protected_until,
+            cwd: None,
             logger: None,
             search: TerminalSearchState::default(),
         },
@@ -1183,6 +1187,12 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
             Task::none()
         }
         SessionMessage::Search(msg) => handle_search(portal, msg),
+        SessionMessage::OpenLink(session_id, link) => handle_open_link(portal, session_id, link),
+        SessionMessage::LinkFileResolved {
+            session_id,
+            line,
+            result,
+        } => handle_link_file_resolved(portal, session_id, line, result),
         SessionMessage::Disconnected { session_id, clean } => {
             tracing::info!("Terminal session disconnected (clean: {})", clean);
             if !portal.sessions.contains(session_id) {
@@ -1396,6 +1406,12 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                 }
                 mark_terminal_attention(portal, session_id);
                 notify_command_finished(portal, session_id, exit_status, duration);
+                Task::none()
+            }
+            TerminalEvent::CwdChanged(path) => {
+                if let Some(session) = portal.sessions.get_mut(session_id) {
+                    session.cwd = Some(path);
+                }
                 Task::none()
             }
             TerminalEvent::PtyWrite(bytes) => {
@@ -1813,6 +1829,231 @@ fn handle_search(portal: &mut Portal, msg: SearchMessage) -> Task<Message> {
     }
 }
 
+/// Handle a Ctrl+clicked terminal link: URLs open in the default browser,
+/// file paths open in the built-in file viewer on the session's host.
+fn handle_open_link(
+    portal: &mut Portal,
+    session_id: SessionId,
+    link: TerminalLink,
+) -> Task<Message> {
+    match link {
+        TerminalLink::Url(url) => {
+            open_terminal_url(portal, &url);
+            Task::none()
+        }
+        TerminalLink::FilePath { path, line } => {
+            open_terminal_file_link(portal, session_id, path, line)
+        }
+    }
+}
+
+fn open_terminal_url(portal: &mut Portal, url: &str) {
+    const ALLOWED_SCHEMES: [&str; 3] = ["http://", "https://", "mailto:"];
+
+    let lower = url.to_ascii_lowercase();
+    if !ALLOWED_SCHEMES
+        .iter()
+        .any(|scheme| lower.starts_with(scheme))
+    {
+        portal.toast_manager.push(Toast::warning(format!(
+            "Blocked link with unsupported scheme: {}",
+            truncate_for_toast(url)
+        )));
+        return;
+    }
+
+    if let Err(error) = open::that(url) {
+        portal
+            .toast_manager
+            .push(Toast::error(format!("Failed to open link: {}", error)));
+    }
+}
+
+fn open_terminal_file_link(
+    portal: &mut Portal,
+    session_id: SessionId,
+    path: String,
+    line: Option<u32>,
+) -> Task<Message> {
+    let Some(session) = portal.sessions.get(session_id) else {
+        return Task::none();
+    };
+
+    if !FileType::from_path(Path::new(&path)).is_viewable() {
+        portal.toast_manager.push(Toast::warning(format!(
+            "{} cannot be opened in the file viewer",
+            truncate_for_toast(&path)
+        )));
+        return Task::none();
+    }
+
+    let cwd = session.cwd.clone();
+    match &session.backend {
+        SessionBackend::Ssh(ssh_session) => {
+            let ssh_session = ssh_session.clone();
+            Task::perform(
+                async move {
+                    let sftp = SftpSession::from_ssh_session(&ssh_session)
+                        .await
+                        .map_err(|error| format!("SFTP unavailable: {}", error))?;
+                    let resolved = resolve_remote_link_path(&sftp, cwd, &path).await?;
+                    Ok(ResolvedLinkFile::Remote {
+                        sftp,
+                        path: resolved,
+                    })
+                },
+                move |result| {
+                    Message::Session(SessionMessage::LinkFileResolved {
+                        session_id,
+                        line,
+                        result,
+                    })
+                },
+            )
+        }
+        SessionBackend::Local(_) => Task::perform(
+            async move {
+                resolve_local_link_path(cwd, &path)
+                    .await
+                    .map(ResolvedLinkFile::Local)
+            },
+            move |result| {
+                Message::Session(SessionMessage::LinkFileResolved {
+                    session_id,
+                    line,
+                    result,
+                })
+            },
+        ),
+        SessionBackend::Proxy(_) => {
+            portal.toast_manager.push(Toast::warning(
+                "Opening file links from Portal Hub sessions is not supported yet",
+            ));
+            Task::none()
+        }
+    }
+}
+
+/// Candidate absolute paths for a clicked link path, most specific first:
+/// the shell's OSC 7 working directory (when reported), then the home
+/// directory.
+fn link_path_candidates(home: &Path, cwd: Option<&Path>, raw: &str) -> Vec<PathBuf> {
+    if let Some(rest) = raw.strip_prefix("~/") {
+        return vec![home.join(rest)];
+    }
+    if raw.starts_with('/') {
+        return vec![PathBuf::from(raw)];
+    }
+
+    let relative = raw.strip_prefix("./").unwrap_or(raw);
+    let mut candidates = Vec::new();
+    if let Some(cwd) = cwd {
+        candidates.push(cwd.join(relative));
+    }
+    candidates.push(home.join(relative));
+    candidates
+}
+
+async fn resolve_remote_link_path(
+    sftp: &SftpSession,
+    cwd: Option<PathBuf>,
+    raw: &str,
+) -> Result<PathBuf, String> {
+    let candidates = link_path_candidates(sftp.home_dir(), cwd.as_deref(), raw);
+    for candidate in &candidates {
+        if sftp.file_size(candidate).await.is_ok() {
+            return Ok(candidate.clone());
+        }
+    }
+    Err(link_not_found_error(&candidates))
+}
+
+async fn resolve_local_link_path(cwd: Option<PathBuf>, raw: &str) -> Result<PathBuf, String> {
+    let home = directories::BaseDirs::new()
+        .map(|dirs| dirs.home_dir().to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("/"));
+    let candidates = link_path_candidates(&home, cwd.as_deref(), raw);
+    for candidate in &candidates {
+        if tokio::fs::metadata(candidate)
+            .await
+            .is_ok_and(|metadata| metadata.is_file())
+        {
+            return Ok(candidate.clone());
+        }
+    }
+    Err(link_not_found_error(&candidates))
+}
+
+fn link_not_found_error(candidates: &[PathBuf]) -> String {
+    match candidates.first() {
+        Some(first) => format!("File not found: {}", first.display()),
+        None => "File not found".to_string(),
+    }
+}
+
+fn truncate_for_toast(text: &str) -> String {
+    const MAX_TOAST_TEXT_CHARS: usize = 80;
+    if text.chars().count() <= MAX_TOAST_TEXT_CHARS {
+        text.to_string()
+    } else {
+        let truncated: String = text.chars().take(MAX_TOAST_TEXT_CHARS).collect();
+        format!("{}...", truncated)
+    }
+}
+
+/// Open the resolved file in a new file viewer tab. Remote files register
+/// their SFTP channel in the connection pool so the viewer's Save works; the
+/// channel is dropped again when the viewer tab closes.
+fn handle_link_file_resolved(
+    portal: &mut Portal,
+    _session_id: SessionId,
+    line: Option<u32>,
+    result: Result<ResolvedLinkFile, String>,
+) -> Task<Message> {
+    let resolved = match result {
+        Ok(resolved) => resolved,
+        Err(error) => {
+            portal.toast_manager.push(Toast::error(error));
+            return Task::none();
+        }
+    };
+
+    let path = match &resolved {
+        ResolvedLinkFile::Local(path) => path,
+        ResolvedLinkFile::Remote { path, .. } => path,
+    };
+    let file_name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_else(|| path.display().to_string());
+    let file_type = FileType::from_path(path);
+    let viewer_id = Uuid::new_v4();
+
+    let (mut viewer_state, load_task) = match resolved {
+        ResolvedLinkFile::Local(path) => {
+            file_viewer::build_local_viewer(viewer_id, file_name.clone(), path, file_type)
+        }
+        ResolvedLinkFile::Remote { sftp, path } => {
+            let sftp_session_id = Uuid::new_v4();
+            portal.sftp.insert_connection(sftp_session_id, sftp.clone());
+            file_viewer::build_remote_viewer(
+                viewer_id,
+                file_name.clone(),
+                path,
+                sftp_session_id,
+                sftp,
+                file_type,
+            )
+        }
+    };
+    viewer_state.pending_goto_line = line.map(|line| line as usize);
+
+    portal.file_viewers.insert(viewer_state);
+    portal.tabs.push(Tab::new_file_viewer(viewer_id, file_name));
+    portal.enter_file_viewer_view(viewer_id);
+    load_task
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1843,6 +2084,7 @@ mod tests {
             terminal_agent_turn_started_at: None,
             last_terminal_notification_at: None,
             resume_snapshot_protected_until: None,
+            cwd: None,
             logger: None,
             search: TerminalSearchState::default(),
         }
@@ -1891,6 +2133,42 @@ mod tests {
         recompute_search(&mut session, SearchSelection::Reset, false);
         assert!(session.search.matches.is_empty());
         assert_eq!(session.search.current, None);
+    }
+
+    #[test]
+    fn link_path_candidates_resolve_home_absolute_and_relative_paths() {
+        let home = Path::new("/home/john");
+        let cwd = PathBuf::from("/home/john/Code/portal");
+
+        assert_eq!(
+            link_path_candidates(home, Some(&cwd), "~/notes.md"),
+            vec![PathBuf::from("/home/john/notes.md")]
+        );
+        assert_eq!(
+            link_path_candidates(home, Some(&cwd), "/etc/hosts"),
+            vec![PathBuf::from("/etc/hosts")]
+        );
+        // Relative paths try the OSC 7 cwd first, then the home directory.
+        assert_eq!(
+            link_path_candidates(home, Some(&cwd), "./src/main.rs"),
+            vec![
+                PathBuf::from("/home/john/Code/portal/src/main.rs"),
+                PathBuf::from("/home/john/src/main.rs"),
+            ]
+        );
+        assert_eq!(
+            link_path_candidates(home, None, "src/main.rs"),
+            vec![PathBuf::from("/home/john/src/main.rs")]
+        );
+    }
+
+    #[test]
+    fn truncate_for_toast_shortens_long_text() {
+        assert_eq!(truncate_for_toast("short"), "short");
+        let long = "x".repeat(100);
+        let truncated = truncate_for_toast(&long);
+        assert_eq!(truncated.chars().count(), 83);
+        assert!(truncated.ends_with("..."));
     }
 
     #[test]

@@ -73,6 +73,9 @@ pub struct ActiveSession {
     pub last_terminal_notification_at: Option<Instant>,
     /// Short guard used after seeding a resumed Portal Hub screen snapshot.
     pub resume_snapshot_protected_until: Option<Instant>,
+    /// Working directory reported by the shell via OSC 7, used to resolve
+    /// relative file paths when opening Ctrl+clicked terminal links.
+    pub cwd: Option<PathBuf>,
     /// Optional session logger for terminal output
     pub logger: Option<SessionLogger>,
     /// Scrollback search (find-in-buffer) state for this session's terminal.
@@ -243,6 +246,7 @@ mod tests {
             terminal_agent_turn_started_at: None,
             last_terminal_notification_at: None,
             resume_snapshot_protected_until: None,
+            cwd: None,
             logger: None,
             search: TerminalSearchState::default(),
         }

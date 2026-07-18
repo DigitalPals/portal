@@ -39,6 +39,11 @@ impl FileViewerManager {
         self.viewers.remove(&viewer_id)
     }
 
+    /// Iterate over all open file viewers
+    pub fn values(&self) -> impl Iterator<Item = &FileViewerState> {
+        self.viewers.values()
+    }
+
     /// Check if a viewer exists
     pub fn contains(&self, viewer_id: SessionId) -> bool {
         self.viewers.contains_key(&viewer_id)

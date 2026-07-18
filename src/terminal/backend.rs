@@ -43,6 +43,8 @@ pub enum TerminalEvent {
         exit_status: Option<i32>,
         duration: Duration,
     },
+    /// Shell integration (OSC 7) reported the working directory.
+    CwdChanged(std::path::PathBuf),
     /// Write response back to the PTY (e.g. device attribute queries)
     PtyWrite(Vec<u8>),
     /// Terminal exited
@@ -325,6 +327,10 @@ impl OscNotificationParser {
                     events.push(event);
                 }
 
+                if let Some(event) = parse_osc_cwd(&osc) {
+                    events.push(event);
+                }
+
                 search_from = end + terminator_len;
                 drain_to = search_from;
             } else {
@@ -443,6 +449,21 @@ fn parse_osc_notification(bytes: &[u8]) -> Option<TerminalNotification> {
         }
         _ => None,
     }
+}
+
+/// Parse an OSC 7 working-directory report (`7;file://host/path`). The host
+/// part is ignored: for SSH sessions it names the remote host the session is
+/// already talking to.
+fn parse_osc_cwd(bytes: &[u8]) -> Option<TerminalEvent> {
+    let content = String::from_utf8_lossy(bytes);
+    let uri = content.strip_prefix("7;")?;
+    let rest = uri.strip_prefix("file://")?;
+    let path_start = rest.find('/')?;
+    let path = crate::terminal::links::percent_decode(&rest[path_start..]);
+    if path.is_empty() || path.chars().any(char::is_control) {
+        return None;
+    }
+    Some(TerminalEvent::CwdChanged(std::path::PathBuf::from(path)))
 }
 
 fn sanitize_notification_text(text: &str) -> String {
@@ -775,6 +796,33 @@ mod tests {
             drain_notification(&mut event_rx),
             Some(("Codex".to_string(), "Task complete".to_string()))
         );
+    }
+
+    #[test]
+    fn process_input_emits_cwd_change_for_osc7() {
+        let (backend, mut event_rx) = TerminalBackend::new(TerminalSize::new(10, 3));
+
+        backend.process_input(b"\x1b]7;file://beast/root/Code/my%20project\x07");
+
+        let mut cwd = None;
+        while let Ok(event) = event_rx.try_recv() {
+            if let TerminalEvent::CwdChanged(path) = event {
+                cwd = Some(path);
+            }
+        }
+        assert_eq!(cwd, Some(std::path::PathBuf::from("/root/Code/my project")));
+    }
+
+    #[test]
+    fn process_input_ignores_malformed_osc7() {
+        let (backend, mut event_rx) = TerminalBackend::new(TerminalSize::new(10, 3));
+
+        backend.process_input(b"\x1b]7;not-a-uri\x07");
+        backend.process_input(b"\x1b]7;file://host-only\x07");
+
+        while let Ok(event) = event_rx.try_recv() {
+            assert!(!matches!(event, TerminalEvent::CwdChanged(_)));
+        }
     }
 
     #[test]

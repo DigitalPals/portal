@@ -592,12 +592,29 @@ impl Portal {
             vnc.session.disconnect();
         }
         if let Some(viewer_state) = self.file_viewers.remove(tab_id)
-            && let FileSource::Remote { temp_path, .. } = viewer_state.file_source
-            && let Some(temp_dir) = temp_path.parent().map(|path| path.to_path_buf())
+            && let FileSource::Remote {
+                temp_path,
+                session_id: viewer_sftp_id,
+                ..
+            } = viewer_state.file_source
         {
-            tokio::spawn(async move {
-                let _ = cleanup_temp_dir(&temp_dir).await;
+            if let Some(temp_dir) = temp_path.parent().map(|path| path.to_path_buf()) {
+                tokio::spawn(async move {
+                    let _ = cleanup_temp_dir(&temp_dir).await;
+                });
+            }
+
+            // Viewers opened from Ctrl+clicked terminal links own their SFTP
+            // channel; drop it unless an SFTP pane or another viewer uses it.
+            let used_by_other_viewers = self.file_viewers.values().any(|viewer| {
+                matches!(
+                    &viewer.file_source,
+                    FileSource::Remote { session_id, .. } if *session_id == viewer_sftp_id
+                )
             });
+            if !self.sftp.is_connection_in_use(viewer_sftp_id) && !used_by_other_viewers {
+                self.sftp.remove_connection(viewer_sftp_id);
+            }
         }
 
         for session_id in sftp_sessions_to_close {

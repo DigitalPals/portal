@@ -28,6 +28,7 @@ use super::backend::{CursorInfo, EventProxy, RenderCell, paste_bytes_for_mode};
 use super::block_elements::{TerminalGraphicCell, render_terminal_graphic};
 use super::colors::{DEFAULT_BG, DEFAULT_FG, ansi_to_iced_themed, cell_fg_to_iced};
 use super::glyph_constraints::GlyphSize;
+use super::links::{self, LinkRegex, ScreenSpan, TerminalLink};
 use super::metrics::{TERMINAL_PADDING_LEFT, TerminalMetrics};
 use super::nerd_font_attributes;
 use super::search::Match;
@@ -212,6 +213,7 @@ pub struct TerminalWidget<'a, Message> {
     on_input: Box<dyn Fn(Vec<u8>) -> Message + 'a>,
     on_paste: Option<Box<dyn Fn() -> Message + 'a>>,
     on_resize: Option<Box<dyn Fn(u16, u16) -> Message + 'a>>,
+    on_open_link: Option<Box<dyn Fn(TerminalLink) -> Message + 'a>>,
     font_size: f32,
     font: iced::Font,
     terminal_font: TerminalFont,
@@ -247,6 +249,7 @@ impl<'a, Message> TerminalWidget<'a, Message> {
             on_input: Box::new(on_input),
             on_paste: None,
             on_resize: None,
+            on_open_link: None,
             font_size: 9.0,
             font: JETBRAINS_MONO_NERD,
             terminal_font: TerminalFont::default(),
@@ -351,6 +354,15 @@ impl<'a, Message> TerminalWidget<'a, Message> {
     /// Set paste callback for app-level clipboard handling.
     pub fn on_paste(mut self, callback: impl Fn() -> Message + 'a) -> Self {
         self.on_paste = Some(Box::new(callback));
+        self
+    }
+
+    /// Set the callback for Ctrl+clicked links (URLs and file paths).
+    ///
+    /// Enables link detection: while Ctrl is held, the link under the cursor
+    /// is underlined and Ctrl+click publishes this message.
+    pub fn on_open_link(mut self, callback: impl Fn(TerminalLink) -> Message + 'a) -> Self {
+        self.on_open_link = Some(Box::new(callback));
         self
     }
 
@@ -677,6 +689,92 @@ impl<'a, Message> TerminalWidget<'a, Message> {
         term.selection_to_string()
     }
 
+    fn current_epoch(&self) -> u64 {
+        self.render_epoch
+            .as_ref()
+            .map(|epoch| epoch.load(Ordering::Relaxed))
+            .unwrap_or(0)
+    }
+
+    /// Find the link under the given pixel position, along with its visible
+    /// screen spans for underlining.
+    fn link_at_position(
+        &self,
+        bounds: &Rectangle,
+        position: iced::Point,
+        regex_slot: &mut Option<LinkRegex>,
+    ) -> Option<(TerminalLink, Vec<ScreenSpan>)> {
+        self.on_open_link.as_ref()?;
+        let (screen_col, screen_line) = self.pixel_to_cell(bounds, position)?;
+        let regex = match regex_slot {
+            Some(regex) => regex,
+            None => {
+                *regex_slot = Some(LinkRegex::new()?);
+                regex_slot.as_mut().expect("just inserted")
+            }
+        };
+
+        let term = self.term.lock();
+        let display_offset = term.grid().display_offset();
+        let point = Point::new(
+            Line(screen_line as i32 - display_offset as i32),
+            Column(screen_col),
+        )
+        .grid_clamp(&*term, Boundary::Grid);
+        let found = links::link_at_point(&term, regex, point)?;
+        let spans = links::match_screen_spans(
+            &found.range,
+            display_offset,
+            term.screen_lines(),
+            term.columns(),
+        );
+        Some((found.link, spans))
+    }
+
+    /// Recompute the hovered link for Ctrl+hover, skipping the (regex) probe
+    /// when the cursor is still on the same cell and no output arrived.
+    fn probe_hovered_link(
+        &self,
+        state: &mut TerminalState,
+        bounds: &Rectangle,
+        position: iced::Point,
+        shell: &mut Shell<'_, Message>,
+    ) {
+        let epoch = self.current_epoch();
+        let Some(cell) = self.pixel_to_cell(bounds, position) else {
+            state.last_link_probe = None;
+            if state.hovered_link.take().is_some() {
+                shell.request_redraw();
+            }
+            return;
+        };
+        if state.last_link_probe == Some((cell, epoch)) {
+            return;
+        }
+        state.last_link_probe = Some((cell, epoch));
+
+        let hovered = self
+            .link_at_position(bounds, position, &mut state.link_regex)
+            .map(|(_, spans)| HoveredLink { spans, epoch });
+        let changed = match (&state.hovered_link, &hovered) {
+            (None, None) => false,
+            (Some(previous), Some(current)) => previous.spans != current.spans,
+            _ => true,
+        };
+        state.hovered_link = hovered;
+        if changed {
+            shell.request_redraw();
+        }
+    }
+
+    /// Clear any hovered-link underline (e.g. after scrolling or Ctrl release).
+    fn clear_hovered_link(state: &mut TerminalState, shell: &mut Shell<'_, Message>) {
+        state.last_link_probe = None;
+        if state.hovered_link.take().is_some() {
+            shell.request_redraw();
+        }
+    }
+
     fn terminal_mode(&self) -> TermMode {
         let term = self.term.lock();
         *term.mode()
@@ -923,6 +1021,23 @@ struct TerminalState {
     last_focus_token: u64,
     last_focus_reported: Option<bool>,
     mouse_button: Option<u8>,
+    /// Current keyboard modifiers (tracked for Ctrl+hover/Ctrl+click links).
+    modifiers: Modifiers,
+    /// Link under the cursor while Ctrl is held, if any.
+    hovered_link: Option<HoveredLink>,
+    /// Cell and render epoch of the last link probe, to avoid rescanning.
+    last_link_probe: Option<((usize, usize), u64)>,
+    /// Lazily compiled link-detection regex.
+    link_regex: Option<LinkRegex>,
+}
+
+/// Hovered link underline state (screen spans + probe epoch).
+#[derive(Debug)]
+struct HoveredLink {
+    /// Visible spans in screen cell coordinates: (line, start_col, end_col).
+    spans: Vec<ScreenSpan>,
+    /// Render epoch the spans were computed against; stale spans are not drawn.
+    epoch: u64,
 }
 
 #[derive(Default)]
@@ -991,6 +1106,10 @@ impl Default for TerminalState {
             last_focus_token: 0,
             last_focus_reported: None,
             mouse_button: None,
+            modifiers: Modifiers::default(),
+            hovered_link: None,
+            last_link_probe: None,
+            link_regex: None,
         }
     }
 }
@@ -1043,6 +1162,10 @@ where
             last_focus_token: 0,
             last_focus_reported: None,
             mouse_button: None,
+            modifiers: Modifiers::default(),
+            hovered_link: None,
+            last_link_probe: None,
+            link_regex: None,
         })
     }
 
@@ -1202,6 +1325,26 @@ where
                     },
                     Background::Color(Color::from_rgba(0.3, 0.5, 0.8, 0.45)),
                 );
+            }
+
+            // Underline the Ctrl+hovered link. Spans computed against an older
+            // render epoch may point at shifted rows, so they are skipped.
+            if let Some(hovered) = &state.hovered_link
+                && hovered.epoch == render_cache.epoch
+            {
+                let link_color = colors.ansi[12];
+                for &(line, start_col, end_col) in &hovered.spans {
+                    let span_rect = selection_span_rect(bounds, metrics, line, start_col, end_col);
+                    draw_metric_rect(
+                        renderer,
+                        Rectangle {
+                            y: span_rect.y + metrics.underline_position,
+                            height: metrics.underline_thickness,
+                            ..span_rect
+                        },
+                        link_color,
+                    );
+                }
             }
 
             // Draw glyphs after all backgrounds so non-standard terminal glyphs are
@@ -1517,6 +1660,19 @@ where
             Event::Mouse(mouse::Event::ButtonPressed(button))
                 if cursor.is_over(bounds) && self.mouse_reporting_enabled() =>
             {
+                // Ctrl+click on a link opens it instead of being reported to
+                // the application (TUIs like Claude Code enable mouse mode).
+                if *button == mouse::Button::Left
+                    && state.modifiers.control()
+                    && let Some(position) = cursor.position()
+                    && let Some((link, _)) =
+                        self.link_at_position(&bounds, position, &mut state.link_regex)
+                    && let Some(on_open_link) = &self.on_open_link
+                {
+                    shell.publish(on_open_link(link));
+                    return;
+                }
+
                 state.is_focused = true;
                 if let Some(bytes) = focus_report_sequence(self.terminal_mode(), true)
                     && state.last_focus_reported != Some(true)
@@ -1554,6 +1710,16 @@ where
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
                 if cursor.is_over(bounds) =>
             {
+                if state.modifiers.control()
+                    && let Some(position) = cursor.position()
+                    && let Some((link, _)) =
+                        self.link_at_position(&bounds, position, &mut state.link_regex)
+                    && let Some(on_open_link) = &self.on_open_link
+                {
+                    shell.publish(on_open_link(link));
+                    return;
+                }
+
                 state.is_focused = true;
                 if let Some(bytes) = focus_report_sequence(self.terminal_mode(), true)
                     && state.last_focus_reported != Some(true)
@@ -1619,6 +1785,14 @@ where
                 shell.request_redraw();
             }
             Event::Mouse(mouse::Event::CursorMoved { position }) => {
+                if self.on_open_link.is_some() {
+                    if state.modifiers.control() && !state.is_selecting && cursor.is_over(bounds) {
+                        self.probe_hovered_link(state, &bounds, *position, shell);
+                    } else {
+                        Self::clear_hovered_link(state, shell);
+                    }
+                }
+
                 if self.mouse_reporting_enabled() {
                     if let Some(bytes) =
                         self.mouse_motion_report(state.mouse_button, bounds, *position, metrics)
@@ -1732,6 +1906,10 @@ where
             Event::Mouse(mouse::Event::WheelScrolled { delta }) if cursor.is_over(bounds) => {
                 // Focus the terminal on scroll
                 state.is_focused = true;
+
+                // Scrolling shifts content under the cursor; drop the link
+                // underline until the next hover probe.
+                Self::clear_hovered_link(state, shell);
 
                 if self.mouse_reporting_enabled() {
                     if let Some(bytes) =
@@ -1922,20 +2100,38 @@ where
                     term.scroll_display(Scroll::Bottom);
                 }
             }
+            Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) => {
+                state.modifiers = *modifiers;
+                if self.on_open_link.is_some() {
+                    if !modifiers.control() {
+                        Self::clear_hovered_link(state, shell);
+                    } else if !state.is_selecting
+                        && cursor.is_over(bounds)
+                        && let Some(position) = cursor.position()
+                    {
+                        self.probe_hovered_link(state, &bounds, position, shell);
+                    }
+                }
+            }
             _ => {}
         }
     }
 
     fn mouse_interaction(
         &self,
-        _tree: &Tree,
+        tree: &Tree,
         layout: Layout<'_>,
         cursor: Cursor,
         _viewport: &Rectangle,
         _renderer: &Renderer,
     ) -> mouse::Interaction {
         if cursor.is_over(layout.bounds()) {
-            mouse::Interaction::Text
+            let state = tree.state.downcast_ref::<TerminalState>();
+            if state.modifiers.control() && state.hovered_link.is_some() {
+                mouse::Interaction::Pointer
+            } else {
+                mouse::Interaction::Text
+            }
         } else {
             mouse::Interaction::default()
         }

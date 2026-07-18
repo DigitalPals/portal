@@ -16,6 +16,7 @@ use crate::keybindings::KeybindingsConfig;
 use crate::message::{Message, SearchMessage, SessionId, SessionMessage};
 use crate::terminal::TerminalBackend;
 use crate::terminal::backend::{EventProxy, TerminalEvent, TerminalSize};
+use crate::terminal::links::TerminalLink;
 use crate::terminal::metrics::TerminalMetrics;
 use crate::terminal::search::TerminalSearchState;
 use crate::terminal::widget::TerminalWidget;
@@ -112,6 +113,7 @@ pub fn terminal_view_with_status<'a>(
     on_input: impl Fn(SessionId, Vec<u8>) -> Message + 'a,
     on_resize: impl Fn(SessionId, u16, u16) -> Message + 'a,
     on_paste: impl Fn(SessionId) -> Message + 'a,
+    on_open_link: impl Fn(SessionId, TerminalLink) -> Message + 'a,
 ) -> Element<'a, Message> {
     session.set_terminal_colors(theme.terminal);
     let metrics = TerminalMetrics::for_font_with_adjustments(
@@ -138,6 +140,7 @@ pub fn terminal_view_with_status<'a>(
         .render_epoch(session.render_epoch())
         .on_resize(move |cols, rows| on_resize(session_id, cols, rows))
         .on_paste(move || on_paste(session_id))
+        .on_open_link(move |link| on_open_link(session_id, link))
         .font_size(font_size)
         .scroll_speed(scroll_speed)
         .font(terminal_font)
@@ -328,6 +331,7 @@ fn terminal_search_bar<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::terminal::metrics::TERMINAL_PADDING_LEFT;
     use crate::theme::{ThemeId, get_theme};
     use iced::Point;
 
@@ -361,6 +365,7 @@ mod tests {
             |id, bytes| Message::Session(SessionMessage::Input(id, bytes)),
             |id, cols, rows| Message::Session(SessionMessage::Resize(id, cols, rows)),
             |id| Message::Session(SessionMessage::Paste(id)),
+            |id, link| Message::Session(SessionMessage::OpenLink(id, link)),
         );
 
         let mut ui = iced_test::simulator(element);
@@ -399,6 +404,127 @@ mod tests {
                     if *id == session_id
             )),
             "expected Close({session_id}), got: {messages:?}"
+        );
+    }
+
+    // End-to-end link click: terminal output containing a file path, Ctrl
+    // held, left click on the path -> the view publishes OpenLink with the
+    // parsed path and line number for the right session.
+    #[test]
+    fn ctrl_click_on_file_path_publishes_open_link() {
+        use crate::terminal::links::TerminalLink;
+
+        let session_id = uuid::Uuid::new_v4();
+        let (session, _events) = TerminalSession::new("test");
+        session.process_output(b"error at src/main.rs:42 in build");
+        let search = TerminalSearchState::default();
+
+        let font_size = 16.0;
+        let element = terminal_view_with_status(
+            get_theme(ThemeId::default()),
+            ScaledFonts::new(1.0),
+            session_id,
+            &session,
+            Instant::now(),
+            "host",
+            None,
+            font_size,
+            4.0,
+            TerminalFont::default(),
+            TerminalMetricAdjustments::default(),
+            KeybindingsConfig::default(),
+            0,
+            &search,
+            |id, bytes| Message::Session(SessionMessage::Input(id, bytes)),
+            |id, cols, rows| Message::Session(SessionMessage::Resize(id, cols, rows)),
+            |id| Message::Session(SessionMessage::Paste(id)),
+            |id, link| Message::Session(SessionMessage::OpenLink(id, link)),
+        );
+
+        let mut ui = iced_test::simulator(element);
+
+        // Aim at "main" inside "src/main.rs:42" ("error at " = 9 cells, so
+        // column 13 is the 'a' of main) on the first terminal row.
+        let metrics = TerminalMetrics::for_font_with_adjustments(
+            TerminalFont::default(),
+            font_size,
+            TerminalMetricAdjustments::default(),
+        );
+        let target = Point::new(
+            TERMINAL_PADDING_LEFT + 13.5 * metrics.cell_width,
+            0.5 * metrics.cell_height,
+        );
+        ui.point_at(target);
+        let _ = ui.simulate([iced::Event::Keyboard(
+            iced::keyboard::Event::ModifiersChanged(iced::keyboard::Modifiers::CTRL),
+        )]);
+        let _ = ui.simulate(iced_test::simulator::click());
+
+        let messages: Vec<Message> = ui.into_messages().collect();
+        let open_link = messages.iter().find_map(|message| match message {
+            Message::Session(SessionMessage::OpenLink(id, link)) if *id == session_id => {
+                Some(link.clone())
+            }
+            _ => None,
+        });
+        assert_eq!(
+            open_link,
+            Some(TerminalLink::FilePath {
+                path: "src/main.rs".to_string(),
+                line: Some(42),
+            }),
+            "expected OpenLink for src/main.rs:42, got: {messages:?}"
+        );
+    }
+
+    // Without Ctrl, clicking the same spot must not publish OpenLink (it
+    // starts a selection instead).
+    #[test]
+    fn plain_click_on_file_path_does_not_publish_open_link() {
+        let session_id = uuid::Uuid::new_v4();
+        let (session, _events) = TerminalSession::new("test");
+        session.process_output(b"error at src/main.rs:42 in build");
+        let search = TerminalSearchState::default();
+
+        let element = terminal_view_with_status(
+            get_theme(ThemeId::default()),
+            ScaledFonts::new(1.0),
+            session_id,
+            &session,
+            Instant::now(),
+            "host",
+            None,
+            16.0,
+            4.0,
+            TerminalFont::default(),
+            TerminalMetricAdjustments::default(),
+            KeybindingsConfig::default(),
+            0,
+            &search,
+            |id, bytes| Message::Session(SessionMessage::Input(id, bytes)),
+            |id, cols, rows| Message::Session(SessionMessage::Resize(id, cols, rows)),
+            |id| Message::Session(SessionMessage::Paste(id)),
+            |id, link| Message::Session(SessionMessage::OpenLink(id, link)),
+        );
+
+        let mut ui = iced_test::simulator(element);
+        let metrics = TerminalMetrics::for_font_with_adjustments(
+            TerminalFont::default(),
+            16.0,
+            TerminalMetricAdjustments::default(),
+        );
+        ui.point_at(Point::new(
+            TERMINAL_PADDING_LEFT + 13.5 * metrics.cell_width,
+            0.5 * metrics.cell_height,
+        ));
+        let _ = ui.simulate(iced_test::simulator::click());
+
+        let messages: Vec<Message> = ui.into_messages().collect();
+        assert!(
+            !messages
+                .iter()
+                .any(|message| matches!(message, Message::Session(SessionMessage::OpenLink(..)))),
+            "plain click must not open links, got: {messages:?}"
         );
     }
 }

@@ -1,6 +1,7 @@
 //! File viewer message handler
 
 use iced::Task;
+use iced::widget::text_editor;
 use std::path::Path;
 
 use crate::app::Portal;
@@ -17,6 +18,9 @@ pub fn handle_file_viewer(app: &mut Portal, msg: FileViewerMessage) -> Task<Mess
         FileViewerMessage::ContentLoaded { viewer_id, content } => {
             if let Some(viewer) = app.file_viewers.get_mut(viewer_id) {
                 viewer.content = content;
+                if let Some(goto_line) = viewer.pending_goto_line.take() {
+                    scroll_viewer_to_line(viewer, goto_line);
+                }
                 if let crate::views::file_viewer::ViewerContent::Pdf {
                     pages,
                     current_page,
@@ -196,6 +200,27 @@ pub fn handle_file_viewer(app: &mut Portal, msg: FileViewerMessage) -> Task<Mess
             }
             Task::none()
         }
+    }
+}
+
+/// Scroll a freshly loaded text/markdown viewer so the target line sits near
+/// the top of the view, with a few lines of context above it.
+fn scroll_viewer_to_line(viewer: &mut crate::views::file_viewer::FileViewerState, line: usize) {
+    const GOTO_LINE_CONTEXT: usize = 3;
+
+    let scroll = line.saturating_sub(1 + GOTO_LINE_CONTEXT);
+    if scroll == 0 {
+        return;
+    }
+    let action = text_editor::Action::Scroll {
+        lines: scroll.min(i32::MAX as usize) as i32,
+    };
+    match &mut viewer.content {
+        crate::views::file_viewer::ViewerContent::Text { content } => content.perform(action),
+        crate::views::file_viewer::ViewerContent::Markdown { content, .. } => {
+            content.perform(action)
+        }
+        _ => {}
     }
 }
 

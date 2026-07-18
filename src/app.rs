@@ -908,6 +908,9 @@ impl Portal {
                             Message::Session(SessionMessage::Resize(session_id, cols, rows))
                         },
                         move |_sid| Message::Session(SessionMessage::Paste(session_id)),
+                        move |_sid, link| {
+                            Message::Session(SessionMessage::OpenLink(session_id, link))
+                        },
                     )
                 } else {
                     text("Session not found").into()
