@@ -33,7 +33,7 @@ Portal is a native SSH and VNC client built for speed and simplicity. Manage you
 
 **`#!` Built-in File Viewer** — View code with syntax highlighting, preview images and PDFs, edit markdown—all without leaving Portal.
 
-**`::` Beautiful Themes** — Choose from 5 built-in themes including the popular Catppuccin palette in both light and dark variants.
+**`::` Beautiful Themes** — Choose from 6 built-in themes including the popular Catppuccin palette in both light and dark variants.
 
 **`/>` Command Snippets** — Save frequently used commands and insert them into any session with a click. Never retype complex commands.
 
@@ -45,6 +45,12 @@ Portal is a native SSH and VNC client built for speed and simplicity. Manage you
 
 - **Multi-tab sessions** — Open multiple SSH connections in tabs
 - **Local terminal** — Launch local shell sessions alongside remote connections
+- **Scrollback search** — Find text in the terminal buffer with `Ctrl+Shift+F`
+- **Clickable links** — `Ctrl+click` URLs and file paths in terminal output; files open in the built-in viewer at the referenced line
+- **Port forwarding** — Local, remote, and dynamic (SOCKS5) forwards per host
+- **Jump hosts** — Chain connections through bastion hosts (ProxyJump)
+- **Auto-reconnect** — Reconnects dropped sessions with exponential backoff
+- **Session logging** — Optionally log terminal output to disk, plain or timestamped
 - **Adjustable font size** — Scale from 6px to 20px for your preference
 - **Configurable scroll speed** — Tune mouse wheel and trackpad scrollback speed
 - **SSH key installation** — Install your public key on remote servers with `Ctrl+Shift+K`
@@ -65,6 +71,7 @@ Portal is a native SSH and VNC client built for speed and simplicity. Manage you
 ### Host Management
 
 - **Host groups** — Organize servers into folders
+- **SSH config import** — Import hosts (including ProxyJump chains) from `~/.ssh/config`
 - **Quick connect** — Type `user@hostname` to connect instantly
 - **Search & filter** — Find hosts as you type
 - **Connection history** — See when you last connected and for how long
@@ -87,7 +94,7 @@ Portal is a native SSH and VNC client built for speed and simplicity. Manage you
 - **GPU-accelerated rendering** — Custom wgpu shader for efficient framebuffer display
 - **Multiple encodings** — Tight, ZRLE, CopyRect, and Raw with automatic selection
 - **ARD authentication** — Apple Remote Desktop support for macOS Screen Sharing
-- **Multi-monitor support** — Discover and select individual displays
+- **SSH tunneling** — Carry VNC traffic over an encrypted SSH channel; the toolbar warns when a session runs unencrypted
 - **Scaling modes** — Fit, Actual (1:1), and Stretch modes
 - **Keyboard passthrough** — Forward all keystrokes to the remote desktop
 - **Special key toolbar** — Send Ctrl+Alt+Del, Alt+Tab, Super, Print Screen, and more
@@ -97,12 +104,13 @@ Portal is a native SSH and VNC client built for speed and simplicity. Manage you
 
 ### Customization
 
-- **5 built-in themes**
+- **6 built-in themes**
   - Portal Default
   - Catppuccin Latte (light)
   - Catppuccin Frappé (dark)
   - Catppuccin Macchiato (dark)
   - Catppuccin Mocha (dark)
+  - Noctalia (dark)
 - **Responsive layout** — Sidebar auto-collapses on narrow windows
 - **Keyboard-first** — Full keyboard navigation support
 
@@ -311,14 +319,18 @@ material.
 
 | Shortcut | Action |
 |----------|--------|
+| `Ctrl+Shift+P` | Open the command palette |
+| `Ctrl+Shift+F` | Search terminal scrollback |
 | `Ctrl+Shift+K` | Install SSH public key on remote server |
 | `Ctrl+Tab` | Switch to next tab |
 | `Ctrl+Shift+Tab` | Switch to previous tab |
-| `Ctrl+W` | Close current tab |
+| `Ctrl+Shift+W` | Close current session |
 | `F11` | Toggle fullscreen (VNC) |
 | `Ctrl+Shift+S` | Capture screenshot (VNC) |
 | `Ctrl+Shift+V` | Paste clipboard to VNC server |
 | `Ctrl+Shift+Escape` | Release keyboard passthrough (VNC) |
+
+Common shortcuts (new tab/connection, copy/paste, search, fullscreen, and more) are rebindable in Settings.
 
 ## Built With
 

@@ -72,6 +72,9 @@ ecosystem, use this order to avoid long feedback loops:
   CI validates the final release candidate commit.
 - For Portal release candidates, validate the release-only paths before pushing
   the release tag:
+  - Run `cargo fmt -- --check` and the same security audit command used by CI
+    before pushing. `./run.sh check` alone does not cover these CI blockers:
+    `cargo audit --ignore RUSTSEC-2023-0071 --ignore RUSTSEC-2026-0194 --ignore RUSTSEC-2026-0195`.
   - Run `nix build --print-build-logs` whenever `flake.nix`, `flake.lock`,
     `Cargo.lock`, `.github/workflows/release.yml`, or Rust dependencies changed.
     This build is slow because it compiles release artifacts and runs release-mode
@@ -89,6 +92,14 @@ ecosystem, use this order to avoid long feedback loops:
   green. If a tag workflow fails before a GitHub release is created, fix `main`,
   verify CI again, delete and recreate the tag on the corrected commit, then
   re-run the release.
+- For Portal Hub LXC validation on `root@10.10.0.13`:
+  - Run remote shell snippets with `bash -lc`; the default shell may be `fish`.
+  - Do not assume `rsync` exists on the LXC. To sync the committed Hub source
+    while preserving remote `target/`, use a tracked-file tar stream such as
+    `git ls-files -z | tar --null -T - -czf - | ssh root@10.10.0.13 'bash -lc "mkdir -p /root/Code/portal-hub && tar -xzf - -C /root/Code/portal-hub"'`.
+  - Use `/usr/local/bin/portal-hub version`; `--version` is not supported.
+  - Run `portal-hub doctor` as the `portal-hub` service user, not as root:
+    `runuser -u portal-hub -- /usr/local/bin/portal-hub doctor`.
 - If a workflow fails and logs are not accessible, reproduce it in a fresh
   sibling checkout layout that matches GitHub Actions:
   `/tmp/portal-ci-repro/{portal,portal-hub,portal-android}`.
