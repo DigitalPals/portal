@@ -699,8 +699,7 @@ fn apply_payloads(
     payloads: HashMap<String, Value>,
 ) -> Result<(), String> {
     if let Some(value) = payloads.get(HOSTS) {
-        let mut hosts: HostsConfig = serde_json::from_value(value.clone())
-            .map_err(|error| format!("failed to parse synced hosts: {}", error))?;
+        let mut hosts = parse_synced_hosts(value.clone())?;
         preserve_runtime_host_metadata(&mut hosts, &profile.hosts);
         hosts.save().map_err(|error| error.to_string())?;
     }
@@ -722,6 +721,26 @@ fn apply_payloads(
     }
     let _ = profile;
     Ok(())
+}
+
+pub fn parse_synced_hosts(mut value: Value) -> Result<HostsConfig, String> {
+    normalize_synced_host_routing(&mut value);
+    serde_json::from_value(value)
+        .map_err(|error| format!("failed to parse synced hosts: {}", error))
+}
+
+fn normalize_synced_host_routing(value: &mut Value) {
+    let Some(hosts) = value.get_mut("hosts").and_then(Value::as_array_mut) else {
+        return;
+    };
+    for host in hosts {
+        let Some(host) = host.as_object_mut() else {
+            continue;
+        };
+        if host.contains_key("hub_routing") {
+            host.remove("portal_hub_enabled");
+        }
+    }
 }
 
 fn load_local_sync_state(hub_url: &str) -> Result<LocalSyncState, String> {
@@ -995,6 +1014,26 @@ mod tests {
         assert!(!host.contains_key("last_connected"));
         assert!(!host.contains_key("detected_os"));
         assert_eq!(host.get("updated_at"), host.get("created_at"));
+    }
+
+    #[test]
+    fn parse_synced_hosts_prefers_canonical_routing_over_legacy_alias() {
+        let payload = json!({
+            "hosts": [{
+                "id": "00000000-0000-0000-0000-000000000001",
+                "name": "Test",
+                "hostname": "example.com",
+                "hub_routing": "direct",
+                "portal_hub_enabled": true,
+                "created_at": "2026-04-25T00:00:00Z",
+                "updated_at": "2026-04-25T00:00:00Z"
+            }],
+            "groups": []
+        });
+
+        let hosts = parse_synced_hosts(payload).unwrap();
+
+        assert_eq!(hosts.hosts[0].hub_routing, HubRouting::Direct);
     }
 
     #[test]

@@ -539,9 +539,7 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
                 async move {
                     let response = crate::hub::sync::http_sync_get(&settings).await?;
                     let profile = crate::hub::sync::parse_profile(&response)?;
-                    let hosts: crate::config::HostsConfig =
-                        serde_json::from_value(profile.hosts)
-                            .map_err(|error| format!("failed to parse synced hosts: {}", error))?;
+                    let hosts = crate::hub::sync::parse_synced_hosts(profile.hosts)?;
                     let settings_config: SettingsConfig = serde_json::from_value(profile.settings)
                         .map_err(|error| format!("failed to parse synced settings: {}", error))?;
                     let snippets: crate::config::SnippetsConfig =
