@@ -306,6 +306,7 @@ impl SshClient {
                 ("PORTAL_TERMINAL", "1"),
                 ("PORTAL_TERM_PROGRAM", "Portal"),
                 ("PORTAL_TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION")),
+                crate::terminal::OSC_PROGRESS_ENV,
             ] {
                 if let Err(e) = channel.set_env(false, name, value).await {
                     tracing::warn!("Failed to set {name}: {e}");

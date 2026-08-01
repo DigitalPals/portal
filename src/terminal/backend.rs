@@ -45,6 +45,10 @@ pub enum TerminalEvent {
     },
     /// Shell integration (OSC 7) reported the working directory.
     CwdChanged(std::path::PathBuf),
+    /// OSC 9;4 progress reporting (ConEmu/Windows Terminal style): busy while
+    /// a non-zero progress state is reported, cleared on state 0. Kimi Code
+    /// emits this while working (its title carries no state text).
+    Progress { busy: bool },
     /// Write response back to the PTY (e.g. device attribute queries)
     PtyWrite(Vec<u8>),
     /// Terminal exited
@@ -331,6 +335,10 @@ impl OscNotificationParser {
                     events.push(event);
                 }
 
+                if let Some(event) = parse_osc_progress(&osc) {
+                    events.push(event);
+                }
+
                 search_from = end + terminator_len;
                 drain_to = search_from;
             } else {
@@ -464,6 +472,20 @@ fn parse_osc_cwd(bytes: &[u8]) -> Option<TerminalEvent> {
         return None;
     }
     Some(TerminalEvent::CwdChanged(std::path::PathBuf::from(path)))
+}
+
+/// Parse an OSC 9;4 progress report (`9;4;<state>;<progress>`). State 0
+/// clears progress; states 1-4 (normal, error, indeterminate, paused) all
+/// mean work is in flight. The progress percentage itself is unused.
+fn parse_osc_progress(bytes: &[u8]) -> Option<TerminalEvent> {
+    let content = String::from_utf8_lossy(bytes);
+    let rest = content.strip_prefix("9;4;")?;
+    let state = rest.split(';').next()?;
+    match state {
+        "0" => Some(TerminalEvent::Progress { busy: false }),
+        "1" | "2" | "3" | "4" => Some(TerminalEvent::Progress { busy: true }),
+        _ => None,
+    }
 }
 
 fn sanitize_notification_text(text: &str) -> String {
@@ -826,12 +848,33 @@ mod tests {
     }
 
     #[test]
-    fn process_input_ignores_osc9_progress() {
+    fn process_input_osc9_progress_is_not_a_notification() {
         let (backend, mut event_rx) = TerminalBackend::new(TerminalSize::new(10, 3));
 
         backend.process_input(b"\x1b]9;4;1;50\x07");
 
         assert_eq!(drain_notification(&mut event_rx), None);
+    }
+
+    #[test]
+    fn process_input_emits_progress_for_osc9_4() {
+        let (backend, mut event_rx) = TerminalBackend::new(TerminalSize::new(10, 3));
+
+        // Indeterminate busy state (what Kimi Code emits while working).
+        backend.process_input(b"\x1b]9;4;3\x07");
+        // Determinate progress and paused/error states also mean busy.
+        backend.process_input(b"\x1b]9;4;1;50\x07");
+        backend.process_input(b"\x1b]9;4;4;50\x07");
+        // State 0 clears progress (what Kimi Code emits when done).
+        backend.process_input(b"\x1b]9;4;0;\x07");
+
+        let mut states = Vec::new();
+        while let Ok(event) = event_rx.try_recv() {
+            if let TerminalEvent::Progress { busy } = event {
+                states.push(busy);
+            }
+        }
+        assert_eq!(states, vec![true, true, true, false]);
     }
 
     #[test]

@@ -597,7 +597,17 @@ enum TerminalAgentTitleState {
     Clear,
 }
 
-fn terminal_agent_title_state(title: &str, turn_active: bool) -> Option<TerminalAgentTitleState> {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TerminalAgentNotificationState {
+    Ready,
+    NeedsInput,
+}
+
+fn terminal_agent_title_state(
+    title: &str,
+    turn_active: bool,
+    current_kind: Option<TabAgentKind>,
+) -> Option<TerminalAgentTitleState> {
     let lower = title.to_ascii_lowercase();
 
     if codex_spinner_title(title) {
@@ -612,6 +622,8 @@ fn terminal_agent_title_state(title: &str, turn_active: bool) -> Option<Terminal
         Some(TabAgentKind::Codex)
     } else if lower.contains("claude") {
         Some(TabAgentKind::Claude)
+    } else if lower.contains("kimi") {
+        Some(TabAgentKind::Kimi)
     } else {
         None
     };
@@ -634,15 +646,44 @@ fn terminal_agent_title_state(title: &str, turn_active: bool) -> Option<Terminal
         if lower.contains("ready") || lower.contains("idle") || lower.contains("done") {
             return Some(TerminalAgentTitleState::Ready(Some(kind)));
         }
+
+        // Kimi Code's title carries no spinner or state text (it is just
+        // "Kimi Code" or a session summary), so a bare recognized Kimi title
+        // means the agent is present and sitting at its prompt.
+        if kind == TabAgentKind::Kimi {
+            return Some(TerminalAgentTitleState::Ready(Some(kind)));
+        }
     }
 
     if turn_active {
         Some(TerminalAgentTitleState::Ready(None))
     } else if agent_kind.is_none() {
-        Some(TerminalAgentTitleState::Clear)
+        // Kimi Code replaces its title with a session summary after the first
+        // exchange (arbitrary text with no "kimi" in it), so once a session is
+        // detected as Kimi an unrecognized title must not clear the indicator.
+        // Only a recognizable shell title signals that Kimi has exited.
+        if current_kind == Some(TabAgentKind::Kimi) && !is_shell_title(title) {
+            Some(TerminalAgentTitleState::Ready(Some(TabAgentKind::Kimi)))
+        } else {
+            Some(TerminalAgentTitleState::Clear)
+        }
     } else {
         None
     }
+}
+
+/// Recognize titles a shell sets when it is back at the prompt after an agent
+/// exits: bare shell names ("fish", "bash", ...) or `user@host...` titles.
+fn is_shell_title(title: &str) -> bool {
+    const SHELL_NAMES: &[&str] = &["fish", "bash", "zsh", "sh", "dash", "nu", "xonsh", "pwsh"];
+    let trimmed = title.trim();
+    if SHELL_NAMES.contains(&trimmed.to_ascii_lowercase().as_str()) {
+        return true;
+    }
+    trimmed
+        .split_whitespace()
+        .next()
+        .is_some_and(|first| first.contains('@'))
 }
 
 fn codex_spinner_title(title: &str) -> bool {
@@ -675,7 +716,8 @@ fn handle_terminal_agent_title_state(portal: &mut Portal, session_id: SessionId,
         .sessions
         .get(session_id)
         .is_some_and(|session| session.terminal_agent_turn_started_at.is_some());
-    let Some(state) = terminal_agent_title_state(title, turn_active) else {
+    let current_kind = tab_agent_kind(portal, session_id);
+    let Some(state) = terminal_agent_title_state(title, turn_active, current_kind) else {
         return;
     };
 
@@ -690,69 +732,161 @@ fn handle_terminal_agent_title_state(portal: &mut Portal, session_id: SessionId,
             set_tab_agent_status(portal, session_id, kind, TabAgentActivity::Working);
         }
         TerminalAgentTitleState::NeedsInput(kind) => {
-            if let Some(session) = portal.sessions.get_mut(session_id)
-                && session.terminal_agent_turn_started_at.is_none()
-            {
-                session.terminal_agent_turn_started_at =
-                    Some((agent_display_name(kind).to_string(), Instant::now()));
-            }
-            set_tab_agent_status(portal, session_id, kind, TabAgentActivity::NeedsInput);
-            mark_terminal_attention(portal, session_id);
-            let terminal_name = terminal_notification_name(portal, session_id);
-            send_terminal_desktop_notification(
-                portal,
-                session_id,
-                format!(
-                    "{} needs input: {}",
-                    agent_display_name(kind),
-                    terminal_name
-                ),
-                "Portal is waiting for your response.",
-            );
+            handle_terminal_agent_needs_input(portal, session_id, kind, true);
         }
         TerminalAgentTitleState::Ready(kind) => {
-            let started_turn = portal
-                .sessions
-                .get(session_id)
-                .and_then(|session| session.terminal_agent_turn_started_at.clone());
-            let kind = kind
-                .or_else(|| tab_agent_kind(portal, session_id))
-                .or_else(|| {
-                    started_turn
-                        .as_ref()
-                        .and_then(|(name, _)| agent_kind_from_name(name))
-                })
-                .unwrap_or(TabAgentKind::Codex);
-            set_tab_agent_status(portal, session_id, kind, TabAgentActivity::Ready);
-            let Some((agent_name, started_at)) = portal
-                .sessions
-                .get_mut(session_id)
-                .and_then(|session| session.terminal_agent_turn_started_at.take())
-            else {
-                return;
-            };
-            let duration = started_at.elapsed();
-            if duration < TERMINAL_AGENT_TITLE_NOTIFICATION_THRESHOLD {
-                return;
-            }
-
-            mark_terminal_attention(portal, session_id);
-            let terminal_name = terminal_notification_name(portal, session_id);
-            send_terminal_desktop_notification(
-                portal,
-                session_id,
-                format!("{} ready: {}", agent_name, terminal_name),
-                format!("Finished after {}s.", duration.as_secs().max(1)),
-            );
+            handle_terminal_agent_ready(portal, session_id, kind);
         }
         TerminalAgentTitleState::Clear => {
-            if let Some(session) = portal.sessions.get_mut(session_id) {
-                session.terminal_agent_turn_started_at = None;
-            }
-            if let Some(tab) = portal.tabs.iter_mut().find(|tab| tab.id == session_id) {
-                tab.agent_status = None;
-            }
+            clear_terminal_agent_status(portal, session_id);
         }
+    }
+}
+
+fn handle_terminal_agent_needs_input(
+    portal: &mut Portal,
+    session_id: SessionId,
+    kind: TabAgentKind,
+    notify: bool,
+) {
+    if let Some(session) = portal.sessions.get_mut(session_id)
+        && session.terminal_agent_turn_started_at.is_none()
+    {
+        session.terminal_agent_turn_started_at =
+            Some((agent_display_name(kind).to_string(), Instant::now()));
+    }
+    set_tab_agent_status(portal, session_id, kind, TabAgentActivity::NeedsInput);
+    if !notify {
+        return;
+    }
+
+    mark_terminal_attention(portal, session_id);
+    let terminal_name = terminal_notification_name(portal, session_id);
+    send_terminal_desktop_notification(
+        portal,
+        session_id,
+        format!(
+            "{} needs input: {}",
+            agent_display_name(kind),
+            terminal_name
+        ),
+        "Portal is waiting for your response.",
+    );
+}
+
+fn handle_terminal_agent_ready(
+    portal: &mut Portal,
+    session_id: SessionId,
+    kind: Option<TabAgentKind>,
+) {
+    let started_turn = portal
+        .sessions
+        .get(session_id)
+        .and_then(|session| session.terminal_agent_turn_started_at.clone());
+    let kind = kind
+        .or_else(|| tab_agent_kind(portal, session_id))
+        .or_else(|| {
+            started_turn
+                .as_ref()
+                .and_then(|(name, _)| agent_kind_from_name(name))
+        })
+        .unwrap_or(TabAgentKind::Codex);
+    set_tab_agent_status(portal, session_id, kind, TabAgentActivity::Ready);
+    let Some((agent_name, started_at)) = portal
+        .sessions
+        .get_mut(session_id)
+        .and_then(|session| session.terminal_agent_turn_started_at.take())
+    else {
+        return;
+    };
+    let duration = started_at.elapsed();
+    if duration < TERMINAL_AGENT_TITLE_NOTIFICATION_THRESHOLD {
+        return;
+    }
+
+    mark_terminal_attention(portal, session_id);
+    let terminal_name = terminal_notification_name(portal, session_id);
+    send_terminal_desktop_notification(
+        portal,
+        session_id,
+        format!("{} ready: {}", agent_name, terminal_name),
+        format!("Finished after {}s.", duration.as_secs().max(1)),
+    );
+}
+
+/// Drive agent activity from OSC 9;4 progress reports. The sequence is
+/// brandless, so it only updates a session that already detected an agent via
+/// its title. Kimi Code emits it while working (its title carries no state
+/// text); busy starts turn tracking, clear marks the turn ready.
+fn handle_terminal_agent_progress(portal: &mut Portal, session_id: SessionId, busy: bool) {
+    if busy {
+        let Some(kind) = tab_agent_kind(portal, session_id) else {
+            return;
+        };
+        if let Some(session) = portal.sessions.get_mut(session_id)
+            && session.terminal_agent_turn_started_at.is_none()
+        {
+            session.terminal_agent_turn_started_at =
+                Some((agent_display_name(kind).to_string(), Instant::now()));
+        }
+        set_tab_agent_status(portal, session_id, kind, TabAgentActivity::Working);
+    } else if tab_agent_kind(portal, session_id).is_some() {
+        handle_terminal_agent_ready(portal, session_id, None);
+    }
+}
+
+fn terminal_agent_notification_state(title: &str) -> Option<TerminalAgentNotificationState> {
+    let lower = title.to_ascii_lowercase();
+    if !lower.contains("kimi code") {
+        return None;
+    }
+    if lower.contains("approval required") || lower.contains("needs your answer") {
+        Some(TerminalAgentNotificationState::NeedsInput)
+    } else if lower.contains("task complete") {
+        Some(TerminalAgentNotificationState::Ready)
+    } else {
+        None
+    }
+}
+
+fn handle_terminal_agent_notification(portal: &mut Portal, session_id: SessionId, title: &str) {
+    if tab_agent_kind(portal, session_id) != Some(TabAgentKind::Kimi) {
+        return;
+    }
+    match terminal_agent_notification_state(title) {
+        Some(TerminalAgentNotificationState::NeedsInput) => {
+            // The OSC notification itself is forwarded below, so only update
+            // agent state here to avoid sending a duplicate notification.
+            handle_terminal_agent_needs_input(portal, session_id, TabAgentKind::Kimi, false);
+        }
+        Some(TerminalAgentNotificationState::Ready) => {
+            handle_terminal_agent_ready(portal, session_id, Some(TabAgentKind::Kimi));
+        }
+        None => {}
+    }
+}
+
+fn handle_terminal_agent_bell(portal: &mut Portal, session_id: SessionId) {
+    let kimi_turn_active = tab_agent_kind(portal, session_id) == Some(TabAgentKind::Kimi)
+        && portal
+            .sessions
+            .get(session_id)
+            .is_some_and(|session| session.terminal_agent_turn_started_at.is_some());
+    if kimi_turn_active {
+        // Kimi falls back to BEL for approval/question notifications when the
+        // terminal does not advertise OSC 9 desktop notifications. A turn-
+        // completion BEL follows the progress-clear event, so it is no longer
+        // active and does not enter this branch.
+        handle_terminal_agent_needs_input(portal, session_id, TabAgentKind::Kimi, false);
+    }
+}
+
+fn clear_terminal_agent_status(portal: &mut Portal, session_id: SessionId) {
+    if let Some(session) = portal.sessions.get_mut(session_id) {
+        session.terminal_agent_turn_started_at = None;
+    }
+    if let Some(tab) = portal.tabs.iter_mut().find(|tab| tab.id == session_id) {
+        tab.agent_status = None;
     }
 }
 
@@ -779,6 +913,7 @@ fn agent_display_name(kind: TabAgentKind) -> &'static str {
     match kind {
         TabAgentKind::Codex => "Codex",
         TabAgentKind::Claude => "Claude Code",
+        TabAgentKind::Kimi => "Kimi Code",
     }
 }
 
@@ -788,6 +923,8 @@ fn agent_kind_from_name(name: &str) -> Option<TabAgentKind> {
         Some(TabAgentKind::Codex)
     } else if lower.contains("claude") {
         Some(TabAgentKind::Claude)
+    } else if lower.contains("kimi") {
+        Some(TabAgentKind::Kimi)
     } else {
         None
     }
@@ -1368,6 +1505,7 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                 if !portal.sessions.contains(session_id) {
                     return Task::none();
                 }
+                handle_terminal_agent_bell(portal, session_id);
                 mark_terminal_attention(portal, session_id);
                 notify_terminal_bell(portal, session_id);
                 portal
@@ -1393,8 +1531,16 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                 if !portal.sessions.contains(session_id) {
                     return Task::none();
                 }
+                handle_terminal_agent_notification(portal, session_id, &title);
                 mark_terminal_attention(portal, session_id);
                 notify_terminal_osc(portal, session_id, title, body);
+                Task::none()
+            }
+            TerminalEvent::Progress { busy } => {
+                if !portal.sessions.contains(session_id) {
+                    return Task::none();
+                }
+                handle_terminal_agent_progress(portal, session_id, busy);
                 Task::none()
             }
             TerminalEvent::CommandFinished {
@@ -1403,6 +1549,12 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
             } => {
                 if !portal.sessions.contains(session_id) {
                     return Task::none();
+                }
+                if tab_agent_kind(portal, session_id) == Some(TabAgentKind::Kimi) {
+                    // Kimi does not restore the shell's previous title on exit.
+                    // OSC 133 command completion is the reliable indication
+                    // that the outer `kimi` process returned to the shell.
+                    clear_terminal_agent_status(portal, session_id);
                 }
                 mark_terminal_attention(portal, session_id);
                 notify_command_finished(portal, session_id, exit_status, duration);
@@ -2174,48 +2326,131 @@ mod tests {
     #[test]
     fn terminal_agent_title_state_detects_ready_and_active_titles() {
         assert_eq!(
-            terminal_agent_title_state("Codex - Working", false),
+            terminal_agent_title_state("Codex - Working", false, None),
             Some(TerminalAgentTitleState::Active(TabAgentKind::Codex))
         );
         assert_eq!(
-            terminal_agent_title_state("Codex - Thinking", false),
+            terminal_agent_title_state("Codex - Thinking", false, None),
             Some(TerminalAgentTitleState::Active(TabAgentKind::Codex))
         );
         assert_eq!(
-            terminal_agent_title_state("Codex - Ready", true),
+            terminal_agent_title_state("Codex - Ready", true, None),
             Some(TerminalAgentTitleState::Ready(Some(TabAgentKind::Codex)))
         );
         assert_eq!(
-            terminal_agent_title_state("Codex - Needs input", true),
+            terminal_agent_title_state("Codex - Needs input", true, None),
             Some(TerminalAgentTitleState::NeedsInput(TabAgentKind::Codex))
         );
         assert_eq!(
-            terminal_agent_title_state("\u{2839} portal", false),
+            terminal_agent_title_state("\u{2839} portal", false, None),
             Some(TerminalAgentTitleState::Active(TabAgentKind::Codex))
         );
         assert_eq!(
-            terminal_agent_title_state("\u{2802} Claude Code", false),
+            terminal_agent_title_state("\u{2802} Claude Code", false, None),
             Some(TerminalAgentTitleState::Active(TabAgentKind::Claude))
         );
         assert_eq!(
-            terminal_agent_title_state("\u{2810} Respond with confirmation message", false),
+            terminal_agent_title_state("\u{2810} Respond with confirmation message", false, None),
             Some(TerminalAgentTitleState::Active(TabAgentKind::Claude))
         );
         assert_eq!(
-            terminal_agent_title_state("portal", true),
+            terminal_agent_title_state("portal", true, None),
             Some(TerminalAgentTitleState::Ready(None))
         );
         assert_eq!(
-            terminal_agent_title_state("\u{2733} Respond with confirmation message", true),
+            terminal_agent_title_state("\u{2733} Respond with confirmation message", true, None),
             Some(TerminalAgentTitleState::Ready(None))
         );
         assert_eq!(
-            terminal_agent_title_state("\u{2733} Claude Code", false),
+            terminal_agent_title_state("\u{2733} Claude Code", false, None),
             None
         );
         assert_eq!(
-            terminal_agent_title_state("bash", false),
+            terminal_agent_title_state("bash", false, None),
             Some(TerminalAgentTitleState::Clear)
+        );
+        // A summary-style title only clears when the session is not a
+        // detected Kimi session.
+        assert_eq!(
+            terminal_agent_title_state("Refactor auth flow", false, Some(TabAgentKind::Codex)),
+            Some(TerminalAgentTitleState::Clear)
+        );
+    }
+
+    #[test]
+    fn terminal_agent_title_state_detects_kimi_titles() {
+        // Kimi Code's title has no spinner or state text, so a bare recognized
+        // title maps to Ready whether or not a turn is active.
+        assert_eq!(
+            terminal_agent_title_state("Kimi Code", false, None),
+            Some(TerminalAgentTitleState::Ready(Some(TabAgentKind::Kimi)))
+        );
+        assert_eq!(
+            terminal_agent_title_state("Kimi Code", true, None),
+            Some(TerminalAgentTitleState::Ready(Some(TabAgentKind::Kimi)))
+        );
+        assert_eq!(
+            terminal_agent_title_state("kimi - refactor auth", false, None),
+            Some(TerminalAgentTitleState::Ready(Some(TabAgentKind::Kimi)))
+        );
+        // Generic state keywords still apply to Kimi titles.
+        assert_eq!(
+            terminal_agent_title_state("Kimi Code - Working", false, None),
+            Some(TerminalAgentTitleState::Active(TabAgentKind::Kimi))
+        );
+        assert_eq!(
+            terminal_agent_title_state("Kimi Code needs approval", false, None),
+            Some(TerminalAgentTitleState::NeedsInput(TabAgentKind::Kimi))
+        );
+        assert_eq!(agent_kind_from_name("Kimi Code"), Some(TabAgentKind::Kimi));
+    }
+
+    #[test]
+    fn terminal_agent_title_state_keeps_kimi_for_summary_titles() {
+        // After the first exchange Kimi replaces its title with a session
+        // summary (arbitrary text without "kimi"). A session already detected
+        // as Kimi must stay detected for such titles.
+        assert_eq!(
+            terminal_agent_title_state("Refactor auth flow", false, Some(TabAgentKind::Kimi)),
+            Some(TerminalAgentTitleState::Ready(Some(TabAgentKind::Kimi)))
+        );
+        assert_eq!(
+            terminal_agent_title_state("Fix the login bug", false, Some(TabAgentKind::Kimi)),
+            Some(TerminalAgentTitleState::Ready(Some(TabAgentKind::Kimi)))
+        );
+        // Shell titles signal Kimi exited and clear the indicator.
+        assert_eq!(
+            terminal_agent_title_state("fish", false, Some(TabAgentKind::Kimi)),
+            Some(TerminalAgentTitleState::Clear)
+        );
+        assert_eq!(
+            terminal_agent_title_state("john@beast: ~", false, Some(TabAgentKind::Kimi)),
+            Some(TerminalAgentTitleState::Clear)
+        );
+        // Without a detected Kimi session, summary-style titles still clear.
+        assert_eq!(
+            terminal_agent_title_state("Refactor auth flow", false, None),
+            Some(TerminalAgentTitleState::Clear)
+        );
+    }
+
+    #[test]
+    fn terminal_agent_notification_state_detects_kimi_signals() {
+        assert_eq!(
+            terminal_agent_notification_state("Kimi Code approval required"),
+            Some(TerminalAgentNotificationState::NeedsInput)
+        );
+        assert_eq!(
+            terminal_agent_notification_state("Kimi Code needs your answer"),
+            Some(TerminalAgentNotificationState::NeedsInput)
+        );
+        assert_eq!(
+            terminal_agent_notification_state("Kimi Code task complete"),
+            Some(TerminalAgentNotificationState::Ready)
+        );
+        assert_eq!(
+            terminal_agent_notification_state("Unrelated task complete"),
+            None
         );
     }
 

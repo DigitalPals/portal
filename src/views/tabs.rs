@@ -48,6 +48,7 @@ pub enum TabType {
 pub enum TabAgentKind {
     Codex,
     Claude,
+    Kimi,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -493,6 +494,7 @@ fn agent_status_indicator<'a>(
     let label = match status.kind {
         TabAgentKind::Codex => "Codex",
         TabAgentKind::Claude => "Claude",
+        TabAgentKind::Kimi => "Kimi",
     };
     let activity_label = match status.activity {
         TabAgentActivity::Working => "working",
@@ -568,6 +570,7 @@ fn agent_accent(kind: TabAgentKind) -> Color {
     match kind {
         TabAgentKind::Codex => Color::from_rgb8(0x8a, 0xb4, 0xf0),
         TabAgentKind::Claude => Color::from_rgb8(0xe5, 0xa9, 0x7a),
+        TabAgentKind::Kimi => Color::from_rgb8(0xb4, 0x9e, 0xfa),
     }
 }
 
