@@ -1,6 +1,6 @@
 [package]
 name = "portal"
-version = "0.6.18"
+version = "0.6.19"
 edition = "2024"
 description = "A modern SSH client with GUI"
 authors = ["John"]
@@ -128,7 +128,7 @@ assets = [
 ]
 
 [package.metadata.generate-rpm.requires]
-wayland = "*"
+"libwayland-client.so.0()(64bit)" = "*"
 libxkbcommon = "*"
 vulkan-loader = "*"
 
