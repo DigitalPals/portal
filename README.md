@@ -185,25 +185,14 @@ cd portal
 ./run.sh check   # Run cargo check and clippy
 ```
 
-**Remote build on The Beast:**
+Builds run locally and write artifacts to Cargo's normal target directory:
+`target/release/portal` for `build` and `target/debug/portal` for direct debug
+builds. On Linux, `run.sh` prefers an installed Cargo toolchain and falls back
+to `nix develop` when Cargo is not available directly.
 
-```bash
-./run.sh remote-build    # Sync source and run cargo build remotely
-./run.sh remote-release  # Sync source and run cargo build --release remotely
-./run.sh remote-check    # Sync source and run check/clippy remotely
-./run.sh remote-test     # Sync source and run cargo test remotely
-```
-
-The remote workflow mirrors tracked files plus non-ignored untracked files to
-`root@10.10.0.233:/root/Code/portal` by default and preserves the remote
-`target/` directory between runs. Override the destination with
-`PORTAL_REMOTE_HOST` and `PORTAL_REMOTE_DIR`, or call
-`scripts/remote-build.sh --help` for command-level options. `remote-build` and
-`remote-release` copy the resulting binary back to `target/debug/portal` or
-`target/release/portal`; pass `--no-fetch` to the script for remote-only builds.
-Remote builds unset `RUSTC_WRAPPER` and `SCCACHE_*`, and override Cargo's
-`rustc-wrapper`, by default so Cargo runs directly on the remote host; set
-`PORTAL_REMOTE_USE_SCCACHE=1` to opt back into remote-side sccache.
+Linux requires a C compiler, `pkg-config`, and the Wayland, XKB, Vulkan, and
+GLib development packages. The DBus C library is vendored by Cargo so local
+builds do not require a distro-specific DBus development package.
 
 ## Operations
 

@@ -6,20 +6,24 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Portal is a Linux-first SSH and VNC client with GUI built in Rust using the Iced framework. It features terminal emulation (via alacritty_terminal) for remote and local shells, SFTP file browsing with dual-pane interface, VNC remote desktop with GPU-accelerated rendering, a built-in file viewer (code/images/PDF/markdown), host management with groups, an encrypted key vault, and optional Portal Hub integration (persistent proxied sessions + profile sync).
 
-The Portal ecosystem spans three repos: this desktop client, Portal Hub (`~/Code/portal-hub`, the sync/proxy service), and Portal Android (`~/Code/portal-android`). See `AGENTS.md` for cross-repo workflow, remote builds ("The Beast"), and the release preflight checklist.
+The Portal ecosystem spans three repos: this desktop client, Portal Hub (`~/Code/portal-hub`, the sync/proxy service), and Portal Android (`~/Code/portal-android`). See `AGENTS.md` for the cross-repo workflow, local builds, and the release preflight checklist.
 
 ## Build Commands
 
 ```bash
-nix develop      # enter the project shell if direnv is not active
 ./run.sh build   # Build release binary
-./run.sh run     # Build and run release (default, uses nix-shell for Wayland)
+./run.sh run     # Build and run release
 ./run.sh dev     # Build and run debug
 ./run.sh check   # Run cargo check and clippy
 cargo test --lib # Run unit tests (integration tests need Docker, see tests/)
 ```
 
-`direnv` is configured through `.envrc`, so an allowed checkout should enter the Nix shell automatically. Add project-specific tools and native libraries to `flake.nix` instead of installing them globally. CI enforces `cargo clippy --all-targets -- -D warnings`, `cargo fmt -- --check`, and `cargo audit` (see `.github/workflows/test.yml`).
+Builds run on the local machine. `run.sh` prefers the host Cargo toolchain and
+falls back to `nix develop` when Nix is available. `direnv` uses the Nix flake
+when possible and otherwise adds the rustup toolchain to `PATH`. Add
+project-specific tools and native libraries to `flake.nix` or Cargo instead of
+installing them globally. CI enforces `cargo clippy --all-targets -- -D warnings`,
+`cargo fmt -- --check`, and `cargo audit` (see `.github/workflows/test.yml`).
 
 ## Architecture
 

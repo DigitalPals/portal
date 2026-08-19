@@ -14,32 +14,20 @@ or compatibility decisions:
 ## Development Environment
 
 - Run commands from the repository root.
-- `direnv` is expected. If the environment is not active, run `nix develop`.
+- Build and test Portal on the local machine; do not use a remote builder.
+- `run.sh` prefers the host rustup Cargo toolchain and falls back to `nix develop`
+  when Nix is available.
+- `direnv` uses the Nix flake when available and otherwise exposes the rustup
+  toolchain from `~/.cargo/bin`.
 - Do not install missing build tools globally; add project-specific tools and libraries to `flake.nix`.
-- Common commands: `cargo test`, `./run.sh check`, `./run.sh remote-build`,
-  `./run.sh remote-release`.
+- Common commands: `cargo test`, `./run.sh build`, `./run.sh check`.
 
-## Remote Binary Builds
+## Local Binary Builds
 
-- The default way to build a Portal binary is on The Beast via
-  `./run.sh remote-build` for debug binaries or `./run.sh remote-release` for
-  release binaries.
-- The remote build helper mirrors tracked files plus non-ignored untracked files
-  to `root@10.10.0.233:/root/Code/portal`, preserves the remote `target/`
-  directory between runs, builds on that host, then fetches the resulting binary
-  back to this laptop.
-- Fetched binaries land in the normal local Cargo paths:
-  `target/debug/portal` for `remote-build` and `target/release/portal` for
-  `remote-release`.
-- Use `PORTAL_REMOTE_HOST` and `PORTAL_REMOTE_DIR` to override the remote
-  destination when needed. Use `scripts/remote-build.sh --no-fetch ...` only when
-  a remote-only build is explicitly desired.
-- The helper disables remote-side `sccache` by default by unsetting
-  `RUSTC_WRAPPER`/`SCCACHE_*` and overriding Cargo's `rustc-wrapper`, so Cargo,
-  build scripts, Rust compilation, and linking happen directly on The Beast.
-- Keep using local `./run.sh check`, `cargo test`, or focused Cargo commands for
-  quick validation when no binary artifact is needed, unless the user asks to
-  offload those checks too.
+- Use `./run.sh build` for the release binary at `target/release/portal`.
+- Use direct Cargo commands for other build profiles when needed.
+- Linux builds vendor libdbus through Cargo so this machine does not need the
+  distro `dbus-devel` package.
 
 ## Human Testing Before Release
 
@@ -106,7 +94,7 @@ ecosystem, use this order to avoid long feedback loops:
 - Keep cross-repo CI dependency parity in mind. The Portal Hub contract workflow
   compiles Portal desktop tests, so it needs the same Linux packages as Portal
   CI: `pkg-config`, `libxkbcommon-dev`, `libwayland-dev`, `libvulkan-dev`,
-  `libglib2.0-dev`, and `libdbus-1-dev`.
+  and `libglib2.0-dev`.
 - When polling long GitHub Actions jobs, check job-level status after the first
   wait so it is clear whether the run is queued, building, stuck, or failed.
 - Portal release jobs can legitimately take 30 minutes or more on a cold cache.

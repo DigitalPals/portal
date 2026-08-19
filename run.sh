@@ -1,5 +1,5 @@
-#!/bin/bash
-set -e
+#!/usr/bin/env bash
+set -euo pipefail
 
 cd "$(dirname "$0")"
 
@@ -8,12 +8,18 @@ if [[ "$(uname)" != "Darwin" ]]; then
   export WGPU_BACKEND="${WGPU_BACKEND:-vulkan,gl}"
 fi
 
-# Use nix develop on Linux, direct cargo on macOS
+# Prefer the host Rust toolchain so locally built binaries use the host loader.
+# Fall back to the Nix development shell when Cargo is not installed directly.
 run_cargo() {
-  if [[ "$(uname)" == "Darwin" ]]; then
+  if command -v cargo >/dev/null 2>&1; then
     cargo "$@"
-  else
+  elif [[ -x "${HOME}/.cargo/bin/cargo" ]]; then
+    "${HOME}/.cargo/bin/cargo" "$@"
+  elif command -v nix >/dev/null 2>&1; then
     nix develop --command cargo "$@"
+  else
+    echo "Cargo is unavailable. Install the pinned Rust toolchain or enter the Nix development shell." >&2
+    exit 127
   fi
 }
 
@@ -38,28 +44,12 @@ check)
   run_cargo check
   run_cargo clippy --all-targets -- -D warnings
   ;;
-remote-build)
-  exec scripts/remote-build.sh --fetch build
-  ;;
-remote-release)
-  exec scripts/remote-build.sh --fetch release
-  ;;
-remote-check)
-  exec scripts/remote-build.sh check
-  ;;
-remote-test)
-  exec scripts/remote-build.sh test
-  ;;
 *)
-  echo "Usage: $0 {build|run|dev|check|remote-build|remote-release|remote-check|remote-test}"
+  echo "Usage: $0 {build|run|dev|check}"
   echo "  build  - Build release binary"
   echo "  run    - Build and run release (default)"
   echo "  dev    - Build and run debug"
   echo "  check  - Run cargo check and clippy"
-  echo "  remote-build    - Sync to The Beast and run cargo build"
-  echo "  remote-release  - Sync to The Beast and run cargo build --release"
-  echo "  remote-check    - Sync to The Beast and run check/clippy"
-  echo "  remote-test     - Sync to The Beast and run cargo test"
   exit 1
   ;;
 esac

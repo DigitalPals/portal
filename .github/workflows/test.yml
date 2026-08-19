@@ -26,7 +26,7 @@ jobs:
       - name: Install Linux dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y pkg-config libxkbcommon-dev libwayland-dev libvulkan-dev libglib2.0-dev libdbus-1-dev
+          sudo apt-get install -y pkg-config libxkbcommon-dev libwayland-dev libvulkan-dev libglib2.0-dev
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
@@ -48,7 +48,7 @@ jobs:
       - name: Install Linux dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y pkg-config libxkbcommon-dev libwayland-dev libvulkan-dev libglib2.0-dev libdbus-1-dev
+          sudo apt-get install -y pkg-config libxkbcommon-dev libwayland-dev libvulkan-dev libglib2.0-dev
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
@@ -119,7 +119,7 @@ jobs:
       - name: Install Linux dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y pkg-config libxkbcommon-dev libwayland-dev libvulkan-dev libglib2.0-dev libdbus-1-dev
+          sudo apt-get install -y pkg-config libxkbcommon-dev libwayland-dev libvulkan-dev libglib2.0-dev
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2
@@ -144,7 +144,7 @@ jobs:
       - name: Install Linux dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y pkg-config libxkbcommon-dev libwayland-dev libvulkan-dev libglib2.0-dev libdbus-1-dev
+          sudo apt-get install -y pkg-config libxkbcommon-dev libwayland-dev libvulkan-dev libglib2.0-dev
 
       - name: Cache cargo
         uses: Swatinem/rust-cache@v2

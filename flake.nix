@@ -23,7 +23,6 @@
             pkgs.libxkbcommon
             pkgs.vulkan-loader
             pkgs.glib
-            pkgs.dbus
             pkgs.systemdMinimal
           ];
           postInstall = ''
@@ -39,7 +38,6 @@
                 pkgs.wayland
                 pkgs.libxkbcommon
                 pkgs.vulkan-loader
-                pkgs.dbus
                 pkgs.systemdMinimal
               ]}
           '';
@@ -59,7 +57,6 @@
             pkgs.libxkbcommon
             pkgs.vulkan-loader
             pkgs.glib
-            pkgs.dbus
             pkgs.systemdMinimal
           ];
           LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath [
@@ -67,7 +64,6 @@
             pkgs.libxkbcommon
             pkgs.vulkan-loader
             pkgs.glib
-            pkgs.dbus
             pkgs.systemdMinimal
           ];
         };
