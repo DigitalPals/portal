@@ -92,8 +92,6 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
         | UiMessage::VncShowStatsOverlayChanged(_)
         | UiMessage::PortalHubEnabled(_)
         | UiMessage::PortalHubDefaultForNewHosts(_)
-        | UiMessage::PortalHubHostChanged(_)
-        | UiMessage::PortalHubWebPortChanged(_)
         | UiMessage::PortalHubPortChanged(_)
         | UiMessage::PortalHubUsernameChanged(_)
         | UiMessage::PortalHubIdentityFileChanged(_)
@@ -108,7 +106,6 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
         | UiMessage::PortalHubDisableSyncDeleteDone(_, _)
         | UiMessage::PortalHubPreferVaultKeys(_)
         | UiMessage::PortalHubWizardToggleHost(_)
-        | UiMessage::PortalHubWizardToggleAdvanced
         | UiMessage::PortalHubWizardRouteDefault(_)
         | UiMessage::PortalHubWizardPreferVault(_)
         | UiMessage::PortalHubWizardSyncAll(_)

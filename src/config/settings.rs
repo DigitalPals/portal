@@ -288,10 +288,6 @@ impl PortalHubSettings {
         self.enabled && !self.effective_web_url().is_empty()
     }
 
-    pub fn web_configured(&self) -> bool {
-        !self.effective_web_url().is_empty()
-    }
-
     pub fn sync_configured(&self) -> bool {
         !self.effective_web_url().is_empty()
             && (self.hosts_sync_enabled
@@ -301,10 +297,31 @@ impl PortalHubSettings {
     }
 
     pub fn effective_web_url(&self) -> String {
-        if let Some(configured) = canonicalize_portal_hub_web_url(&self.web_url) {
-            return configured;
+        if !self.web_url.trim().is_empty() {
+            if let Some(configured) = canonicalize_portal_hub_web_url(&self.web_url) {
+                return configured;
+            }
+            return normalize_portal_hub_web_url_input(&self.web_url, self.web_port)
+                .unwrap_or_default();
         }
         self.derived_web_url()
+    }
+
+    /// Value shown when editing the Hub connection. Prefer the explicit URL,
+    /// but migrate legacy host/port-only configurations into the same field.
+    pub fn web_url_input_value(&self) -> String {
+        if self.web_url.trim().is_empty() {
+            self.derived_web_url()
+        } else {
+            self.web_url.clone()
+        }
+    }
+
+    /// Resolve the user-facing URL/address field into the HTTP(S) origin used
+    /// by every Hub API. A full URL may omit its standard port; host-only
+    /// input retains the legacy Portal Hub web-port default.
+    pub fn normalize_web_url_input(&self, input: &str) -> Result<String, String> {
+        normalize_portal_hub_web_url_input(input, self.web_port)
     }
 
     pub fn derived_web_url(&self) -> String {
@@ -338,8 +355,10 @@ impl PortalHubSettings {
     }
 
     pub fn apply_web_url_input(&mut self, url: String) {
-        self.web_url =
-            canonicalize_portal_hub_web_url(&url).unwrap_or_else(|| url.trim().to_string());
+        self.web_url = url.trim().to_string();
+        // Explicit URL editing supersedes the deprecated host/port fallback.
+        // Clearing the field must not resurrect an old host value.
+        self.host.clear();
     }
 
     pub fn apply_discovered_web_url(&mut self, url: &str) {
@@ -408,6 +427,68 @@ fn canonicalize_host_input_with_port(input: &str) -> Option<String> {
     let parsed = Url::parse(&format!("https://{}", trimmed)).ok()?;
     parsed.port()?;
     canonicalize_http_url(&parsed)
+}
+
+fn normalize_portal_hub_web_url_input(
+    input: &str,
+    default_web_port: u16,
+) -> Result<String, String> {
+    let trimmed = input.trim().trim_end_matches('/');
+    if trimmed.is_empty() {
+        return Err("Enter your Portal Hub URL or address.".to_string());
+    }
+
+    if trimmed.contains("://") {
+        let parsed = Url::parse(trimmed)
+            .map_err(|_| "The Hub URL is invalid. Check the address and try again.".to_string())?;
+        if !matches!(parsed.scheme(), "http" | "https") {
+            return Err("The Hub URL must start with http:// or https://.".to_string());
+        }
+        validate_portal_hub_origin(&parsed)?;
+        return canonicalize_http_url(&parsed)
+            .ok_or_else(|| "The Hub URL must include a hostname or IP address.".to_string());
+    }
+
+    if trimmed.contains('/') || trimmed.contains('?') || trimmed.contains('#') {
+        return Err("Enter a hostname, IP address, or full http:// or https:// URL.".to_string());
+    }
+
+    let authority = if trimmed.parse::<std::net::Ipv6Addr>().is_ok() {
+        format!("[{trimmed}]")
+    } else {
+        trimmed.to_string()
+    };
+    let parsed = Url::parse(&format!("https://{authority}"))
+        .map_err(|_| "The Hub address is invalid. Check it and try again.".to_string())?;
+    validate_portal_hub_origin(&parsed)?;
+    let host = parsed
+        .host_str()
+        .ok_or_else(|| "The Hub address must include a hostname or IP address.".to_string())?;
+    let scheme = if is_local_web_host(host) {
+        "http"
+    } else {
+        "https"
+    };
+    let formatted_host = format_url_host(host);
+    Ok(
+        match parsed
+            .port()
+            .or((default_web_port > 0).then_some(default_web_port))
+        {
+            Some(port) => format!("{scheme}://{formatted_host}:{port}"),
+            None => format!("{scheme}://{formatted_host}"),
+        },
+    )
+}
+
+fn validate_portal_hub_origin(url: &Url) -> Result<(), String> {
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err("The Hub URL cannot include a username or password.".to_string());
+    }
+    if !matches!(url.path(), "" | "/") || url.query().is_some() || url.fragment().is_some() {
+        return Err("Enter the Hub base URL without a path, query, or fragment.".to_string());
+    }
+    Ok(())
 }
 
 fn portal_hub_web_url_from_input(input: &str, web_port: u16) -> String {
@@ -1101,6 +1182,73 @@ web_url = "https://hub.example.test"
 
         settings.apply_host_input("localhost".to_string());
         assert_eq!(settings.effective_web_url(), "http://localhost:8080");
+    }
+
+    #[test]
+    fn portal_hub_setup_accepts_urls_with_optional_ports() {
+        let settings = PortalHubSettings::default();
+
+        assert_eq!(
+            settings
+                .normalize_web_url_input("https://portal-hub.example.ts.net")
+                .unwrap(),
+            "https://portal-hub.example.ts.net"
+        );
+        assert_eq!(
+            settings
+                .normalize_web_url_input("https://portal-hub.example.ts.net:8443/")
+                .unwrap(),
+            "https://portal-hub.example.ts.net:8443"
+        );
+        assert_eq!(
+            settings
+                .normalize_web_url_input("portal-hub.example.ts.net")
+                .unwrap(),
+            "https://portal-hub.example.ts.net:8080"
+        );
+        assert_eq!(
+            settings.normalize_web_url_input("localhost:9090").unwrap(),
+            "http://localhost:9090"
+        );
+    }
+
+    #[test]
+    fn portal_hub_setup_rejects_non_origin_urls() {
+        let settings = PortalHubSettings::default();
+
+        assert!(
+            settings
+                .normalize_web_url_input("ftp://portal-hub.example.ts.net")
+                .is_err()
+        );
+        assert!(
+            settings
+                .normalize_web_url_input("https://portal-hub.example.ts.net/admin")
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn portal_hub_url_editing_does_not_restore_legacy_host_values() {
+        let mut settings = PortalHubSettings {
+            host: "old-hub.example.ts.net".to_string(),
+            ..Default::default()
+        };
+
+        assert_eq!(
+            settings.web_url_input_value(),
+            "https://old-hub.example.ts.net:8080"
+        );
+
+        settings.apply_web_url_input("new-hub.example.ts.net".to_string());
+        assert_eq!(settings.web_url_input_value(), "new-hub.example.ts.net");
+        assert_eq!(
+            settings.effective_web_url(),
+            "https://new-hub.example.ts.net:8080"
+        );
+
+        settings.apply_web_url_input(String::new());
+        assert!(settings.effective_web_url().is_empty());
     }
 
     #[test]

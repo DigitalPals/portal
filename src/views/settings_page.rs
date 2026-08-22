@@ -1151,7 +1151,7 @@ fn portal_hub_account_summary(
         .on_press(Message::Ui(UiMessage::PortalHubLogout));
     let manage_button = help_tooltip(
         manage_button,
-        "Edit Portal Hub host and web port",
+        "Edit the Portal Hub address and setup defaults",
         theme,
         fonts,
         iced::widget::tooltip::Position::Top,

@@ -285,10 +285,10 @@ To use it:
 
 1. Deploy Portal Hub and restrict access with Tailscale ACLs.
 2. Start the Portal Hub web server and create the first owner account.
-3. In Portal settings, enable Portal Hub and set the Hub host, web port (`8080` by default), and Web URL.
-4. Use **Sign in** on the Portal Hub settings tab to authenticate through the browser.
-5. Choose whether to upload this device's hosts/settings/snippets to Hub or pull Hub's profile to this device.
-6. Enable Portal Hub on individual SSH hosts that use SSH Agent or Public Key authentication.
+3. In Portal settings, choose **Set up Portal Hub** and enter its URL or address. The port is optional; include `:port` only when the Hub uses a custom web port.
+4. Check the connection, then use **Sign in** to authenticate through the browser.
+5. Choose the profile-sync, Vault, and default host-routing options for this device.
+6. Review which SSH Agent or Public Key hosts should use persistent Hub sessions.
 7. Open the Sessions view to see active proxy sessions, terminal thumbnails, and resume an existing session.
 
 Typing `exit` in the remote shell closes the real session. Closing the Portal tab or losing connectivity only detaches Portal from the proxy session.

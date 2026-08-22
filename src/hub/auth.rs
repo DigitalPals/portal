@@ -149,7 +149,7 @@ pub async fn authenticate(settings: PortalHubSettings) -> Result<HubAuthSummary,
 pub async fn fetch_hub_info(settings: &PortalHubSettings) -> Result<HubInfo, String> {
     let hub_url = settings.effective_web_url();
     if hub_url.is_empty() {
-        return Err("Portal Hub host and web port are not configured".to_string());
+        return Err("Portal Hub URL or address is not configured".to_string());
     }
     http::json(
         true,

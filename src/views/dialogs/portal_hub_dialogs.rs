@@ -12,7 +12,8 @@ use crate::config::settings::PortalHubSettings;
 use crate::hub::sync::{ConflictChoice, PortalHubSyncService, SyncConflict};
 use crate::message::{DialogMessage, Message, UiMessage};
 use crate::proxy::ProxyStatus;
-use crate::theme::{STATUS_FAILURE, ScaledFonts, Theme};
+use crate::theme::{ScaledFonts, Theme};
+use crate::views::components::{BadgeTone, status_badge};
 
 use super::common::{
     alert_dialog, dialog_backdrop, dialog_input_style, primary_button_style, secondary_button_style,
@@ -32,55 +33,89 @@ pub fn portal_hub_onboarding_dialog_view(
     theme: Theme,
     fonts: ScaledFonts,
 ) -> Element<'static, Message> {
-    let host = settings.host.clone();
-    let web_port = settings.web_port.to_string();
-    let web_url = settings.effective_web_url();
+    let hub_url_value = wizard.hub_url_input.clone();
+    let has_hub_url = !hub_url_value.trim().is_empty();
+    let connection_ready = has_hub_url && status.is_some() && !wizard.connection_dirty;
+    let signed_in = auth_user.is_some() && !wizard.connection_dirty;
+    let checked_url = settings.effective_web_url();
 
-    let auth_status = if auth_loading {
-        text("Waiting for browser sign-in...")
-            .size(fonts.label)
-            .color(theme.text_muted)
-    } else if let Some(user) = auth_user {
-        text(format!("Signed in as {}", user))
-            .size(fonts.label)
-            .color(theme.text_secondary)
-    } else if let Some(error) = auth_error {
-        text(error.to_string())
-            .size(fonts.label)
-            .color(STATUS_FAILURE)
+    let (setup_badge, setup_tone, setup_detail) = if wizard.connection_dirty {
+        if has_hub_url {
+            (
+                "Not checked",
+                BadgeTone::Neutral,
+                "Press Enter or check setup to apply this address.".to_string(),
+            )
+        } else {
+            (
+                "Address needed",
+                BadgeTone::Neutral,
+                "Enter the URL or address of your Portal Hub.".to_string(),
+            )
+        }
+    } else if status_loading {
+        (
+            "Checking",
+            BadgeTone::Info,
+            "Connecting to Portal Hub...".to_string(),
+        )
+    } else if let Some(status) = status.as_ref() {
+        (
+            "Ready",
+            BadgeTone::Success,
+            format!(
+                "Portal Hub v{} · API {} · proxy {} · sync {}",
+                status.version,
+                status.api_version,
+                capability_label(status.web_proxy),
+                capability_label(status.sync_v2)
+            ),
+        )
+    } else if let Some(error) = status_error {
+        ("Needs attention", BadgeTone::Danger, error.to_string())
     } else {
-        text("Not signed in")
-            .size(fonts.label)
-            .color(theme.text_muted)
+        (
+            "Not checked",
+            BadgeTone::Neutral,
+            "Check the connection before signing in.".to_string(),
+        )
     };
 
-    let setup_status = if status_loading {
-        text("Checking Portal Hub...")
-            .size(fonts.label)
-            .color(theme.text_muted)
-    } else if let Some(status) = status {
-        text(format!(
-            "Ready: v{} · API {} · proxy {} · sync {}",
-            status.version,
-            status.api_version,
-            capability_label(status.web_proxy),
-            capability_label(status.sync_v2)
-        ))
-        .size(fonts.label)
-        .color(theme.text_secondary)
-    } else if let Some(error) = status_error {
-        text(format!("Blocked: {}", error))
-            .size(fonts.label)
-            .color(STATUS_FAILURE)
+    let (auth_badge, auth_tone, auth_detail) = if wizard.connection_dirty {
+        (
+            "Waiting",
+            BadgeTone::Neutral,
+            "Check the new address to continue.".to_string(),
+        )
+    } else if auth_loading {
+        (
+            "Browser open",
+            BadgeTone::Info,
+            "Finish signing in through your browser.".to_string(),
+        )
+    } else if let Some(user) = auth_user {
+        ("Connected", BadgeTone::Success, user.to_string())
+    } else if let Some(error) = auth_error {
+        ("Sign-in failed", BadgeTone::Danger, error.to_string())
+    } else if connection_ready {
+        (
+            "Ready",
+            BadgeTone::Info,
+            "Connection verified. Sign in to link this device.".to_string(),
+        )
     } else {
-        text("Enter your Hub URL, then check setup.")
-            .size(fonts.label)
-            .color(theme.text_muted)
+        (
+            "Locked",
+            BadgeTone::Neutral,
+            "Available after the connection check passes.".to_string(),
+        )
     };
 
     let check_button = button(
         text(if status_loading {
             "Checking"
+        } else if connection_ready {
+            "Check again"
         } else {
             "Check setup"
         })
@@ -89,21 +124,30 @@ pub fn portal_hub_onboarding_dialog_view(
     .padding([8, 16])
     .style(secondary_button_style(theme))
     .on_press_maybe(
-        (!status_loading && !auth_loading).then_some(Message::Ui(UiMessage::PortalHubCheckStatus)),
+        (has_hub_url && !status_loading && !auth_loading)
+            .then_some(Message::Ui(UiMessage::PortalHubCheckStatus)),
     );
 
-    let auth_button =
-        button(text(if auth_loading { "Waiting" } else { "Sign in" }).size(fonts.body))
-            .padding([8, 16])
-            .style(primary_button_style(theme))
-            .on_press_maybe(
-                (!auth_loading && !status_loading)
-                    .then_some(Message::Ui(UiMessage::PortalHubAuthenticate)),
-            );
+    let auth_button = button(
+        text(if signed_in {
+            "Signed in"
+        } else if auth_loading {
+            "Waiting"
+        } else {
+            "Sign in"
+        })
+        .size(fonts.body),
+    )
+    .padding([8, 16])
+    .style(primary_button_style(theme))
+    .on_press_maybe(
+        (!signed_in && connection_ready && !auth_loading && !status_loading)
+            .then_some(Message::Ui(UiMessage::PortalHubAuthenticate)),
+    );
 
     // Defaults step: explicit consent for routing, vault preference, and
     // sync — nothing switches on silently. Includes a bulk host review.
-    let finish_section = if auth_user.is_some() {
+    let finish_section = if signed_in {
         let eligible: Vec<_> = hosts
             .hosts
             .iter()
@@ -174,7 +218,7 @@ pub fn portal_hub_onboarding_dialog_view(
         };
 
         column![
-            section_title("Defaults", theme, fonts),
+            section_title("3. Choose defaults", theme, fonts),
             checkbox(wizard.route_default)
                 .label("Route eligible hosts via Portal Hub — sessions survive crashes and sleep")
                 .on_toggle(|value| Message::Ui(UiMessage::PortalHubWizardRouteDefault(value)))
@@ -214,31 +258,64 @@ pub fn portal_hub_onboarding_dialog_view(
         column![]
     };
 
+    let connection_caption = if wizard.connection_dirty {
+        "Changes are kept as a draft until you check setup.".to_string()
+    } else if checked_url.is_empty() {
+        "Enter a Hub address to get started.".to_string()
+    } else {
+        format!("Portal will connect to {checked_url}")
+    };
+
     let content = column![
-        text("Set Up Portal Hub")
-            .size(fonts.dialog_title)
-            .color(theme.text_primary),
+        row![
+            text("Set Up Portal Hub")
+                .size(fonts.dialog_title)
+                .color(theme.text_primary),
+            Space::new().width(Length::Fill),
+            button(text("Close").size(fonts.label))
+                .padding([6, 12])
+                .style(secondary_button_style(theme))
+                .on_press(Message::Dialog(DialogMessage::Close)),
+        ]
+        .align_y(Alignment::Center),
         text("Portal Hub keeps SSH sessions alive through a private proxy, stores encrypted key vault items, and syncs hosts, settings, and snippets between devices.")
             .size(fonts.body)
             .color(theme.text_secondary),
         Space::new().height(8),
-        section_title("Connection", theme, fonts),
-        labeled_input(
-            PortalHubOnboardingField::WebUrl,
-            "Hub URL",
-            web_url.clone(),
-            UiMessage::PortalHubWebUrlChanged,
+        section_title("1. Connect", theme, fonts),
+        hub_url_input(
+            hub_url_value,
+            !status_loading && !auth_loading,
+            has_hub_url && !status_loading && !auth_loading,
             theme,
             fonts
         ),
-        advanced_connection_section(wizard.advanced_open, host, web_port, theme, fonts),
-        text(format!("Portal will authenticate through {}", web_url))
+        text("Paste a full URL or enter a host. The port is optional; add :port only when your Hub uses a custom web port.")
+            .size(fonts.small)
+            .color(theme.text_tertiary),
+        text(connection_caption)
             .size(fonts.label)
             .color(theme.text_muted),
-        row![setup_status, Space::new().width(Length::Fill), check_button]
+        row![
+            status_badge(setup_badge, setup_tone, theme, fonts),
+            text(setup_detail)
+                .size(fonts.label)
+                .color(theme.text_secondary)
+                .width(Length::Fill),
+            check_button
+        ]
             .spacing(10)
             .align_y(Alignment::Center),
-        row![auth_status, Space::new().width(Length::Fill), auth_button]
+        Space::new().height(6),
+        section_title("2. Sign in", theme, fonts),
+        row![
+            status_badge(auth_badge, auth_tone, theme, fonts),
+            text(auth_detail)
+                .size(fonts.label)
+                .color(theme.text_secondary)
+                .width(Length::Fill),
+            auth_button
+        ]
             .spacing(10)
             .align_y(Alignment::Center),
         Space::new().height(6),
@@ -391,90 +468,42 @@ fn capability_label(enabled: bool) -> &'static str {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PortalHubOnboardingField {
-    Host,
-    WebPort,
     WebUrl,
 }
 
 pub fn portal_hub_onboarding_field_id(field: PortalHubOnboardingField) -> Id {
     match field {
-        PortalHubOnboardingField::Host => Id::new("portal-hub-onboarding-host"),
-        PortalHubOnboardingField::WebPort => Id::new("portal-hub-onboarding-web-port"),
         PortalHubOnboardingField::WebUrl => Id::new("portal-hub-onboarding-web-url"),
     }
 }
 
 pub fn portal_hub_onboarding_field_from_id(id: &Id) -> Option<PortalHubOnboardingField> {
-    [
-        PortalHubOnboardingField::Host,
-        PortalHubOnboardingField::WebPort,
-        PortalHubOnboardingField::WebUrl,
-    ]
-    .into_iter()
-    .find(|field| portal_hub_onboarding_field_id(*field) == *id)
-}
-
-/// One URL is enough — the host and port fields derive from it and live
-/// behind an Advanced disclosure for unusual setups.
-fn advanced_connection_section(
-    open: bool,
-    host: String,
-    web_port: String,
-    theme: Theme,
-    fonts: ScaledFonts,
-) -> Element<'static, Message> {
-    let toggle = button(
-        text(if open { "Advanced ▾" } else { "Advanced ▸" })
-            .size(fonts.small)
-            .color(theme.text_secondary),
-    )
-    .padding([2, 4])
-    .style(|_theme, _status| iced::widget::button::Style {
-        background: None,
-        ..Default::default()
-    })
-    .on_press(Message::Ui(UiMessage::PortalHubWizardToggleAdvanced));
-
-    if !open {
-        return column![toggle].into();
+    if portal_hub_onboarding_field_id(PortalHubOnboardingField::WebUrl) == *id {
+        Some(PortalHubOnboardingField::WebUrl)
+    } else {
+        None
     }
-
-    column![
-        toggle,
-        labeled_input(
-            PortalHubOnboardingField::Host,
-            "Detected host / fallback host",
-            host,
-            UiMessage::PortalHubHostChanged,
-            theme,
-            fonts
-        ),
-        labeled_input(
-            PortalHubOnboardingField::WebPort,
-            "Fallback web port",
-            web_port,
-            UiMessage::PortalHubWebPortChanged,
-            theme,
-            fonts
-        ),
-    ]
-    .spacing(8)
-    .into()
 }
 
-fn labeled_input(
-    field: PortalHubOnboardingField,
-    label: &'static str,
+fn hub_url_input(
     value: String,
-    message: fn(String) -> UiMessage,
+    can_edit: bool,
+    can_submit: bool,
     theme: Theme,
     fonts: ScaledFonts,
 ) -> Element<'static, Message> {
     column![
-        text(label).size(fonts.label).color(theme.text_muted),
-        text_input(label, &value)
-            .id(portal_hub_onboarding_field_id(field))
-            .on_input(move |value| Message::Ui(message(value)))
+        text("Hub URL or address")
+            .size(fonts.label)
+            .color(theme.text_muted),
+        text_input("https://portal-hub.example.ts.net", &value)
+            .id(portal_hub_onboarding_field_id(
+                PortalHubOnboardingField::WebUrl
+            ))
+            .on_input_maybe(
+                can_edit.then_some(|value| Message::Ui(UiMessage::PortalHubWebUrlChanged(value)))
+            )
+            .on_submit_maybe(can_submit.then_some(Message::Ui(UiMessage::PortalHubCheckStatus)))
             .padding([8, 10])
             .style(dialog_input_style(theme))
     ]
@@ -517,15 +546,10 @@ mod tests {
 
     #[test]
     fn portal_hub_onboarding_field_ids_roundtrip() {
-        for field in [
-            PortalHubOnboardingField::Host,
-            PortalHubOnboardingField::WebPort,
-            PortalHubOnboardingField::WebUrl,
-        ] {
-            assert_eq!(
-                portal_hub_onboarding_field_from_id(&portal_hub_onboarding_field_id(field)),
-                Some(field)
-            );
-        }
+        let field = PortalHubOnboardingField::WebUrl;
+        assert_eq!(
+            portal_hub_onboarding_field_from_id(&portal_hub_onboarding_field_id(field)),
+            Some(field)
+        );
     }
 }

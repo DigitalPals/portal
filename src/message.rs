@@ -795,8 +795,6 @@ pub enum UiMessage {
     PortalHubPreferVaultKeys(bool),
     /// Toggle a host's inclusion in the onboarding bulk-enable list
     PortalHubWizardToggleHost(Uuid),
-    /// Show/hide the advanced host/port fields in onboarding
-    PortalHubWizardToggleAdvanced,
     /// Toggle "route eligible hosts via Hub" in the onboarding Defaults step
     PortalHubWizardRouteDefault(bool),
     /// Toggle "prefer Vault keys" in the onboarding Defaults step
@@ -815,10 +813,6 @@ pub enum UiMessage {
     HostCardHovered(Option<Uuid>),
     /// Submit the hosts omnibox (user@host quick connect)
     SearchSubmitted,
-    /// Portal Hub host/IP changed
-    PortalHubHostChanged(String),
-    /// Portal Hub web port changed
-    PortalHubWebPortChanged(String),
     /// Portal Hub port changed
     PortalHubPortChanged(String),
     /// Portal Hub SSH username changed

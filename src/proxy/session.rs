@@ -420,7 +420,7 @@ async fn run_web_terminal(
     let result = async {
         let hub_url = settings.effective_web_url();
         if hub_url.is_empty() {
-            return Err("Portal Hub host and web port are not configured".to_string());
+            return Err("Portal Hub URL or address is not configured".to_string());
         }
         let token = refreshed_portal_hub_access_token(&hub_url).await?;
         let mut request = terminal_ws_url(&hub_url)?
@@ -838,7 +838,7 @@ pub async fn rename_session(
 pub async fn check_terminal_websocket(settings: &PortalHubSettings) -> Result<(), String> {
     let hub_url = settings.effective_web_url();
     if hub_url.is_empty() {
-        return Err("Portal Hub host and web port are not configured".to_string());
+        return Err("Portal Hub URL or address is not configured".to_string());
     }
     let token = refreshed_portal_hub_access_token(&hub_url).await?;
     let mut request = terminal_ws_url(&hub_url)?

@@ -485,12 +485,6 @@ fn handle_portal_hub_onboarding_clipboard(
                             return Message::Noop;
                         };
                         Message::Ui(match focused.field {
-                            PortalHubOnboardingField::Host => {
-                                UiMessage::PortalHubHostChanged(contents)
-                            }
-                            PortalHubOnboardingField::WebPort => {
-                                UiMessage::PortalHubWebPortChanged(contents)
-                            }
                             PortalHubOnboardingField::WebUrl => {
                                 UiMessage::PortalHubWebUrlChanged(contents)
                             }

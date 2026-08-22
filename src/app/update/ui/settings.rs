@@ -253,6 +253,11 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
         UiMessage::PortalHubOpenOnboarding => {
             init_portal_hub_wizard(portal);
             portal.dialogs.open_portal_hub_onboarding();
+            return iced::widget::operation::focus(
+                crate::views::dialogs::portal_hub_dialogs::portal_hub_onboarding_field_id(
+                    crate::views::dialogs::portal_hub_dialogs::PortalHubOnboardingField::WebUrl,
+                ),
+            );
         }
         UiMessage::PortalHubOpenDefaultsReview => {
             init_portal_hub_wizard(portal);
@@ -271,9 +276,6 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
             if !excluded.remove(&host_id) {
                 excluded.insert(host_id);
             }
-        }
-        UiMessage::PortalHubWizardToggleAdvanced => {
-            portal.ui.portal_hub_wizard.advanced_open = !portal.ui.portal_hub_wizard.advanced_open;
         }
         UiMessage::PortalHubWizardRouteDefault(enabled) => {
             portal.ui.portal_hub_wizard.route_default = enabled;
@@ -308,23 +310,6 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
             portal.prefs.portal_hub.default_for_new_ssh_hosts = enabled;
             save_settings_and_queue_sync(portal);
         }
-        UiMessage::PortalHubHostChanged(host) => {
-            portal.prefs.portal_hub.apply_host_input(host);
-            clear_portal_hub_status(portal);
-            save_settings_and_queue_sync(portal);
-        }
-        UiMessage::PortalHubWebPortChanged(port) => {
-            if let Ok(parsed) = port.trim().parse::<u16>()
-                && parsed > 0
-            {
-                portal.prefs.portal_hub.web_port = parsed;
-                portal.prefs.portal_hub.web_url = portal.prefs.portal_hub.derived_web_url();
-                portal.ui.portal_hub_auth_user = None;
-                portal.ui.portal_hub_auth_error = None;
-                clear_portal_hub_status(portal);
-                save_settings_and_queue_sync(portal);
-            }
-        }
         UiMessage::PortalHubPortChanged(port) => {
             if let Ok(parsed) = port.trim().parse::<u16>()
                 && parsed > 0
@@ -352,17 +337,18 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
             save_settings_and_queue_sync(portal);
         }
         UiMessage::PortalHubWebUrlChanged(url) => {
-            portal.prefs.portal_hub.apply_web_url_input(url);
-            portal.ui.portal_hub_auth_user = None;
+            if portal.ui.portal_hub_status_loading || portal.ui.portal_hub_auth_loading {
+                return Task::none();
+            }
+            portal.ui.portal_hub_wizard.hub_url_input = url;
+            portal.ui.portal_hub_wizard.connection_dirty = true;
             portal.ui.portal_hub_auth_error = None;
             clear_portal_hub_status(portal);
-            save_settings_and_queue_sync(portal);
         }
         UiMessage::PortalHubCheckStatus => {
-            if !portal.prefs.portal_hub.web_configured() {
+            if let Err(error) = commit_portal_hub_wizard_connection(portal) {
                 portal.ui.portal_hub_status = None;
-                portal.ui.portal_hub_status_error =
-                    Some("Enter a Portal Hub URL or host first".to_string());
+                portal.ui.portal_hub_status_error = Some(error);
                 portal.ui.portal_hub_status_loading = false;
                 return Task::none();
             }
@@ -378,9 +364,14 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
         }
         UiMessage::PortalHubStatusLoaded(result) => {
             portal.ui.portal_hub_status_loading = false;
+            if portal.ui.portal_hub_wizard.connection_dirty {
+                return Task::none();
+            }
             match result {
                 Ok(status) => {
                     apply_portal_hub_discovery(&mut portal.prefs.portal_hub, &status);
+                    portal.ui.portal_hub_wizard.hub_url_input =
+                        portal.prefs.portal_hub.web_url_input_value();
                     save_settings_and_queue_sync(portal);
                     portal.ui.portal_hub_status = Some(status);
                     portal.ui.portal_hub_status_error = None;
@@ -418,13 +409,9 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
             portal.ui.portal_hub_diagnostics = Some(report);
         }
         UiMessage::PortalHubAuthenticate => {
-            if portal.prefs.portal_hub.web_url.trim().is_empty() {
-                portal.prefs.portal_hub.web_url = portal.prefs.portal_hub.derived_web_url();
-            }
-            if portal.prefs.portal_hub.web_url.trim().is_empty() {
+            if let Err(error) = commit_portal_hub_wizard_connection(portal) {
                 portal.ui.portal_hub_auth_user = None;
-                portal.ui.portal_hub_auth_error =
-                    Some("Portal Hub host and web port are not configured".to_string());
+                portal.ui.portal_hub_auth_error = Some(error);
                 portal.ui.portal_hub_auth_loading = false;
                 return Task::none();
             }
@@ -445,9 +432,18 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
         }
         UiMessage::PortalHubAuthenticated(result) => {
             portal.ui.portal_hub_auth_loading = false;
+            if portal.ui.portal_hub_wizard.connection_dirty {
+                portal.ui.portal_hub_auth_error = Some(
+                    "The Hub address changed during sign-in. Check the new address to continue."
+                        .to_string(),
+                );
+                return Task::none();
+            }
             match result {
                 Ok((info, summary)) => {
                     apply_portal_hub_info(&mut portal.prefs.portal_hub, &info);
+                    portal.ui.portal_hub_wizard.hub_url_input =
+                        portal.prefs.portal_hub.web_url_input_value();
                     save_settings_and_queue_sync(portal);
                     portal.ui.portal_hub_auth_user =
                         Some(format!("{} @ {}", summary.username, summary.hub_url));
@@ -778,6 +774,8 @@ pub(crate) fn portal_hub_sync_task(
 /// seeded from current preferences.
 fn init_portal_hub_wizard(portal: &mut Portal) {
     let wizard = &mut portal.ui.portal_hub_wizard;
+    wizard.hub_url_input = portal.prefs.portal_hub.web_url_input_value();
+    wizard.connection_dirty = false;
     wizard.excluded_hosts.clear();
     wizard.route_default = portal.prefs.portal_hub.default_for_new_ssh_hosts
         || !portal.prefs.portal_hub.is_configured();
@@ -786,7 +784,31 @@ fn init_portal_hub_wizard(portal: &mut Portal) {
         && portal.prefs.portal_hub.settings_sync_enabled
         && portal.prefs.portal_hub.snippets_sync_enabled
         && portal.prefs.portal_hub.key_vault_enabled;
-    wizard.advanced_open = false;
+}
+
+/// Validate and commit the draft connection address immediately before a
+/// network action. Cancelling midway through editing therefore leaves the
+/// working Portal Hub configuration untouched.
+fn commit_portal_hub_wizard_connection(portal: &mut Portal) -> Result<(), String> {
+    let normalized = portal
+        .prefs
+        .portal_hub
+        .normalize_web_url_input(&portal.ui.portal_hub_wizard.hub_url_input)?;
+    let endpoint_changed = normalized != portal.prefs.portal_hub.effective_web_url();
+
+    portal
+        .prefs
+        .portal_hub
+        .apply_discovered_web_url(&normalized);
+    portal.ui.portal_hub_wizard.hub_url_input = normalized;
+    portal.ui.portal_hub_wizard.connection_dirty = false;
+
+    if endpoint_changed {
+        portal.ui.portal_hub_auth_user = None;
+        portal.ui.portal_hub_auth_error = None;
+    }
+    portal.save_settings();
+    Ok(())
 }
 
 /// Apply the onboarding Defaults step: write routing for every eligible host

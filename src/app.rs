@@ -254,9 +254,14 @@ pub struct UiState {
     pub hovered_drop_files: Vec<std::path::PathBuf>,
 }
 
-/// State for the Portal Hub onboarding Defaults step.
+/// Draft state for the Portal Hub onboarding flow.
 #[derive(Debug, Default)]
 pub struct PortalHubWizardState {
+    /// Draft Hub URL/address. It is only committed when the user submits it,
+    /// so typing or cancelling the dialog cannot corrupt the saved endpoint.
+    pub hub_url_input: String,
+    /// The draft address has changed since it was last checked.
+    pub connection_dirty: bool,
     /// Eligible hosts excluded from the bulk enable (checked by default).
     pub excluded_hosts: std::collections::HashSet<Uuid>,
     /// "Route eligible hosts via Portal Hub" toggle.
@@ -265,8 +270,6 @@ pub struct PortalHubWizardState {
     pub prefer_vault: bool,
     /// "Enable all sync services" toggle.
     pub sync_all: bool,
-    /// Show the host/port advanced fields in the connection step.
-    pub advanced_open: bool,
 }
 
 /// User preference state (theme, fonts, sizing).
