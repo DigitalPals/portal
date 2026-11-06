@@ -639,6 +639,10 @@ mod tests {
                 contrast_ratio(theme.accent, theme.text_on_accent()) >= 4.5,
                 "{id}: primary button labels must remain readable"
             );
+            assert!(
+                contrast_ratio(theme.focus_ring, theme.text_on_accent()) >= 4.5,
+                "{id}: primary button labels must remain readable on hover"
+            );
         }
     }
 }

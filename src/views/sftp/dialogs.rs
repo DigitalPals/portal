@@ -607,7 +607,7 @@ fn permission_checkbox(
         let bg = match status {
             iced::widget::button::Status::Hovered => {
                 if checked {
-                    iced::Color::from_rgb8(0, 100, 180)
+                    theme.focus_ring
                 } else {
                     theme.hover
                 }
@@ -676,7 +676,7 @@ fn dialog_submit_button(
             iced::Color::from_rgb8(200, 70, 70),
         )
     } else {
-        (theme.accent, iced::Color::from_rgb8(0, 100, 180))
+        (theme.accent, theme.focus_ring)
     };
 
     let btn = button(

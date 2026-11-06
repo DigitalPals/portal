@@ -580,7 +580,7 @@ fn empty_state(theme: Theme, fonts: ScaledFonts) -> Element<'static, Message> {
         )
         .style(move |_theme, status| {
             let bg = match status {
-                button::Status::Hovered => iced::Color::from_rgb8(0x00, 0x8B, 0xE8),
+                button::Status::Hovered => theme.focus_ring,
                 _ => theme.accent,
             };
             button::Style {
