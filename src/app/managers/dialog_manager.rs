@@ -308,6 +308,13 @@ impl DialogManager {
         );
     }
 
+    /// Update the step only while connection progress is visible.
+    pub fn set_connection_step(&mut self, step: &'static str) {
+        if let ActiveDialog::Connecting(state) = &mut self.active {
+            state.step = step;
+        }
+    }
+
     /// Close the dialog only if it's the connecting dialog
     pub fn close_connecting(&mut self) {
         self.pending

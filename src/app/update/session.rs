@@ -1202,6 +1202,16 @@ async fn save_clipboard_image_locally(filename: String, png: Vec<u8>) -> Result<
 /// Handle terminal session messages
 pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message> {
     match msg {
+        SessionMessage::ConnectionStep { session_id, step } => {
+            if portal
+                .pending_connect
+                .as_ref()
+                .is_some_and(|pending| pending.is_for(session_id))
+            {
+                portal.dialogs.set_connection_step(step);
+            }
+            Task::none()
+        }
         SessionMessage::Connected {
             session_id,
             host_name,
@@ -1547,7 +1557,7 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                 session.disconnected_reason = Some(disconnect_reason(&error).into());
                 return schedule_reconnect(portal, session_id);
             }
-            if !portal.finish_pending_connect_for(session_id) {
+            if !portal.fail_pending_connect_for(session_id, error.clone()) {
                 tracing::warn!(
                     "Ignoring stale connection failure for session {}: {}",
                     session_id,
@@ -1555,8 +1565,6 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                 );
                 return Task::none();
             }
-            portal.pre_session_terminal_output.remove(&session_id);
-            portal.toast_manager.push(Toast::error(error));
             Task::none()
         }
         SessionMessage::TerminalEvent(session_id, event) => match event {

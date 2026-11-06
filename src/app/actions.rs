@@ -376,10 +376,15 @@ impl Portal {
         host_name: String,
         protocol: &str,
         session_id: SessionId,
+        host: Option<Host>,
         task: Task<Message>,
     ) -> Task<Message> {
         self.dialogs.open_connecting(host_name, protocol);
-        self.track_pending_connect(session_id, task)
+        let task = self.track_pending_connect(session_id, task);
+        if let Some(pending) = &mut self.pending_connect {
+            pending.host = host;
+        }
+        task
     }
 
     pub(super) fn track_pending_connect(
@@ -436,6 +441,25 @@ impl Portal {
                 .push(Toast::warning("Connection cancelled"));
         }
         self.dialogs.close_connecting();
+    }
+
+    pub(super) fn fail_pending_connect_for(
+        &mut self,
+        session_id: SessionId,
+        error: String,
+    ) -> bool {
+        let host = self
+            .pending_connect
+            .as_ref()
+            .filter(|pending| pending.is_for(session_id))
+            .and_then(|pending| pending.host.clone());
+        if !self.finish_pending_connect_for(session_id) {
+            return false;
+        }
+        self.pre_session_terminal_output.remove(&session_id);
+        self.toast_manager
+            .push(Toast::connection_error(host, error));
+        true
     }
 
     fn hide_sidebar_for_session(&mut self) {
@@ -867,6 +891,7 @@ impl Portal {
         };
 
         let session_id = Uuid::new_v4();
+        let retry_host = host.clone();
         let dialog_host_name = host.name.clone();
         let host = Arc::new(host.clone());
         let port = host.effective_vnc_port();
@@ -1006,6 +1031,7 @@ impl Portal {
             dialog_host_name,
             &protocol_label,
             session_id,
+            Some(retry_host),
             Task::batch(tasks),
         )
     }
@@ -1028,6 +1054,7 @@ impl Portal {
         }
 
         if connection::should_use_portal_hub(&self.prefs.portal_hub, host) {
+            let retry_host = host.clone();
             let dialog_host_name = host.name.clone();
             let host = Arc::new(host.clone());
             let session_id = Uuid::new_v4();
@@ -1041,7 +1068,13 @@ impl Portal {
                 terminal_size,
             );
 
-            return self.begin_connecting(dialog_host_name, "Portal Hub", session_id, task);
+            return self.begin_connecting(
+                dialog_host_name,
+                "Portal Hub",
+                session_id,
+                Some(retry_host),
+                task,
+            );
         }
 
         // Check if password authentication is configured
@@ -1064,6 +1097,7 @@ impl Portal {
         };
 
         // Use Arc to avoid multiple deep clones of Host data
+        let retry_host = host.clone();
         let dialog_host_name = host.name.clone();
         let host = Arc::new(host.clone());
         let session_id = Uuid::new_v4();
@@ -1083,7 +1117,13 @@ impl Portal {
             jump_chain,
         );
 
-        self.begin_connecting(dialog_host_name, &protocol_label, session_id, task)
+        self.begin_connecting(
+            dialog_host_name,
+            &protocol_label,
+            session_id,
+            Some(retry_host),
+            task,
+        )
     }
 
     /// Resolve the jump-host chain for `host`, surfacing configuration errors

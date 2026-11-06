@@ -1,18 +1,22 @@
-//! Toast notification system for displaying temporary messages
+//! Toast notifications, including persistent connection failures.
 
 use std::time::{Duration, Instant};
 
-use iced::widget::{Column, Space, button, container, row, text};
+use iced::widget::{Column, Space, button, column, container, row, scrollable, text};
 use iced::{Alignment, Color, Element, Length, Padding};
 use uuid::Uuid;
 
+use crate::config::Host;
 use crate::icons::{icon_with_color, ui};
 use crate::message::{Message, UiMessage};
 use crate::theme::{BORDER_RADIUS, ScaledFonts, Theme};
+use crate::views::dialogs::common::secondary_button_style;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ToastAction {
     OpenVaultApprovals,
+    RetryConnection,
+    EditConnection,
 }
 
 /// Type of toast notification (determines color and icon)
@@ -25,11 +29,11 @@ pub enum ToastType {
 
 impl ToastType {
     /// Get the color for this toast type
-    pub fn color(&self) -> Color {
+    pub fn color(&self, theme: Theme) -> Color {
         match self {
-            ToastType::Error => Color::from_rgb8(0xf4, 0x43, 0x36), // #f44336 - red
-            ToastType::Warning => Color::from_rgb8(0xff, 0x98, 0x00), // #ff9800 - orange
-            ToastType::Success => Color::from_rgb8(0x4c, 0xaf, 0x50), // #4caf50 - green
+            ToastType::Error => theme.terminal.ansi[1],
+            ToastType::Warning => theme.terminal.ansi[3],
+            ToastType::Success => theme.terminal.ansi[2],
         }
     }
 
@@ -43,6 +47,13 @@ impl ToastType {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct ConnectionFailure {
+    pub host: Option<Host>,
+    pub detail: String,
+    pub show_details: bool,
+}
+
 /// A single toast notification
 #[derive(Debug, Clone)]
 pub struct Toast {
@@ -52,6 +63,7 @@ pub struct Toast {
     pub created_at: Instant,
     pub duration: Option<Duration>,
     pub action: Option<ToastAction>,
+    pub connection: Option<ConnectionFailure>,
 }
 
 impl Toast {
@@ -64,12 +76,29 @@ impl Toast {
             created_at: Instant::now(),
             duration: Some(Duration::from_secs(5)),
             action: None,
+            connection: None,
         }
     }
 
     /// Create an error toast
     pub fn error(message: impl Into<String>) -> Self {
         Self::new(message, ToastType::Error)
+    }
+
+    pub fn connection_error(host: Option<Host>, detail: impl Into<String>) -> Self {
+        let detail = detail.into();
+        let summary = connection_error_summary(&detail);
+        let message = host.as_ref().map_or_else(
+            || summary.to_string(),
+            |host| format!("{}: {}", host.name, summary),
+        );
+        let mut toast = Self::error(message).persistent();
+        toast.connection = Some(ConnectionFailure {
+            host,
+            detail,
+            show_details: false,
+        });
+        toast
     }
 
     /// Create a warning toast
@@ -99,6 +128,50 @@ impl Toast {
     }
 }
 
+/// Backends preserve their diagnostic strings; only the visible summary is simplified.
+fn connection_error_summary(detail: &str) -> &'static str {
+    let detail = detail.to_ascii_lowercase();
+    if detail.contains("connection refused") || detail.contains("actively refused") {
+        "Connection refused"
+    } else if ["timed out", "timeout", "deadline has elapsed"]
+        .iter()
+        .any(|word| detail.contains(word))
+    {
+        "Connection timed out"
+    } else if [
+        "host not found",
+        "no such host",
+        "name or service not known",
+        "nodename nor servname",
+        "failed to lookup address",
+        "name resolution",
+        "dns error",
+    ]
+    .iter()
+    .any(|word| detail.contains(word))
+    {
+        "Host not found"
+    } else if [
+        "authentication failed",
+        "authentication failure",
+        "authentication error",
+        "authentication rejected",
+        "wrong password",
+        "no password provided",
+        "permission denied",
+        "no authentication method",
+        "no auth method",
+        "authfailure",
+    ]
+    .iter()
+    .any(|word| detail.contains(word))
+    {
+        "Authentication failed"
+    } else {
+        "Could not connect"
+    }
+}
+
 /// Manager for multiple toast notifications
 #[derive(Debug, Default)]
 pub struct ToastManager {
@@ -113,9 +186,14 @@ impl ToastManager {
 
     /// Add a toast notification
     pub fn push(&mut self, toast: Toast) {
-        // Limit to 5 visible toasts
-        if self.toasts.len() >= 5 {
-            self.toasts.remove(0);
+        // Trim temporary notifications without discarding undismissed errors.
+        if self.toasts.len() >= 5
+            && let Some(index) = self
+                .toasts
+                .iter()
+                .position(|toast| toast.duration.is_some())
+        {
+            self.toasts.remove(index);
         }
         self.toasts.push(toast);
     }
@@ -131,6 +209,7 @@ impl ToastManager {
             existing.created_at = Instant::now();
             existing.duration = toast.duration;
             existing.action = toast.action;
+            existing.connection = toast.connection;
             return;
         }
         self.push(toast);
@@ -143,6 +222,21 @@ impl ToastManager {
     /// Remove a toast by ID (for manual dismissal)
     pub fn dismiss(&mut self, id: Uuid) {
         self.toasts.retain(|t| t.id != id);
+    }
+
+    pub fn get(&self, id: Uuid) -> Option<&Toast> {
+        self.toasts.iter().find(|toast| toast.id == id)
+    }
+
+    pub fn toggle_details(&mut self, id: Uuid) {
+        if let Some(connection) = self
+            .toasts
+            .iter_mut()
+            .find(|toast| toast.id == id)
+            .and_then(|toast| toast.connection.as_mut())
+        {
+            connection.show_details = !connection.show_details;
+        }
     }
 
     /// Remove all expired toasts
@@ -179,6 +273,8 @@ pub fn toast_overlay_view(
             .map(|toast| toast_item_view(toast, theme, fonts)),
     )
     .spacing(8)
+    .width(Length::Fill)
+    .max_width(520)
     .into();
 
     // Position at bottom-right with padding
@@ -198,7 +294,7 @@ pub fn toast_overlay_view(
 /// Render a single toast notification
 fn toast_item_view(toast: &Toast, theme: Theme, fonts: ScaledFonts) -> Element<'static, Message> {
     let toast_id = toast.id;
-    let accent_color = toast.toast_type.color();
+    let accent_color = toast.toast_type.color(theme);
     let message = toast.message.clone();
     let action = toast.action;
 
@@ -228,7 +324,8 @@ fn toast_item_view(toast: &Toast, theme: Theme, fonts: ScaledFonts) -> Element<'
         container(type_icon).padding(Padding::from([0, 8])),
         text(message)
             .size(fonts.button_small)
-            .color(theme.text_primary),
+            .color(theme.text_primary)
+            .width(Length::Fill),
     ]
     .align_y(Alignment::Center);
 
@@ -256,16 +353,59 @@ fn toast_item_view(toast: &Toast, theme: Theme, fonts: ScaledFonts) -> Element<'
         container(message_content).width(Length::Fill).into()
     };
 
-    let content = row![
-        message_element,
-        Space::new().width(Length::Fill),
-        dismiss_btn,
-    ]
-    .align_y(Alignment::Center);
+    let mut content =
+        column![row![message_element, dismiss_btn].align_y(Alignment::Start)].spacing(10);
+
+    if let Some(connection) = &toast.connection {
+        let mut actions = row![].spacing(8).align_y(Alignment::Center);
+        if connection.host.is_some() {
+            for (label, action) in [
+                ("Retry", ToastAction::RetryConnection),
+                ("Edit host", ToastAction::EditConnection),
+            ] {
+                actions = actions.push(
+                    button(text(label).size(fonts.button_small))
+                        .padding([6, 12])
+                        .style(secondary_button_style(theme))
+                        .on_press(Message::Ui(UiMessage::ToastAction(toast_id, action))),
+                );
+            }
+        }
+        actions = actions.push(
+            button(
+                text(if connection.show_details {
+                    "Hide details"
+                } else {
+                    "Details"
+                })
+                .size(fonts.button_small),
+            )
+            .padding([6, 12])
+            .style(secondary_button_style(theme))
+            .on_press(Message::Ui(UiMessage::ToastDetailsToggle(toast_id))),
+        );
+        content = content.push(actions);
+        if connection.show_details {
+            content = content.push(
+                container(
+                    scrollable(
+                        text(connection.detail.clone())
+                            .size(fonts.label)
+                            .color(theme.text_secondary)
+                            .width(Length::Fill),
+                    )
+                    .height(Length::Shrink)
+                    .width(Length::Fill),
+                )
+                .max_height(160),
+            );
+        }
+    }
 
     container(content)
         .padding([10, 14])
-        .width(Length::Fixed(360.0))
+        .width(Length::Fill)
+        .max_width(520)
         .style(move |_theme| container::Style {
             background: Some(theme.surface.into()),
             border: iced::Border {
@@ -274,11 +414,89 @@ fn toast_item_view(toast: &Toast, theme: Theme, fonts: ScaledFonts) -> Element<'
                 radius: BORDER_RADIUS.into(),
             },
             shadow: iced::Shadow {
-                color: Color::from_rgba8(0, 0, 0, 0.3),
+                color: theme.text_primary.scale_alpha(0.18),
                 offset: iced::Vector::new(0.0, 2.0),
                 blur_radius: 8.0,
             },
             ..Default::default()
         })
         .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn common_connection_errors_have_short_summaries_and_preserve_details() {
+        for (detail, summary) in [
+            (
+                "Connection failed: Connection failed to 127.0.0.1:1: Connection refused (os error 111)",
+                "Connection refused",
+            ),
+            (
+                "No connection could be made because the target machine actively refused it. (os error 10061)",
+                "Connection refused",
+            ),
+            (
+                "Timeout connecting to example.com:22",
+                "Connection timed out",
+            ),
+            ("Connection timed out (os error 60)", "Connection timed out"),
+            (
+                "failed to lookup address information: Name or service not known",
+                "Host not found",
+            ),
+            (
+                "nodename nor servname provided, or not known",
+                "Host not found",
+            ),
+            ("No such host is known. (os error 11001)", "Host not found"),
+            (
+                "Authentication failed: Permission denied (publickey)",
+                "Authentication failed",
+            ),
+            ("Wrong password", "Authentication failed"),
+            (
+                "Portal Hub connection failed: websocket protocol error",
+                "Could not connect",
+            ),
+        ] {
+            let toast = Toast::connection_error(None, detail);
+            assert_eq!(toast.message, summary);
+            let connection = toast.connection.unwrap();
+            assert_eq!(connection.detail, detail);
+            assert!(!connection.show_details);
+        }
+    }
+
+    #[test]
+    fn connection_failure_survives_expiry_and_temporary_notifications() {
+        let mut manager = ToastManager::new();
+        let mut failure = Toast::connection_error(None, "Connection refused");
+        failure.created_at = Instant::now() - Duration::from_secs(60);
+        let id = failure.id;
+        manager.push(failure);
+        for _ in 0..8 {
+            let mut info = Toast::success("Saved");
+            assert_eq!(info.duration, Some(Duration::from_secs(5)));
+            info.created_at = Instant::now() - Duration::from_secs(6);
+            manager.push(info);
+        }
+        manager.cleanup_expired();
+        assert_eq!(manager.toasts().len(), 1);
+        assert_eq!(manager.toasts()[0].id, id);
+        manager.toggle_details(id);
+        assert!(
+            manager
+                .get(id)
+                .unwrap()
+                .connection
+                .as_ref()
+                .unwrap()
+                .show_details
+        );
+        manager.dismiss(id);
+        assert!(!manager.has_toasts());
+    }
 }
