@@ -828,9 +828,14 @@ fn managed_hub_view(
                 .size(fonts.small)
                 .color(theme.text_secondary),
         );
-        let resume = state.selected.is_some();
+        let label = match (state.selected.is_some(), state.tailnet_override) {
+            (false, false) => "Deploy Hub",
+            (false, true) => "Deploy anyway",
+            (true, false) => "Resume setup",
+            (true, true) => "Resume anyway",
+        };
         content = content.push(
-            button(text(if resume { "Resume setup" } else { "Deploy Hub" }).size(fonts.body))
+            button(text(label).size(fonts.body))
                 .padding([8, 16])
                 .style(primary_button_style(theme))
                 .on_press_maybe(

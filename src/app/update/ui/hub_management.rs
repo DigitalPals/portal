@@ -4,6 +4,7 @@ use crate::{
         self, DeploymentAction as Action, DeploymentRecord, DeploymentRequest, ManagedHubState,
         ManagementMessage as M, OwnerSetupLink, OwnerSetupMode, SetupChoice,
     },
+    hub::tailnet::LocalTailnet,
     message::{Message, UiMessage},
     ssh::SshEvent,
 };
@@ -279,7 +280,26 @@ pub(super) fn handle(portal: &mut Portal, value: M) -> Task<Message> {
             state.image = deployment::DEFAULT_IMAGE.into();
             return start(portal, Action::Update, OwnerSetupMode::Setup);
         }
-        M::Deploy => return start_automated(portal),
+        M::Deploy => return start_automated(portal, false),
+        M::TailnetChecked(generation, tailnet) => {
+            let wizard = &mut portal.ui.portal_hub_wizard;
+            if !wizard.accepts(generation) || wizard.managed.busy {
+                return Task::none();
+            }
+            let warning = match tailnet {
+                LocalTailnet::Connected => return start_automated(portal, true),
+                LocalTailnet::Disconnected(backend) => format!(
+                    "Tailscale is not connected on this computer ({backend}). Your Hub will answer only on your tailnet: connect this computer first, for example with tailscale up, or continue anyway and connect it before setup finishes."
+                ),
+                LocalTailnet::Unavailable => "Portal could not find Tailscale on this computer. Your Hub will answer only on your tailnet: install and connect Tailscale here first, or continue anyway if it runs in a way Portal cannot detect.".into(),
+            };
+            let state = &mut wizard.managed;
+            state.progress.clear();
+            state.last_action = None;
+            state.error = Some(warning);
+            // The next click continues; it does not check again.
+            state.tailnet_override = true;
+        }
         M::ToggleAdvanced => {
             let state = &mut portal.ui.portal_hub_wizard.managed;
             state.show_advanced = !state.show_advanced;
@@ -391,14 +411,15 @@ fn connect_device(
 
 /// The owner account name: the Advanced field, then the name Portal used
 /// before, then the local login name.
-fn owner_name(state: &ManagedHubState, record: &DeploymentRecord) -> String {
+fn owner_name(state: &ManagedHubState) -> String {
     let typed = state.owner_name.trim();
     if !typed.is_empty() {
         typed.to_string()
     } else {
-        record
-            .owner_username
-            .clone()
+        state
+            .selected
+            .as_ref()
+            .and_then(|record| record.owner_username.clone())
             .unwrap_or_else(deployment::default_owner_username)
     }
 }
@@ -444,7 +465,7 @@ fn start(portal: &mut Portal, action: Action, owner_mode: OwnerSetupMode) -> Tas
         if action == Action::Update {
             deployment::validate_image(&state.image)?;
         }
-        let username = owner_name(state, &record);
+        let username = owner_name(state);
         if action == Action::OwnerSetup && owner_mode == OwnerSetupMode::Setup {
             deployment::validate_owner_username(&username)?;
             remember_owner_name(state, &mut record, &username)?;
@@ -505,8 +526,10 @@ fn start(portal: &mut Portal, action: Action, owner_mode: OwnerSetupMode) -> Tas
 
 /// Run the whole setup on one SSH session: check, install (Docker too),
 /// Tailscale enrollment and HTTPS, ending with a passkey setup link for the
-/// browser. The click is the consent.
-fn start_automated(portal: &mut Portal) -> Task<Message> {
+/// browser. The click is the consent. Unless `tailnet_checked`, it first checks
+/// that this computer is on Tailscale: the finished Hub answers only there.
+fn start_automated(portal: &mut Portal, tailnet_checked: bool) -> Task<Message> {
+    let generation = portal.ui.portal_hub_wizard.generation;
     let state = &mut portal.ui.portal_hub_wizard.managed;
     if state.busy {
         return Task::none();
@@ -518,25 +541,43 @@ fn start_automated(portal: &mut Portal) -> Task<Message> {
         if state.selected.is_none() {
             deployment::validate_hostname(&state.hostname)?;
         }
-        let mut record = select_record(state, host_id)?;
-        let owner_username = owner_name(state, &record);
+        let owner_username = owner_name(state);
         deployment::validate_owner_username(&owner_username)?;
-        remember_owner_name(state, &mut record, &owner_username)?;
-        let plan = deployment::AutomatedPlan {
-            deployment_id: record.deployment_id,
-            hostname: record.hostname.clone(),
-            hub_image: state.image.clone(),
-            archive: state.archive.clone(),
-            owner_username,
-        };
-        Ok((host, chain, plan))
+        Ok((host, chain, owner_username))
     })();
-    let (host, chain, plan) = match prepare {
+    let (host, chain, owner_username) = match prepare {
         Ok(value) => value,
         Err(error) => {
             state.error = Some(error);
             return Task::none();
         }
+    };
+    if !tailnet_checked && !state.tailnet_override {
+        state.error = None;
+        state.progress = "Checking Tailscale on this computer…".into();
+        return Task::perform(crate::hub::tailnet::local_tailnet(), move |tailnet| {
+            message(M::TailnetChecked(generation, tailnet))
+        });
+    }
+    state.tailnet_override = false;
+    let saved = (|| -> Result<_, String> {
+        let mut record = select_record(state, host.id)?;
+        remember_owner_name(state, &mut record, &owner_username)?;
+        Ok(record)
+    })();
+    let record = match saved {
+        Ok(record) => record,
+        Err(error) => {
+            state.error = Some(error);
+            return Task::none();
+        }
+    };
+    let plan = deployment::AutomatedPlan {
+        deployment_id: record.deployment_id,
+        hostname: record.hostname.clone(),
+        hub_image: state.image.clone(),
+        archive: state.archive.clone(),
+        owner_username,
     };
     let id = Uuid::new_v4();
     let host_id = host.id;
@@ -946,14 +987,63 @@ mod tests {
         let state = &portal.ui.portal_hub_wizard.managed;
         assert!(deployment::validate_hostname(&state.hostname).is_ok());
         assert!(state.selected.is_none()); // The editable field remains visible.
-        let task = handle(&mut portal, M::Deploy);
+        // Checking this computer's Tailscale creates no record yet.
+        assert!(handle(&mut portal, M::Deploy).units() > 0);
+        assert!(portal.ui.portal_hub_wizard.managed.selected.is_none());
+        let generation = portal.ui.portal_hub_wizard.generation;
+        let task = handle(
+            &mut portal,
+            M::TailnetChecked(generation, LocalTailnet::Connected),
+        );
         assert!(task.units() > 0);
         let state = &portal.ui.portal_hub_wizard.managed;
+        assert!(state.busy);
         assert_eq!(state.selected.as_ref().unwrap().hostname, "my-hub");
         assert_eq!(state.records.len(), 1);
         let records = ManagedHubState::load().records;
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].hostname, "my-hub");
+    }
+
+    #[test]
+    fn deploying_without_tailscale_here_warns_once_then_continues() {
+        if Portal::isolate_config_test() {
+            return;
+        }
+        for tailnet in [
+            LocalTailnet::Unavailable,
+            LocalTailnet::Disconnected("NeedsLogin".into()),
+        ] {
+            let (mut portal, _) = wizard();
+            portal.ui.portal_hub_wizard.managed.busy = false;
+            let record = saved_server(&mut portal);
+            portal.ui.portal_hub_wizard.managed.host_id = Some(record.ssh_host_id);
+            assert!(handle(&mut portal, M::Deploy).units() > 0);
+            assert!(!portal.ui.portal_hub_wizard.managed.busy);
+            // A result for an earlier wizard state is ignored.
+            let _ = handle(
+                &mut portal,
+                M::TailnetChecked(Uuid::new_v4(), tailnet.clone()),
+            );
+            assert!(portal.ui.portal_hub_wizard.managed.error.is_none());
+            let generation = portal.ui.portal_hub_wizard.generation;
+            assert_eq!(
+                handle(&mut portal, M::TailnetChecked(generation, tailnet.clone())).units(),
+                0
+            );
+            let state = &portal.ui.portal_hub_wizard.managed;
+            let warning = state.error.as_deref().unwrap();
+            assert!(warning.contains("only on your tailnet"), "{warning}");
+            assert!(warning.contains("continue anyway"), "{warning}");
+            assert!(state.tailnet_override);
+            assert!(state.selected.is_none() && !state.busy);
+            // The second click starts setup without checking again.
+            assert!(handle(&mut portal, M::Deploy).units() > 0);
+            let state = &portal.ui.portal_hub_wizard.managed;
+            assert!(state.busy && state.automated);
+            assert!(!state.tailnet_override);
+            assert!(state.selected.is_some());
+        }
     }
 
     fn ready_response(url: &str) -> deployment::DeploymentResponse {

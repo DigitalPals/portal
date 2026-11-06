@@ -223,8 +223,10 @@ has been recorded and is still available; a missing image can be restored from
 that archive or its recorded digest. Use `update` for any deliberate image change. Install also
 accepts `allow_session_interruptions` when repairing an existing live stack.
 
-The desktop's **Deploy Hub** button drives this sequence automatically on one
-SSH connection (one sudo prompt at most, held in memory for that run): `inspect`,
+The desktop's **Deploy Hub** button first asks the local Tailscale daemon whether
+this computer is connected (the Hub answers only on its tailnet name) and warns
+once if not. It then drives this sequence automatically on one SSH connection
+(one sudo prompt at most, held in memory for that run): `inspect`,
 `install` with `install_docker:true`, `status` every 3 seconds while it opens the
 validated Tailscale login/approval page in the browser, `configure_https`
 (reopening the tailnet HTTPS consent page if certificate issuance needs it) and

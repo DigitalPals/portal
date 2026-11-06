@@ -4,5 +4,6 @@ pub(crate) mod diagnostics;
 pub(crate) mod http;
 pub(crate) mod onboarding;
 pub(crate) mod sync;
+pub(crate) mod tailnet;
 pub(crate) mod vault;
 pub(crate) mod vault_enrollment;

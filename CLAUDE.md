@@ -87,7 +87,8 @@ src/
 ├── local/              # Local terminal sessions via portable-pty
 ├── proxy/              # Portal Hub proxied terminal sessions (WebSocket)
 ├── hub/                # Portal Hub client: OAuth (auth.rs), sync, encrypted vault,
-│                       # vault enrollment, diagnostics
+│                       # vault enrollment, diagnostics, managed deployment
+│                       # (deployment.rs), local Tailscale check (tailnet.rs)
 ├── terminal/           # Custom Iced widget on alacritty_terminal: selection with
 │                       # edge auto-scroll, scrollback search (search.rs), clickable
 │                       # links (links.rs), session logging (logger.rs)

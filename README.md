@@ -291,7 +291,8 @@ Docker Compose 2.20+ first. Servers without `/dev/net/tun` (such as unprivileged
 LXC containers) use Tailscale userspace networking automatically; Docker inside an
 LXC still needs nesting enabled on its host, and in userspace mode Hub reaches SSH
 targets over the server's normal network only. This computer must be on the same
-tailnet to reach the Hub. Networking policy must allow clients to reach Hub and
+tailnet to reach the Hub; Deploy Hub checks that Tailscale is connected here
+before it changes anything on the server. Networking policy must allow clients to reach Hub and
 Hub to reach the selected SSH targets. This deployment does not publish public
 Hub ports or enable Tailscale Funnel.
 

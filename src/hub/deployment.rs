@@ -530,6 +530,9 @@ pub struct ManagedHubState {
     pub image: String,
     pub archive: Option<PathBuf>,
     pub allow_interruptions: bool,
+    /// This computer did not look connected to Tailscale and the person was
+    /// told; the next Deploy click continues without checking again.
+    pub tailnet_override: bool,
     pub uninstall_confirmed: bool,
     /// Resetting the owner passkeys signs out every device: confirm first.
     pub reset_confirmed: bool,
@@ -557,6 +560,7 @@ impl Default for ManagedHubState {
             image: DEFAULT_IMAGE.into(),
             archive: None,
             allow_interruptions: false,
+            tailnet_override: false,
             uninstall_confirmed: false,
             reset_confirmed: false,
             owner_name: String::new(),
@@ -639,6 +643,8 @@ pub enum ManagementMessage {
     UpdateToPortalVersion,
     /// One-click setup: everything from server check to a signed-in Hub.
     Deploy,
+    /// Whether this computer is on Tailscale, checked before setup starts.
+    TailnetChecked(Uuid, crate::hub::tailnet::LocalTailnet),
     ToggleAdvanced,
     /// The automated run reached a Tailscale page the person must complete.
     OpenBrowser(Uuid, String),
