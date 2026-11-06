@@ -147,6 +147,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y openssh-server openssh-client dtach util-linux pkg-config
           sudo mkdir -p /run/sshd
+          # The pinned sidecar exercises legacy iptables inside its own namespace.
+          sudo modprobe iptable_filter
       - uses: Swatinem/rust-cache@v2
       - name: Test Hub and compatibility fixtures
         run: cargo test --locked -p portal-hub
