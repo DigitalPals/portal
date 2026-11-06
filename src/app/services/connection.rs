@@ -616,7 +616,7 @@ fn map_ssh_connect_error(
         }
         _ => Message::Session(SessionMessage::ConnectFailed {
             session_id,
-            error: format!("Connection failed: {}", error),
+            error: error.to_string(),
         }),
     }
 }

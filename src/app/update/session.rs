@@ -1491,7 +1491,7 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
             if portal.sessions.contains(session_id) {
                 return schedule_reconnect(portal, session_id);
             }
-            if !portal.finish_pending_connect_for(session_id) {
+            if !portal.fail_pending_connect_for(session_id, error.clone()) {
                 tracing::warn!(
                     "Ignoring stale connection failure for session {}: {}",
                     session_id,
@@ -1499,8 +1499,6 @@ pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message>
                 );
                 return Task::none();
             }
-            portal.pre_session_terminal_output.remove(&session_id);
-            portal.toast_manager.push(Toast::error(error));
             Task::none()
         }
         SessionMessage::TerminalEvent(session_id, event) => match event {

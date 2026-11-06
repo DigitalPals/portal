@@ -917,6 +917,8 @@ pub enum UiMessage {
     WindowFocused,
     /// Dismiss toast notification
     ToastDismiss(Uuid),
+    /// Expand or collapse the diagnostic detail of a connection failure.
+    ToastDetailsToggle(Uuid),
     /// Run a toast action and dismiss the toast.
     ToastAction(Uuid, crate::views::toast::ToastAction),
     /// Toast timer tick
