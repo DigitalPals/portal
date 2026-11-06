@@ -15,6 +15,9 @@ use crate::message::{
 };
 use crate::sftp::FileEntry;
 use crate::ssh::host_key_verification::HostKeyVerificationResponse;
+use crate::views::command_palette::{
+    available_commands, command_list_id, filter_commands, move_selection, selected_matching_action,
+};
 use crate::views::dialogs::host_dialog::host_dialog_field_id;
 use crate::views::dialogs::portal_hub_dialogs::{
     PortalHubOnboardingField, portal_hub_onboarding_field_from_id,
@@ -27,6 +30,9 @@ pub(super) fn handle_key_released(
     key: Key,
     modifiers: keyboard::Modifiers,
 ) -> Task<Message> {
+    if portal.ui.command_palette_open {
+        return Task::none();
+    }
     if let View::VncViewer(session_id) = portal.ui.active_view {
         let passthrough = portal
             .vnc_sessions
@@ -72,21 +78,46 @@ pub(super) fn handle_keyboard_event(
             Key::Named(keyboard::key::Named::Escape) => {
                 return Task::done(Message::Ui(UiMessage::CommandPaletteClose));
             }
-            Key::Named(keyboard::key::Named::Enter) => {
-                let commands = crate::views::command_palette::available_commands(
+            Key::Named(
+                named @ (keyboard::key::Named::ArrowUp | keyboard::key::Named::ArrowDown),
+            ) => {
+                let commands = available_commands(
                     &portal.config.hosts,
                     &portal.config.snippets,
                     portal.prefs.portal_hub.sync_configured(),
                 );
-                if let Some(action) = crate::views::command_palette::first_matching_action(
+                let count = filter_commands(&commands, &portal.ui.command_palette_query).len();
+                let selected = move_selection(
+                    portal.ui.command_palette_selected,
+                    count,
+                    *named == keyboard::key::Named::ArrowDown,
+                );
+                portal.ui.command_palette_selected = selected;
+                // Keep keyboard selection visible, including when wrapping to either end.
+                return iced::widget::operation::snap_to(
+                    command_list_id(),
+                    iced::widget::operation::RelativeOffset {
+                        x: 0.0,
+                        y: selected as f32 / count.saturating_sub(1).max(1) as f32,
+                    },
+                );
+            }
+            Key::Named(keyboard::key::Named::Enter) => {
+                let commands = available_commands(
+                    &portal.config.hosts,
+                    &portal.config.snippets,
+                    portal.prefs.portal_hub.sync_configured(),
+                );
+                if let Some(action) = selected_matching_action(
                     &commands,
                     &portal.ui.command_palette_query,
+                    portal.ui.command_palette_selected,
                 ) {
                     return Task::done(Message::Ui(UiMessage::CommandPaletteRun(action)));
                 }
                 return Task::none();
             }
-            _ => {}
+            _ => return Task::none(),
         }
     }
 

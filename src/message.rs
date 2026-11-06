@@ -727,6 +727,8 @@ pub enum UiMessage {
     CommandPaletteClose,
     /// Command palette search changed
     CommandPaletteChanged(String),
+    /// Select a command palette row by hovering it
+    CommandPaletteSelect(usize),
     /// Execute a command palette action
     CommandPaletteRun(CommandAction),
     /// Theme changed

@@ -215,6 +215,7 @@ pub struct UiState {
     host_grid_cache: RefCell<HostGridCache>,
     pub command_palette_open: bool,
     pub command_palette_query: String,
+    pub command_palette_selected: usize,
     pub host_details_sheet: Option<Uuid>,
     pub sidebar_state: SidebarState,
     pub sidebar_state_before_session: Option<SidebarState>, // Saved state before hiding for terminal
@@ -667,6 +668,7 @@ impl Portal {
                 host_grid_cache: RefCell::new(HostGridCache::default()),
                 command_palette_open: false,
                 command_palette_query: String::new(),
+                command_palette_selected: 0,
                 host_details_sheet: None,
                 sidebar_state: SidebarState::Expanded,
                 sidebar_state_before_session: None,
@@ -1421,7 +1423,14 @@ impl Portal {
             );
             stack![
                 with_dropzone,
-                command_palette_view(&self.ui.command_palette_query, &commands, theme, fonts)
+                command_palette_view(
+                    &self.ui.command_palette_query,
+                    &commands,
+                    self.ui.command_palette_selected,
+                    &self.prefs.keybindings,
+                    theme,
+                    fonts,
+                )
             ]
             .into()
         } else {
@@ -1566,7 +1575,13 @@ impl Portal {
     pub fn subscription(&self) -> Subscription<Message> {
         let mut subscriptions = vec![
             // Keyboard events
-            event::listen_with(|event, status, _id| subscription_message(event, status)),
+            if self.ui.command_palette_open {
+                event::listen_with(|event, status, _id| {
+                    command_palette_subscription_message(event, status)
+                })
+            } else {
+                event::listen_with(|event, status, _id| subscription_message(event, status))
+            },
             // Window resize events
             window::resize_events().map(|(_id, size)| Message::Ui(UiMessage::WindowResized(size))),
         ];
@@ -1673,6 +1688,30 @@ fn terminal_status_bar_estimated_height(fonts: ScaledFonts) -> f32 {
         + TERMINAL_STATUS_BAR_KEY_PADDING
         + TERMINAL_STATUS_BAR_VERTICAL_PADDING
         + TERMINAL_STATUS_BAR_GUARD
+}
+
+fn command_palette_subscription_message(
+    event: iced::Event,
+    status: event::Status,
+) -> Option<Message> {
+    // In particular, the focused search input captures Escape before subscriptions.
+    let status = if matches!(
+        &event,
+        iced::Event::Keyboard(keyboard::Event::KeyPressed {
+            key: keyboard::Key::Named(
+                keyboard::key::Named::ArrowUp
+                    | keyboard::key::Named::ArrowDown
+                    | keyboard::key::Named::Enter
+                    | keyboard::key::Named::Escape
+            ),
+            ..
+        })
+    ) {
+        event::Status::Ignored
+    } else {
+        status
+    };
+    subscription_message(event, status)
 }
 
 fn subscription_message(event: iced::Event, status: event::Status) -> Option<Message> {

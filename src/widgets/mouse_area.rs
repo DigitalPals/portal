@@ -20,6 +20,7 @@ where
     content: Element<'a, Message, Theme, Renderer>,
     on_press: Option<Message>,
     on_double_click: Option<Message>,
+    on_hover: Option<Message>,
     on_right_press: Option<Box<dyn Fn(f32, f32) -> Message + 'a>>,
     on_ctrl_press: Option<Message>,
     on_shift_press: Option<Message>,
@@ -38,6 +39,7 @@ where
             content: content.into(),
             on_press: None,
             on_double_click: None,
+            on_hover: None,
             on_right_press: None,
             on_ctrl_press: None,
             on_shift_press: None,
@@ -68,6 +70,13 @@ where
     /// Sets the message to emit on a double left click.
     pub fn on_double_click(mut self, message: Message) -> Self {
         self.on_double_click = Some(message);
+        self
+    }
+
+    /// Emits a message when the pointer moves over the visible content.
+    /// Layout and scroll changes under a stationary pointer do not trigger it.
+    pub fn on_hover(mut self, message: Message) -> Self {
+        self.on_hover = Some(message);
         self
     }
 
@@ -168,6 +177,14 @@ where
         shell: &mut Shell<'_, Message>,
         viewport: &Rectangle,
     ) {
+        if matches!(event, Event::Mouse(mouse::Event::CursorMoved { .. }))
+            && cursor.is_over(layout.bounds())
+            && cursor.is_over(*viewport)
+            && let Some(message) = &self.on_hover
+        {
+            shell.publish(message.clone());
+        }
+
         // Buttons inside this wrapper capture presses, so double-click
         // recognition must happen before the child sees the event.
         if let Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) = event
