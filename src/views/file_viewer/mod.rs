@@ -15,6 +15,7 @@ use iced::{Alignment, Color, Element, Fill, Length};
 
 use crate::message::{FileViewerMessage, Message, SessionId};
 use crate::theme::{ScaledFonts, Theme};
+use crate::views::dialogs::common::{primary_button_style, secondary_button_style};
 
 // Error color constant
 const ERROR_COLOR: Color = Color::from_rgb(0.9, 0.3, 0.3);
@@ -99,7 +100,18 @@ pub fn file_viewer_view(
         ),
     };
 
-    let main_content = column![toolbar, content].spacing(0);
+    let mut main_content = column![toolbar].spacing(0);
+    if let Some(error) = &state.save_error {
+        main_content = main_content.push(
+            container(
+                text(format!("Could not save: {error}"))
+                    .size(fonts.small)
+                    .color(theme.text_primary),
+            )
+            .padding([8, 16]),
+        );
+    }
+    let main_content = main_content.push(content);
 
     container(main_content)
         .width(Fill)
@@ -131,45 +143,21 @@ fn file_viewer_toolbar(
         .color(theme.text_primary);
 
     // Save button (only for editable content)
-    let save_btn = if state.file_type.is_editable() && state.is_modified {
-        button(
-            text("Save")
-                .size(fonts.button_small)
-                .color(theme.text_on_accent()),
-        )
-        .style(move |_theme, status| {
-            let bg = match status {
-                button::Status::Hovered => iced::Color::from_rgb8(0x00, 0x8B, 0xE8),
-                _ => theme.accent,
-            };
-            button::Style {
-                background: Some(bg.into()),
-                text_color: theme.text_on(bg),
-                border: iced::Border {
-                    radius: 4.0.into(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            }
-        })
-        .padding([6, 16])
-        .on_press(Message::FileViewer(FileViewerMessage::Save(viewer_id)))
+    let save_btn = if state.file_type.is_editable() && (state.is_modified || state.is_saving) {
+        button(text(if state.is_saving { "Saving…" } else { "Save" }).size(fonts.button_small))
+            .style(primary_button_style(theme))
+            .padding([6, 16])
+            .on_press_maybe(
+                (!state.is_saving)
+                    .then_some(Message::FileViewer(FileViewerMessage::Save(viewer_id))),
+            )
     } else {
         button(
             text("Save")
                 .size(fonts.button_small)
                 .color(theme.text_muted),
         )
-        .style(move |_theme, _status| button::Style {
-            background: Some(theme.surface.into()),
-            text_color: theme.text_muted,
-            border: iced::Border {
-                radius: 4.0.into(),
-                color: theme.border,
-                width: 1.0,
-            },
-            ..Default::default()
-        })
+        .style(secondary_button_style(theme))
         .padding([6, 16])
     };
 

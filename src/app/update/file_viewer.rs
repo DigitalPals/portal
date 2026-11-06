@@ -7,7 +7,7 @@ use std::path::Path;
 use crate::app::Portal;
 use crate::app::services::file_viewer;
 use crate::fs_utils::write_regular_file;
-use crate::message::{FileViewerMessage, Message, TabMessage};
+use crate::message::{FileViewerMessage, Message};
 use crate::sftp::SharedSftpSession;
 use crate::views::file_viewer::FileSource;
 use crate::views::toast::{Toast, ToastType};
@@ -55,10 +55,10 @@ pub fn handle_file_viewer(app: &mut Portal, msg: FileViewerMessage) -> Task<Mess
         }
         FileViewerMessage::TextChanged(viewer_id, action) => {
             if let Some(viewer) = app.file_viewers.get_mut(viewer_id) {
+                let is_edit = action.is_edit();
                 match &mut viewer.content {
                     crate::views::file_viewer::ViewerContent::Text { content } => {
                         content.perform(action);
-                        viewer.mark_modified();
                     }
                     crate::views::file_viewer::ViewerContent::Markdown {
                         content,
@@ -67,22 +67,19 @@ pub fn handle_file_viewer(app: &mut Portal, msg: FileViewerMessage) -> Task<Mess
                     } => {
                         content.perform(action);
                         *raw_text = content.text();
-                        viewer.mark_modified();
                     }
                     _ => {}
+                }
+                if is_edit {
+                    viewer.mark_modified();
                 }
             }
             Task::none()
         }
         FileViewerMessage::Save(viewer_id) => {
             if let Some(viewer) = app.file_viewers.get_mut(viewer_id) {
-                if viewer.is_saving {
-                    return Task::none();
-                }
-
                 // Get text content to save
-                if let Some(text) = viewer.get_text() {
-                    viewer.is_saving = true;
+                if let Some(text) = viewer.begin_save() {
                     let source = viewer.file_source.clone();
 
                     // Get SFTP session if this is a remote file
@@ -104,14 +101,17 @@ pub fn handle_file_viewer(app: &mut Portal, msg: FileViewerMessage) -> Task<Mess
         }
         FileViewerMessage::SaveResult(viewer_id, result) => {
             if let Some(viewer) = app.file_viewers.get_mut(viewer_id) {
-                viewer.is_saving = false;
+                if !viewer.is_saving {
+                    return Task::none();
+                }
+                viewer.finish_save(&result);
                 match result {
                     Ok(()) => {
-                        viewer.mark_saved();
                         app.toast_manager
                             .push(Toast::new("File saved", ToastType::Success));
-                        // Close the tab after successful save
-                        return Task::done(Message::Tab(TabMessage::Close(viewer_id)));
+                        if !viewer.is_modified {
+                            app.dialogs.close_unsaved_file(viewer_id);
+                        }
                     }
                     Err(e) => {
                         app.toast_manager.push(Toast::new(
@@ -120,6 +120,18 @@ pub fn handle_file_viewer(app: &mut Portal, msg: FileViewerMessage) -> Task<Mess
                         ));
                     }
                 }
+            }
+            Task::none()
+        }
+        FileViewerMessage::DiscardChanges(viewer_id) => {
+            if matches!(app.dialogs.active(), crate::app::managers::ActiveDialog::UnsavedFile(id) if *id == viewer_id)
+                && app
+                    .file_viewers
+                    .get(viewer_id)
+                    .is_some_and(|viewer| !viewer.is_saving)
+            {
+                app.dialogs.close_unsaved_file(viewer_id);
+                app.close_tab_without_confirmation(viewer_id);
             }
             Task::none()
         }

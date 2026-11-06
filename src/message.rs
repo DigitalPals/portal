@@ -627,6 +627,8 @@ pub enum FileViewerMessage {
     Save(SessionId),
     /// Save operation completed
     SaveResult(SessionId, Result<(), String>),
+    /// Discard edits after explicit confirmation in the close dialog
+    DiscardChanges(SessionId),
     /// PDF page navigation
     PdfPageChange(SessionId, usize),
     /// Render a PDF page on demand
