@@ -31,6 +31,8 @@ use host_key_verification::HostKeyVerificationRequest;
 /// Events emitted by the SSH layer
 #[derive(Debug)]
 pub enum SshEvent {
+    /// Current step while establishing a connection.
+    ConnectionStep(&'static str),
     /// SSH connection established
     Connected,
     /// Data received from remote

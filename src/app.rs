@@ -170,6 +170,28 @@ mod tests {
     }
 
     #[test]
+    fn command_palette_receives_captured_navigation_but_not_text_editing() {
+        assert!(
+            command_palette_subscription_message(ctrl_c_event(), event::Status::Captured).is_none()
+        );
+        for named in [
+            keyboard::key::Named::ArrowUp,
+            keyboard::key::Named::ArrowDown,
+            keyboard::key::Named::Enter,
+            keyboard::key::Named::Escape,
+        ] {
+            let mut event = ctrl_c_event();
+            if let iced::Event::Keyboard(keyboard::Event::KeyPressed { key, .. }) = &mut event {
+                *key = keyboard::Key::Named(named);
+            }
+            assert!(matches!(
+                command_palette_subscription_message(event, event::Status::Captured),
+                Some(Message::Ui(UiMessage::KeyboardEvent(keyboard::Key::Named(key), _, _))) if key == named
+            ));
+        }
+    }
+
+    #[test]
     fn ignored_keyboard_events_still_reach_global_shortcuts() {
         let Some(Message::Ui(UiMessage::KeyboardEvent(key, modifiers, shortcut_key))) =
             subscription_message(ctrl_c_event(), event::Status::Ignored)
@@ -215,6 +237,7 @@ pub struct UiState {
     host_grid_cache: RefCell<HostGridCache>,
     pub command_palette_open: bool,
     pub command_palette_query: String,
+    pub command_palette_selected: usize,
     pub host_details_sheet: Option<Uuid>,
     pub sidebar_state: SidebarState,
     pub sidebar_state_before_session: Option<SidebarState>, // Saved state before hiding for terminal
@@ -447,6 +470,7 @@ pub struct Portal {
 
 pub(crate) struct PendingConnect {
     session_id: SessionId,
+    host: Option<crate::config::Host>,
     draft_tab_id: Option<Uuid>,
     handle: iced::task::Handle,
 }
@@ -455,6 +479,7 @@ impl PendingConnect {
     fn new(session_id: SessionId, draft_tab_id: Option<Uuid>, handle: iced::task::Handle) -> Self {
         Self {
             session_id,
+            host: None,
             draft_tab_id,
             handle,
         }
@@ -667,6 +692,7 @@ impl Portal {
                 host_grid_cache: RefCell::new(HostGridCache::default()),
                 command_palette_open: false,
                 command_palette_query: String::new(),
+                command_palette_selected: 0,
                 host_details_sheet: None,
                 sidebar_state: SidebarState::Expanded,
                 sidebar_state_before_session: None,
@@ -832,6 +858,7 @@ impl Portal {
             View::Settings => settings_page_view(
                 SettingsPageContext {
                     current_theme: self.prefs.theme_id,
+                    keybindings: self.prefs.keybindings.clone(),
                     terminal_font_size: self.prefs.terminal_font_size,
                     terminal_scroll_speed: self.prefs.terminal_scroll_speed,
                     terminal_font: self.prefs.terminal_font,
@@ -1188,6 +1215,17 @@ impl Portal {
 
         // Overlay dialog if open - host key dialog takes priority as it's connection-critical
         let with_dialog: Element<'_, Message> = match self.dialogs.active() {
+            ActiveDialog::UnsavedFile(viewer_id) => {
+                if let Some(viewer) = self.file_viewers.get(*viewer_id) {
+                    let dialog =
+                        crate::views::dialogs::unsaved_file_dialog::unsaved_file_dialog_view(
+                            viewer, theme, fonts,
+                        );
+                    stack![main_layout, dialog].into()
+                } else {
+                    main_layout
+                }
+            }
             ActiveDialog::HostKey(host_key_state) => {
                 let dialog = host_key_dialog_view(host_key_state, theme, fonts);
                 stack![main_layout, dialog].into()
@@ -1426,7 +1464,14 @@ impl Portal {
             );
             stack![
                 with_dropzone,
-                command_palette_view(&self.ui.command_palette_query, &commands, theme, fonts)
+                command_palette_view(
+                    &self.ui.command_palette_query,
+                    &commands,
+                    self.ui.command_palette_selected,
+                    &self.prefs.keybindings,
+                    theme,
+                    fonts,
+                )
             ]
             .into()
         } else {
@@ -1571,12 +1616,25 @@ impl Portal {
     pub fn subscription(&self) -> Subscription<Message> {
         let mut subscriptions = vec![
             // Keyboard events
-            event::listen_with(|event, status, _id| subscription_message(event, status)),
+            if self.ui.command_palette_open {
+                event::listen_with(|event, status, _id| {
+                    command_palette_subscription_message(event, status)
+                })
+            } else {
+                event::listen_with(|event, status, _id| subscription_message(event, status))
+            },
             // Window resize events
             window::resize_events().map(|(_id, size)| Message::Ui(UiMessage::WindowResized(size))),
         ];
 
-        // Toast tick timer (only when toasts are visible)
+        // Refresh connection elapsed time while its dialog is visible.
+        if matches!(self.dialogs.active(), ActiveDialog::Connecting(_)) {
+            subscriptions.push(
+                time::every(Duration::from_secs(1)).map(|_| Message::Ui(UiMessage::ConnectingTick)),
+            );
+        }
+
+        // Toast tick timer (only when toasts are visible).
         if self.toast_manager.has_toasts() {
             subscriptions.push(
                 time::every(Duration::from_millis(100)).map(|_| Message::Ui(UiMessage::ToastTick)),
@@ -1678,6 +1736,30 @@ fn terminal_status_bar_estimated_height(fonts: ScaledFonts) -> f32 {
         + TERMINAL_STATUS_BAR_KEY_PADDING
         + TERMINAL_STATUS_BAR_VERTICAL_PADDING
         + TERMINAL_STATUS_BAR_GUARD
+}
+
+fn command_palette_subscription_message(
+    event: iced::Event,
+    status: event::Status,
+) -> Option<Message> {
+    // In particular, the focused search input captures Escape before subscriptions.
+    let status = if matches!(
+        &event,
+        iced::Event::Keyboard(keyboard::Event::KeyPressed {
+            key: keyboard::Key::Named(
+                keyboard::key::Named::ArrowUp
+                    | keyboard::key::Named::ArrowDown
+                    | keyboard::key::Named::Enter
+                    | keyboard::key::Named::Escape
+            ),
+            ..
+        })
+    ) {
+        event::Status::Ignored
+    } else {
+        status
+    };
+    subscription_message(event, status)
 }
 
 fn subscription_message(event: iced::Event, status: event::Status) -> Option<Message> {

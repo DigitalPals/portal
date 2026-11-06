@@ -87,7 +87,13 @@ pub fn handle_proxy_sessions(portal: &mut Portal, msg: ProxySessionsMessage) -> 
                 display_name.clone(),
                 portal.terminal_initial_size(),
             );
-            portal.begin_connecting(display_name, "Portal Hub", session_id, task)
+            portal.begin_connecting(
+                display_name,
+                "Portal Hub",
+                session_id,
+                host_id.and_then(|id| portal.config.hosts.find_host(id).cloned()),
+                task,
+            )
         }
         ProxySessionsMessage::KillRequested(session_id) => {
             if portal.proxy_sessions.get(session_id).is_none() {
