@@ -174,6 +174,11 @@ pub enum SearchMessage {
 /// Terminal session-related messages
 #[derive(Debug, Clone)]
 pub enum SessionMessage {
+    /// Current step of a pending SSH connection.
+    ConnectionStep {
+        session_id: SessionId,
+        step: &'static str,
+    },
     /// SSH connection established
     Connected {
         session_id: SessionId,
@@ -210,6 +215,8 @@ pub enum SessionMessage {
     Disconnected { session_id: SessionId, clean: bool },
     /// Scheduled reconnect attempt
     Reconnect(SessionId),
+    /// User requested a reconnect in the existing terminal tab
+    ReconnectNow(SessionId),
     /// Session error occurred
     Error(String),
     /// Connection failed for a specific session
@@ -371,6 +378,8 @@ pub enum SftpMessage {
 /// Dialog-related messages
 #[derive(Debug, Clone)]
 pub enum DialogMessage {
+    /// Abort the pending connection and close its progress dialog.
+    ConnectingCancel,
     /// Close any open dialog
     Close,
     /// Submit host dialog
@@ -912,10 +921,14 @@ pub enum UiMessage {
     WindowFocused,
     /// Dismiss toast notification
     ToastDismiss(Uuid),
+    /// Expand or collapse the diagnostic detail of a connection failure.
+    ToastDetailsToggle(Uuid),
     /// Run a toast action and dismiss the toast.
     ToastAction(Uuid, crate::views::toast::ToastAction),
     /// Toast timer tick
     ToastTick,
+    /// Refresh elapsed time in the connecting dialog.
+    ConnectingTick,
     /// Timer tick for animated tab agent indicators.
     AgentStatusTick,
     /// Drives the short width-reveal animation for newly opened tabs.

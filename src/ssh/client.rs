@@ -259,6 +259,10 @@ impl SshClient {
                 }
             };
 
+            let _ = event_tx
+                .send(SshEvent::ConnectionStep("Opening session"))
+                .await;
+
             // Open channel and request PTY
             let channel = {
                 let handle = connection.handle();
@@ -392,6 +396,7 @@ impl SshClient {
 
         let mut last_transport_error = None;
         for transport_attempt in 0..NEW_CONNECTION_TRANSPORT_ATTEMPTS {
+            let _ = event_tx.send(SshEvent::ConnectionStep("Connecting")).await;
             // Transport: direct TCP, or a direct-tcpip channel through the
             // jump chain. Jump-hop failures are not retried here — they carry
             // their own hop-specific error message.
@@ -462,6 +467,9 @@ impl SshClient {
 
             // Authenticate with the configured method plus automatic
             // fallback (publickey/agent -> keyboard-interactive -> password).
+            let _ = event_tx
+                .send(SshEvent::ConnectionStep("Authenticating"))
+                .await;
             let auth =
                 ResolvedAuth::resolve(&host.auth, password.clone(), passphrase.clone()).await?;
             auth_flow::authenticate(

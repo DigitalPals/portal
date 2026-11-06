@@ -184,7 +184,7 @@ pub fn handle_vnc(portal: &mut Portal, msg: VncMessage) -> Task<Message> {
         }
         VncMessage::ConnectFailed { session_id, error } => {
             tracing::error!("VNC connection failed: {}", error);
-            if !portal.finish_pending_connect_for(session_id) {
+            if !portal.fail_pending_connect_for(session_id, error.clone()) {
                 tracing::warn!(
                     "Ignoring stale VNC connection failure for session {}: {}",
                     session_id,
@@ -192,9 +192,6 @@ pub fn handle_vnc(portal: &mut Portal, msg: VncMessage) -> Task<Message> {
                 );
                 return Task::none();
             }
-            portal
-                .toast_manager
-                .push(Toast::error(format!("VNC: {}", error)));
             Task::none()
         }
         VncMessage::Error(err) => {

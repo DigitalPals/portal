@@ -76,14 +76,18 @@ fn build_action_bar(
             .style(move |_theme, status| {
                 use iced::widget::text_input::{Status, Style};
                 let border_color = match status {
-                    Status::Focused { .. } => theme.accent,
+                    Status::Focused { .. } => theme.focus_ring,
                     _ => theme.border,
                 };
                 Style {
                     background: theme.background.into(),
                     border: iced::Border {
                         color: border_color,
-                        width: 1.0,
+                        width: if matches!(status, text_input::Status::Focused { .. }) {
+                            2.0
+                        } else {
+                            1.0
+                        },
                         radius: 22.0.into(),
                     },
                     icon: theme.text_muted,
@@ -576,7 +580,7 @@ fn empty_state(theme: Theme, fonts: ScaledFonts) -> Element<'static, Message> {
         )
         .style(move |_theme, status| {
             let bg = match status {
-                button::Status::Hovered => iced::Color::from_rgb8(0x00, 0x8B, 0xE8),
+                button::Status::Hovered => theme.focus_ring,
                 _ => theme.accent,
             };
             button::Style {

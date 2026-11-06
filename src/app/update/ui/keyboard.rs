@@ -8,7 +8,7 @@ use iced::{Rectangle, Task};
 
 use crate::app::ActiveDialog;
 use crate::app::{FocusSection, Portal, VaultModal, View};
-use crate::keybindings::AppAction;
+use crate::keybindings::{AppAction, is_command_palette_shortcut};
 use crate::message::{
     DialogMessage, HistoryMessage, HostMessage, Message, SearchMessage, SessionMessage,
     SftpMessage, SidebarMenuItem, TabMessage, UiMessage, VncMessage,
@@ -322,7 +322,27 @@ pub(super) fn handle_keyboard_event(
         }
     }
 
-    // Priority 3: Terminal captured - only Ctrl+Escape exits
+    // App shortcuts take priority over terminal capture. VNC passthrough and
+    // modal/search input have already handled their keys above.
+    if let Some(action) = portal.prefs.keybindings.app_action(&key, &modifiers) {
+        return portal.handle_keybinding_action(action);
+    }
+    if is_command_palette_shortcut(&key, &modifiers) {
+        return Task::done(Message::Ui(UiMessage::CommandPaletteToggle));
+    }
+
+    if let View::Terminal(session_id) = portal.ui.active_view
+        && modifiers.is_empty()
+        && matches!(key, Key::Named(keyboard::key::Named::Enter))
+        && portal
+            .sessions
+            .get(session_id)
+            .is_some_and(|session| session.disconnected_reason.is_some())
+    {
+        return portal.update(Message::Session(SessionMessage::ReconnectNow(session_id)));
+    }
+
+    // Terminal captured: leave ordinary shell keys to the terminal widget.
     if portal.ui.terminal_captured {
         // Ctrl+Escape exits captured mode
         if let Key::Named(keyboard::key::Named::Escape) = &key
@@ -348,11 +368,8 @@ pub(super) fn handle_keyboard_event(
         }
     }
 
-    // Priority 3: Global shortcuts (always work unless terminal captured)
+    // Global navigation shortcuts (unless terminal captured)
     match (&key, modifiers.control(), modifiers.shift()) {
-        (Key::Character(c), true, false) if c.as_str() == "k" || c.as_str() == "K" => {
-            return Task::done(Message::Ui(UiMessage::CommandPaletteToggle));
-        }
         // F1 - Focus Sidebar
         (Key::Named(keyboard::key::Named::F1), false, false) => {
             portal.ui.focus_section = FocusSection::Sidebar;
@@ -388,23 +405,6 @@ pub(super) fn handle_keyboard_event(
             return Task::none();
         }
         _ => {}
-    }
-
-    if let Some(task) = handle_configured_actions(
-        portal,
-        &key,
-        &modifiers,
-        &[
-            AppAction::NewWindow,
-            AppAction::NewConnection,
-            AppAction::CloseSession,
-            AppAction::NewTab,
-            AppAction::NextSession,
-            AppAction::PreviousSession,
-            AppAction::ToggleFullscreen,
-        ],
-    ) {
-        return task;
     }
 
     // Priority 4: Section-specific navigation
@@ -1183,6 +1183,7 @@ fn sftp_enter_navigation_path(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::keybindings::Keybinding;
     use std::path::PathBuf;
 
     fn palette_key(portal: &mut Portal, key: keyboard::key::Named) -> Task<Message> {
@@ -1238,6 +1239,134 @@ mod tests {
         let focus = portal.ui.focus_section;
         let _ = palette_key(&mut portal, keyboard::key::Named::F1);
         assert_eq!(portal.ui.focus_section, focus);
+    }
+
+    fn captured_terminal_portal() -> Portal {
+        let mut portal = Portal::test_state();
+        portal.open_new_tab();
+        portal.open_new_tab();
+        portal.active_tab = Some(portal.tabs[0].id);
+        portal.ui.active_view = View::Terminal(portal.tabs[0].id);
+        portal.ui.terminal_captured = true;
+        portal
+    }
+
+    #[test]
+    fn captured_terminal_allows_next_and_previous_session_shortcuts() {
+        for (modifiers, start, expected) in [
+            (keyboard::Modifiers::CTRL, 0, 1),
+            (keyboard::Modifiers::CTRL | keyboard::Modifiers::SHIFT, 1, 0),
+        ] {
+            let mut portal = captured_terminal_portal();
+            portal.active_tab = Some(portal.tabs[start].id);
+            portal.ui.active_view = View::Terminal(portal.tabs[start].id);
+            let expected_id = portal.tabs[expected].id;
+
+            let _ = handle_keyboard_event(
+                &mut portal,
+                Key::Named(keyboard::key::Named::Tab),
+                modifiers,
+                None,
+            );
+
+            assert_eq!(portal.active_tab, Some(expected_id));
+        }
+    }
+
+    #[test]
+    fn captured_terminal_allows_new_and_close_tab_shortcuts() {
+        for (key, expected_tabs) in [("t", 3), ("W", 1)] {
+            let mut portal = captured_terminal_portal();
+
+            let _ = handle_keyboard_event(
+                &mut portal,
+                Key::Character(key.into()),
+                keyboard::Modifiers::CTRL | keyboard::Modifiers::SHIFT,
+                None,
+            );
+
+            assert_eq!(portal.tabs.len(), expected_tabs, "Ctrl+Shift+{key}");
+        }
+    }
+
+    #[test]
+    fn captured_terminal_allows_command_palette_shortcut() {
+        let mut portal = captured_terminal_portal();
+        let task = handle_keyboard_event(
+            &mut portal,
+            Key::Character("k".into()),
+            keyboard::Modifiers::CTRL,
+            Some('k'),
+        );
+
+        assert_eq!(task.units(), 1, "command palette toggle should be emitted");
+    }
+
+    #[test]
+    fn captured_terminal_honors_remapped_shortcuts() {
+        let mut portal = captured_terminal_portal();
+        portal.prefs.keybindings.new_tab = vec![Keybinding::parse("Alt+N").unwrap()];
+
+        let _ = handle_keyboard_event(
+            &mut portal,
+            Key::Character("t".into()),
+            keyboard::Modifiers::CTRL | keyboard::Modifiers::SHIFT,
+            Some('t'),
+        );
+        assert_eq!(portal.tabs.len(), 2, "the old binding should be inactive");
+
+        let _ = handle_keyboard_event(
+            &mut portal,
+            Key::Character("n".into()),
+            keyboard::Modifiers::ALT,
+            Some('n'),
+        );
+        assert_eq!(portal.tabs.len(), 3);
+    }
+
+    #[test]
+    fn captured_terminal_leaves_shell_keys_and_focus_navigation_alone() {
+        let mut portal = captured_terminal_portal();
+        let active_tab = portal.active_tab;
+        for (key, modifiers) in [
+            (Key::Character("c".into()), keyboard::Modifiers::CTRL),
+            (Key::Character("d".into()), keyboard::Modifiers::CTRL),
+            (Key::Character("z".into()), keyboard::Modifiers::CTRL),
+            (
+                Key::Named(keyboard::key::Named::Tab),
+                keyboard::Modifiers::empty(),
+            ),
+            (
+                Key::Named(keyboard::key::Named::ArrowLeft),
+                keyboard::Modifiers::empty(),
+            ),
+            (
+                Key::Named(keyboard::key::Named::F1),
+                keyboard::Modifiers::empty(),
+            ),
+        ] {
+            let task = handle_keyboard_event(&mut portal, key, modifiers, None);
+
+            assert_eq!(task.units(), 0);
+            assert!(portal.ui.terminal_captured);
+            assert_eq!(portal.ui.focus_section, FocusSection::Content);
+            assert_eq!(portal.active_tab, active_tab);
+            assert_eq!(portal.tabs.len(), 2);
+        }
+    }
+
+    #[test]
+    fn captured_terminal_keeps_ctrl_escape_exit() {
+        let mut portal = captured_terminal_portal();
+        let _ = handle_keyboard_event(
+            &mut portal,
+            Key::Named(keyboard::key::Named::Escape),
+            keyboard::Modifiers::CTRL,
+            None,
+        );
+
+        assert!(!portal.ui.terminal_captured);
+        assert_eq!(portal.ui.focus_section, FocusSection::Content);
     }
 
     fn sftp_entry(name: &str, is_dir: bool, is_symlink: bool) -> FileEntry {

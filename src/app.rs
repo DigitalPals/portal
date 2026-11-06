@@ -470,6 +470,7 @@ pub struct Portal {
 
 pub(crate) struct PendingConnect {
     session_id: SessionId,
+    host: Option<crate::config::Host>,
     draft_tab_id: Option<Uuid>,
     handle: iced::task::Handle,
 }
@@ -478,6 +479,7 @@ impl PendingConnect {
     fn new(session_id: SessionId, draft_tab_id: Option<Uuid>, handle: iced::task::Handle) -> Self {
         Self {
             session_id,
+            host: None,
             draft_tab_id,
             handle,
         }
@@ -963,6 +965,10 @@ impl Portal {
                         session.session_start,
                         &session.host_name,
                         status_message,
+                        session
+                            .disconnected_reason
+                            .as_deref()
+                            .map(|reason| (reason, session.reconnect_in_progress)),
                         self.prefs.terminal_font_size,
                         self.prefs.terminal_scroll_speed,
                         self.prefs.terminal_font,
@@ -1608,7 +1614,14 @@ impl Portal {
             window::resize_events().map(|(_id, size)| Message::Ui(UiMessage::WindowResized(size))),
         ];
 
-        // Toast tick timer (only when toasts are visible)
+        // Refresh connection elapsed time while its dialog is visible.
+        if matches!(self.dialogs.active(), ActiveDialog::Connecting(_)) {
+            subscriptions.push(
+                time::every(Duration::from_secs(1)).map(|_| Message::Ui(UiMessage::ConnectingTick)),
+            );
+        }
+
+        // Toast tick timer (only when toasts are visible).
         if self.toast_manager.has_toasts() {
             subscriptions.push(
                 time::every(Duration::from_millis(100)).map(|_| Message::Ui(UiMessage::ToastTick)),

@@ -23,7 +23,18 @@ use uuid::Uuid;
 /// Handle dialog messages
 pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
     match msg {
+        DialogMessage::ConnectingCancel => {
+            portal.cancel_pending_connect();
+            Task::none()
+        }
         DialogMessage::Close => {
+            let reconnect_id = portal
+                .dialogs
+                .passphrase_mut()
+                .and_then(|dialog| dialog.session_id);
+            if let Some(session) = reconnect_id.and_then(|id| portal.sessions.get_mut(id)) {
+                session.reconnect_in_progress = false;
+            }
             if matches!(
                 portal.dialogs.active(),
                 crate::app::managers::ActiveDialog::PortalHubOnboarding
@@ -474,6 +485,7 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                 let host_id = dialog.host_id;
                 let connection_kind = dialog.connection_kind;
                 let sftp_context = dialog.sftp_context;
+                let reconnect_session_id = dialog.reconnect_session_id;
                 let dialog_username = dialog.username.clone();
                 let save_to_vault = dialog.save_to_vault;
                 dialog.error = None;
@@ -491,26 +503,45 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                             let Some(jump_chain) = portal.resolved_jump_chain(&host) else {
                                 return Task::none();
                             };
-                            let session_id = uuid::Uuid::new_v4();
+                            let session_id =
+                                reconnect_session_id.unwrap_or_else(uuid::Uuid::new_v4);
+                            let terminal_size = if let Some(session_id) = reconnect_session_id {
+                                let Some(session) = portal.sessions.get_mut(session_id) else {
+                                    return Task::none();
+                                };
+                                if session.disconnected_reason.is_none()
+                                    || session.reconnect_in_progress
+                                {
+                                    return Task::none();
+                                }
+                                session.reconnect_in_progress = true;
+                                session.last_terminal_size
+                            } else {
+                                portal.terminal_initial_size()
+                            };
                             let should_detect_os =
                                 connection::should_detect_os(host.detected_os.as_ref());
                             let dialog_host_name = host.name.clone();
                             let protocol_label =
                                 crate::app::actions::ssh_protocol_label(&jump_chain);
                             let task = connection::ssh_connect_tasks_with_password(
-                                host,
+                                host.clone(),
                                 session_id,
                                 host_id,
-                                portal.terminal_initial_size(),
+                                terminal_size,
                                 should_detect_os,
                                 portal.prefs.allow_agent_forwarding,
                                 jump_chain,
                                 password,
                             );
+                            if reconnect_session_id.is_some() {
+                                return task;
+                            }
                             return portal.begin_connecting(
                                 dialog_host_name,
                                 &protocol_label,
                                 session_id,
+                                Some((*host).clone()),
                                 task,
                             );
                         }
@@ -606,19 +637,27 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                                 let protocol_label =
                                     crate::app::actions::ssh_protocol_label(&jump_chain);
                                 let task = connection::ssh_connect_tasks_with_passphrase(
-                                    host,
+                                    host.clone(),
                                     session_id,
                                     request.host_id,
-                                    portal.terminal_initial_size(),
+                                    portal
+                                        .sessions
+                                        .get(session_id)
+                                        .map(|session| session.last_terminal_size)
+                                        .unwrap_or_else(|| portal.terminal_initial_size()),
                                     request.should_detect_os,
                                     portal.prefs.allow_agent_forwarding,
                                     jump_chain,
                                     cached_passphrase,
                                 );
+                                if portal.sessions.contains(session_id) {
+                                    return task;
+                                }
                                 return portal.begin_connecting(
                                     request.host_name.clone(),
                                     &protocol_label,
                                     session_id,
+                                    Some((*host).clone()),
                                     task,
                                 );
                             }
@@ -698,19 +737,27 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                             let protocol_label =
                                 crate::app::actions::ssh_protocol_label(&jump_chain);
                             let task = connection::ssh_connect_tasks_with_passphrase(
-                                host,
+                                host.clone(),
                                 session_id,
                                 host_id,
-                                portal.terminal_initial_size(),
+                                portal
+                                    .sessions
+                                    .get(session_id)
+                                    .map(|session| session.last_terminal_size)
+                                    .unwrap_or_else(|| portal.terminal_initial_size()),
                                 should_detect_os,
                                 portal.prefs.allow_agent_forwarding,
                                 jump_chain,
                                 passphrase,
                             );
+                            if portal.sessions.contains(session_id) {
+                                return task;
+                            }
                             return portal.begin_connecting(
                                 dialog_host_name,
                                 &protocol_label,
                                 session_id,
+                                Some((*host).clone()),
                                 task,
                             );
                         }
@@ -730,6 +777,13 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
             Task::none()
         }
         DialogMessage::PassphraseCancel => {
+            let reconnect_id = portal
+                .dialogs
+                .passphrase_mut()
+                .and_then(|dialog| dialog.session_id);
+            if let Some(session) = reconnect_id.and_then(|id| portal.sessions.get_mut(id)) {
+                session.reconnect_in_progress = false;
+            }
             if let Some(dialog) = portal.dialogs.passphrase_mut() {
                 if dialog.sftp_context.is_some() {
                     portal.sftp.clear_pending_connection();
@@ -869,6 +923,46 @@ mod tests {
     use super::*;
     use crate::config::{AuthMethod, DetectedOs, Protocol};
 
+    #[test]
+    fn connecting_cancel_aborts_attempt_and_ignores_late_failure() {
+        let mut portal = Portal::test_state();
+        let session_id = Uuid::new_v4();
+        let task = portal.begin_connecting(
+            "Test server".into(),
+            "SSH",
+            session_id,
+            None,
+            Task::future(std::future::pending()),
+        );
+        let handle = portal.pending_connect.as_ref().unwrap().handle.clone();
+        portal
+            .pre_session_terminal_output
+            .entry(session_id)
+            .or_default();
+
+        let _ = handle_dialog(&mut portal, DialogMessage::ConnectingCancel);
+
+        assert!(handle.is_aborted());
+        assert!(portal.pending_connect.is_none());
+        assert!(!portal.pre_session_terminal_output.contains_key(&session_id));
+        assert!(matches!(
+            portal.dialogs.active(),
+            crate::app::managers::ActiveDialog::None
+        ));
+        let _ = portal.update(Message::Session(
+            crate::message::SessionMessage::ConnectFailed {
+                session_id,
+                error: "Connection refused".into(),
+            },
+        ));
+        assert_eq!(portal.toast_manager.toasts().len(), 1);
+        assert_eq!(
+            portal.toast_manager.toasts()[0].message,
+            "Connection cancelled"
+        );
+        drop(task);
+    }
+
     fn host_with_metadata() -> Host {
         let now = Utc::now();
         Host {
@@ -895,6 +989,93 @@ mod tests {
             detected_os: Some(DetectedOs::Ubuntu),
             last_connected: Some(now - Duration::hours(1)),
         }
+    }
+
+    #[test]
+    fn ssh_and_vnc_failures_keep_host_context_and_edit_saved_hosts() {
+        use crate::message::{SessionMessage, UiMessage, VncMessage};
+        use crate::views::toast::ToastAction;
+        for protocol in [Protocol::Ssh, Protocol::Vnc] {
+            let mut portal = Portal::test_state();
+            let mut host = host_with_metadata();
+            host.protocol = protocol.clone();
+            portal.config.hosts.add_host(host.clone());
+            let session_id = Uuid::new_v4();
+            let _ = portal.begin_connecting(
+                host.name.clone(),
+                "Test",
+                session_id,
+                Some(host.clone()),
+                Task::future(std::future::pending()),
+            );
+            let error = "Connection failed: Connection refused (os error 111)".to_string();
+            let message = match protocol {
+                Protocol::Ssh => {
+                    Message::Session(SessionMessage::ConnectFailed { session_id, error })
+                }
+                Protocol::Vnc => Message::Vnc(VncMessage::ConnectFailed { session_id, error }),
+            };
+            let _ = portal.update(message);
+            assert!(portal.pending_connect.is_none());
+            let toast = &portal.toast_manager.toasts()[0];
+            assert_eq!(toast.message, "Pulse: Connection refused");
+            assert!(toast.duration.is_none());
+            assert_eq!(
+                toast.connection.as_ref().unwrap().host.as_ref().unwrap().id,
+                host.id
+            );
+            let id = toast.id;
+            let _ = portal.update(Message::Ui(UiMessage::ToastAction(
+                id,
+                ToastAction::EditConnection,
+            )));
+            let state = portal.dialogs.host_mut().unwrap();
+            assert_eq!(state.editing_id, Some(host.id));
+            assert_eq!(state.hostname, host.hostname);
+            assert!(!portal.toast_manager.has_toasts());
+        }
+    }
+
+    #[test]
+    fn retry_uses_current_saved_host_and_requests_credentials_again() {
+        use crate::message::UiMessage;
+        use crate::views::toast::ToastAction;
+        let mut portal = Portal::test_state();
+        let host = host_with_metadata();
+        let toast = Toast::connection_error(Some(host.clone()), "Authentication failed");
+        let id = toast.id;
+        portal.toast_manager.push(toast);
+        let mut updated = host;
+        updated.hostname = "new.example.com".into();
+        updated.auth = AuthMethod::Password;
+        portal.config.hosts.add_host(updated);
+        let _ = portal.update(Message::Ui(UiMessage::ToastAction(
+            id,
+            ToastAction::RetryConnection,
+        )));
+        assert_eq!(
+            portal.dialogs.password_mut().unwrap().hostname,
+            "new.example.com"
+        );
+        assert!(!portal.toast_manager.has_toasts());
+    }
+
+    #[test]
+    fn editing_failed_quick_connection_creates_a_new_host() {
+        use crate::message::UiMessage;
+        use crate::views::toast::ToastAction;
+        let mut portal = Portal::test_state();
+        let host = host_with_metadata();
+        let toast = Toast::connection_error(Some(host.clone()), "Connection refused");
+        let id = toast.id;
+        portal.toast_manager.push(toast);
+        let _ = portal.update(Message::Ui(UiMessage::ToastAction(
+            id,
+            ToastAction::EditConnection,
+        )));
+        let state = portal.dialogs.host_mut().unwrap();
+        assert_eq!(state.editing_id, None);
+        assert_eq!(state.hostname, host.hostname);
     }
 
     #[test]

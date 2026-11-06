@@ -201,8 +201,42 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
             Task::none()
         }
         UiMessage::ToastAction(id, action) => {
+            let host = portal
+                .toast_manager
+                .get(id)
+                .and_then(|toast| toast.connection.as_ref())
+                .and_then(|connection| connection.host.clone());
             portal.toast_manager.dismiss(id);
             match action {
+                crate::views::toast::ToastAction::RetryConnection => {
+                    let Some(host) = host else {
+                        return Task::none();
+                    };
+                    let host = portal
+                        .config
+                        .hosts
+                        .find_host(host.id)
+                        .cloned()
+                        .unwrap_or(host);
+                    match host.protocol {
+                        crate::config::Protocol::Ssh => portal.connect_to_host(&host),
+                        crate::config::Protocol::Vnc => portal.connect_vnc_host(&host),
+                    }
+                }
+                crate::views::toast::ToastAction::EditConnection => {
+                    if let Some(host) = host {
+                        let saved_host = portal.config.hosts.find_host(host.id);
+                        let mut state =
+                            crate::views::dialogs::host_dialog::HostDialogState::from_host(
+                                saved_host.unwrap_or(&host),
+                            );
+                        if saved_host.is_none() {
+                            state.editing_id = None;
+                        }
+                        portal.dialogs.open_host(state);
+                    }
+                    Task::none()
+                }
                 crate::views::toast::ToastAction::OpenVaultApprovals => {
                     let open_vault = handle_sidebar_item_select(portal, SidebarMenuItem::Vault);
                     let refresh = Task::done(Message::Vault(
@@ -212,10 +246,15 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
                 }
             }
         }
+        UiMessage::ToastDetailsToggle(id) => {
+            portal.toast_manager.toggle_details(id);
+            Task::none()
+        }
         UiMessage::ToastTick => {
             portal.toast_manager.cleanup_expired();
             Task::none()
         }
+        UiMessage::ConnectingTick => Task::none(),
         UiMessage::AgentStatusTick => {
             // No-op: drives animated tab agent indicators.
             Task::none()
