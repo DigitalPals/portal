@@ -131,7 +131,7 @@ jobs:
     strategy:
       matrix:
         include:
-          # Keep both architectures on the same kernel/legacy iptables baseline.
+          # Keep kernel networking tests on the same LTS for both architectures.
           - runner: ubuntu-24.04
             arch: amd64
           - runner: ubuntu-24.04-arm
@@ -185,7 +185,6 @@ jobs:
           java-version: "17"
       - uses: android-actions/setup-android@v3
         with:
-          # Google no longer publishes the legacy "tools" package.
           packages: platform-tools
       - name: Check Android contract and pairing compatibility
         working-directory: portal-android

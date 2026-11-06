@@ -147,17 +147,25 @@ pub fn pane_header(
         .padding([4, 8])
         .size(fonts.body)
         .width(Length::Fixed(120.0))
-        .style(move |_theme, _status| text_input::Style {
+        .style(move |_theme, status| text_input::Style {
             background: theme.background.into(),
             border: iced::Border {
-                color: theme.border,
-                width: 1.0,
+                color: if matches!(status, text_input::Status::Focused { .. }) {
+                    theme.focus_ring
+                } else {
+                    theme.border
+                },
+                width: if matches!(status, text_input::Status::Focused { .. }) {
+                    2.0
+                } else {
+                    1.0
+                },
                 radius: 4.0.into(),
             },
             icon: theme.text_muted,
             placeholder: theme.text_muted,
             value: theme.text_primary,
-            selection: theme.accent,
+            selection: theme.selected,
         });
 
     // Actions dropdown button
