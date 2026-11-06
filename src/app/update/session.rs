@@ -1067,6 +1067,16 @@ async fn save_clipboard_image_locally(filename: String, png: Vec<u8>) -> Result<
 /// Handle terminal session messages
 pub fn handle_session(portal: &mut Portal, msg: SessionMessage) -> Task<Message> {
     match msg {
+        SessionMessage::ConnectionStep { session_id, step } => {
+            if portal
+                .pending_connect
+                .as_ref()
+                .is_some_and(|pending| pending.is_for(session_id))
+            {
+                portal.dialogs.set_connection_step(step);
+            }
+            Task::none()
+        }
         SessionMessage::Connected {
             session_id,
             host_name,

@@ -1572,6 +1572,12 @@ impl Portal {
         ];
 
         // Toast tick timer (only when toasts are visible)
+        if matches!(self.dialogs.active(), ActiveDialog::Connecting(_)) {
+            subscriptions.push(
+                time::every(Duration::from_secs(1)).map(|_| Message::Ui(UiMessage::ConnectingTick)),
+            );
+        }
+
         if self.toast_manager.has_toasts() {
             subscriptions.push(
                 time::every(Duration::from_millis(100)).map(|_| Message::Ui(UiMessage::ToastTick)),

@@ -23,6 +23,10 @@ use uuid::Uuid;
 /// Handle dialog messages
 pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
     match msg {
+        DialogMessage::ConnectingCancel => {
+            portal.cancel_pending_connect();
+            Task::none()
+        }
         DialogMessage::Close => {
             if matches!(
                 portal.dialogs.active(),
@@ -868,6 +872,45 @@ mod tests {
 
     use super::*;
     use crate::config::{AuthMethod, DetectedOs, Protocol};
+
+    #[test]
+    fn connecting_cancel_aborts_attempt_and_ignores_late_failure() {
+        let mut portal = Portal::test_state();
+        let session_id = Uuid::new_v4();
+        let task = portal.begin_connecting(
+            "Test server".into(),
+            "SSH",
+            session_id,
+            Task::future(std::future::pending()),
+        );
+        let handle = portal.pending_connect.as_ref().unwrap().handle.clone();
+        portal
+            .pre_session_terminal_output
+            .entry(session_id)
+            .or_default();
+
+        let _ = handle_dialog(&mut portal, DialogMessage::ConnectingCancel);
+
+        assert!(handle.is_aborted());
+        assert!(portal.pending_connect.is_none());
+        assert!(!portal.pre_session_terminal_output.contains_key(&session_id));
+        assert!(matches!(
+            portal.dialogs.active(),
+            crate::app::managers::ActiveDialog::None
+        ));
+        let _ = portal.update(Message::Session(
+            crate::message::SessionMessage::ConnectFailed {
+                session_id,
+                error: "Connection refused".into(),
+            },
+        ));
+        assert_eq!(portal.toast_manager.toasts().len(), 1);
+        assert_eq!(
+            portal.toast_manager.toasts()[0].message,
+            "Connection cancelled"
+        );
+        drop(task);
+    }
 
     fn host_with_metadata() -> Host {
         let now = Utc::now();

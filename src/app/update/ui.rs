@@ -197,6 +197,7 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
             portal.toast_manager.cleanup_expired();
             Task::none()
         }
+        UiMessage::ConnectingTick => Task::none(),
         UiMessage::AgentStatusTick => {
             // No-op: drives animated tab agent indicators.
             Task::none()
