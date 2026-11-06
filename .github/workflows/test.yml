@@ -131,7 +131,8 @@ jobs:
     strategy:
       matrix:
         include:
-          - runner: ubuntu-latest
+          # Keep kernel networking tests on the same LTS for both architectures.
+          - runner: ubuntu-24.04
             arch: amd64
           - runner: ubuntu-24.04-arm
             arch: arm64
@@ -183,6 +184,8 @@ jobs:
           distribution: temurin
           java-version: "17"
       - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
       - name: Check Android contract and pairing compatibility
         working-directory: portal-android
         env:

@@ -140,14 +140,18 @@ pub fn command_palette_view(
         .size(fonts.body)
         .style(move |_theme, status| {
             let border_color = match status {
-                text_input::Status::Focused { .. } => theme.accent,
+                text_input::Status::Focused { .. } => theme.focus_ring,
                 _ => theme.border,
             };
             text_input::Style {
                 background: theme.background.into(),
                 border: iced::Border {
                     color: border_color,
-                    width: 1.0,
+                    width: if matches!(status, text_input::Status::Focused { .. }) {
+                        2.0
+                    } else {
+                        1.0
+                    },
                     radius: BORDER_RADIUS.into(),
                 },
                 icon: theme.text_muted,

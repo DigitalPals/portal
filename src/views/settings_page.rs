@@ -881,7 +881,7 @@ fn selectable_read_only_value(
         .width(width)
         .style(move |_theme, status| {
             let border_color = match status {
-                text_input::Status::Focused { .. } => theme.accent,
+                text_input::Status::Focused { .. } => theme.focus_ring,
                 text_input::Status::Hovered => theme.focus_ring,
                 _ => theme.border,
             };
@@ -890,7 +890,11 @@ fn selectable_read_only_value(
                 background: theme.surface.into(),
                 border: iced::Border {
                     color: border_color,
-                    width: 1.0,
+                    width: if matches!(status, text_input::Status::Focused { .. }) {
+                        2.0
+                    } else {
+                        1.0
+                    },
                     radius: 6.0.into(),
                 },
                 icon: theme.text_secondary,
