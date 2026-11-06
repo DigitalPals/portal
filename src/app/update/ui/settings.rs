@@ -287,7 +287,22 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
                 wizard.managed.host_id = Some(record.ssh_host_id);
                 wizard.managed.hostname = record.hostname.clone();
                 wizard.managed.image = record.hub_image.clone();
+                let host_exists = portal
+                    .config
+                    .hosts
+                    .hosts
+                    .iter()
+                    .any(|host| host.id == record.ssh_host_id);
                 wizard.managed.selected = Some(record);
+                portal.dialogs.open_portal_hub_onboarding();
+                // Read-only status shows the maintenance options right away.
+                if host_exists {
+                    return Task::done(Message::Ui(UiMessage::PortalHubManagement(
+                        crate::hub::deployment::ManagementMessage::Run(
+                            crate::hub::deployment::DeploymentAction::Status,
+                        ),
+                    )));
+                }
             }
             portal.dialogs.open_portal_hub_onboarding();
         }
@@ -1048,6 +1063,11 @@ fn init_portal_hub_wizard(portal: &mut Portal) {
         portal.ui.portal_hub_auth_user.clone(),
     );
     wizard.managed = crate::hub::deployment::ManagedHubState::load();
+    wizard.signed_in_url = portal
+        .ui
+        .portal_hub_auth_user
+        .as_ref()
+        .map(|_| portal.prefs.portal_hub.effective_web_url());
     portal.ui.portal_hub_wizard = wizard;
 }
 

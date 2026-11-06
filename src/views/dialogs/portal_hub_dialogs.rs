@@ -366,7 +366,9 @@ pub fn portal_hub_onboarding_dialog_view(
                 .style(choice_style(server)).on_press(management(M::Choose(SetupChoice::Server))),
         ].spacing(10),
         if server {
-            managed_hub_view(&wizard.managed, wizard.auth_loading, hosts, theme, fonts)
+            let offer_connect = wizard.auto_finish.is_none()
+                && wizard.managed.ready_url().is_some_and(|url| wizard.signed_in_url.as_deref() != Some(url.as_str()));
+            managed_hub_view(&wizard.managed, wizard.auth_loading, offer_connect, hosts, theme, fonts)
         } else { column![].into() },
         column(cleanup_warnings.iter().map(|warning| text(warning.clone()).size(fonts.label).color(super::common::ERROR_COLOR).into())),
         connect_steps,
@@ -680,6 +682,59 @@ mod tests {
     }
 
     #[test]
+    fn advanced_options_hold_overrides_and_diagnostics_only() {
+        let mut wizard = PortalHubWizardState::begin(Default::default());
+        wizard.managed.choice = SetupChoice::Server;
+        wizard.managed.show_advanced = true;
+        for label in ["Choose local image tar…", "Clear"] {
+            assert!(shows(onboarding(&wizard), label), "{label}");
+        }
+        // Readiness checks and logs belong to an installed server.
+        assert!(!shows(onboarding(&wizard), "Check readiness"));
+        wizard.managed.selected = Some(crate::hub::deployment::DeploymentRecord {
+            deployment_id: uuid::Uuid::new_v4(),
+            ssh_host_id: uuid::Uuid::new_v4(),
+            hostname: "portal-hub".into(),
+            hub_image: crate::hub::deployment::DEFAULT_IMAGE.into(),
+            public_url: None,
+            owner_username: None,
+        });
+        for label in ["Refresh status", "Check readiness", "View diagnostics"] {
+            assert!(shows(onboarding(&wizard), label), "{label}");
+        }
+        // Setup steps run only through Deploy Hub / Resume setup.
+        for label in [
+            "Check server",
+            "Install Hub",
+            "Enable private HTTPS",
+            "Create owner passkey",
+            "Open Tailscale in browser",
+            "Verify Hub connection",
+        ] {
+            assert!(!shows(onboarding(&wizard), label), "{label}");
+        }
+    }
+
+    #[test]
+    fn a_ready_hub_offers_to_connect_this_device_unless_it_is_signed_in() {
+        let url = "https://portal-hub.example-tail.ts.net";
+        let mut wizard = PortalHubWizardState::begin(Default::default());
+        wizard.managed.choice = SetupChoice::Server;
+        wizard.managed.response = Some(
+            DeploymentResponse::parse(
+                &serde_json::json!({"protocol_version":1,"ok":true,"phase":"ready","message":"Hub is ready",
+                    "data":{"owner_exists":true,"owner_ready":true,"public_url":url}})
+                .to_string(),
+            )
+            .unwrap(),
+        );
+        assert!(shows(onboarding(&wizard), "Connect this device"));
+        assert!(!shows(onboarding(&wizard), "Deploy Hub"));
+        wizard.signed_in_url = Some(url.into());
+        assert!(!shows(onboarding(&wizard), "Connect this device"));
+    }
+
+    #[test]
     fn portal_hub_onboarding_field_ids_roundtrip() {
         let field = PortalHubOnboardingField::WebUrl;
         assert_eq!(
@@ -708,6 +763,9 @@ fn managed_hub_view(
     state: &ManagedHubState,
     // The browser passkey step is running; a new setup link would replace it.
     signing_in: bool,
+    // The selected Hub is ready, and this device is neither signed in to it
+    // nor being connected to it.
+    offer_connect: bool,
     hosts: &HostsConfig,
     theme: Theme,
     fonts: ScaledFonts,
@@ -778,6 +836,14 @@ fn managed_hub_view(
                 .on_press_maybe(
                     (!state.busy && state.host_id.is_some()).then_some(management(M::Deploy)),
                 ),
+        );
+    }
+    if ready && offer_connect && !state.busy && !signing_in {
+        content = content.push(
+            button(text("Connect this device").size(fonts.body))
+                .padding([8, 16])
+                .style(primary_button_style(theme))
+                .on_press(management(M::ConnectDevice)),
         );
     }
     if state.busy && state.browser_url.is_some() {
@@ -857,18 +923,11 @@ fn managed_hub_view(
     if state.show_advanced {
         content = content.push(advanced_hub_view(state, theme, fonts));
     }
-    if let Some(response) = state.response.as_ref().filter(|_| {
-        state.selected.is_some()
-            && (state
-                .response
-                .as_ref()
-                .and_then(|r| r.string("hub_version"))
-                .is_some()
-                || state
-                    .preflight
-                    .as_ref()
-                    .is_some_and(|p| p.bool("installed")))
-    }) {
+    if let Some(response) = state
+        .response
+        .as_ref()
+        .filter(|r| state.selected.is_some() && r.string("hub_version").is_some())
+    {
         content = content.push(maintenance_view(state, response, theme, fonts));
     }
     if let Some(diagnostics) = &state.diagnostics {
@@ -880,7 +939,8 @@ fn managed_hub_view(
     content.into()
 }
 
-/// Manual, step-by-step controls for unusual setups and troubleshooting.
+/// Overrides for an unusual setup, plus readiness checks and logs. Setup and
+/// recovery themselves always run through Deploy Hub / Resume setup.
 fn advanced_hub_view(
     state: &ManagedHubState,
     theme: Theme,
@@ -893,6 +953,26 @@ fn advanced_hub_view(
                 .on_input_maybe((!state.busy).then_some(|v| management(M::Hostname(v))))
                 .padding(8)
                 .style(dialog_input_style(theme)),
+        );
+    }
+    let owner_exists = state
+        .response
+        .as_ref()
+        .is_some_and(|r| r.bool("owner_exists"));
+    if !owner_exists {
+        let default = state
+            .selected
+            .as_ref()
+            .and_then(|record| record.owner_username.clone())
+            .unwrap_or_else(crate::hub::deployment::default_owner_username);
+        content = content.push(
+            text_input(
+                &format!("Owner account name (default: {default})"),
+                &state.owner_name,
+            )
+            .on_input_maybe((!state.busy).then_some(|v| management(M::OwnerName(v))))
+            .padding(8)
+            .style(dialog_input_style(theme)),
         );
     }
     content = content.push(
@@ -930,110 +1010,18 @@ fn advanced_hub_view(
         .size(fonts.small)
         .color(theme.text_secondary),
     );
-    let action_button = |action: Action, enabled: bool| {
-        button(text(action.label()).size(fonts.label))
-            .padding([8, 12])
-            .style(secondary_button_style(theme))
-            .on_press_maybe((enabled && !state.busy).then_some(management(M::Run(action))))
-    };
-    content = content.push(
-        row![
-            action_button(Action::Inspect, state.host_id.is_some()),
-            action_button(Action::Status, state.selected.is_some())
-        ]
-        .spacing(8),
-    );
-    if let Some(preflight) = &state.preflight {
-        content = content.push(
-            text(format!(
-                "{} · {} · Docker {} · Compose {} · Tailscale networking: {}",
-                preflight.string("os_id").unwrap_or("Unknown OS"),
-                preflight
-                    .string("architecture")
-                    .unwrap_or("unknown architecture"),
-                if preflight.bool("docker_available") {
-                    "available"
-                } else {
-                    "missing"
-                },
-                if preflight.bool("compose_available") {
-                    "available"
-                } else {
-                    "missing"
-                },
-                preflight.string("tailscale_mode").unwrap_or("kernel"),
-            ))
-            .size(fonts.label),
-        );
-        if !preflight.bool("docker_available") || !preflight.bool("compose_available") {
-            content = content.push(checkbox(state.install_docker).label("Install Docker and Compose on this server. This changes system packages and services.").on_toggle(|v| management(M::InstallDocker(v))));
-        }
-        if !preflight.bool("installed") {
-            content = content.push(text("Installation creates a private Tailscale connection and stores Hub data on this server. No public ports are opened.").size(fonts.small));
-            content = content.push(action_button(
-                Action::Install,
-                crate::hub::deployment::inspection_blockers(preflight).is_empty()
-                    && (preflight.bool("docker_available") && preflight.bool("compose_available")
-                        || state.install_docker),
-            ));
-        }
-    }
-    if let Some(response) = &state.response {
-        let guidance = response.guidance();
-        content = content.push(text(guidance).size(fonts.label).color(theme.text_secondary));
-        if response
-            .string("auth_url")
-            .or_else(|| response.string("approval_url"))
-            .is_some()
-        {
-            content = content.push(
-                button(text("Open Tailscale in browser").size(fonts.body))
-                    .on_press_maybe((!state.busy).then_some(management(M::OpenEnrollment)))
-                    .padding([8, 12])
-                    .style(primary_button_style(theme)),
-            );
-        }
-        if matches!(
-            response.phase.as_str(),
-            "awaiting_https" | "awaiting_owner" | "ready"
-        ) {
-            content = content.push(action_button(Action::ConfigureHttps, true));
-        }
-        if response.phase == "awaiting_owner" {
-            if !response.bool("owner_exists") {
-                content = content.push(
-                    text_input(
-                        "Owner account name (default: your login name)",
-                        &state.owner_name,
-                    )
-                    .on_input(|v| management(M::OwnerName(v)))
-                    .padding(8)
-                    .style(dialog_input_style(theme)),
-                );
-            }
-            content = content.push(
-                button(text("Create owner passkey").size(fonts.body))
-                    .on_press_maybe((!state.busy).then_some(management(M::SetUpPasskey(
-                        crate::hub::deployment::OwnerSetupMode::Setup,
-                    ))))
-                    .padding([8, 12])
-                    .style(primary_button_style(theme)),
-            );
-        }
-        if response.phase == "ready" && response.bool("owner_ready") {
-            content = content.push(
-                button(text("Verify Hub connection").size(fonts.body))
-                    .on_press_maybe((!state.busy).then_some(management(M::UseEndpoint)))
-                    .padding([8, 12])
-                    .style(primary_button_style(theme)),
-            );
-        }
-    }
     if state.selected.is_some() {
+        let action_button = |action: Action| {
+            button(text(action.label()).size(fonts.label))
+                .padding([8, 12])
+                .style(secondary_button_style(theme))
+                .on_press_maybe((!state.busy).then_some(management(M::Run(action))))
+        };
         content = content.push(
             row![
-                action_button(Action::Doctor, true),
-                action_button(Action::Logs, true)
+                action_button(Action::Status),
+                action_button(Action::Doctor),
+                action_button(Action::Logs)
             ]
             .spacing(8),
         );

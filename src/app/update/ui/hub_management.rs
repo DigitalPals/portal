@@ -61,7 +61,6 @@ pub(super) fn handle(portal: &mut Portal, value: M) -> Task<Message> {
                 return Task::none();
             }
             state.host_id = Some(id);
-            state.preflight = None;
             state.response = None;
             state.error = None;
         }
@@ -78,9 +77,7 @@ pub(super) fn handle(portal: &mut Portal, value: M) -> Task<Message> {
             state.image = record.hub_image.clone();
             state.selected = Some(record);
             state.response = None;
-            state.preflight = None;
             state.error = None;
-            state.install_docker = false;
             state.allow_interruptions = false;
             state.uninstall_confirmed = false;
             state.reset_confirmed = false;
@@ -88,7 +85,13 @@ pub(super) fn handle(portal: &mut Portal, value: M) -> Task<Message> {
             state.automated = false;
             state.browser_url = None;
             state.diagnostics = None;
-            state.progress = "Saved server loaded. Select Resume setup to continue.".into();
+            state.progress.clear();
+            // Read-only: shows where setup stopped, or the maintenance options.
+            // A missing SSH host is already explained next to the server.
+            let host = state.host_id;
+            if portal.config.hosts.hosts.iter().any(|h| Some(h.id) == host) {
+                return start(portal, Action::Status, OwnerSetupMode::Setup);
+            }
         }
         M::NewDeployment => {
             if portal.ui.portal_hub_wizard.managed.busy {
@@ -117,7 +120,6 @@ pub(super) fn handle(portal: &mut Portal, value: M) -> Task<Message> {
                 portal.ui.portal_hub_wizard.managed.image = value;
             }
         }
-        M::InstallDocker(value) => portal.ui.portal_hub_wizard.managed.install_docker = value,
         M::AllowInterruptions(value) => {
             portal.ui.portal_hub_wizard.managed.allow_interruptions = value
         }
@@ -153,38 +155,16 @@ pub(super) fn handle(portal: &mut Portal, value: M) -> Task<Message> {
                 portal.ui.portal_hub_wizard.managed.archive = path;
             }
         }
-        M::OpenEnrollment => {
-            let state = &mut portal.ui.portal_hub_wizard.managed;
-            if let Some(url) = state
-                .response
-                .as_ref()
-                .and_then(|r| r.string("auth_url").or_else(|| r.string("approval_url")))
-            {
-                match deployment::validate_enrollment_url(url) {
-                    Ok(url) => {
-                        if open::that(url.as_str()).is_err() {
-                            state.error = Some("Could not open the browser. Check your default browser, then retry.".into());
-                        }
-                    }
-                    Err(error) => state.error = Some(error),
-                }
-            }
-        }
-        M::UseEndpoint => {
+        M::ConnectDevice => {
             let wizard = &mut portal.ui.portal_hub_wizard;
-            let response = wizard.managed.response.as_ref();
-            if let Some(response) =
-                response.filter(|r| r.ok && r.phase == "ready" && r.bool("owner_ready"))
-                && let Some(url) = response.string("public_url")
-                && deployment::validate_public_url(url).is_ok()
-            {
-                wizard.edit_endpoint(url.to_string());
-                return Task::done(Message::Ui(UiMessage::PortalHubCheckStatus));
+            if wizard.managed.busy {
+                return Task::none();
             }
-            wizard.managed.error = Some(
-                "Refresh status and finish private HTTPS and the owner passkey before connecting."
-                    .into(),
-            );
+            if let Some(url) = wizard.managed.ready_url() {
+                return connect_device(wizard, url, None);
+            }
+            wizard.managed.error =
+                Some("Resume setup to finish this Hub before connecting.".into());
         }
         M::Progress(id, text) => {
             if portal.ui.portal_hub_wizard.managed.accepts(id) {
@@ -241,9 +221,6 @@ pub(super) fn handle(portal: &mut Portal, value: M) -> Task<Message> {
                         Some(code) => format!("{} ({code})", response.message),
                         None => response.message.clone(),
                     });
-                    if action == Action::Inspect && response.ok {
-                        state.preflight = Some(response.clone());
-                    }
                     if !response.ok || matches!(action, Action::Logs | Action::Doctor) {
                         state.diagnostics = Some(deployment::bounded_text(
                             &serde_json::to_string_pretty(&response.data).unwrap_or_default(),
@@ -262,19 +239,11 @@ pub(super) fn handle(portal: &mut Portal, value: M) -> Task<Message> {
                                 deployment::bounded_text(path, 1024)
                             ));
                         }
-                        if action == Action::Uninstall {
-                            state.preflight = None;
-                        }
-                        if action == Action::Install
-                            && let Some(preflight) = state.preflight.as_mut()
-                        {
-                            preflight.data["installed"] = true.into();
-                        }
                         if let Some(record) = state.selected.as_mut() {
                             if let Some(url) = response.string("public_url") {
                                 record.public_url = Some(url.into());
                             }
-                            if matches!(action, Action::Install | Action::Update) {
+                            if action == Action::Update {
                                 record.hub_image = state.image.clone();
                             }
                             if let Err(error) = deployment::save_record(record) {
@@ -434,6 +403,8 @@ fn owner_name(state: &ManagedHubState, record: &DeploymentRecord) -> String {
     }
 }
 
+/// One action on a saved deployment: status, diagnostics, maintenance or an
+/// owner passkey link. Setup itself always runs through [`start_automated`].
 fn start(portal: &mut Portal, action: Action, owner_mode: OwnerSetupMode) -> Task<Message> {
     let state = &mut portal.ui.portal_hub_wizard.managed;
     if state.busy {
@@ -442,24 +413,10 @@ fn start(portal: &mut Portal, action: Action, owner_mode: OwnerSetupMode) -> Tas
     let prepare = (|| -> Result<_, String> {
         let host_id = state.host_id.ok_or("Choose an SSH host first")?;
         let (host, chain) = management_target(&portal.config.hosts.hosts, host_id)?;
-        if action == Action::Install {
-            let preflight = state
-                .preflight
-                .as_ref()
-                .ok_or("Check the server before installing")?;
-            if (!preflight.bool("docker_available") || !preflight.bool("compose_available"))
-                && !state.install_docker
-            {
-                return Err(
-                    "Docker is missing. Review and approve Docker installation before continuing."
-                        .into(),
-                );
-            }
-            let blockers = deployment::inspection_blockers(preflight);
-            if !blockers.is_empty() {
-                return Err(blockers.join(" "));
-            }
-        }
+        let mut record = state
+            .selected
+            .clone()
+            .ok_or("Deploy Hub on this server first")?;
         if action == Action::Uninstall && !state.uninstall_confirmed {
             return Err(
                 "Confirm that you want to uninstall this Hub. Its data will be retained.".into(),
@@ -484,16 +441,9 @@ fn start(portal: &mut Portal, action: Action, owner_mode: OwnerSetupMode) -> Tas
                 "This Hub has active sessions. Approve interrupting them before continuing.".into(),
             );
         }
-        if state.selected.is_none() && action != Action::Inspect {
-            return Err("Check the server first to create its recovery record".into());
-        }
-        if matches!(action, Action::Install | Action::Update) {
+        if action == Action::Update {
             deployment::validate_image(&state.image)?;
         }
-        if state.selected.is_none() || action == Action::Install {
-            deployment::validate_hostname(&state.hostname)?;
-        }
-        let mut record = select_record(state, host_id)?;
         let username = owner_name(state, &record);
         if action == Action::OwnerSetup && owner_mode == OwnerSetupMode::Setup {
             deployment::validate_owner_username(&username)?;
@@ -502,11 +452,10 @@ fn start(portal: &mut Portal, action: Action, owner_mode: OwnerSetupMode) -> Tas
         let request = DeploymentRequest {
             action,
             deployment_id: record.deployment_id,
-            hostname: state.hostname.clone(),
+            hostname: record.hostname.clone(),
             hub_image: state.image.clone(),
             image_archive: None,
             image_archive_sha256: None,
-            install_docker: state.install_docker,
             allow_session_interruptions: state.allow_interruptions,
             username,
             owner_mode,
@@ -521,7 +470,7 @@ fn start(portal: &mut Portal, action: Action, owner_mode: OwnerSetupMode) -> Tas
             return Task::none();
         }
     };
-    let archive = if matches!(action, Action::Install | Action::Update) {
+    let archive = if action == Action::Update {
         state.archive.clone()
     } else {
         None
@@ -981,7 +930,7 @@ mod tests {
         portal.ui.portal_hub_wizard.managed.host_id = Some(host.id);
         portal.config.hosts.hosts.push(host);
         let _ = handle(&mut portal, M::Hostname("My Hub".into()));
-        assert_eq!(handle(&mut portal, M::Run(Action::Inspect)).units(), 0);
+        assert_eq!(handle(&mut portal, M::Deploy).units(), 0);
         let state = &portal.ui.portal_hub_wizard.managed;
         assert!(
             state
@@ -997,7 +946,7 @@ mod tests {
         let state = &portal.ui.portal_hub_wizard.managed;
         assert!(deployment::validate_hostname(&state.hostname).is_ok());
         assert!(state.selected.is_none()); // The editable field remains visible.
-        let task = handle(&mut portal, M::Run(Action::Inspect));
+        let task = handle(&mut portal, M::Deploy);
         assert!(task.units() > 0);
         let state = &portal.ui.portal_hub_wizard.managed;
         assert_eq!(state.selected.as_ref().unwrap().hostname, "my-hub");
@@ -1252,20 +1201,67 @@ mod tests {
     }
 
     #[test]
-    fn failed_https_action_keeps_its_diagnostic_payload() {
+    fn failed_action_keeps_its_diagnostic_payload() {
         let (mut portal, id) = wizard();
         let response = deployment::DeploymentResponse::parse(&serde_json::json!({
-            "protocol_version":1,"ok":false,"phase":"awaiting_https","message":"Enable HTTPS",
-            "error_code":"serve_failed", "data":{"next_step":"approve tailnet HTTPS", "logs":"token=[redacted]"}
+            "protocol_version":1,"ok":false,"phase":"error","message":"Update failed; the previous image was restored",
+            "error_code":"update_rolled_back", "data":{"cause":"health_failed", "logs":"token=[redacted]"}
         }).to_string()).unwrap();
-        let _ = handle(
-            &mut portal,
-            M::Completed(id, Action::ConfigureHttps, Ok(response)),
-        );
+        let _ = handle(&mut portal, M::Completed(id, Action::Update, Ok(response)));
         let state = &portal.ui.portal_hub_wizard.managed;
-        assert_eq!(state.error.as_deref(), Some("Enable HTTPS (serve_failed)"));
+        assert_eq!(
+            state.error.as_deref(),
+            Some("Update failed; the previous image was restored (update_rolled_back)")
+        );
         let diagnostics = state.diagnostics.as_ref().unwrap();
-        assert!(diagnostics.contains("approve tailnet HTTPS"));
+        assert!(diagnostics.contains("health_failed"));
         assert!(diagnostics.contains("[redacted]"));
+    }
+
+    fn saved_server(portal: &mut Portal) -> DeploymentRecord {
+        let host: crate::config::Host = serde_json::from_value(serde_json::json!({
+            "id":Uuid::new_v4(),"name":"recovery","hostname":"server.example","port":22,
+            "username":"user","auth":{"type":"agent"},
+            "created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"
+        }))
+        .unwrap();
+        let record = DeploymentRecord {
+            deployment_id: Uuid::new_v4(),
+            ssh_host_id: host.id,
+            hostname: "portal-hub".into(),
+            hub_image: deployment::DEFAULT_IMAGE.into(),
+            public_url: None,
+            owner_username: Some("owner".into()),
+        };
+        portal.config.hosts.hosts.push(host);
+        record
+    }
+
+    #[test]
+    fn selecting_a_saved_server_checks_its_status() {
+        let (mut portal, _) = wizard();
+        portal.ui.portal_hub_wizard.managed.busy = false;
+        let record = saved_server(&mut portal);
+        let task = handle(&mut portal, M::Resume(record.clone()));
+        assert!(task.units() > 0);
+        let state = &portal.ui.portal_hub_wizard.managed;
+        assert!(state.busy);
+        assert_eq!(state.last_action, Some(Action::Status));
+        assert_eq!(state.selected.as_ref(), Some(&record));
+    }
+
+    #[test]
+    fn a_ready_hub_connects_this_device_without_ssh() {
+        let url = "https://portal-hub.example-tail.ts.net";
+        let (mut portal, _) = wizard();
+        portal.ui.portal_hub_wizard.managed.busy = false;
+        assert_eq!(handle(&mut portal, M::ConnectDevice).units(), 0);
+        assert!(portal.ui.portal_hub_wizard.managed.error.is_some());
+        portal.ui.portal_hub_wizard.managed.response = Some(ready_response(url));
+        let task = handle(&mut portal, M::ConnectDevice);
+        assert!(task.units() > 0);
+        let wizard = &portal.ui.portal_hub_wizard;
+        assert_eq!(wizard.hub_url_input, url);
+        assert!(wizard.auto_finish.as_ref().unwrap().setup.is_none());
     }
 }

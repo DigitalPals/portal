@@ -273,9 +273,11 @@ yours, reopen Hub setup, select the server and use **Add a passkey** or **Reset
 owner passkey**: Portal creates a new setup link over SSH, so SSH access to the
 server is the recovery path. A reset signs out every device.
 
-Reopen Hub setup to resume an interrupted deployment, open Sessions to resume
-terminals, or manage updates, private backups, diagnostics and removal.
-**Advanced options** keeps the manual step-by-step controls.
+Reopen Hub setup and pick the saved server to resume an interrupted deployment
+or to manage updates, private backups and removal; Portal checks the server's
+status when you pick it. Open Sessions to resume terminals. **Advanced options**
+sets the Tailscale name, owner account name and Hub image (including a local
+image tar), and shows readiness checks and logs.
 
 Choose **Connect an existing Hub** for a Hub you run yourself; the
 [manual deployment guide](hub/docs/deployment.md) covers installing one. Existing

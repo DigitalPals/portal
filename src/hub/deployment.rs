@@ -144,7 +144,6 @@ pub struct DeploymentRequest {
     pub hub_image: String,
     pub image_archive: Option<String>,
     pub image_archive_sha256: Option<String>,
-    pub install_docker: bool,
     pub allow_session_interruptions: bool,
     pub username: String,
     pub owner_mode: OwnerSetupMode,
@@ -181,7 +180,8 @@ impl DeploymentRequest {
         }
         if self.action == DeploymentAction::Install {
             object.insert("hostname".into(), self.hostname.clone().into());
-            object.insert("install_docker".into(), self.install_docker.into());
+            // Installation adds Docker when it is missing; starting setup is the consent.
+            object.insert("install_docker".into(), true.into());
         }
         if self.action.interrupts() {
             object.insert(
@@ -297,25 +297,6 @@ impl DeploymentResponse {
     }
     pub fn sessions(&self) -> Option<u64> {
         self.data.get("active_sessions").and_then(|v| v.as_u64())
-    }
-    pub fn guidance(&self) -> &'static str {
-        match self.phase.as_str() {
-            "awaiting_login" => "Connect Tailscale in your browser, then refresh status.",
-            "awaiting_approval" => {
-                "This server needs approval from your tailnet administrator. Approve it, then refresh status."
-            }
-            "awaiting_owner" => {
-                "Create the owner passkey. Portal opens the Hub in your browser, where your browser or password manager saves the passkey."
-            }
-            "awaiting_https" => {
-                "Enable private HTTPS. If Tailscale requests consent, approve it in your browser, then retry."
-            }
-            "ready" => {
-                "The server is ready. Verify its connection, then sign in and choose your preferences."
-            }
-            "not_installed" => "Check this server, then install your Hub.",
-            _ => "Refresh status to see the next step.",
-        }
     }
 }
 pub fn bounded_text(text: &str, length: usize) -> String {
@@ -548,7 +529,6 @@ pub struct ManagedHubState {
     pub hostname: String,
     pub image: String,
     pub archive: Option<PathBuf>,
-    pub install_docker: bool,
     pub allow_interruptions: bool,
     pub uninstall_confirmed: bool,
     /// Resetting the owner passkeys signs out every device: confirm first.
@@ -560,7 +540,6 @@ pub struct ManagedHubState {
     pub progress: String,
     pub error: Option<String>,
     pub response: Option<DeploymentResponse>,
-    pub preflight: Option<DeploymentResponse>,
     pub last_action: Option<DeploymentAction>,
     pub diagnostics: Option<String>,
 }
@@ -577,7 +556,6 @@ impl Default for ManagedHubState {
             hostname: "portal-hub".into(),
             image: DEFAULT_IMAGE.into(),
             archive: None,
-            install_docker: false,
             allow_interruptions: false,
             uninstall_confirmed: false,
             reset_confirmed: false,
@@ -588,7 +566,6 @@ impl Default for ManagedHubState {
             progress: String::new(),
             error: None,
             response: None,
-            preflight: None,
             last_action: None,
             diagnostics: None,
         }
@@ -617,6 +594,15 @@ impl ManagedHubState {
     pub fn accepts(&self, operation: Uuid) -> bool {
         self.busy && self.operation == operation
     }
+    /// The private HTTPS address of the selected Hub once it is ready for sign-in.
+    pub fn ready_url(&self) -> Option<String> {
+        self.response
+            .as_ref()
+            .filter(|r| r.ok && r.phase == "ready" && r.bool("owner_ready"))
+            .and_then(|r| r.string("public_url"))
+            .filter(|url| validate_public_url(url).is_ok())
+            .map(str::to_string)
+    }
     pub fn recovery_hosts(&self, hosts: &[Host]) -> HashSet<Uuid> {
         let mut ids = HashSet::new();
         for record in self.records.iter().chain(self.selected.iter()) {
@@ -642,7 +628,6 @@ pub enum ManagementMessage {
     ChooseArchive,
     ArchiveChosen(Uuid, Option<PathBuf>),
     ClearArchive,
-    InstallDocker(bool),
     AllowInterruptions(bool),
     ConfirmUninstall(bool),
     ConfirmReset(bool),
@@ -660,8 +645,8 @@ pub enum ManagementMessage {
     ReopenBrowser,
     AutoCompleted(Uuid, Result<DeploymentResponse, String>),
     Cancel,
-    OpenEnrollment,
-    UseEndpoint,
+    /// Connect this device to the selected ready Hub and sign in.
+    ConnectDevice,
     Progress(Uuid, String),
     /// Cleanup belongs to the task lifetime, independently of the wizard.
     CleanupFailed {
@@ -1007,7 +992,6 @@ pub async fn run_automated(
             hub_image: plan.hub_image.clone(),
             image_archive: None,
             image_archive_sha256: None,
-            install_docker: true,
             allow_session_interruptions: false,
             username: plan.owner_username.clone(),
             owner_mode: OwnerSetupMode::Setup,
@@ -1135,14 +1119,6 @@ mod tests {
         io::Write,
         process::{Command, Stdio},
     };
-
-    #[test]
-    fn guidance_explains_the_passkey_step() {
-        let response = DeploymentResponse::parse(r#"{"protocol_version":1,"ok":true,"phase":"awaiting_owner","message":"Pending","data":{"owner_exists":false}}"#).unwrap();
-        assert!(response.guidance().contains("passkey"));
-        let response = DeploymentResponse::parse(r#"{"protocol_version":1,"ok":true,"phase":"awaiting_https","message":"Pending","data":{}}"#).unwrap();
-        assert!(response.guidance().starts_with("Enable private HTTPS"));
-    }
 
     #[test]
     fn hub_and_portal_share_one_version() {
@@ -1425,6 +1401,28 @@ mod tests {
         }
     }
     #[test]
+    fn only_installation_asks_the_server_to_add_docker() {
+        let mut request = DeploymentRequest {
+            action: DeploymentAction::Install,
+            deployment_id: Uuid::new_v4(),
+            hostname: "hub".into(),
+            hub_image: DEFAULT_IMAGE.into(),
+            image_archive: None,
+            image_archive_sha256: None,
+            allow_session_interruptions: false,
+            username: "owner".into(),
+            owner_mode: OwnerSetupMode::Setup,
+        };
+        let value: serde_json::Value =
+            serde_json::from_slice(&request.stdin_json().unwrap()).unwrap();
+        assert_eq!(value["install_docker"], true);
+        assert_eq!(value["hostname"], "hub");
+        request.action = DeploymentAction::Update;
+        let value: serde_json::Value =
+            serde_json::from_slice(&request.stdin_json().unwrap()).unwrap();
+        assert!(value.get("install_docker").is_none());
+    }
+    #[test]
     fn owner_setup_requests_carry_a_mode_and_never_a_credential() {
         let mut request = DeploymentRequest {
             action: DeploymentAction::OwnerSetup,
@@ -1433,7 +1431,6 @@ mod tests {
             hub_image: DEFAULT_IMAGE.into(),
             image_archive: None,
             image_archive_sha256: None,
-            install_docker: false,
             allow_session_interruptions: false,
             username: "owner".into(),
             owner_mode: OwnerSetupMode::Setup,

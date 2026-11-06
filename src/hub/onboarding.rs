@@ -29,6 +29,8 @@ pub struct PortalHubWizardState {
     pub prefer_vault: bool,
     pub sync_all: bool,
     pub managed: ManagedHubState,
+    /// The Hub this device was signed in to when setup opened.
+    pub signed_in_url: Option<String>,
     /// Set when a one-click deployment reached ready: verify the endpoint,
     /// sign in and save the defaults without further clicks.
     pub auto_finish: Option<AutoFinish>,
