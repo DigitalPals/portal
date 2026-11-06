@@ -1,8 +1,10 @@
 # Portal Hub
 
-> Integrated checkout: this document preserves the standalone Hub guidance.
-> Build the integrated service from the Portal root with `cargo build -p portal-hub`.
-> For managed Docker/Tailscale setup and current runtime behavior, see [the integrated runtime contract](docs/integrated-runtime.md).
+> Portal Hub is developed, versioned and released together with Portal in this
+> repository; the former standalone repository is retired. Portal installs and
+> manages the Hub for you (Settings → Portal Hub → Set up on a server). Build the
+> service from the repository root with `cargo build -p portal-hub`. Current
+> runtime behavior: [the integrated runtime contract](docs/integrated-runtime.md).
 
 Portal Hub is the always-on companion service for Portal. Run it on a small
 Linux host or LXC in your tailnet, then let Portal use it for persistent SSH
@@ -24,7 +26,7 @@ still pre-1.0 and API or storage details may change before a stable release.
 | Session resume | Reopen active sessions from Portal, including sessions detached from another device. |
 | Terminal thumbnails | Portal can show session previews from Hub replay logs. |
 | Web terminal transport | Portal connects through an OAuth-authenticated WebSocket instead of relying only on SSH forced-command mode. |
-| Browser sign-in | Portal signs in with OAuth authorization code + PKCE and stores tokens in the OS keychain. |
+| Passkey sign-in | The owner signs in with a passkey in the browser (OAuth authorization code + PKCE); Portal stores tokens in the OS keychain. There are no passwords. |
 | Profile sync | Hosts, settings, snippets, and vault metadata sync between Portal devices. |
 | Encrypted key vault sync | Private keys are stored as Portal-encrypted blobs; Hub never receives the vault passphrase or decrypted keys. |
 | Tailscale Serve support | Use a clean HTTPS `.ts.net` URL while the Hub service binds safely to loopback. |
@@ -78,79 +80,49 @@ and thumbnails.
 
 ## Install
 
-On a Debian or Ubuntu LXC, run the installer as root or a sudo-capable user:
+Use Portal: open Settings → Portal Hub, choose **Set up on a server**, pick an
+SSH host and select **Deploy Hub**. Portal installs Docker when needed, runs the
+Hub image of its own version with a private Tailscale sidecar, and asks you to
+sign in to Tailscale and create your owner passkey in the browser. See the
+[Portal README](../README.md#portal-hub-beta) and the
+[deployment protocol](../deploy/hub/README.md).
+
+The `install-debian.sh` installer and `hub-v*` releases of the retired
+standalone repository are not part of this repository and are unsupported.
+
+For a manual installation, build the binary (`cargo build --release -p
+portal-hub`) or use the release image, publish the web service privately over
+HTTPS (for example `tailscale serve --bg http://127.0.0.1:8080`) and run it with
+that address:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/DigitalPals/portal-hub/main/scripts/install-debian.sh | bash
-```
-
-The installer:
-
-- installs `openssh-server`, `openssh-client`, `dtach`, `util-linux`, `curl`,
-  and `tar`;
-- installs Tailscale when it is available from the configured apt repositories;
-- creates the dedicated `portal-hub` user;
-- creates `/var/lib/portal-hub` with private permissions;
-- installs or updates the release binary in `/usr/local/bin`;
-- configures OpenSSH to keep the existing SSH port and add `2222` by default;
-- installs and restarts `portal-hub-web.service`;
-- enables a daily prune timer;
-- runs `portal-hub doctor`.
-
-Update later by running the same installer again.
-
-### Install With Tailscale Serve
-
-For a polished HTTPS tailnet URL, bind Hub to loopback and publish it with
-Tailscale Serve:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/DigitalPals/portal-hub/main/scripts/install-debian.sh \
-  | PORTAL_HUB_WEB_BIND=127.0.0.1:8080 \
-    PORTAL_HUB_PUBLIC_URL=https://portal-hub.example.ts.net \
-    bash
-
-tailscale serve --bg http://127.0.0.1:8080
-```
-
-Use your real Serve URL in `PORTAL_HUB_PUBLIC_URL`, for example
-`https://portal-hub.your-tailnet.ts.net`.
-
-### Useful Installer Options
-
-```sh
-# Pin a release
-curl -fsSL https://raw.githubusercontent.com/DigitalPals/portal-hub/main/scripts/install-debian.sh \
-  | PORTAL_HUB_VERSION=v0.5.0-beta.9 bash
-
-# Use a custom Portal Hub SSH port
-curl -fsSL https://raw.githubusercontent.com/DigitalPals/portal-hub/main/scripts/install-debian.sh \
-  | PORTAL_HUB_SSH_PORT=2022 bash
-
-# Bind the web service to a private address or loopback
-curl -fsSL https://raw.githubusercontent.com/DigitalPals/portal-hub/main/scripts/install-debian.sh \
-  | PORTAL_HUB_WEB_BIND=127.0.0.1:8080 bash
+portal-hub web --bind 127.0.0.1:8080 --public-url https://portal-hub.example.ts.net
 ```
 
 ## First Run
 
-After installation, open the Hub admin page through the same URL Portal will
-use:
+The owner signs in with passkeys only. Create the owner with a one-time link,
+as the Hub service user on the server:
 
-```text
-https://portal-hub.example.ts.net/admin
+```sh
+portal-hub owner-setup --username your-name
 ```
 
-The first visit creates the owner account. Portal then signs in through the
-browser and stores Hub tokens locally in the OS keychain. Hub stores only an
-Argon2 password hash, OAuth tokens, sync state, session metadata, and replay
-logs in `/var/lib/portal-hub`.
+Open the printed `https://…/setup#token=…` link within 30 minutes and create
+the passkey. Save it in a password manager that syncs (Google Password Manager,
+iCloud Keychain, 1Password, Bitwarden) or on a security key to use one passkey
+on all your devices. Later, `portal-hub owner-setup --mode add` adds a passkey
+and `portal-hub owner-setup --mode reset` replaces all passkeys if you lose
+yours; SSH access to the server is the recovery path. Portal does this for you
+on a Hub it deployed.
+
+Hub stores passkey public keys, OAuth tokens, sync state, session metadata and
+replay logs in `/var/lib/portal-hub`. It never stores a password.
 
 Check the service:
 
 ```sh
-sudo systemctl status portal-hub-web
-sudo -u portal-hub portal-hub doctor
+portal-hub doctor
 ```
 
 ## Portal Setup
@@ -163,7 +135,7 @@ Use:
 - Web URL: the HTTPS URL that reaches `portal-hub-web.service`.
 - Web port: `8080`, unless you changed the web bind port. Portal does not append
   this port when Host or Web URL already contains a full URL.
-- Sign in through the browser.
+- Sign in with your passkey in the browser.
 - Enable the services you want: hosts, settings, snippets, key vault, and
   persistent sessions.
 - Enable Portal Hub on individual SSH hosts that should use persistent sessions.

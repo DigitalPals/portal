@@ -14,8 +14,6 @@ use std::thread;
 use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow, bail};
-use argon2::password_hash::{SaltString, rand_core::OsRng};
-use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use axum::Router;
 use axum::extract::ws::{Message as WsMessage, WebSocket, WebSocketUpgrade};
 use axum::extract::{Json, Path as AxumPath, Query, State};
@@ -45,6 +43,9 @@ use tower_http::trace::TraceLayer;
 use url::{Host, Url};
 use uuid::Uuid;
 
+mod owner;
+pub use owner::{SetupMode, owner_setup_cli};
+
 const DESKTOP_CLIENT_ID: &str = "portal-desktop";
 const ANDROID_CLIENT_ID: &str = "portal-android";
 const ANDROID_REDIRECT_SCHEME: &str = "com.digitalpals.portal.android";
@@ -52,7 +53,6 @@ const ANDROID_REDIRECT_PATH: &str = "/oauth2redirect";
 const ACCESS_TOKEN_TTL_HOURS: i64 = 24;
 const REFRESH_TOKEN_TTL_DAYS: i64 = 90;
 const AUTH_CODE_TTL_MINUTES: i64 = 5;
-const MIN_PASSWORD_LEN: usize = 12;
 const MAX_SESSION_DISPLAY_NAME_CHARS: usize = 80;
 const MAX_WEB_SESSION_PREVIEW_BYTES: u64 = 64 * 1024;
 const WEB_TERMINAL_OUTPUT_COALESCE_DELAY: Duration = Duration::from_millis(4);
@@ -82,7 +82,7 @@ struct AppState {
     ssh_port: u16,
     sync_events: broadcast::Sender<SyncRevisionEvent>,
     vault_events: broadcast::Sender<VaultEnrollmentEvent>,
-    require_bootstrap: bool,
+    flows: Arc<Mutex<owner::Flows>>,
     stopping: Arc<AtomicBool>,
 }
 
@@ -140,19 +140,6 @@ struct AuthorizeQuery {
     code_challenge: String,
     code_challenge_method: String,
     state: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct RegisterRequest {
-    username: String,
-    password: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct LoginRequest {
-    username: String,
-    password: String,
-    oauth: AuthorizeQuery,
 }
 
 #[derive(Debug, Serialize)]
@@ -401,7 +388,7 @@ async fn run_async(
         ssh_port,
         sync_events,
         vault_events,
-        require_bootstrap: crate::runtime::require_bootstrap(),
+        flows: Arc::new(Mutex::new(owner::Flows::default())),
         stopping: Arc::new(AtomicBool::new(false)),
     };
 
@@ -409,8 +396,12 @@ async fn run_async(
         .route("/", get(root))
         .route("/admin", get(admin_page))
         .route("/pair/android", get(android_pairing_page))
-        .route("/auth/register", post(register))
-        .route("/auth/login", post(login))
+        .route("/setup", get(owner::setup_page))
+        .route("/webauthn/setup/info", post(setup_info))
+        .route("/webauthn/setup/start", post(setup_start))
+        .route("/webauthn/setup/finish", post(setup_finish))
+        .route("/webauthn/login/start", post(login_start))
+        .route("/webauthn/login/finish", post(login_finish))
         .route("/oauth/authorize", get(authorize_page))
         .route("/oauth/token", post(token))
         .route("/api/info", get(api_info))
@@ -505,78 +496,50 @@ fn open_db(state_dir: &Path) -> Result<Connection> {
 
 pub fn bootstrap_status_cli(state_dir: &Path, _json: bool) -> Result<()> {
     local_bootstrap_only()?;
-    println!("{}", json!({"owner_exists": owner_exists(state_dir)?}));
+    println!(
+        "{}",
+        json!({"owner_exists": owner_exists(state_dir)?, "owner_ready": owner_ready(state_dir)?})
+    );
     Ok(())
 }
 
-pub(super) fn owner_exists(state_dir: &Path) -> Result<bool> {
+fn read_only_db(state_dir: &Path) -> Result<Option<Connection>> {
     if !state_dir.join("hub.db").exists() {
-        return Ok(false);
+        return Ok(None);
     }
     let db = Connection::open_with_flags(
         state_dir.join("hub.db"),
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
     )?;
     db.busy_timeout(Duration::from_secs(15))?;
+    Ok(Some(db))
+}
+
+pub(super) fn owner_exists(state_dir: &Path) -> Result<bool> {
+    let Some(db) = read_only_db(state_dir)? else {
+        return Ok(false);
+    };
     Ok(db.query_row("SELECT EXISTS(SELECT 1 FROM users)", [], |row| row.get(0))?)
+}
+
+/// The owner exists and has a passkey, so sign-in works.
+pub(super) fn owner_ready(state_dir: &Path) -> Result<bool> {
+    let Some(db) = read_only_db(state_dir)? else {
+        return Ok(false);
+    };
+    let has_passkeys: bool = db.query_row(
+        "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'passkeys')",
+        [],
+        |row| row.get(0),
+    )?;
+    Ok(has_passkeys && owner::owner_ready(&db))
 }
 
 fn local_bootstrap_only() -> Result<()> {
     if std::env::var_os("SSH_ORIGINAL_COMMAND").is_some() {
-        bail!("bootstrap is only available to the local service administrator");
+        bail!("owner setup is only available to the local service administrator");
     }
     Ok(())
-}
-
-pub fn bootstrap_owner_cli(state_dir: &Path, _json: bool) -> Result<()> {
-    local_bootstrap_only()?;
-    let mut input = Vec::new();
-    io::stdin().take(8193).read_to_end(&mut input)?;
-    if input.len() > 8192 {
-        bail!("bootstrap request exceeds size limit");
-    }
-    // Do not include serde errors: a malformed request may contain credentials.
-    let request: RegisterRequest =
-        serde_json::from_slice(&input).map_err(|_| anyhow!("invalid bootstrap JSON request"))?;
-    let created = bootstrap_owner(&open_db(state_dir)?, request)?;
-    println!("{}", json!({"owner_exists": true, "created": created}));
-    Ok(())
-}
-
-fn bootstrap_owner(db: &Connection, request: RegisterRequest) -> Result<bool> {
-    validate_username(&request.username)?;
-    validate_password(&request.password)?;
-    let username = request.username.trim();
-    let password_hash = hash_password(&request.password)?;
-    // SQLite owns the arbitration across CLI processes and the HTTP server.
-    // An immediate transaction prevents two different first owners racing.
-    let tx = Transaction::new_unchecked(db, TransactionBehavior::Immediate)?;
-    let existing: Option<(String, String)> = tx
-        .query_row(
-            "SELECT username, COALESCE(password_hash, '') FROM users LIMIT 1",
-            [],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .optional()?;
-    if let Some((existing_username, existing_hash)) = existing {
-        if existing_username != username
-            || !verify_password(&request.password, &existing_hash).unwrap_or(false)
-        {
-            bail!("owner already exists; credentials do not match");
-        }
-        tx.commit()?;
-        return Ok(false);
-    }
-    let user_id = Uuid::new_v4();
-    insert_user(&tx, user_id, username, &password_hash)?;
-    audit_db(
-        &tx,
-        "owner_created",
-        Some(&user_id.to_string()),
-        json!({"auth_method":"local_bootstrap"}),
-    )?;
-    tx.commit()?;
-    Ok(true)
 }
 
 fn init_db(db: &Connection) -> Result<()> {
@@ -646,6 +609,20 @@ fn init_db(db: &Connection) -> Result<()> {
             approved_at TEXT,
             revoked_at TEXT
         );
+        CREATE TABLE IF NOT EXISTS passkeys (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            passkey TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            last_used_at TEXT
+        );
+        CREATE TABLE IF NOT EXISTS owner_setup_tokens (
+            token_hash TEXT PRIMARY KEY,
+            mode TEXT NOT NULL,
+            username TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS android_pairing_sessions (
             id TEXT PRIMARY KEY,
             public_url TEXT NOT NULL,
@@ -662,7 +639,7 @@ fn init_db(db: &Connection) -> Result<()> {
 }
 
 async fn root(State(state): State<AppState>) -> Response {
-    if user_count(&state).unwrap_or(0) == 0 {
+    if !owner::owner_ready_state(&state) {
         Redirect::to("/admin").into_response()
     } else {
         Html(page(
@@ -686,94 +663,22 @@ async fn admin_page(
     State(state): State<AppState>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Response {
-    let continue_url = admin_continue_url(&params).unwrap_or_default();
-    if state.require_bootstrap
-        && (user_count(&state).unwrap_or(0) == 0
-            || owner_missing_password(&state).ok().flatten().is_some())
-    {
-        return Html(page("Portal Hub setup", "<section class=\"panel\"><h1>Complete setup in Portal.</h1><p>The service administrator must establish the owner through the managed setup connection.</p></section>")).into_response();
+    if !owner::owner_ready_state(&state) {
+        return Html(owner::finish_setup_in_portal_page()).into_response();
     }
-    if user_count(&state).unwrap_or(0) > 0 {
-        if let Ok(Some(username)) = owner_missing_password(&state) {
-            return Html(page(
-                "Set Portal Hub Password",
-                &format!(
-                    r#"<section class="panel setup-panel">
-                        <div id="setup-error" class="error" hidden></div>
-                        <form id="owner-form" class="flow" autocomplete="off" data-password-only="true" data-continue-url="{}">
-                          <p class="eyebrow">Owner password</p>
-                          <h1>Set a password.</h1>
-                          <p class="lead">This existing owner account needs a password before Portal desktop can sign in.</p>
-                          <label>Account name<input id="username" name="username" autocomplete="username" required minlength="2" maxlength="64" readonly value="{}"></label>
-                          <label>Password<input id="password" name="password" type="password" autocomplete="new-password" required minlength="{}" maxlength="256"></label>
-                          <label>Confirm password<input id="password-confirm" name="password-confirm" type="password" autocomplete="new-password" required minlength="{}" maxlength="256"></label>
-                          <button type="submit" id="create-button">Set password</button>
-                        </form>
-                      </section>"#,
-                    html_escape(&continue_url),
-                    html_escape(&username),
-                    MIN_PASSWORD_LEN,
-                    MIN_PASSWORD_LEN
-                ),
-            ))
-            .into_response();
-        }
-        return Html(page(
-            "Portal Hub",
-            &format!(
-                r#"<section class="panel">
-                <p class="eyebrow">Owner exists</p>
+    let continue_url = admin_continue_url(&params).unwrap_or_default();
+    Html(page(
+        "Portal Hub",
+        &format!(
+            r#"<section class="panel">
+                <p class="eyebrow">Owner ready</p>
                 <h1>Portal Hub is ready.</h1>
-                <p class="lead">Continue through Portal desktop sign-in to authenticate with your password.</p>
+                <p class="lead">Sign in from Portal with your passkey.</p>
                 {}
                 {}
               </section>"#,
-                continue_button_html(&continue_url),
-                android_pairing_panel(&state)
-            ),
-        ))
-        .into_response();
-    }
-
-    Html(page(
-        "Create Portal Hub Owner",
-        &format!(
-            r#"<section class="panel setup-panel">
-            <div class="steps" aria-label="Setup progress">
-              <span class="step-dot active" data-step-dot="1">1</span>
-              <span class="step-line"></span>
-              <span class="step-dot" data-step-dot="2">2</span>
-            </div>
-            <div id="setup-error" class="error" hidden></div>
-            <form id="owner-form" class="flow" autocomplete="off" data-continue-url="{}">
-              <div class="wizard-step" data-step="1">
-                <p class="eyebrow">First owner</p>
-                <h1>Name this account.</h1>
-                <p class="lead">This name is stored on the Hub and shown in Portal after sign-in.</p>
-                <label>Account name<input id="username" name="username" autocomplete="username" required minlength="2" maxlength="64" autofocus></label>
-                <button type="button" id="next-button">Next</button>
-              </div>
-              <div class="wizard-step" data-step="2" hidden>
-                <p class="eyebrow">Password</p>
-                <h1>Create a password.</h1>
-                <p class="lead">This password protects Portal desktop sign-in to this Hub.</p>
-                <label>Password<input id="password" name="password" type="password" autocomplete="new-password" required minlength="12" maxlength="256"></label>
-                <label>Confirm password<input id="password-confirm" name="password-confirm" type="password" autocomplete="new-password" required minlength="12" maxlength="256"></label>
-                <div class="security-callout">
-                  <span class="security-icon" aria-hidden="true"></span>
-                  <div>
-                    <strong>Use a unique password.</strong>
-                    <p>The Hub stores only an Argon2 password hash.</p>
-                  </div>
-                </div>
-                <div class="actions">
-                  <button type="button" class="secondary" id="back-button">Back</button>
-                  <button type="submit" id="create-button">Create owner</button>
-                </div>
-              </div>
-            </form>
-          </section>"#,
-            html_escape(&continue_url)
+            continue_button_html(&continue_url),
+            android_pairing_panel(&state)
         ),
     ))
     .into_response()
@@ -806,177 +711,60 @@ async fn authorize_page(
         )
             .into_response();
     }
-    if user_count(&state).unwrap_or(0) == 0 {
-        let location = authorize_path("/admin", &query);
-        return Redirect::to(&location).into_response();
+    if !owner::owner_ready_state(&state) {
+        return Html(owner::finish_setup_in_portal_page()).into_response();
     }
-
-    Html(page(
-        "Sign In To Portal Hub",
-        r#"<section class="panel auth-panel">
-            <p class="eyebrow">Portal desktop sign-in</p>
-            <h1>Sign in.</h1>
-            <p class="lead">Portal Hub will confirm your password, then return you to Portal.</p>
-            <div id="login-error" class="error" hidden></div>
-            <form id="login-form" class="flow" autocomplete="on">
-              <label>Account name<input id="username" name="username" autocomplete="username" required autofocus></label>
-              <label>Password<input id="password" name="password" type="password" autocomplete="current-password" required></label>
-              <button type="submit" id="login-button">Sign in</button>
-            </form>
-          </section>"#,
-    ))
-    .into_response()
+    Html(owner::sign_in_page()).into_response()
 }
 
-async fn register(State(state): State<AppState>, Json(request): Json<RegisterRequest>) -> Response {
-    if state.require_bootstrap {
-        return json_error(
-            StatusCode::FORBIDDEN,
-            anyhow!("owner setup requires local bootstrap"),
-        );
-    }
-    match register_inner(&state, request) {
-        Ok(()) => Json(json!({"ok": true})).into_response(),
+async fn setup_info(
+    State(state): State<AppState>,
+    Json(request): Json<owner::SetupTokenRequest>,
+) -> Response {
+    match owner::setup_info(&state, &request.token) {
+        Ok(info) => Json(info).into_response(),
         Err(error) => json_error(StatusCode::BAD_REQUEST, error),
     }
 }
 
-fn register_inner(state: &AppState, request: RegisterRequest) -> Result<()> {
-    if state.require_bootstrap {
-        bail!("owner setup requires local bootstrap");
+async fn setup_start(
+    State(state): State<AppState>,
+    Json(request): Json<owner::SetupTokenRequest>,
+) -> Response {
+    match owner::setup_start(&state, &request.token) {
+        Ok(start) => Json(start).into_response(),
+        Err(error) => json_error(StatusCode::BAD_REQUEST, error),
     }
-    validate_username(&request.username)?;
-    validate_password(&request.password)?;
-    let username = request.username.trim().to_string();
-    let user_id = Uuid::new_v4();
-    let password_hash = hash_password(&request.password)?;
-    let db = state
-        .db
-        .lock()
-        .map_err(|_| anyhow!("database lock poisoned"))?;
-
-    let db = Transaction::new_unchecked(&db, TransactionBehavior::Immediate)?;
-    let count: i64 = db.query_row("SELECT COUNT(*) FROM users", [], |row| row.get(0))?;
-    if count == 0 {
-        insert_user(&db, user_id, &username, &password_hash)?;
-        audit_db(
-            &db,
-            "owner_created",
-            Some(&user_id.to_string()),
-            json!({"username": username, "auth_method": "password"}),
-        )?;
-        db.commit()?;
-        return Ok(());
-    }
-
-    let existing = db
-        .query_row(
-            "SELECT id, COALESCE(password_hash, '') FROM users WHERE username = ?1",
-            [username.as_str()],
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
-        )
-        .optional()?;
-    let Some((existing_user_id, existing_password_hash)) = existing else {
-        bail!("owner account already exists");
-    };
-    if !existing_password_hash.is_empty() {
-        bail!("owner account already exists");
-    }
-    db.execute(
-        "UPDATE users SET password_hash = ?1 WHERE id = ?2",
-        params![password_hash, existing_user_id],
-    )?;
-    audit_db(
-        &db,
-        "owner_password_set",
-        Some(&existing_user_id),
-        json!({"username": username, "auth_method": "password"}),
-    )?;
-    db.commit()?;
-    Ok(())
 }
 
-async fn login(State(state): State<AppState>, Json(request): Json<LoginRequest>) -> Response {
-    match login_inner(&state, request) {
-        Ok(response) => Json(response).into_response(),
+async fn setup_finish(
+    State(state): State<AppState>,
+    Json(request): Json<owner::SetupFinishRequest>,
+) -> Response {
+    match owner::setup_finish(&state, request) {
+        Ok(finished) => Json(finished).into_response(),
+        Err(error) => json_error(StatusCode::BAD_REQUEST, error),
+    }
+}
+
+async fn login_start(
+    State(state): State<AppState>,
+    Json(request): Json<owner::LoginStartRequest>,
+) -> Response {
+    match owner::login_start(&state, request) {
+        Ok(start) => Json(start).into_response(),
         Err(error) => json_error(StatusCode::UNAUTHORIZED, error),
     }
 }
 
-fn login_inner(state: &AppState, request: LoginRequest) -> Result<LoginFinishResponse> {
-    validate_authorize_query(&request.oauth)?;
-    validate_username(&request.username)?;
-    if request.password.is_empty() {
-        bail!("missing password");
+async fn login_finish(
+    State(state): State<AppState>,
+    Json(request): Json<owner::LoginFinishRequest>,
+) -> Response {
+    match owner::login_finish(&state, request) {
+        Ok(finished) => Json(finished).into_response(),
+        Err(error) => json_error(StatusCode::UNAUTHORIZED, error),
     }
-    let username = request.username.trim().to_string();
-    let db = state
-        .db
-        .lock()
-        .map_err(|_| anyhow!("database lock poisoned"))?;
-    let Some((user_id, password_hash)) = db
-        .query_row(
-            "SELECT id, COALESCE(password_hash, '') FROM users WHERE username = ?1",
-            [username.as_str()],
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
-        )
-        .optional()?
-    else {
-        audit_db(
-            &db,
-            "login_failed",
-            None,
-            json!({"username": username, "reason": "unknown_user"}),
-        )?;
-        bail!("unknown account");
-    };
-    if password_hash.is_empty() {
-        audit_db(
-            &db,
-            "login_failed",
-            Some(&user_id),
-            json!({"username": username, "reason": "password_not_set"}),
-        )?;
-        bail!("this account needs a password");
-    }
-    if !verify_password(&request.password, &password_hash)? {
-        audit_db(
-            &db,
-            "login_failed",
-            Some(&user_id),
-            json!({"username": username, "reason": "invalid_password"}),
-        )?;
-        bail!("invalid password");
-    }
-
-    let code = random_token();
-    let expires_at = (Utc::now() + ChronoDuration::minutes(AUTH_CODE_TTL_MINUTES)).to_rfc3339();
-    db.execute(
-        "INSERT INTO auth_codes (code, user_id, client_id, redirect_uri, code_challenge, expires_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        params![
-            code,
-            user_id,
-            request.oauth.client_id,
-            request.oauth.redirect_uri,
-            request.oauth.code_challenge,
-            expires_at
-        ],
-    )?;
-    audit_db(
-        &db,
-        "login_success",
-        Some(&user_id),
-        json!({"client_id": request.oauth.client_id, "auth_method": "password"}),
-    )?;
-
-    Ok(LoginFinishResponse {
-        redirect_uri: format!(
-            "{}?code={}&state={}",
-            request.oauth.redirect_uri,
-            urlencoding::encode(&code),
-            urlencoding::encode(&request.oauth.state)
-        ),
-    })
 }
 
 async fn token(
@@ -3415,14 +3203,6 @@ fn issue_tokens(db: &Connection, user_id: &str, client_id: &str) -> Result<Token
     })
 }
 
-fn user_count(state: &AppState) -> Result<i64> {
-    let db = state
-        .db
-        .lock()
-        .map_err(|_| anyhow!("database lock poisoned"))?;
-    Ok(db.query_row("SELECT COUNT(*) FROM users", [], |row| row.get(0))?)
-}
-
 fn validate_authorize_query(query: &AuthorizeQuery) -> Result<()> {
     if query.response_type != "code" {
         bail!("unsupported response_type");
@@ -3592,16 +3372,6 @@ fn validate_username(username: &str) -> Result<()> {
     Ok(())
 }
 
-fn validate_password(password: &str) -> Result<()> {
-    if password.len() < MIN_PASSWORD_LEN {
-        bail!("password must be at least {MIN_PASSWORD_LEN} characters");
-    }
-    if password.len() > 256 {
-        bail!("password must be 256 characters or fewer");
-    }
-    Ok(())
-}
-
 fn insert_user(db: &Connection, user_id: Uuid, username: &str, password_hash: &str) -> Result<()> {
     let now = Utc::now().to_rfc3339();
     if user_table_has_column(db, "totp_secret")? {
@@ -3658,44 +3428,6 @@ fn user_table_has_column(db: &Connection, name: &str) -> Result<bool> {
         }
     }
     Ok(false)
-}
-
-fn owner_missing_password(state: &AppState) -> Result<Option<String>> {
-    let db = state
-        .db
-        .lock()
-        .map_err(|_| anyhow!("database lock poisoned"))?;
-    let mut statement = db.prepare("SELECT username, COALESCE(password_hash, '') FROM users")?;
-    let rows = statement.query_map([], |row| {
-        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-    })?;
-    let mut missing = None;
-    for row in rows {
-        let (username, password_hash) = row?;
-        if password_hash.is_empty() {
-            if missing.is_some() {
-                return Ok(None);
-            }
-            missing = Some(username);
-        }
-    }
-    Ok(missing)
-}
-
-fn hash_password(password: &str) -> Result<String> {
-    let salt = SaltString::generate(&mut OsRng);
-    Ok(Argon2::default()
-        .hash_password(password.as_bytes(), &salt)
-        .map_err(|error| anyhow!("failed to hash password: {error}"))?
-        .to_string())
-}
-
-fn verify_password(password: &str, password_hash: &str) -> Result<bool> {
-    let parsed_hash = PasswordHash::new(password_hash)
-        .map_err(|error| anyhow!("stored password hash is invalid: {error}"))?;
-    Ok(Argon2::default()
-        .verify_password(password.as_bytes(), &parsed_hash)
-        .is_ok())
 }
 
 fn pkce_challenge(verifier: &str) -> String {
@@ -4097,129 +3829,8 @@ fn page(title: &str, body: &str) -> String {
         </html>"#,
         html_escape(PORTAL_ASCII_LOGO),
         body,
-        password_script()
+        owner::passkey_script()
     )
-}
-
-fn password_script() -> &'static str {
-    r#"
-      function showError(id, message) {
-        const node = document.getElementById(id);
-        if (!node) return;
-        node.textContent = message;
-        node.hidden = false;
-      }
-      function clearError(id) {
-        const node = document.getElementById(id);
-        if (!node) return;
-        node.textContent = "";
-        node.hidden = true;
-      }
-      async function postJSON(url, body) {
-        const response = await fetch(url, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(body),
-        });
-        const json = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(json.error || "Request failed");
-        return json;
-      }
-      function setSetupStep(step) {
-        document.querySelectorAll("[data-step]").forEach((node) => {
-          node.hidden = node.dataset.step !== String(step);
-        });
-        document.querySelectorAll("[data-step-dot]").forEach((node) => {
-          node.classList.toggle("active", node.dataset.stepDot === String(step));
-        });
-      }
-      function ownerSetupSuccessHTML(continueUrl) {
-        const lead = continueUrl
-          ? "Continue to sign in with the password you just created."
-          : "Return to Portal and sign in to Portal Hub.";
-        const action = continueUrl
-          ? `<a class="button-link" href="${continueUrl}">Continue to sign in</a>`
-          : "";
-        return `<p class="eyebrow">Owner ready</p><h1>Password saved.</h1><p class="lead">${lead}</p>${action}`;
-      }
-      function initOwnerWizard() {
-        const form = document.getElementById("owner-form");
-        const username = document.getElementById("username");
-        const password = document.getElementById("password");
-        const confirmation = document.getElementById("password-confirm");
-        const next = document.getElementById("next-button");
-        const back = document.getElementById("back-button");
-        const submit = document.getElementById("create-button");
-        if (!form || !username || !password || !confirmation || !submit) return;
-        if (next && back) {
-          next.addEventListener("click", () => {
-            clearError("setup-error");
-            if (!username.reportValidity()) return;
-            setSetupStep(2);
-            password.focus();
-          });
-          back.addEventListener("click", () => {
-            clearError("setup-error");
-            setSetupStep(1);
-            username.focus();
-          });
-        }
-        form.addEventListener("submit", async (event) => {
-          event.preventDefault();
-          clearError("setup-error");
-          if (!username.reportValidity() || !password.reportValidity() || !confirmation.reportValidity()) return;
-          if (password.value !== confirmation.value) {
-            showError("setup-error", "Passwords do not match");
-            confirmation.focus();
-            return;
-          }
-          submit.disabled = true;
-          const originalText = submit.textContent;
-          submit.textContent = "Saving...";
-          try {
-            await postJSON("/auth/register", { username: username.value, password: password.value });
-            document.querySelector(".setup-panel").innerHTML =
-              ownerSetupSuccessHTML(form.dataset.continueUrl || "");
-          } catch (error) {
-            showError("setup-error", error.message || String(error));
-          } finally {
-            submit.disabled = false;
-            submit.textContent = originalText;
-          }
-        });
-      }
-      function initPasswordLogin() {
-        const form = document.getElementById("login-form");
-        const username = document.getElementById("username");
-        const password = document.getElementById("password");
-        const submit = document.getElementById("login-button");
-        if (!form || !username || !password || !submit) return;
-        form.addEventListener("submit", async (event) => {
-          event.preventDefault();
-          clearError("login-error");
-          if (!username.reportValidity() || !password.reportValidity()) return;
-          submit.disabled = true;
-          const originalText = submit.textContent;
-          submit.textContent = "Signing in...";
-          try {
-            const oauth = Object.fromEntries(new URLSearchParams(window.location.search).entries());
-            const finish = await postJSON("/auth/login", { username: username.value, password: password.value, oauth });
-            window.location.assign(finish.redirect_uri);
-          } catch (error) {
-            showError("login-error", error.message || String(error));
-          } finally {
-            submit.disabled = false;
-            submit.textContent = originalText;
-          }
-        });
-      }
-      if (document.getElementById("owner-form")) {
-        initOwnerWizard();
-      }
-      if (document.getElementById("login-form")) {
-        initPasswordLogin();
-      }
-    "#
 }
 
 fn html_escape(value: &str) -> String {
@@ -4234,7 +3845,7 @@ fn html_escape(value: &str) -> String {
 mod tests {
     use super::*;
 
-    fn test_state() -> AppState {
+    pub(super) fn test_state() -> AppState {
         let db = Connection::open_in_memory().unwrap();
         init_db(&db).unwrap();
         let (sync_events, _) = broadcast::channel(16);
@@ -4247,101 +3858,9 @@ mod tests {
             ssh_port: 2222,
             sync_events,
             vault_events,
-            require_bootstrap: crate::runtime::require_bootstrap(),
+            flows: Default::default(),
             stopping: Arc::new(AtomicBool::new(false)),
         }
-    }
-
-    fn owner_request(username: &str) -> RegisterRequest {
-        RegisterRequest {
-            username: username.into(),
-            password: "unique-test-password".into(),
-        }
-    }
-
-    #[test]
-    fn bootstrap_never_replaces_owner_or_password() {
-        let state = test_state();
-        let db = state.db.lock().unwrap();
-        assert!(bootstrap_owner(&db, owner_request("owner")).unwrap());
-        let initial_hash: String = db
-            .query_row("SELECT password_hash FROM users", [], |r| r.get(0))
-            .unwrap();
-        assert!(!bootstrap_owner(&db, owner_request("owner")).unwrap());
-        assert!(bootstrap_owner(&db, owner_request("intruder")).is_err());
-        assert!(
-            bootstrap_owner(
-                &db,
-                RegisterRequest {
-                    username: "owner".into(),
-                    password: "a-different-password".into()
-                }
-            )
-            .is_err()
-        );
-        let hash: String = db
-            .query_row("SELECT password_hash FROM users", [], |r| r.get(0))
-            .unwrap();
-        assert_eq!(hash, initial_hash);
-        assert_eq!(
-            db.query_row("SELECT COUNT(*) FROM users", [], |r| r.get::<_, i64>(0))
-                .unwrap(),
-            1
-        );
-        assert_eq!(
-            db.query_row(
-                "SELECT COUNT(*) FROM audit_events WHERE event = 'owner_created'",
-                [],
-                |r| r.get::<_, i64>(0)
-            )
-            .unwrap(),
-            1
-        );
-    }
-
-    #[tokio::test]
-    async fn managed_registration_is_forbidden_even_for_legacy_password_setup() {
-        let mut state = test_state();
-        state.require_bootstrap = true;
-        assert_eq!(
-            register(State(state.clone()), Json(owner_request("owner")))
-                .await
-                .status(),
-            StatusCode::FORBIDDEN
-        );
-        assert_eq!(user_count(&state).unwrap(), 0);
-        {
-            let db = state.db.lock().unwrap();
-            insert_user(&db, Uuid::new_v4(), "owner", "").unwrap();
-            assert!(bootstrap_owner(&db, owner_request("owner")).is_err());
-        }
-        assert!(register_inner(&state, owner_request("owner")).is_err());
-        assert_eq!(
-            owner_missing_password(&state).unwrap().as_deref(),
-            Some("owner")
-        );
-        state.require_bootstrap = false;
-        register_inner(&state, owner_request("owner")).unwrap();
-        assert!(owner_missing_password(&state).unwrap().is_none());
-    }
-
-    #[test]
-    fn public_registration_and_local_bootstrap_arbitrate_one_owner() {
-        let mut state = test_state();
-        state.db = Arc::new(Mutex::new(open_db(&state.state_dir).unwrap()));
-        let db = open_db(&state.state_dir).unwrap();
-        let barrier = Arc::new(std::sync::Barrier::new(2));
-        let thread_barrier = barrier.clone();
-        let attempt = thread::spawn(move || {
-            thread_barrier.wait();
-            bootstrap_owner(&db, owner_request("local-owner"))
-        });
-        barrier.wait();
-        let public = register_inner(&state, owner_request("public-owner"));
-        let local = attempt.join().unwrap();
-        assert_ne!(public.is_ok(), local.is_ok());
-        assert_eq!(user_count(&state).unwrap(), 1);
-        fs::remove_dir_all(&state.state_dir).unwrap();
     }
 
     #[test]
@@ -4492,44 +4011,6 @@ mod tests {
     }
 
     #[test]
-    fn password_hash_verifies_only_original_password() {
-        let hash = hash_password("correct horse battery staple").unwrap();
-
-        assert!(verify_password("correct horse battery staple", &hash).unwrap());
-        assert!(!verify_password("wrong horse battery staple", &hash).unwrap());
-    }
-
-    #[test]
-    fn password_login_issues_oauth_redirect() {
-        let state = test_state();
-        register_inner(
-            &state,
-            RegisterRequest {
-                username: "owner".to_string(),
-                password: "correct horse battery staple".to_string(),
-            },
-        )
-        .unwrap();
-
-        let response = login_inner(
-            &state,
-            LoginRequest {
-                username: "owner".to_string(),
-                password: "correct horse battery staple".to_string(),
-                oauth: test_oauth(),
-            },
-        )
-        .unwrap();
-
-        assert!(
-            response
-                .redirect_uri
-                .starts_with("http://127.0.0.1:49152/callback?code=")
-        );
-        assert!(response.redirect_uri.contains("&state=state-state-state"));
-    }
-
-    #[test]
     fn android_oauth_redirect_is_accepted() {
         let mut query = test_oauth();
         query.client_id = ANDROID_CLIENT_ID.to_string();
@@ -4677,14 +4158,7 @@ mod tests {
     #[test]
     fn android_vault_pairing_flow_smoke() {
         let state = test_state();
-        register_inner(
-            &state,
-            RegisterRequest {
-                username: "owner".to_string(),
-                password: "correct horse battery staple".to_string(),
-            },
-        )
-        .unwrap();
+        insert_user(&state.db.lock().unwrap(), Uuid::new_v4(), "owner", "").unwrap();
         let user_id: String = state
             .db
             .lock()
@@ -5023,18 +4497,11 @@ mod tests {
             ssh_port: 2222,
             sync_events,
             vault_events,
-            require_bootstrap: crate::runtime::require_bootstrap(),
+            flows: Default::default(),
             stopping: Arc::new(AtomicBool::new(false)),
         };
 
-        register_inner(
-            &state,
-            RegisterRequest {
-                username: "owner".to_string(),
-                password: "correct horse battery staple".to_string(),
-            },
-        )
-        .unwrap();
+        insert_user(&state.db.lock().unwrap(), Uuid::new_v4(), "owner", "").unwrap();
 
         let db = state.db.lock().unwrap();
         let (password_hash, totp_secret): (String, String) = db
@@ -5044,7 +4511,7 @@ mod tests {
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .unwrap();
-        assert!(!password_hash.is_empty());
+        assert!(password_hash.is_empty());
         assert!(totp_secret.is_empty());
     }
 

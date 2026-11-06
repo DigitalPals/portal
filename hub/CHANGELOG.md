@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased (shared Portal version, from 0.6.19)
+
+- The owner signs in with passkeys only. Password sign-up and sign-in
+  (`/auth/register`, `/auth/login`) and `bootstrap-owner` are removed.
+- Added `portal-hub owner-setup --mode setup|add|reset`: one-time, single-use
+  setup links (30 minutes, stored as hashes) for creating the owner, adding a
+  passkey and recovery over SSH. `/setup` creates the passkey and can sign the
+  calling client in through OAuth PKCE in the same visit.
+- `bootstrap-status` and `doctor` report `owner_ready`.
+- An owner from a password-based Hub enrolls a passkey through `setup`; its
+  password hash is erased.
+- Portal Hub is versioned and released together with Portal from the Portal
+  repository; the standalone repository is retired.
+
 ## 0.5.0-beta.14 - 2026-04-29
 
 - Added Android QR pairing for vault access.

@@ -1,10 +1,13 @@
-# Portal Hub Deployment
+# Manual Portal Hub Deployment
 
-> Integrated checkout: this document preserves the standalone Hub guidance.
-> Build the integrated service from the Portal root with `cargo build -p portal-hub`.
-> For managed Docker/Tailscale setup and current runtime behavior, see [integrated-runtime.md](integrated-runtime.md).
+> **Recommended:** let Portal install and manage Hub for you (Settings → Portal
+> Hub → Set up on a server → Deploy Hub); see the main README and
+> [the deployment protocol](../../deploy/hub/README.md). This guide covers running
+> the Hub binary by hand. The `install-debian.sh` installer of the retired
+> standalone repository is not part of this repository and is unsupported.
+> Current runtime behavior: [integrated-runtime.md](integrated-runtime.md).
 
-This guide targets a Debian or Ubuntu LXC reachable through Tailscale.
+This guide targets a Debian or Ubuntu host or LXC reachable through Tailscale.
 
 ## Suggested LXC Size
 
@@ -22,51 +25,13 @@ for reconnect replay and thumbnails.
 
 ## Packages
 
-Use the installer for a standard Debian/Ubuntu LXC:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/DigitalPals/portal-hub/main/scripts/install-debian.sh | bash
-```
-
-For beta prereleases, pin the version:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/DigitalPals/portal-hub/main/scripts/install-debian.sh | PORTAL_HUB_VERSION=v0.5.0-beta.6 bash
-```
-
-Use a custom proxy SSH port:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/DigitalPals/portal-hub/main/scripts/install-debian.sh | PORTAL_HUB_SSH_PORT=2022 bash
-```
-
-The installer can be rerun to update Portal Hub. It installs requirements,
-creates the `portal-hub` user and state directory, installs the release binary,
-configures OpenSSH to listen on the existing SSH port plus `2222` by default,
-installs `portal-hub-web.service` on `0.0.0.0:8080`, enables daily pruning
-through systemd, and runs `portal-hub doctor`. Run it from a root shell or from
-a user with `sudo`; the script detects the current user and escalates through
-`sudo` when needed.
-
-If you want the web service to bind somewhere else, such as loopback for a
-reverse proxy:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/DigitalPals/portal-hub/main/scripts/install-debian.sh | PORTAL_HUB_WEB_BIND=127.0.0.1:8080 bash
-```
-
-The default bind is intended for hosts that are reachable only over Tailscale or
-another private network. For HTTPS, bind the service on loopback and publish it
-with Tailscale Serve or another reverse proxy.
-
-Manual package installation:
-
 ```sh
 sudo apt update
 sudo apt install -y openssh-server openssh-client dtach tailscale util-linux
 ```
 
-`script(1)` is provided by util-linux.
+`script(1)` is provided by util-linux. Build the Hub from the root of this
+repository with `cargo build --locked --release -p portal-hub`.
 
 ## Tailscale
 
@@ -107,14 +72,8 @@ the process is running as a non-root user.
 
 ## Web Service
 
-Portal desktop uses the web service for OAuth sign-in, sync, session listing,
-and persistent terminal WebSocket streams. With the installer, check it with:
-
-```sh
-sudo systemctl status portal-hub-web
-```
-
-Manual service installation can use
+Portal desktop uses the web service for passkey and OAuth sign-in, sync, session
+listing, and persistent terminal WebSocket streams. Service installation can use
 `examples/systemd/portal-hub-web.service`. The service listens on HTTP; expose
 it through Tailscale Serve or another HTTPS reverse proxy when using a public
 URL.
@@ -127,6 +86,18 @@ PORTAL_HUB_PUBLIC_URL=https://portal-hub.example.ts.net \
   portal-hub web --bind 127.0.0.1:8080
 tailscale serve --bg http://127.0.0.1:8080
 ```
+
+Passkeys belong to this HTTPS host name, so the owner can only be created once
+the Hub answers on it. Create the owner with a one-time link (valid 30 minutes)
+and open it in your browser:
+
+```sh
+sudo -u portal-hub env PORTAL_HUB_PUBLIC_URL=https://portal-hub.example.ts.net \
+  portal-hub owner-setup --username your-name
+```
+
+Use `--mode add` for another passkey and `--mode reset` to replace all of them if
+you lose yours.
 
 ## Legacy SSH Forced Command
 
@@ -253,7 +224,7 @@ In Portal:
 - Set Web URL to the HTTPS reverse-proxy or Tailscale Serve URL. If the web
   service is bound directly to a Tailscale-only/private address, set the matching
   `http://host:port` URL.
-- Sign in through the browser.
+- Sign in with your passkey in the browser.
 - Enable Portal Hub on individual SSH hosts.
 
 Portal Hub currently supports SSH terminal sessions only.

@@ -13,7 +13,10 @@ The root workspace lockfile and integrated CI/deployment own those concerns.
 Reuse assessment: the existing implementation already covers the desktop and
 Android OAuth/PKCE flows, encrypted vault enrollment, sync and SSH sessions.
 There is no blocker requiring a rewrite or a shared client/server crate.
-The integrated candidate is independently versioned as `0.5.0-beta.17`.
 API v2 schemas and the legacy CLI API version remain compatible.
+
+The standalone repository is retired: all Hub development and releases happen in
+this repository. The Hub now shares Portal's version (first shared version
+0.6.19) and is released with each Portal `v*` tag; there are no `hub-v*` releases.
 
 See `docs/integrated-runtime.md` for the additive runtime behavior.

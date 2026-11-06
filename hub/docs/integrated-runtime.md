@@ -5,38 +5,54 @@ vault and sync protocols. The CLI's legacy `api_version: 1` is unchanged.
 Source provenance is in `../PROVENANCE.md`. Build from the Portal repository root
 with `cargo build -p portal-hub`; minimum Rust is 1.88.
 
-## Owner setup
+## Owner setup and sign-in
 
-Managed deployments set `PORTAL_HUB_REQUIRE_BOOTSTRAP=true`. Public
-`POST /auth/register` then returns HTTP 403, including legacy password setup.
-`/admin` directs the user to complete local setup. An unset, empty, `false` or `0`
-value preserves legacy/manual registration. Other nonempty values fail closed.
+The owner signs in with passkeys only. There is no password sign-up, password
+sign-in or public owner registration; `/auth/register` and `/auth/login` do not
+exist. Passkeys belong to the host of the Hub's public HTTPS URL (its Tailscale
+MagicDNS name in a managed deployment), so a Hub needs HTTPS, or a
+`*.localhost` development name, before an owner can be created.
 
-Run these commands as the Hub service user using the deployment's local Docker
-exec transport (not the Hub SSH forced-command interface):
+Every passkey registration starts from a one-time setup link that only the local
+service administrator can create. Run it as the Hub service user through the
+deployment's local Docker exec transport (not the Hub SSH forced-command
+interface, which rejects it):
 
 ```sh
+portal-hub owner-setup --json --username NAME          # new Hub: create the owner
+portal-hub owner-setup --json --mode add               # another passkey
+portal-hub owner-setup --json --mode reset             # recovery: replace all passkeys
 portal-hub bootstrap-status --json
-portal-hub bootstrap-owner --json
 ```
 
-`bootstrap-owner` reads one stdin JSON object containing `username` and `password`
-and waits for EOF. Maximum input is 8192 bytes. Account names use the existing
-2–64 character rules; passwords must be 12–256 bytes. Never put credentials in
-argv, environment variables, Compose files, diagnostic logs or deployment records.
+`owner-setup` prints `token`, `mode`, `username`, `expires_at` and, when
+`PORTAL_HUB_PUBLIC_URL` is an HTTPS or `*.localhost` address, `setup_url`
+(`<public URL>/setup#token=<token>`). Without `--json` it prints the link as a
+sentence. The token is 256 bits, valid for 30 minutes and single use; the
+database keeps only its SHA-256 hash, and creating a link invalidates any
+earlier unused one.
 
-Success is `{"owner_exists":true,"created":true}`. Repeating correct existing
-credentials returns `created:false`. Different credentials, a passwordless legacy
-owner, and invalid input fail with nonzero status; they never replace an owner or
-set an existing password. Errors contain no supplied credentials. An immediate
-SQLite transaction arbitrates CLI/HTTP/process races and commits the owner plus
-audit record together. The service directory is private to its filesystem owner;
-that local service-user/root access is the bootstrap authorization boundary.
-No secret bootstrap HTTP endpoint exists.
+- `setup` needs `--username` (2–64 letters, digits, `.`, `_`, `-`, `@`) when no
+  owner exists. When an owner from an older password-based Hub exists without a
+  passkey, it enrolls that owner's first passkey, keeps the account name, and
+  erases the stored password hash. It fails once the owner has a passkey.
+- `add` registers another passkey and keeps the existing ones.
+- `reset` replaces every passkey and revokes all access tokens, refresh tokens
+  and authorization codes, so every device signs in again with the new passkey.
 
-Status emits `{"owner_exists":false}` or `true`; it does not create a database.
-After bootstrap, the already-running server sees the owner without a restart.
-Ordinary sign-in, tokens and encrypted vault enrollment still use API v2.
+`/setup` reads the token from the URL fragment, which browsers never send to the
+server, and removes it from the address bar. If the page was opened with an
+OAuth PKCE request (as Portal desktop does), finishing the registration returns
+an authorization code to that client, so creating the passkey also signs the
+client in. The link is consumed in the same SQLite transaction that stores the
+passkey and, for a new Hub, creates the owner with its audit records.
+
+`bootstrap-status` emits `{"owner_exists":bool,"owner_ready":bool}` and does not
+create a database; `owner_ready` means the owner has at least one passkey. The
+running server sees CLI changes without a restart. Ordinary sign-in at
+`/oauth/authorize` uses the owner's passkey and then the existing OAuth/PKCE and
+API v2 flows. Managed deployments set `PORTAL_HUB_REQUIRE_BOOTSTRAP=true`, which
+makes `doctor` fail its `owner_bootstrap` check until the owner has a passkey.
 
 ## Durable and transient state
 

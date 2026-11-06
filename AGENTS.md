@@ -7,8 +7,13 @@ or compatibility decisions:
 
 - Portal (`~/Code/portal`) is the desktop client.
 - Portal Hub (`hub/` in this repository) is the main hub for SSH proxying, the
-  key vault, host storage, and related shared services. The former standalone
-  repository is retained as upstream history, not a build dependency.
+  key vault, host storage, and related shared services. All Hub development,
+  packaging and releases happen here. The former standalone repository
+  (`DigitalPals/portal-hub`, `~/Code/portal-hub`) is retired: do not change or
+  release from it. `hub/PROVENANCE.md` records the imported commit.
+- Portal deploys and manages the Hub itself (Settings → Portal Hub → Set up on a
+  server). The owner signs in with passkeys only; SSH access to the server is the
+  recovery path (`portal-hub owner-setup --mode reset`).
 - Portal Android (`~/Code/portal-android`) is the Android Portal client and works
   only with Portal Hub.
 
@@ -38,6 +43,10 @@ or compatibility decisions:
   `python3 scripts/test-hub-mounts.py`. These use leased fixtures on thebeast.
   `python3 scripts/test-hub-image-import.py IMAGE` round-trips an existing pinned
   image through the actual Docker importer; it starts no containers.
+- Passkey pages in a real browser: `cargo build -p portal-hub && node
+  scripts/test-hub-passkeys.mjs target/debug/portal-hub` (Node 22+, Chromium or
+  `CHROME=/path/to/chrome`). It drives owner setup, passkey sign-in and reset with
+  a virtual WebAuthn authenticator against a local Hub; no containers.
 
 ## Local Binary Builds
 
@@ -68,11 +77,14 @@ ecosystem, use this order to avoid long feedback loops:
   Commit only intentional files and leave generated
   state such as `.direnv/` alone.
 - Identify release triggers before pushing release changes:
-  - Portal releases are created by pushing a `v*` tag whose version matches
-    `Cargo.toml`.
-  - Integrated Portal Hub images are released by pushing `hub-v*`, matching
-    `hub/Cargo.toml`. The Hub release workflow requires green main-branch Tests
-    on that exact commit and publishes amd64/arm64 images and provenance.
+  - Portal and Portal Hub share one version and one release. Bump `version` in
+    both `Cargo.toml` and `hub/Cargo.toml` (a unit test and the release workflow
+    reject a mismatch; `deploy/hub/Dockerfile` and the helper's `DEFAULT_IMAGE`
+    follow the same version and are checked by the same test).
+  - Pushing a `v*` tag matching that version builds the desktop packages and
+    publishes the amd64/arm64 Hub image `ghcr.io/digitalpals/portal-hub:<version>`
+    with provenance in the same release. The workflow requires green main-branch
+    Tests on that exact commit. There are no separate `hub-v*` releases.
   - Portal Android currently has CI but no GitHub release workflow in this repo.
 - Decide whether a new release is needed before waiting on CI. If a release is
   needed, bump versions first, then run local focused checks, then push once so

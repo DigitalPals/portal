@@ -34,26 +34,44 @@ impl Fixture {
         cmd
     }
 
-    fn start_bootstrap(&self, username: &str, password: &str) -> Child {
-        let mut child = self
-            .command()
-            .args(["bootstrap-owner", "--json"])
-            .spawn()
-            .unwrap();
-        let input = json!({"username": username, "password": password}).to_string();
-        child
-            .stdin
-            .take()
+    fn owner_setup(&self, args: &[&str]) -> Output {
+        self.command()
+            .arg("owner-setup")
+            .arg("--json")
+            .args(args)
+            .output()
             .unwrap()
-            .write_all(input.as_bytes())
-            .unwrap();
-        child
     }
 
-    fn bootstrap(&self, username: &str, password: &str) -> Output {
-        self.start_bootstrap(username, password)
-            .wait_with_output()
-            .unwrap()
+    fn status(&self) -> Value {
+        response(
+            self.command()
+                .args(["bootstrap-status", "--json"])
+                .output()
+                .unwrap(),
+        )
+    }
+
+    fn db(&self) -> rusqlite::Connection {
+        rusqlite::Connection::open(self.root.join("data/hub.db")).unwrap()
+    }
+
+    /// An owner who already finished passkey setup. The passkey content is
+    /// opaque to these runtime tests; ceremonies are covered by unit tests.
+    fn seed_owner(&self) {
+        response(self.owner_setup(&["--username", "owner"]));
+        let db = self.db();
+        db.execute(
+            "INSERT INTO users (id, username, created_at) VALUES ('owner-id', 'owner', '2026-01-01T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO passkeys (id, user_id, passkey, created_at) VALUES ('passkey-id', 'owner-id', '{}', '2026-01-01T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+        db.execute("DELETE FROM owner_setup_tokens", []).unwrap();
     }
 
     fn start_web(&mut self) -> u16 {
@@ -118,57 +136,97 @@ fn response(output: Output) -> Value {
     serde_json::from_slice(&output.stdout).unwrap()
 }
 
+fn token_hash(token: &str) -> String {
+    use sha2::Digest;
+    sha2::Sha256::digest(token.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
 #[test]
-fn bootstrap_cli_is_local_idempotent_and_never_replaces_credentials() {
+fn owner_setup_links_are_local_single_and_stored_only_as_hashes() {
     let fixture = Fixture::new();
     assert_eq!(
-        response(
-            fixture
-                .command()
-                .args(["bootstrap-status", "--json"])
-                .output()
-                .unwrap()
-        ),
-        json!({"owner_exists":false})
+        fixture.status(),
+        json!({"owner_exists":false, "owner_ready":false})
     );
     assert!(
         !fixture.root.join("data").exists(),
         "status should not create state"
     );
-    assert_eq!(
-        response(fixture.bootstrap("owner", "unique-test-password")),
-        json!({"owner_exists":true, "created":true})
-    );
-    assert_eq!(
-        response(fixture.bootstrap("owner", "unique-test-password")),
-        json!({"owner_exists":true, "created":false})
-    );
+    // A new owner needs a name; other modes need an existing owner.
+    assert!(!fixture.owner_setup(&[]).status.success());
+    assert!(!fixture.owner_setup(&["--mode", "add"]).status.success());
+    assert!(!fixture.owner_setup(&["--mode", "reset"]).status.success());
     assert!(
         !fixture
-            .bootstrap("someone-else", "unique-test-password")
+            .owner_setup(&["--username", "bad name!"])
             .status
             .success()
     );
+
+    let first = response(fixture.owner_setup(&["--username", "owner"]));
+    assert_eq!(first["username"], "owner");
+    assert_eq!(first["mode"], "setup");
     assert!(
-        !fixture
-            .bootstrap("owner", "some-wrong-password")
-            .status
-            .success()
+        first["setup_url"].is_null(),
+        "no HTTPS address is known yet"
     );
-    let denied = fixture
-        .command()
-        .args(["serve", "--stdio"])
-        .env("SSH_ORIGINAL_COMMAND", "portal-hub bootstrap-owner --json")
-        .output()
-        .unwrap();
-    assert!(!denied.status.success());
-    assert!(String::from_utf8_lossy(&denied.stderr).contains("local service administrator"));
-    let db = rusqlite::Connection::open(fixture.root.join("data/hub.db")).unwrap();
+    let token = first["token"].as_str().unwrap();
+    assert_eq!(token.len(), 43);
+    // The link only authorizes creating the owner; it does not create one.
     assert_eq!(
-        db.query_row("SELECT COUNT(*) FROM users", [], |r| r.get::<_, i64>(0))
+        fixture.status(),
+        json!({"owner_exists":false, "owner_ready":false})
+    );
+    let second = response(
+        fixture
+            .command()
+            .args(["owner-setup", "--json", "--username", "owner"])
+            .env(
+                "PORTAL_HUB_PUBLIC_URL",
+                "https://portal-hub.example.ts.net/",
+            )
+            .output()
             .unwrap(),
-        1
     );
+    let second_token = second["token"].as_str().unwrap();
+    assert_eq!(
+        second["setup_url"],
+        format!("https://portal-hub.example.ts.net/setup#token={second_token}")
+    );
+    let stored: Vec<String> = fixture
+        .db()
+        .prepare("SELECT token_hash FROM owner_setup_tokens")
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(stored, vec![token_hash(second_token)]);
+
+    for denied in [
+        fixture
+            .command()
+            .args(["serve", "--stdio"])
+            .env(
+                "SSH_ORIGINAL_COMMAND",
+                "portal-hub owner-setup --json --username owner",
+            )
+            .output()
+            .unwrap(),
+        fixture
+            .command()
+            .args(["owner-setup", "--json", "--username", "owner"])
+            .env("SSH_ORIGINAL_COMMAND", "anything")
+            .output()
+            .unwrap(),
+    ] {
+        assert!(!denied.status.success());
+        assert!(String::from_utf8_lossy(&denied.stderr).contains("local service administrator"));
+        assert!(denied.stdout.is_empty());
+    }
     assert_eq!(
         fs::metadata(fixture.root.join("data"))
             .unwrap()
@@ -180,89 +238,89 @@ fn bootstrap_cli_is_local_idempotent_and_never_replaces_credentials() {
 }
 
 #[test]
-fn independently_started_bootstraps_elect_exactly_one_owner() {
+fn concurrent_setup_links_leave_exactly_one_valid_link() {
     let fixture = Fixture::new();
+    response(fixture.owner_setup(&["--username", "owner"]));
     let attempts: Vec<_> = (0..6)
-        .map(|i| fixture.start_bootstrap(&format!("owner-{i}"), "unique-test-password"))
-        .collect();
-    let results: Vec<_> = attempts
-        .into_iter()
-        .map(|child| child.wait_with_output().unwrap())
-        .collect();
-    assert_eq!(results.iter().filter(|r| r.status.success()).count(), 1);
-    let winner = results.iter().position(|r| r.status.success()).unwrap();
-    assert_eq!(
-        response(fixture.bootstrap(&format!("owner-{winner}"), "unique-test-password"))["created"],
-        false
-    );
-}
-
-#[test]
-fn bootstrap_parser_does_not_echo_secrets_or_accept_oversized_input() {
-    let fixture = Fixture::new();
-    for input in [
-        "{\"username\":\"owner\",\"password\":secret-that-must-not-leak}".to_string(),
-        "X".repeat(8193),
-    ] {
-        let mut child = fixture
-            .command()
-            .args(["bootstrap-owner", "--json"])
-            .spawn()
-            .unwrap();
-        child
-            .stdin
-            .take()
-            .unwrap()
-            .write_all(input.as_bytes())
-            .unwrap();
-        let output = child.wait_with_output().unwrap();
-        assert!(!output.status.success());
-        assert!(output.stdout.is_empty());
-        assert!(!String::from_utf8_lossy(&output.stderr).contains("secret-that-must-not-leak"));
-    }
-    assert!(!fixture.root.join("data/hub.db").exists());
-}
-
-#[test]
-fn managed_http_cannot_claim_owner_and_bootstrap_is_visible_without_restart() {
-    let mut fixture = Fixture::new();
-    let port = fixture.start_web();
-    let body = json!({"username":"public-owner", "password":"unique-test-password"}).to_string();
-    let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
-    stream
-        .set_read_timeout(Some(Duration::from_secs(5)))
-        .unwrap();
-    write!(stream, "POST /auth/register HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}", body.len(), body).unwrap();
-    let mut reply = String::new();
-    stream.read_to_string(&mut reply).unwrap();
-    assert!(reply.starts_with("HTTP/1.1 403"), "{reply}");
-    assert_eq!(
-        response(fixture.bootstrap("local-owner", "unique-test-password"))["created"],
-        true
-    );
-    assert_eq!(
-        response(
+        .map(|i| {
             fixture
                 .command()
-                .args(["bootstrap-status", "--json"])
-                .output()
+                .args(["owner-setup", "--json", "--username", &format!("owner-{i}")])
+                .spawn()
                 .unwrap()
-        )["owner_exists"],
-        true
-    );
-    fixture.stop_web();
-    fixture.start_web();
+        })
+        .collect();
+    let tokens: Vec<String> = attempts
+        .into_iter()
+        .map(|child| {
+            response(child.wait_with_output().unwrap())["token"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        })
+        .collect();
+    let stored: String = fixture
+        .db()
+        .query_row("SELECT token_hash FROM owner_setup_tokens", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
     assert_eq!(
-        response(fixture.bootstrap("local-owner", "unique-test-password"))["created"],
-        false
+        tokens
+            .iter()
+            .filter(|token| token_hash(token) == stored)
+            .count(),
+        1
     );
+}
+
+#[test]
+fn web_never_creates_an_owner_and_sees_cli_changes_without_restart() {
+    let mut fixture = Fixture::new();
+    let port = fixture.start_web();
+    let request = |method: &str, path: &str, body: &str| {
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        write!(stream, "{method} {path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}", body.len(), body).unwrap();
+        let mut reply = String::new();
+        stream.read_to_string(&mut reply).unwrap();
+        reply
+    };
+    let password =
+        json!({"username":"public-owner", "password":"unique-test-password"}).to_string();
+    for path in ["/auth/register", "/auth/login"] {
+        let reply = request("POST", path, &password);
+        assert!(
+            reply.starts_with("HTTP/1.1 404") || reply.starts_with("HTTP/1.1 405"),
+            "{reply}"
+        );
+    }
+    let guess = json!({"token": "not-a-real-setup-token"}).to_string();
+    for path in ["/webauthn/setup/info", "/webauthn/setup/start"] {
+        let reply = request("POST", path, &guess);
+        assert!(reply.starts_with("HTTP/1.1 400"), "{reply}");
+    }
+    assert!(
+        request("GET", "/", "")
+            .to_ascii_lowercase()
+            .contains("location: /admin")
+    );
+    assert!(request("GET", "/admin", "").contains("Finish setup in Portal"));
+    fixture.seed_owner();
+    assert_eq!(
+        fixture.status(),
+        json!({"owner_exists":true, "owner_ready":true})
+    );
+    assert!(request("GET", "/", "").contains("Portal Hub is running"));
     fixture.stop_web();
 }
 
 #[test]
 fn doctor_sidecar_checks_real_prerequisites_without_requiring_tailscale() {
     let fixture = Fixture::new();
-    response(fixture.bootstrap("owner", "unique-test-password"));
+    fixture.seed_owner();
     let bin = fixture.root.join("bin");
     fs::create_dir(&bin).unwrap();
     for name in ["sh", "ssh", "ssh-keygen", "ssh-keyscan", "script", "dtach"] {
@@ -277,6 +335,7 @@ fn doctor_sidecar_checks_real_prerequisites_without_requiring_tailscale() {
     let report: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(report["network_mode"], "sidecar");
     assert_eq!(report["owner_exists"], true);
+    assert_eq!(report["owner_ready"], true);
     let checks = report["checks"].as_array().unwrap();
     assert!(
         !checks
@@ -315,7 +374,7 @@ fn doctor_sidecar_checks_real_prerequisites_without_requiring_tailscale() {
 #[test]
 fn replaced_runtime_reconciles_metadata_and_preserves_durable_data() {
     let mut fixture = Fixture::new();
-    response(fixture.bootstrap("owner", "unique-test-password"));
+    fixture.seed_owner();
     fixture.start_web();
     fixture.stop_web();
     let session_id = uuid::Uuid::new_v4();
@@ -363,10 +422,7 @@ fn replaced_runtime_reconciles_metadata_and_preserves_durable_data() {
         ),
         json!([])
     );
-    assert_eq!(
-        response(fixture.bootstrap("owner", "unique-test-password"))["created"],
-        false
-    );
+    assert_eq!(fixture.status()["owner_ready"], true);
     fixture.stop_web();
     assert_eq!(
         fs::read_to_string(
@@ -393,7 +449,7 @@ fn graceful_web_shutdown_terminates_live_detached_sessions() {
         return;
     }
     let mut fixture = Fixture::new();
-    response(fixture.bootstrap("owner", "unique-test-password"));
+    fixture.seed_owner();
     fixture.start_web();
     let session_id = uuid::Uuid::new_v4();
     let socket = fixture

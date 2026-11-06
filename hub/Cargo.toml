@@ -1,6 +1,6 @@
 [package]
 name = "portal-hub"
-version = "0.5.0-beta.17"
+version = "0.6.19"
 edition = "2024"
 description = "Persistent SSH session hub for Portal"
 authors = ["John"]
@@ -13,7 +13,6 @@ categories = ["command-line-utilities", "network-programming"]
 [dependencies]
 anyhow = "1.0"
 libc = "0.2"
-argon2 = "0.5"
 axum = { version = "0.7", features = ["ws"] }
 base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
@@ -33,6 +32,8 @@ tower-http = { version = "0.6", features = ["trace"] }
 url = "2.5"
 urlencoding = "2.1"
 uuid = { version = "1.10", features = ["v4", "serde"] }
+webauthn-rs = { version = "0.5.4", default-features = false }
 
 [dev-dependencies]
 jsonschema = { version = "0.46.3", default-features = false }
+webauthn-authenticator-rs = { version = "0.5.4", default-features = false, features = ["softpasskey"] }

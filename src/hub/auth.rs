@@ -13,7 +13,7 @@ use crate::config::settings::PortalHubSettings;
 use crate::hub::http;
 
 const CLIENT_ID: &str = "portal-desktop";
-const KEYCHAIN_SERVICE: &str = "com.digitalpals.portal";
+pub(crate) const KEYCHAIN_SERVICE: &str = "com.digitalpals.portal";
 
 #[derive(Debug, Clone)]
 pub struct HubAuthSummary {
@@ -100,6 +100,24 @@ impl PendingHubAuth {
 }
 
 pub async fn authenticate(settings: PortalHubSettings) -> Result<PendingHubAuth, String> {
+    browser_authorization(settings, None).await
+}
+
+/// Create the owner passkey through a one-time setup link from the deployment
+/// connection, and sign this device in with the same browser visit.
+pub async fn authenticate_with_setup(
+    settings: PortalHubSettings,
+    setup_token: SecretString,
+) -> Result<PendingHubAuth, String> {
+    browser_authorization(settings, Some(setup_token)).await
+}
+
+/// OAuth PKCE through the system browser, where the Hub verifies the owner's
+/// passkey. Portal never sees the passkey; it receives a code on loopback.
+async fn browser_authorization(
+    settings: PortalHubSettings,
+    setup_token: Option<SecretString>,
+) -> Result<PendingHubAuth, String> {
     let hub_url = settings.effective_web_url();
     if hub_url.is_empty() {
         return Err("Portal Hub web URL is not configured".to_string());
@@ -115,34 +133,74 @@ pub async fn authenticate(settings: PortalHubSettings) -> Result<PendingHubAuth,
     let state = random_url_token(24);
     let verifier = random_url_token(32);
     let challenge = BASE64URL_NOPAD.encode(&Sha256::digest(verifier.as_bytes()));
-    let authorize_url = format!(
-        "{}/oauth/authorize?response_type=code&client_id={}&redirect_uri={}&code_challenge={}&code_challenge_method=S256&state={}",
-        hub_url,
-        CLIENT_ID,
-        urlencoding::encode(&redirect_uri),
-        urlencoding::encode(&challenge),
-        urlencoding::encode(&state),
+    let browser_url = authorization_url(
+        &hub_url,
+        &redirect_uri,
+        &challenge,
+        &state,
+        setup_token.as_ref(),
     );
 
-    open::that(&authorize_url)
+    open::that(browser_url.expose_secret())
         .map_err(|error| format!("failed to open browser for Portal Hub sign-in: {}", error))?;
 
-    let code = tokio::time::timeout(
-        Duration::from_secs(300),
-        wait_for_callback(listener, &state),
-    )
-    .await
-    .map_err(|_| "Sign-in timed out. Select Sign in to try again.".to_string())??;
+    // Creating a passkey can take longer than using one.
+    let limit = Duration::from_secs(if setup_token.is_some() { 900 } else { 300 });
+    let code = tokio::time::timeout(limit, wait_for_callback(listener, &state))
+        .await
+        .map_err(|_| {
+            if setup_token.is_some() {
+                "Passkey setup timed out. Select Create owner passkey to get a new link."
+                    .to_string()
+            } else {
+                "Sign-in timed out. Select Sign in to try again.".to_string()
+            }
+        })??;
 
+    finish_authorization(hub_url, &code, &redirect_uri, &verifier).await
+}
+
+/// The browser address: the sign-in page, or the passkey setup page with the
+/// one-time token in the fragment, which browsers never send to the server.
+fn authorization_url(
+    hub_url: &str,
+    redirect_uri: &str,
+    challenge: &str,
+    state: &str,
+    setup_token: Option<&SecretString>,
+) -> SecretString {
+    let query = format!(
+        "response_type=code&client_id={}&redirect_uri={}&code_challenge={}&code_challenge_method=S256&state={}",
+        CLIENT_ID,
+        urlencoding::encode(redirect_uri),
+        urlencoding::encode(challenge),
+        urlencoding::encode(state),
+    );
+    match setup_token {
+        Some(token) => format!(
+            "{hub_url}/setup?{query}#token={}",
+            urlencoding::encode(token.expose_secret())
+        ),
+        None => format!("{hub_url}/oauth/authorize?{query}"),
+    }
+    .into()
+}
+
+async fn finish_authorization(
+    hub_url: String,
+    code: &str,
+    redirect_uri: &str,
+    verifier: &str,
+) -> Result<PendingHubAuth, String> {
     let client = http::client();
     let token: TokenResponse = client
         .post(format!("{}/oauth/token", hub_url))
         .form(&[
             ("grant_type", "authorization_code"),
-            ("code", code.as_str()),
-            ("redirect_uri", redirect_uri.as_str()),
+            ("code", code),
+            ("redirect_uri", redirect_uri),
             ("client_id", CLIENT_ID),
-            ("code_verifier", verifier.as_str()),
+            ("code_verifier", verifier),
         ])
         .send()
         .await
@@ -343,6 +401,33 @@ fn random_url_token(len: usize) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn setup_token_travels_only_in_the_fragment_of_the_setup_page() {
+        let token = SecretString::from("setup-token-value");
+        let url = authorization_url(
+            "https://hub.example.ts.net",
+            "http://127.0.0.1:4000/callback",
+            "challenge",
+            "state",
+            Some(&token),
+        );
+        let url = url::Url::parse(url.expose_secret()).unwrap();
+        assert_eq!(url.path(), "/setup");
+        assert_eq!(url.fragment(), Some("token=setup-token-value"));
+        assert!(!url.query().unwrap().contains("setup-token-value"));
+        assert!(url.query().unwrap().contains("client_id=portal-desktop"));
+        let sign_in = authorization_url(
+            "https://hub.example.ts.net",
+            "http://127.0.0.1:4000/callback",
+            "challenge",
+            "state",
+            None,
+        );
+        let sign_in = url::Url::parse(sign_in.expose_secret()).unwrap();
+        assert_eq!(sign_in.path(), "/oauth/authorize");
+        assert!(sign_in.fragment().is_none());
+    }
 
     #[test]
     fn parse_query_decodes_callback_params() {

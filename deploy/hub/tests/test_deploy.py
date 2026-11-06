@@ -3,6 +3,8 @@
 The filesystem fixture simulates root UID/chown only. Files, modes, atomic
 replacements, journals, locks, tar streams and symlink checks are real.
 """
+import base64
+import contextlib
 import copy
 import hashlib
 import importlib.util
@@ -25,7 +27,8 @@ spec.loader.exec_module(d)
 ID = "7bdf71ad-a270-440e-8ceb-590652b47293"
 OLD = "sha256:" + "1" * 64
 NEW = "sha256:" + "2" * 64
-NEXT = "ghcr.io/digitalpals/portal-hub:0.5.0-beta.18"
+NEXT = "ghcr.io/digitalpals/portal-hub:0.6.20"
+TOKEN = "T" * 43
 FQDN = "hub.example-tail.ts.net"
 
 
@@ -33,7 +36,7 @@ def request(action, **kwargs):
     return {"protocol_version": 1, "action": action, "deployment_id": ID, **kwargs}
 
 
-def image(identity=OLD, version="0.5.0-beta.17"):
+def image(identity=OLD, version=d.MIN_HUB_VERSION):
     return {"Id": identity, "Architecture": {"x86_64": "amd64", "aarch64": "arm64"}.get(d.platform.machine(), d.platform.machine()),
             "Os": "linux", "RepoDigests": ["ghcr.io/digitalpals/portal-hub@" + identity],
             "Config": {"Labels": {"org.opencontainers.image.version": version, d.LABEL + "deployment-protocol": "1", d.LABEL + "api-version": "2"}}}
@@ -43,11 +46,12 @@ class Engine:
     def __init__(self, directory):
         self.directory = directory
         self.calls = []
-        self.images = {d.DEFAULT_IMAGE: image(), NEXT: image(NEW, "0.5.0-beta.18"),
+        self.images = {d.DEFAULT_IMAGE: image(), NEXT: image(NEW, "0.6.20"),
                        d.TAILSCALE_IMAGE: {"Id": "sha256:" + "3" * 64}}
         self.containers = {}
         self.network_exists = False
         self.owner = False
+        self.owner_ready = False
         self.sessions = []
         self.state = "NeedsLogin"
         self.auth_url = "https://login.tailscale.com/a/test-fixture"
@@ -64,6 +68,9 @@ class Engine:
         self.offline = False
         self.endpoint_results = []
         self.endpoint_attempts = 0
+        self.tun = True
+        self.apt_sources = []
+        self.curl_calls = []
 
     def config(self):
         return json.loads((self.directory / "compose.yaml").read_text())
@@ -145,15 +152,16 @@ class Engine:
                 return d.Result(0, "net:[1234]" if not self.namespace_mismatch or container_id.startswith("a") else "net:[5678]")
             if args[0] == "portal-hub":
                 if args[1] == "bootstrap-status":
-                    return out({"owner_exists": self.owner})
-                if args[1] == "bootstrap-owner":
-                    self.stdin_payloads.append(stdin)
-                    credentials = json.loads(stdin)
-                    if credentials["password"] == "reject-valid-password":
-                        return d.Result(1, "bad credentials")
-                    created = not self.owner
-                    self.owner = True
-                    return out({"owner_exists": True, "created": created})
+                    return out({"owner_exists": self.owner, "owner_ready": self.owner_ready})
+                if args[1] == "owner-setup":
+                    mode = args[args.index("--mode") + 1]
+                    if mode == "setup" and self.owner_ready:
+                        return d.Result(1, "", "Error: the owner already has a passkey; use mode add or reset\n")
+                    if mode != "setup" and not self.owner:
+                        return d.Result(1, "", "Error: this Hub has no owner yet; use mode setup\n")
+                    name = args[args.index("--username") + 1] if "--username" in args else "owner"
+                    return out({"token": TOKEN, "mode": mode, "username": name, "expires_at": "2026-11-06T12:30:00Z",
+                                "setup_url": "https://" + FQDN + "/setup#token=" + TOKEN})
                 if args[1] == "list":
                     return d.Result(1) if self.session_unknown else out({"sessions": self.sessions})
                 if args[1] == "version":
@@ -173,6 +181,7 @@ class Engine:
                 if args[:2] == ["serve", "status"]:
                     return out(json.loads((self.directory / "serve" / "serve.json").read_text()))
             if args[0] == "curl":
+                self.curl_calls.append(args)
                 record = json.loads((self.directory / "deployment.json").read_text())
                 if args[-1].startswith("https:"):
                     self.endpoint_attempts += 1
@@ -182,9 +191,45 @@ class Engine:
                 return out({"api_version": 2, "public_url": record.get("public_url") or "http://127.0.0.1:8080"})
         if argv[:2] == ["docker", "logs"]:
             return d.Result(0, 'password="top-secret" token=example tskey-auth-12345 https://login.tailscale.com/a/private\nnormal line\n')
-        if argv[0] in {"apt-get", "systemctl"}:
+        if argv[0] == "apt-get":
+            if argv[-1] == "update":
+                source = next(x for x in argv if x.startswith("Dir::Etc::sourcelist="))
+                self.apt_sources.append(Path(source.split("=", 1)[1]).read_text())
+            return d.Result()
+        if argv[0] in {"dnf", "systemctl"}:
             return d.Result()
         raise AssertionError("Unmocked command boundary: " + repr(argv))
+
+
+def openpgp_primary_fingerprints(armored):
+    """Independent v4 fingerprint calculation (RFC 4880 section 12.2)."""
+    lines = armored.strip().splitlines()
+    body = lines[lines.index("") + 1:-1]
+    data = base64.b64decode("".join(x for x in body if not x.startswith("=")))
+    fingerprints, offset = [], 0
+    while offset < len(data):
+        header = data[offset]
+        assert header & 0x80
+        if header & 0x40:
+            tag, first = header & 0x3F, data[offset + 1]
+            if first < 192:
+                length, size = first, 1
+            elif first < 224:
+                length, size = ((first - 192) << 8) + data[offset + 2] + 192, 2
+            else:
+                assert first == 255
+                length, size = int.from_bytes(data[offset + 2:offset + 6], "big"), 5
+            start = offset + 1 + size
+        else:
+            tag, kind = (header >> 2) & 0x0F, header & 0x03
+            size = {0: 1, 1: 2, 2: 4}[kind]
+            length = int.from_bytes(data[offset + 1:offset + 1 + size], "big")
+            start = offset + 1 + size
+        packet = data[start:start + length]
+        if tag == 6:
+            fingerprints.append(hashlib.sha1(b"\x99" + len(packet).to_bytes(2, "big") + packet).hexdigest().upper())
+        offset = start + length
+    return fingerprints
 
 
 class FilesystemCase(unittest.TestCase):
@@ -235,7 +280,8 @@ class FilesystemCase(unittest.TestCase):
         manager = d.Manager(request(action, **kwargs), self.engine, root=self.root)
         def prereqs():
             return {"docker_available": self.engine.docker_available, "compose_available": self.engine.compose_available,
-                    "tun_available": True, "architecture": "amd64", "os_id": "debian", "os_version": "13", "root": True,
+                    "tun_available": self.engine.tun, "architecture": "amd64", "os_id": "debian", "os_version": "13", "root": True,
+                    "tailscale_mode": manager.record.get("tailscale_mode", "kernel") if manager.record else ("kernel" if self.engine.tun else "userspace"),
                     "installed": bool(manager.record and not manager.record.get("uninstalled")),
                     "blockers": []}
         manager.prerequisites = prereqs
@@ -254,7 +300,13 @@ class FilesystemCase(unittest.TestCase):
         self.install()
         self.engine.state = "Running"
         self.engine.cert_enabled = True
-        return self.run_action("claim", username="owner", password="test-password")
+        self.run_action("configure_https")
+        self.passkey_created()
+        return self.run_action("status")
+
+    def passkey_created(self):
+        """What the person's browser does with the setup link."""
+        self.engine.owner = self.engine.owner_ready = True
 
     def assert_error(self, code, callback):
         with self.assertRaises(d.DeployError) as raised:
@@ -299,7 +351,7 @@ class LifecycleTests(FilesystemCase):
         for path in [self.directory, self.directory / "hub-data", self.directory / "tailscale-state", self.directory / "deployment.json"]:
             self.assertEqual(path.stat().st_mode & 0o077, 0)
 
-    def test_owner_and_https_states_no_unclaimed_exposure(self):
+    def test_private_https_comes_before_the_owner_passkey(self):
         self.install()
         self.engine.state = "NeedsMachineAuth"
         response = self.run_action("status")
@@ -308,25 +360,42 @@ class LifecycleTests(FilesystemCase):
         self.engine.state = "Running"
         self.assertEqual(self.run_action("configure_https")["phase"], "awaiting_https")
         self.engine.cert_enabled = True
-        self.assertEqual(self.run_action("configure_https")["phase"], "awaiting_owner")
-        self.assertEqual(json.loads((self.directory / "serve" / "serve.json").read_text()), {})
-        response = self.run_action("claim", username="owner", password='quotes " and $() ` not shell')
-        self.assertEqual(response["phase"], "ready")
-        self.assertEqual(response["data"]["public_url"], "https://" + FQDN)
-        self.assertFalse(json.loads((self.directory / "serve" / "serve.json").read_text())["AllowFunnel"])
-        claim_commands = [a for a, _ in self.engine.calls if "bootstrap-owner" in a]
-        self.assertIn("-i", claim_commands[-1])
-        self.assertEqual(claim_commands[-1][claim_commands[-1].index("--user") + 1], d.HUB_USER)
-        self.assertNotIn("quotes", " ".join(claim_commands[-1]))
-        self.assertEqual(json.loads(self.engine.stdin_payloads[-1])["password"], 'quotes " and $() ` not shell')
-        self.assertNotIn("quotes", json.dumps(self.record()))
-        self.assertEqual(self.run_action("claim", username="owner", password="test-password")["phase"], "ready")
+        response = self.run_action("configure_https")
+        # Passkeys need the HTTPS name, so Serve opens before an owner exists;
+        # the Hub accepts owner creation only with a setup link.
+        self.assertEqual(response["phase"], "awaiting_owner")
+        self.assertTrue(response["data"]["https_ready"])
+        self.assertFalse(response["data"]["owner_ready"])
+        serve = json.loads((self.directory / "serve" / "serve.json").read_text())
+        self.assertTrue(serve["TCP"]["443"]["HTTPS"])
+        self.assertFalse(serve["AllowFunnel"])
+        self.assertNotIn("owner_setup", response["data"])
 
-    def test_failed_claim_keeps_serve_closed(self):
+        response = self.run_action("owner_setup", mode="setup", username="owner")
+        self.assertEqual(response["phase"], "awaiting_owner")
+        self.assertEqual(response["data"]["owner_setup"], {"token": TOKEN, "mode": "setup", "username": "owner",
+                                                           "expires_at": "2026-11-06T12:30:00Z"})
+        self.assertEqual(response["data"]["public_url"], "https://" + FQDN)
+        setup = [a for a, _ in self.engine.calls if "owner-setup" in a][-1]
+        self.assertEqual(setup[setup.index("--user") + 1], d.HUB_USER)
+        self.assertEqual(setup[setup.index("portal-hub"):], ["portal-hub", "owner-setup", "--json", "--mode", "setup", "--username", "owner"])
+        self.assertNotIn(TOKEN, json.dumps(self.record()))
+
+        self.passkey_created()
+        self.assertEqual(self.run_action("status")["phase"], "ready")
+        self.assert_error("owner_setup_failed", lambda: self.run_action("owner_setup", mode="setup", username="owner"))
+        with self.assertRaises(d.DeployError) as raised:
+            self.run_action("owner_setup", mode="setup")
+        self.assertIn("already has a passkey", str(raised.exception))
+        for mode in ("add", "reset"):
+            self.assertEqual(self.run_action("owner_setup", mode=mode)["data"]["owner_setup"]["mode"], mode)
+
+    def test_owner_setup_needs_tailscale_and_private_https(self):
         self.install()
+        self.assert_error("tailscale_not_ready", lambda: self.run_action("owner_setup", mode="setup", username="owner"))
         self.engine.state = "Running"
-        self.assert_error("owner_claim_failed", lambda: self.run_action("claim", username="owner", password="reject-valid-password"))
-        self.assertEqual(json.loads((self.directory / "serve" / "serve.json").read_text()), {})
+        self.assert_error("https_not_ready", lambda: self.run_action("owner_setup", mode="setup", username="owner"))
+        self.assertFalse(any("owner-setup" in a for a, _ in self.engine.calls))
 
     def test_doctor_checks_application_and_tls(self):
         self.ready()
@@ -779,17 +848,188 @@ class LifecycleTests(FilesystemCase):
         self.assert_error("docker_consent_required", lambda: manager.install_docker(manager.prerequisites()))
         self.assertFalse(any(a[0] == "apt-get" for a, _ in self.engine.calls))
 
+    def system_paths(self, ca_bundle=True, systemd=True):
+        """Package configuration targets redirected into the fixture."""
+        system = self.base / "system"
+        (system / "sources.list.d").mkdir(parents=True, exist_ok=True)
+        (system / "run-systemd").mkdir(exist_ok=True) if systemd else None
+        if ca_bundle:
+            (system / "ca.crt").write_text("bundle")
+        stack = contextlib.ExitStack()
+        for name, value in (("DOCKER_APT_KEYRING", system / "keyrings" / "portal-hub-docker.asc"),
+                            ("DOCKER_APT_SOURCE", system / "sources.list.d" / "portal-hub-docker.list"),
+                            ("APT_SOURCE_PARTS", system / "sources.list.d"),
+                            ("DOCKER_RPM_KEYRING", system / "rpm-gpg" / "portal-hub-docker.asc"),
+                            ("DOCKER_DNF_REPO", system / "yum.repos.d" / "portal-hub-docker.repo"),
+                            ("CA_BUNDLE", system / "ca.crt"), ("SYSTEMD_RUNTIME", system / "run-systemd")):
+            stack.enter_context(mock.patch.object(d, name, value))
+        keyrings = system / "usr-keyrings"
+        keyrings.mkdir(exist_ok=True)
+        for os_id in ("debian", "ubuntu"):
+            (keyrings / (os_id + "-archive-keyring.pgp")).write_text("fixture")
+        original = d.archive_keyring
+        stack.enter_context(mock.patch.object(d, "archive_keyring", lambda os_id: original(os_id, keyrings)))
+        stack.enter_context(mock.patch.object(d, "ensure_path", side_effect=lambda path, **_: Path(path)))
+        return system, stack
+
+    def install_docker_on(self, os_id, version, architecture="amd64", **paths):
+        manager = self.manager("install", install_docker=True)
+        prerequisites = {**manager.prerequisites(), "os_id": os_id, "os_version": version, "architecture": architecture}
+        system, stack = self.system_paths(**paths)
+        with stack:
+            manager.install_docker(prerequisites)
+        return system
+
     def test_docker_install_uses_isolated_authenticated_distro_sources(self):
         manager = self.manager("install", install_docker=True)
-        with mock.patch.object(d, "ensure_path"):
+        _, stack = self.system_paths()
+        with stack:
             manager.install_docker(manager.prerequisites())
         apt = [a for a, _ in self.engine.calls if a[0] == "apt-get"]
         self.assertEqual(len(apt), 2)
         self.assertTrue(all("APT::Get::AllowUnauthenticated=false" in a for a in apt))
         self.assertTrue(all(any(x.startswith("Dir::State::lists=") for x in a) for a in apt))
         self.assertTrue(all("Dir::Etc::sourceparts=-" in a for a in apt))
-        self.assertIn("docker-compose", apt[-1])
+        self.assertEqual(apt[-1][-3:], ["docker.io", "docker-cli", "docker-compose"])
         self.assertNotIn("docker-compose-v2", apt[-1])
+
+    def test_archive_keyring_prefers_regular_pgp_and_refuses_links(self):
+        keyrings = self.base / "keyrings"
+        keyrings.mkdir()
+        (keyrings / "debian-archive-keyring.pgp").write_text("real")
+        (keyrings / "debian-archive-keyring.gpg").symlink_to("debian-archive-keyring.pgp")
+        (keyrings / "ubuntu-archive-keyring.gpg").write_text("real")
+        with mock.patch.object(d, "ensure_path", side_effect=lambda path, **_: Path(path)):
+            self.assertEqual(d.archive_keyring("debian", keyrings).name, "debian-archive-keyring.pgp")
+            self.assertEqual(d.archive_keyring("ubuntu", keyrings).name, "ubuntu-archive-keyring.gpg")
+            (keyrings / "debian-archive-keyring.pgp").unlink()
+            (keyrings / "elsewhere.pgp").write_text("other")
+            (keyrings / "debian-archive-keyring.pgp").symlink_to("elsewhere.pgp")
+            self.assert_error("missing_prerequisite", lambda: d.archive_keyring("debian", keyrings))
+
+    def test_docker_install_platform_matrix(self):
+        cases = {("debian", "13", "amd64"): ("apt_distro", "trixie"), ("ubuntu", "26.04", "arm64"): ("apt_distro", "resolute"),
+                 ("debian", "12", "amd64"): ("apt_docker", "bookworm"), ("ubuntu", "22.04", "arm64"): ("apt_docker", "jammy"),
+                 ("fedora", "43", "amd64"): ("dnf", "fedora"), ("rhel", "9.4", "amd64"): ("dnf", "rhel"),
+                 ("rocky", "10.0", "arm64"): ("dnf", "centos"), ("almalinux", "9.6", "amd64"): ("dnf", "centos"),
+                 ("debian", "11", "amd64"): None, ("ubuntu", "20.04", "amd64"): None, ("rhel", "8.10", "amd64"): None,
+                 ("arch", None, "amd64"): None, ("debian", "13", "riscv64"): None}
+        for (os_id, version, arch), expected in cases.items():
+            self.assertEqual(d.docker_install_method({"os_id": os_id, "os_version": version, "architecture": arch}), expected, (os_id, version))
+
+    def test_docker_repository_install_pins_embedded_key_and_persists_updates(self):
+        system = self.install_docker_on("debian", "12")
+        self.assertEqual((system / "keyrings" / "portal-hub-docker.asc").read_text(), d.DOCKER_APT_KEY)
+        self.assertEqual(oct((system / "keyrings" / "portal-hub-docker.asc").stat().st_mode & 0o777), "0o644")
+        sources = self.engine.apt_sources[-1]
+        docker_line = "deb [arch=amd64 signed-by=" + str(system / "keyrings" / "portal-hub-docker.asc") + "] https://download.docker.com/linux/debian bookworm stable\n"
+        self.assertIn(docker_line, sources)
+        self.assertIn("signed-by=" + str(system / "usr-keyrings" / "debian-archive-keyring.pgp") + "] https://deb.debian.org/debian bookworm main", sources)
+        self.assertNotIn("trusted=yes", sources)
+        install = [a for a, _ in self.engine.calls if a[0] == "apt-get" and "install" in a][-1]
+        self.assertEqual(install[-4:], d.DOCKER_PACKAGES)
+        self.assertEqual((system / "sources.list.d" / "portal-hub-docker.list").read_text(), docker_line)
+        self.assertIn(["systemctl", "enable", "--now", "docker"], [a for a, _ in self.engine.calls])
+
+    def test_operator_docker_source_is_not_duplicated_with_a_conflicting_key(self):
+        system = self.base / "system" / "sources.list.d"
+        system.mkdir(parents=True)
+        (system / "docker.list").write_text("deb [signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu jammy stable\n")
+        self.install_docker_on("ubuntu", "22.04", "arm64")
+        self.assertFalse((system / "portal-hub-docker.list").exists())
+        self.assertIn("https://ports.ubuntu.com/ubuntu-ports jammy-security main universe", self.engine.apt_sources[-1])
+
+    def test_missing_ca_bundle_bootstraps_certificates_from_signed_http_metadata(self):
+        self.install_docker_on("ubuntu", "24.04", ca_bundle=False)
+        first, second = self.engine.apt_sources
+        self.assertIn("http://archive.ubuntu.com/ubuntu noble main universe", first)
+        self.assertNotIn("https://", first)
+        self.assertIn("https://archive.ubuntu.com/ubuntu noble main universe", second)
+        installs = [a for a, _ in self.engine.calls if a[0] == "apt-get" and "install" in a]
+        self.assertEqual(installs[0][-1], "ca-certificates")
+        self.assertEqual(installs[1][-2:], ["docker.io", "docker-compose-v2"])
+
+    def test_dnf_install_uses_embedded_rpm_key_without_erasing_packages(self):
+        system = self.install_docker_on("rocky", "9.4")
+        repo = (system / "yum.repos.d" / "portal-hub-docker.repo").read_text()
+        self.assertIn("baseurl=https://download.docker.com/linux/centos/9/x86_64/stable\n", repo)
+        self.assertIn("gpgcheck=1\n", repo)
+        self.assertIn("gpgkey=file://" + str(system / "rpm-gpg" / "portal-hub-docker.asc"), repo)
+        self.assertEqual((system / "rpm-gpg" / "portal-hub-docker.asc").read_text(), d.DOCKER_RPM_KEY)
+        dnf = [a for a, _ in self.engine.calls if a[0] == "dnf"]
+        self.assertEqual(len(dnf), 1)
+        self.assertEqual(dnf[0][-4:], d.DOCKER_PACKAGES)
+        self.assertFalse(any("--allowerasing" in a for a in dnf[0]))
+
+    def test_docker_install_refuses_unsupported_or_non_systemd_hosts(self):
+        self.assert_error("systemd_required", lambda: self.install_docker_on("debian", "13", systemd=False))
+        self.assert_error("unsupported_docker_install", lambda: self.install_docker_on("debian", "11"))
+        self.assertFalse(any(a[0] in {"apt-get", "dnf"} for a, _ in self.engine.calls))
+
+    def test_embedded_docker_keys_match_pinned_fingerprints(self):
+        self.assertEqual(openpgp_primary_fingerprints(d.DOCKER_APT_KEY), ["9DC858229FC7DD38854AE2D88D81803C0EBFCD88"])
+        self.assertEqual(openpgp_primary_fingerprints(d.DOCKER_RPM_KEY), ["060A61C51B558A7F742B77AAC52FEB6B621E9F35"])
+
+    def test_missing_tun_installs_userspace_sidecar_without_network_capabilities(self):
+        self.engine.tun = False
+        self.assertEqual(self.install()["data"]["tailscale_mode"], "userspace")
+        self.assertEqual(self.record()["tailscale_mode"], "userspace")
+        tail = self.engine.config()["services"]["tailscale"]
+        self.assertNotIn("devices", tail)
+        self.assertNotIn("cap_add", tail)
+        self.assertEqual(tail["cap_drop"], ["ALL"])
+        self.assertEqual(tail["environment"]["TS_USERSPACE"], "true")
+        self.assertEqual(tail["environment"]["TS_SOCKS5_SERVER"], "127.0.0.1:1055")
+        self.assertNotIn("ports", tail)
+        self.engine.state = "Running"
+        self.engine.cert_enabled = True
+        response = self.run_action("configure_https")
+        self.assertEqual(response["phase"], "awaiting_owner")
+        self.assertTrue(response["data"]["https_ready"])
+        https = [a for a in self.engine.curl_calls if a[-1].startswith("https:")]
+        self.assertTrue(https)
+        self.assertTrue(all(a[1:3] == ["--proxy", "socks5://127.0.0.1:1055"] and "--noproxy" not in a for a in https))
+
+    def test_kernel_networking_keeps_tun_and_existing_records_keep_their_mode(self):
+        self.install()
+        self.assertEqual(self.record()["tailscale_mode"], "kernel")
+        tail = self.engine.config()["services"]["tailscale"]
+        self.assertEqual(tail["devices"], ["/dev/net/tun:/dev/net/tun:rw"])
+        self.engine.state = "Running"
+        self.engine.cert_enabled = True
+        self.run_action("configure_https")
+        self.assertTrue(all(a[1:3] == ["--noproxy", "*"] for a in self.engine.curl_calls))
+        manager = d.Manager(request("inspect"), self.engine, root=self.root)
+        manager.load()
+        with mock.patch.object(d, "tun_available", return_value=False):
+            facts = manager.prerequisites()
+        self.assertIn("tun_unavailable", facts["blockers"])
+        self.assertEqual(facts["tailscale_mode"], "kernel")
+        fresh = d.Manager(request("inspect"), self.engine, root=self.root / "missing")
+        with mock.patch.object(d, "tun_available", return_value=False):
+            facts = fresh.prerequisites()
+        self.assertNotIn("tun_unavailable", facts["blockers"])
+        self.assertEqual(facts["tailscale_mode"], "userspace")
+
+    def test_docker_without_a_reachable_daemon_is_unavailable(self):
+        manager = d.Manager(request("inspect"), self.engine, root=self.root / "missing")
+        self.assertTrue(manager.prerequisites()["docker_available"])
+        original = self.engine.dispatch
+        def no_daemon(argv, stdin):
+            if argv[:2] == ["docker", "info"]:
+                return d.Result(0, '""', "Cannot connect to the Docker daemon")
+            return original(argv, stdin)
+        self.engine.dispatch = no_daemon
+        facts = manager.prerequisites()
+        self.assertFalse(facts["docker_available"])
+        self.assertIn("docker_unavailable", facts["blockers"])
+
+    def test_unknown_recorded_networking_mode_is_rejected(self):
+        self.install()
+        record = self.record()
+        record["tailscale_mode"] = "host"
+        (self.directory / "deployment.json").write_text(json.dumps(record))
+        self.assert_error("invalid_record", lambda: self.run_action("status"))
 
     def test_uploaded_docker_archive_is_loaded_via_stdin(self):
         path = self.base / "hub.tar"
@@ -942,7 +1182,9 @@ class ValidationTests(unittest.TestCase):
         cases = [request("install", install_docker="true"), request("uninstall", delete_data=1),
                  request("install", image_archive="/tmp/../evil"), request("install", image_archive="relative.tar"),
                  request("install", hostname="--help"), request("status", password="should-not-be-sent"),
-                 request("status", deployment_id="../../etc"), request("install", hostname="hello\nworld")]
+                 request("status", deployment_id="../../etc"), request("install", hostname="hello\nworld"),
+                 request("owner_setup"), request("owner_setup", mode="admin"), request("owner_setup", mode="setup", username="bad name"),
+                 request("owner_setup", mode="setup", password="no-passwords"), request("claim", username="owner")]
         for value in cases:
             with self.subTest(value=value), self.assertRaises(d.DeployError):
                 d.validate_request(value)
@@ -991,7 +1233,7 @@ class ValidationTests(unittest.TestCase):
 
     def test_cli_errors_are_one_json_object_without_secret_echo(self):
         for payload, code in ((b"{not json}", "invalid_request"),
-                              (json.dumps(request("claim", username="owner", password="do-not-echo", extra="bad")).encode(), "invalid_request")):
+                              (json.dumps(request("owner_setup", mode="setup", username="owner", password="do-not-echo")).encode(), "invalid_request")):
             result = subprocess.run([sys.executable, str(HELPER), "--request-stdin"], input=payload, capture_output=True, check=False)
             response = json.loads(result.stdout)
             self.assertEqual(response["error_code"], code)

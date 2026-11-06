@@ -153,12 +153,16 @@ impl ManagementConnection {
         read_output(&mut channel).await
     }
 
+    /// `cached` holds the administrator password for one management run, in
+    /// memory only. A cached value is offered once; if sudo rejects it, the
+    /// cache is cleared and the operation fails rather than prompting again.
     pub async fn execute_sudo(
         &self,
         command: &str,
         input: &[u8],
         host: &Host,
         events: &mpsc::Sender<SshEvent>,
+        cached: &mut Option<SecretString>,
     ) -> Result<CommandOutput, String> {
         let mut channel = self.channel().await?;
         // The wrapper announces successful elevation before reading the helper's
@@ -181,7 +185,10 @@ impl ManagementConnection {
                         SudoStep::Ready => break,
                         SudoStep::Wait => continue,
                         SudoStep::Password => {
-                            let value = super::auth_prompt::request_secret(host, events, "Server administrator access", "Sudo password").await.map_err(|_| "Administrator password request cancelled or timed out")?;
+                            let value = match cached.take() {
+                                Some(value) => value,
+                                None => super::auth_prompt::request_secret(host, events, "Server administrator access", "Sudo password").await.map_err(|_| "Administrator password request cancelled or timed out")?,
+                            };
                             validate_sudo_password(&value)?;
                             channel.data(value.expose_secret().as_bytes()).await.map_err(|_| "Could not send sudo password")?;
                             channel.data(&b"\n"[..]).await.map_err(|_| "Could not finish sudo password")?;
@@ -206,6 +213,8 @@ impl ManagementConnection {
             output.stdout = output
                 .stdout
                 .replace(password.expose_secret(), "[redacted]");
+            // Elevation succeeded, so later commands in this run may reuse it.
+            *cached = Some(password);
         }
         Ok(output)
     }

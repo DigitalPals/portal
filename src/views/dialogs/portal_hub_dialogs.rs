@@ -18,7 +18,6 @@ use crate::message::{DialogMessage, Message, UiMessage};
 use crate::proxy::ProxyStatus;
 use crate::theme::{ScaledFonts, Theme};
 use crate::views::components::{BadgeTone, status_badge};
-use secrecy::{ExposeSecret, SecretString};
 
 use super::common::{
     alert_dialog, dialog_backdrop, dialog_input_style, primary_button_style, secondary_button_style,
@@ -308,7 +307,7 @@ pub fn portal_hub_onboarding_dialog_view(
                 .style(secondary_button_style(theme)).on_press(management(M::Choose(SetupChoice::Server))),
         ].spacing(10),
         if wizard.managed.choice == SetupChoice::Server {
-            managed_hub_view(&wizard.managed, hosts, theme, fonts)
+            managed_hub_view(&wizard.managed, wizard.auth_loading, hosts, theme, fonts)
         } else { column![].into() },
         column(cleanup_warnings.iter().map(|warning| text(warning.clone()).size(fonts.label).color(super::common::ERROR_COLOR).into())),
         section_title("1. Connect", theme, fonts),
@@ -600,6 +599,8 @@ impl std::fmt::Display for ManagementHost {
 
 fn managed_hub_view(
     state: &ManagedHubState,
+    // The browser passkey step is running; a new setup link would replace it.
+    signing_in: bool,
     hosts: &HostsConfig,
     theme: Theme,
     fonts: ScaledFonts,
@@ -640,7 +641,7 @@ fn managed_hub_view(
     if state.selected.is_none() {
         content = content.push(
             pick_list(choices, selected, |host| management(M::SelectHost(host.id)))
-                .placeholder("Choose an existing SSH host")
+                .placeholder("Choose the server to install Hub on")
                 .width(Length::Fill),
         );
     } else if let Some(host) = selected {
@@ -652,6 +653,133 @@ fn managed_hub_view(
                 .size(fonts.label),
         );
     }
+    let ready = state
+        .response
+        .as_ref()
+        .is_some_and(|r| r.ok && r.phase == "ready");
+    if !ready && !signing_in {
+        content = content.push(
+            text("Portal installs Docker if needed and runs Hub in two containers with its own private Tailscale address. No public ports are opened. Your browser opens to sign in to Tailscale, then to create the passkey you sign in to your Hub with.")
+                .size(fonts.small)
+                .color(theme.text_secondary),
+        );
+        let resume = state.selected.is_some();
+        content = content.push(
+            button(text(if resume { "Resume setup" } else { "Deploy Hub" }).size(fonts.body))
+                .padding([8, 16])
+                .style(primary_button_style(theme))
+                .on_press_maybe(
+                    (!state.busy && state.host_id.is_some()).then_some(management(M::Deploy)),
+                ),
+        );
+    }
+    if state.busy && state.browser_url.is_some() {
+        content = content.push(
+            button(text("Open Tailscale page again").size(fonts.label))
+                .padding([6, 12])
+                .style(secondary_button_style(theme))
+                .on_press(management(M::ReopenBrowser)),
+        );
+    }
+    if !state.progress.is_empty() {
+        content = content.push(
+            text(state.progress.clone())
+                .size(fonts.body)
+                .color(theme.text_secondary),
+        );
+    }
+    if state.busy {
+        content = content.push(
+            button(
+                text(if state.automated {
+                    "Stop setup"
+                } else {
+                    "Cancel operation"
+                })
+                .size(fonts.label),
+            )
+            .on_press(management(M::Cancel))
+            .padding([8, 12])
+            .style(secondary_button_style(theme)),
+        );
+    }
+    if let Some(error) = &state.error {
+        content = content.push(
+            text(error.clone())
+                .size(fonts.label)
+                .color(super::common::ERROR_COLOR),
+        );
+        if let Some(action) = state
+            .last_action
+            .filter(|action| !state.automated && *action != Action::OwnerSetup)
+        {
+            content = content.push(
+                button(text(action.label()).size(fonts.label))
+                    .padding([8, 12])
+                    .style(secondary_button_style(theme))
+                    .on_press_maybe((!state.busy).then_some(management(M::Run(action)))),
+            );
+        }
+    }
+    if let Some(owner) = state
+        .selected
+        .as_ref()
+        .and_then(|record| record.owner_username.clone())
+    {
+        content = content.push(
+            text(format!(
+                "Hub owner: {owner}. Signs in with a passkey; no password is stored."
+            ))
+            .size(fonts.label)
+            .color(theme.text_secondary),
+        );
+    }
+    content = content.push(
+        button(
+            text(if state.show_advanced {
+                "Hide advanced options"
+            } else {
+                "Advanced options"
+            })
+            .size(fonts.label),
+        )
+        .padding([6, 10])
+        .style(secondary_button_style(theme))
+        .on_press(management(M::ToggleAdvanced)),
+    );
+    if state.show_advanced {
+        content = content.push(advanced_hub_view(state, theme, fonts));
+    }
+    if let Some(response) = state.response.as_ref().filter(|_| {
+        state.selected.is_some()
+            && (state
+                .response
+                .as_ref()
+                .and_then(|r| r.string("hub_version"))
+                .is_some()
+                || state
+                    .preflight
+                    .as_ref()
+                    .is_some_and(|p| p.bool("installed")))
+    }) {
+        content = content.push(maintenance_view(state, response, theme, fonts));
+    }
+    if let Some(diagnostics) = &state.diagnostics {
+        content = content.push(
+            container(scrollable(text(diagnostics.clone()).size(fonts.small)))
+                .height(Length::Fixed(160.0)),
+        );
+    }
+    content.into()
+}
+
+/// Manual, step-by-step controls for unusual setups and troubleshooting.
+fn advanced_hub_view(
+    state: &ManagedHubState,
+    theme: Theme,
+    fonts: ScaledFonts,
+) -> Element<'static, Message> {
+    let mut content = column![].spacing(10);
     if state.selected.is_none() {
         content = content.push(
             text_input("Server name in Tailscale", &state.hostname)
@@ -711,7 +839,7 @@ fn managed_hub_view(
     if let Some(preflight) = &state.preflight {
         content = content.push(
             text(format!(
-                "{} · {} · Docker {} · Compose {} · TUN {}",
+                "{} · {} · Docker {} · Compose {} · Tailscale networking: {}",
                 preflight.string("os_id").unwrap_or("Unknown OS"),
                 preflight
                     .string("architecture")
@@ -726,11 +854,7 @@ fn managed_hub_view(
                 } else {
                     "missing"
                 },
-                if preflight.bool("tun_available") {
-                    "available"
-                } else {
-                    "missing"
-                },
+                preflight.string("tailscale_mode").unwrap_or("kernel"),
             ))
             .size(fonts.label),
         );
@@ -741,35 +865,10 @@ fn managed_hub_view(
             content = content.push(text("Installation creates a private Tailscale connection and stores Hub data on this server. No public ports are opened.").size(fonts.small));
             content = content.push(action_button(
                 Action::Install,
-                preflight.bool("tun_available")
+                crate::hub::deployment::inspection_blockers(preflight).is_empty()
                     && (preflight.bool("docker_available") && preflight.bool("compose_available")
                         || state.install_docker),
             ));
-        }
-    }
-    if !state.progress.is_empty() {
-        content = content.push(
-            text(state.progress.clone())
-                .size(fonts.body)
-                .color(theme.text_secondary),
-        );
-    }
-    if state.busy {
-        content = content.push(
-            button(text("Cancel operation").size(fonts.label))
-                .on_press(management(M::Cancel))
-                .padding([8, 12])
-                .style(secondary_button_style(theme)),
-        );
-    }
-    if let Some(error) = &state.error {
-        content = content.push(
-            text(error.clone())
-                .size(fonts.label)
-                .color(super::common::ERROR_COLOR),
-        );
-        if let Some(action) = state.last_action {
-            content = content.push(action_button(action, true));
         }
     }
     if let Some(response) = &state.response {
@@ -787,71 +886,40 @@ fn managed_hub_view(
                     .style(primary_button_style(theme)),
             );
         }
-        if !response.bool("owner_exists")
-            && matches!(response.phase.as_str(), "awaiting_owner" | "awaiting_https")
-        {
-            content = content.push(
-                text_input("Owner username", &state.owner_name)
+        if matches!(
+            response.phase.as_str(),
+            "awaiting_https" | "awaiting_owner" | "ready"
+        ) {
+            content = content.push(action_button(Action::ConfigureHttps, true));
+        }
+        if response.phase == "awaiting_owner" {
+            if !response.bool("owner_exists") {
+                content = content.push(
+                    text_input(
+                        "Owner account name (default: your login name)",
+                        &state.owner_name,
+                    )
                     .on_input(|v| management(M::OwnerName(v)))
                     .padding(8)
                     .style(dialog_input_style(theme)),
-            );
+                );
+            }
             content = content.push(
-                text_input("Owner password", state.owner_password.expose_secret())
-                    .secure(true)
-                    .on_input(|v| management(M::OwnerPassword(SecretString::from(v))))
-                    .padding(8)
-                    .style(dialog_input_style(theme)),
+                button(text("Create owner passkey").size(fonts.body))
+                    .on_press_maybe((!state.busy).then_some(management(M::SetUpPasskey(
+                        crate::hub::deployment::OwnerSetupMode::Setup,
+                    ))))
+                    .padding([8, 12])
+                    .style(primary_button_style(theme)),
             );
-            content = content.push(action_button(
-                Action::Claim,
-                !state.owner_name.trim().is_empty()
-                    && !state.owner_password.expose_secret().is_empty(),
-            ));
         }
-        if response.bool("owner_exists")
-            && matches!(
-                response.phase.as_str(),
-                "awaiting_https" | "awaiting_owner" | "ready"
-            )
-        {
-            content = content.push(action_button(Action::ConfigureHttps, true));
-        }
-        if response.phase == "ready" && response.bool("owner_exists") {
+        if response.phase == "ready" && response.bool("owner_ready") {
             content = content.push(
                 button(text("Verify Hub connection").size(fonts.body))
                     .on_press_maybe((!state.busy).then_some(management(M::UseEndpoint)))
                     .padding([8, 12])
                     .style(primary_button_style(theme)),
             );
-        }
-        if state.selected.is_some()
-            && (response.string("hub_version").is_some()
-                || state
-                    .preflight
-                    .as_ref()
-                    .is_some_and(|p| p.bool("installed")))
-        {
-            content = content.push(section_title("Maintain this Hub", theme, fonts));
-            content = content.push(text(match response.sessions() { Some(count) => format!("{count} active sessions. Updating, backing up or uninstalling can interrupt sessions."), None => "Session count is unavailable. Maintenance checks the server again before making changes.".into() }).size(fonts.label));
-            content = content.push(
-                checkbox(state.allow_interruptions)
-                    .label("Allow this operation to interrupt active sessions")
-                    .on_toggle(|v| management(M::AllowInterruptions(v))),
-            );
-            content = content.push(
-                row![
-                    action_button(Action::Update, true),
-                    action_button(Action::Backup, true)
-                ]
-                .spacing(8),
-            );
-            content = content.push(
-                checkbox(state.uninstall_confirmed)
-                    .label("Uninstall this Hub's services and retain its data")
-                    .on_toggle(|v| management(M::ConfirmUninstall(v))),
-            );
-            content = content.push(action_button(Action::Uninstall, state.uninstall_confirmed));
         }
     }
     if state.selected.is_some() {
@@ -863,11 +931,97 @@ fn managed_hub_view(
             .spacing(8),
         );
     }
-    if let Some(diagnostics) = &state.diagnostics {
-        content = content.push(
-            container(scrollable(text(diagnostics.clone()).size(fonts.small)))
-                .height(Length::Fixed(160.0)),
-        );
-    }
     content.into()
+}
+
+/// Update, backup and removal of an installed Hub.
+fn maintenance_view(
+    state: &ManagedHubState,
+    response: &crate::hub::deployment::DeploymentResponse,
+    theme: Theme,
+    fonts: ScaledFonts,
+) -> Element<'static, Message> {
+    let action_button = |action: Action, enabled: bool| {
+        button(text(action.label()).size(fonts.label))
+            .padding([8, 12])
+            .style(secondary_button_style(theme))
+            .on_press_maybe((enabled && !state.busy).then_some(management(M::Run(action))))
+    };
+    use crate::hub::deployment::OwnerSetupMode;
+    let passkey_button = |label: &'static str, mode: OwnerSetupMode, enabled: bool| {
+        button(text(label).size(fonts.label))
+            .padding([8, 12])
+            .style(secondary_button_style(theme))
+            .on_press_maybe((enabled && !state.busy).then_some(management(M::SetUpPasskey(mode))))
+    };
+    let update_offer = response
+        .string("hub_version")
+        .filter(|version| crate::hub::deployment::hub_is_older_than_portal(version))
+        .map(|version| {
+            column![
+                text(format!(
+                    "This Hub runs version {version}. This Portal deploys version {}.",
+                    env!("CARGO_PKG_VERSION")
+                ))
+                .size(fonts.label),
+                button(
+                    text(format!("Update Hub to {}", env!("CARGO_PKG_VERSION"))).size(fonts.label)
+                )
+                .padding([8, 12])
+                .style(primary_button_style(theme))
+                .on_press_maybe((!state.busy).then_some(management(M::UpdateToPortalVersion))),
+            ]
+            .spacing(8)
+        });
+    let mut content = column![
+        section_title("Maintain this Hub", theme, fonts),
+        text(match response.sessions() {
+            Some(count) => format!("{count} active sessions. Updating, backing up or uninstalling can interrupt sessions."),
+            None => "Session count is unavailable. Maintenance checks the server again before making changes.".into(),
+        })
+        .size(fonts.label),
+        checkbox(state.allow_interruptions)
+            .label("Allow this operation to interrupt active sessions")
+            .on_toggle(|v| management(M::AllowInterruptions(v))),
+    ]
+    .spacing(10);
+    if let Some(offer) = update_offer {
+        content = content.push(offer);
+    }
+    content
+        .push(
+            row![
+                action_button(Action::Update, true),
+                action_button(Action::Backup, true)
+            ]
+            .spacing(8),
+        )
+        .push(
+            checkbox(state.uninstall_confirmed)
+                .label("Uninstall this Hub's services and retain its data")
+                .on_toggle(|v| management(M::ConfirmUninstall(v))),
+        )
+        .push(action_button(Action::Uninstall, state.uninstall_confirmed))
+        .push(section_title("Owner passkeys", theme, fonts))
+        .push(
+            text("Your Hub has no password. Add a passkey on another authenticator, or recover access by replacing all passkeys through this server's SSH connection.")
+                .size(fonts.label)
+                .color(theme.text_secondary),
+        )
+        .push(passkey_button(
+            "Add a passkey",
+            OwnerSetupMode::Add,
+            response.bool("owner_ready"),
+        ))
+        .push(
+            checkbox(state.reset_confirmed)
+                .label("Replace every passkey and sign out every device")
+                .on_toggle(|v| management(M::ConfirmReset(v))),
+        )
+        .push(passkey_button(
+            "Reset owner passkey",
+            OwnerSetupMode::Reset,
+            response.bool("owner_exists") && state.reset_confirmed,
+        ))
+        .into()
 }
