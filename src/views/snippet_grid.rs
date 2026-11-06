@@ -573,7 +573,7 @@ fn empty_state(theme: Theme, fonts: ScaledFonts) -> Element<'static, Message> {
         button(
             row![
                 icon_with_color(icons::ui::PLUS, 14, accent_text),
-                text("NEW SNIPPET").size(fonts.body).color(accent_text),
+                text("New Snippet").size(fonts.body).color(accent_text),
             ]
             .spacing(6)
             .align_y(Alignment::Center),

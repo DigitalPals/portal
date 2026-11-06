@@ -805,8 +805,8 @@ fn empty_state(theme: Theme, fonts: ScaledFonts, searching: bool) -> Element<'st
     } else {
         (
             "No hosts configured",
-            "Click NEW HOST to add your first server",
-            "NEW HOST",
+            "Click New Host to add your first server",
+            "New Host",
             Message::Host(HostMessage::Add),
         )
     };
