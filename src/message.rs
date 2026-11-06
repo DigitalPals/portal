@@ -210,6 +210,8 @@ pub enum SessionMessage {
     Disconnected { session_id: SessionId, clean: bool },
     /// Scheduled reconnect attempt
     Reconnect(SessionId),
+    /// User requested a reconnect in the existing terminal tab
+    ReconnectNow(SessionId),
     /// Session error occurred
     Error(String),
     /// Connection failed for a specific session
