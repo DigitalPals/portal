@@ -48,14 +48,18 @@ pub fn snippet_edit_view(
         .style(move |_theme, status| {
             use iced::widget::text_input::{Status, Style};
             let border_color = match status {
-                Status::Focused { .. } => theme.accent,
+                Status::Focused { .. } => theme.focus_ring,
                 _ => theme.border,
             };
             Style {
                 background: theme.surface.into(),
                 border: iced::Border {
                     color: border_color,
-                    width: 1.0,
+                    width: if matches!(status, text_input::Status::Focused { .. }) {
+                        2.0
+                    } else {
+                        1.0
+                    },
                     radius: 8.0.into(),
                 },
                 icon: theme.text_muted,
@@ -78,14 +82,18 @@ pub fn snippet_edit_view(
     .style(move |_theme, status| {
         use iced::widget::text_input::{Status, Style};
         let border_color = match status {
-            Status::Focused { .. } => theme.accent,
+            Status::Focused { .. } => theme.focus_ring,
             _ => theme.border,
         };
         Style {
             background: theme.surface.into(),
             border: iced::Border {
                 color: border_color,
-                width: 1.0,
+                width: if matches!(status, text_input::Status::Focused { .. }) {
+                    2.0
+                } else {
+                    1.0
+                },
                 radius: 8.0.into(),
             },
             icon: theme.text_muted,
@@ -110,14 +118,18 @@ pub fn snippet_edit_view(
     .style(move |_theme, status| {
         use iced::widget::text_input::{Status, Style};
         let border_color = match status {
-            Status::Focused { .. } => theme.accent,
+            Status::Focused { .. } => theme.focus_ring,
             _ => theme.border,
         };
         Style {
             background: theme.surface.into(),
             border: iced::Border {
                 color: border_color,
-                width: 1.0,
+                width: if matches!(status, text_input::Status::Focused { .. }) {
+                    2.0
+                } else {
+                    1.0
+                },
                 radius: 8.0.into(),
             },
             icon: theme.text_muted,
