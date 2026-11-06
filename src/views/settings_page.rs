@@ -15,6 +15,7 @@ use crate::fonts::TerminalFont;
 use crate::hub::diagnostics::{DiagnosticStatus, PortalHubDiagnosticsReport};
 use crate::hub::sync::PortalHubSyncService;
 use crate::icons::{self, icon_with_color};
+use crate::keybindings::{Keybinding, KeybindingsConfig};
 use crate::message::{Message, SettingsTab, UiMessage};
 use crate::proxy::ProxyStatus;
 use crate::theme::{BORDER_RADIUS, ScaledFonts, Theme, ThemeId, get_theme};
@@ -24,6 +25,7 @@ use crate::views::components::{
 
 pub struct SettingsPageContext {
     pub current_theme: ThemeId,
+    pub keybindings: KeybindingsConfig,
     pub active_tab: SettingsTab,
     pub terminal_font_size: f32,
     pub terminal_scroll_speed: f32,
@@ -265,21 +267,24 @@ fn active_tab_sections(
     fonts: ScaledFonts,
 ) -> Vec<Element<'static, Message>> {
     match context.active_tab {
-        SettingsTab::UiUx => vec![settings_section(
-            "UI & UX",
-            theme,
-            fonts,
-            vec![
-                theme_tiles_row(context.current_theme, theme, fonts),
-                ui_scale_setting(
-                    context.ui_scale,
-                    context.system_ui_scale,
-                    context.has_ui_scale_override,
-                    theme,
-                    fonts,
-                ),
-            ],
-        )],
+        SettingsTab::UiUx => vec![
+            settings_section(
+                "UI & UX",
+                theme,
+                fonts,
+                vec![
+                    theme_tiles_row(context.current_theme, theme, fonts),
+                    ui_scale_setting(
+                        context.ui_scale,
+                        context.system_ui_scale,
+                        context.has_ui_scale_override,
+                        theme,
+                        fonts,
+                    ),
+                ],
+            ),
+            keyboard_section(&context.keybindings, theme, fonts),
+        ],
         SettingsTab::Terminal => vec![settings_section(
             "Terminal",
             theme,
@@ -433,6 +438,151 @@ fn settings_section<'a>(
     section = section.push(text(title).size(fonts.label).color(theme.text_muted));
 
     section.push(form_card(items, theme)).into()
+}
+
+fn keyboard_section(
+    bindings: &KeybindingsConfig,
+    theme: Theme,
+    fonts: ScaledFonts,
+) -> Element<'static, Message> {
+    let settings_path = crate::config::paths::settings_file()
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| "settings.toml".to_string());
+    let instructions = text(format!(
+        "Change configurable shortcuts in [keybindings] in {settings_path}, then restart Portal."
+    ))
+    .size(fonts.label)
+    .color(theme.text_muted);
+
+    settings_section(
+        "Keyboard",
+        theme,
+        fonts,
+        vec![
+            instructions.into(),
+            shortcut_group(
+                "General",
+                &[
+                    ("New window", shortcut_labels(&bindings.new_window, &[])),
+                    ("Quick connect", shortcut_labels(&bindings.new_connection, &[])),
+                    ("New tab", shortcut_labels(&bindings.new_tab, &[])),
+                    ("Close current tab", shortcut_labels(&bindings.close_session, &[])),
+                    ("Next tab", shortcut_labels(&bindings.next_session, &[])),
+                    ("Previous tab", shortcut_labels(&bindings.previous_session, &[])),
+                    ("Search hosts", "/".into()),
+                    ("Open command palette", "Ctrl+K".into()),
+                    ("Focus sidebar", "F1".into()),
+                    ("Focus tab bar", "F2".into()),
+                    ("Focus content", "F3".into()),
+                    ("Navigate sidebar, tabs, hosts, or history", "Arrow keys".into()),
+                    ("First / last item in the focused area", "Home / End".into()),
+                    ("Open selected item", "Enter or Space".into()),
+                    ("Close focused tab in the tab bar", "Delete".into()),
+                    ("Move between host dialog fields", "Tab / Shift+Tab".into()),
+                    ("Submit host dialog or run palette command", "Enter".into()),
+                    ("Save tab name", "Enter".into()),
+                    ("Close dialog, menu, palette, or tab rename", "Escape".into()),
+                ],
+                theme,
+                fonts,
+            ),
+            shortcut_group(
+                "Terminal",
+                &[
+                    ("Search terminal", shortcut_labels(&bindings.terminal_search, &[])),
+                    ("Next / previous search match", "Enter / Shift+Enter".into()),
+                    ("Close terminal search", "Escape".into()),
+                    (
+                        "Copy selection",
+                        shortcut_labels(&bindings.terminal_copy, &["Ctrl+Shift+C", "Ctrl+Insert", "Super+C"]),
+                    ),
+                    (
+                        "Paste clipboard",
+                        shortcut_labels(&bindings.terminal_paste, &["Ctrl+Shift+V", "Shift+Insert", "Super+V"]),
+                    ),
+                    ("Select all", "Ctrl+Shift+A or Super+A".into()),
+                    ("Install SSH key", "Ctrl+Shift+K".into()),
+                    ("Release terminal keyboard capture", "Ctrl+Escape".into()),
+                    ("Open link or file under the pointer", "Ctrl+click".into()),
+                ],
+                theme,
+                fonts,
+            ),
+            shortcut_group(
+                "SFTP",
+                &[
+                    ("Switch pane", "Tab".into()),
+                    ("Select previous / next file", "Up / Down".into()),
+                    ("Select first / last file", "Home / End".into()),
+                    ("Focus left pane or sidebar", "Left".into()),
+                    ("Focus right pane", "Right".into()),
+                    ("Open selected folder", "Enter".into()),
+                    ("Go to parent folder", "Backspace".into()),
+                    ("Refresh active pane", "F5".into()),
+                    ("Close menu or dialog", "Escape".into()),
+                ],
+                theme,
+                fonts,
+            ),
+            shortcut_group(
+                "VNC",
+                &[
+                    ("Toggle fullscreen", shortcut_labels(&bindings.toggle_fullscreen, &[])),
+                    ("Screenshot", "Ctrl+Shift+S".into()),
+                    ("Paste clipboard", "Ctrl+Shift+V".into()),
+                    ("Release keyboard passthrough", "Ctrl+Shift+Escape".into()),
+                ],
+                theme,
+                fonts,
+            ),
+            text("VNC shortcuts apply when keyboard passthrough is off; the release shortcut always works.")
+                .size(fonts.label)
+                .color(theme.text_muted)
+                .into(),
+        ],
+    )
+}
+
+/// Include the terminal's fixed clipboard alternatives even when custom bindings change.
+fn shortcut_labels(bindings: &[Keybinding], fixed: &[&str]) -> String {
+    let mut labels: Vec<String> = bindings.iter().map(ToString::to_string).collect();
+    for label in fixed {
+        if !labels.iter().any(|existing| existing == label) {
+            labels.push((*label).to_string());
+        }
+    }
+    if labels.is_empty() {
+        "Unassigned".to_string()
+    } else {
+        labels.join(" or ")
+    }
+}
+
+fn shortcut_group(
+    title: &'static str,
+    shortcuts: &[(&'static str, String)],
+    theme: Theme,
+    fonts: ScaledFonts,
+) -> Element<'static, Message> {
+    let mut group = column![text(title).size(fonts.body).color(theme.text_primary)].spacing(8);
+    for (description, keys) in shortcuts {
+        group = group.push(
+            row![
+                text(*description)
+                    .size(fonts.body)
+                    .color(theme.text_secondary)
+                    .width(Length::FillPortion(1)),
+                text(keys.clone())
+                    .size(fonts.small)
+                    .color(theme.text_primary)
+                    .width(Length::FillPortion(1))
+                    .align_x(Alignment::End),
+            ]
+            .spacing(16)
+            .align_y(Alignment::Center),
+        );
+    }
+    group.into()
 }
 
 /// Theme selector with visual tile previews
@@ -1974,4 +2124,90 @@ fn credential_timeout_setting(
     ]
     .spacing(0)
     .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn keyboard_reference_shows_configured_bindings_in_every_theme() {
+        let bindings: KeybindingsConfig = toml::from_str(
+            r#"
+new_window = ["Alt+N", "Super+N"]
+new_connection = ["Alt+O"]
+close_session = ["Alt+W"]
+new_tab = ["Alt+T"]
+next_session = ["Alt+Tab"]
+previous_session = ["Alt+Shift+Tab"]
+terminal_copy = ["Alt+C"]
+terminal_paste = ["Alt+V"]
+toggle_fullscreen = ["F10"]
+terminal_search = ["Alt+F"]
+"#,
+        )
+        .unwrap();
+
+        for &theme_id in ThemeId::all() {
+            let mut ui = iced_test::simulator(keyboard_section(
+                &bindings,
+                get_theme(theme_id),
+                ScaledFonts::new(1.0),
+            ));
+            for label in [
+                "Keyboard",
+                "General",
+                "Terminal",
+                "SFTP",
+                "VNC",
+                "Alt+N or Super+N",
+                "Alt+O",
+                "Alt+W",
+                "Alt+T",
+                "Alt+Tab",
+                "Shift+Alt+Tab",
+                "Alt+C or Ctrl+Shift+C or Ctrl+Insert or Super+C",
+                "Alt+V or Ctrl+Shift+V or Shift+Insert or Super+V",
+                "F10",
+                "Alt+F",
+                "/",
+                "Ctrl+K",
+                "F1",
+                "F2",
+                "F3",
+                "Ctrl+Shift+K",
+                "Ctrl+Escape",
+                "F5",
+                "Ctrl+Shift+S",
+                "Ctrl+Shift+Escape",
+            ] {
+                assert!(ui.find(label).is_ok(), "Missing {label} in {theme_id}");
+            }
+            assert!(ui.find("Ctrl+Shift+N").is_err());
+            assert!(ui.find("Ctrl+Shift+F").is_err());
+            assert!(ui.find("F11").is_err());
+        }
+    }
+
+    #[test]
+    fn keyboard_reference_shows_unassigned_actions_and_fixed_clipboard_alternatives() {
+        let bindings: KeybindingsConfig = toml::from_str(
+            r#"
+new_window = []
+terminal_copy = []
+terminal_paste = ["Ctrl+Shift+V", "Shift+Insert"]
+"#,
+        )
+        .unwrap();
+        let mut ui = iced_test::simulator(keyboard_section(
+            &bindings,
+            get_theme(ThemeId::default()),
+            ScaledFonts::new(1.0),
+        ));
+
+        assert!(ui.find("Unassigned").is_ok());
+        assert!(ui.find("Ctrl+Shift+N").is_err());
+        assert!(ui.find("Ctrl+Shift+C or Ctrl+Insert or Super+C").is_ok());
+        assert!(ui.find("Ctrl+Shift+V or Shift+Insert or Super+V").is_ok());
+    }
 }
