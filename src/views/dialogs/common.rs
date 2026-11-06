@@ -9,12 +9,54 @@
 //! - `dialog_pick_list_style` - Styled pick list for dialogs
 
 use iced::widget::{
-    Space, button, column, container, mouse_area, pick_list, row, text, text_input,
+    Space, button, checkbox, column, container, mouse_area, pick_list, row, text, text_input,
 };
 use iced::{Alignment, Element, Length};
 
 use crate::message::Message;
 use crate::theme::{BORDER_RADIUS, ScaledFonts, Theme};
+
+/// Checkbox colors shared by host and password dialogs.
+pub fn dialog_checkbox_style(
+    theme: Theme,
+) -> impl Fn(&iced::Theme, checkbox::Status) -> checkbox::Style {
+    move |_theme, status| {
+        let (checked, hovered, disabled) = match status {
+            checkbox::Status::Active { is_checked } => (is_checked, false, false),
+            checkbox::Status::Hovered { is_checked } => (is_checked, true, false),
+            checkbox::Status::Disabled { is_checked } => (is_checked, false, true),
+        };
+        let background = if disabled {
+            theme.hover
+        } else if checked {
+            theme.accent
+        } else if hovered {
+            theme.hover
+        } else {
+            theme.background
+        };
+        checkbox::Style {
+            background: background.into(),
+            icon_color: theme.text_on(background),
+            border: iced::Border {
+                color: if hovered {
+                    theme.focus_ring
+                } else if checked && !disabled {
+                    theme.accent
+                } else {
+                    theme.border
+                },
+                width: 1.0,
+                radius: (BORDER_RADIUS / 2.0).into(),
+            },
+            text_color: Some(if disabled {
+                theme.text_muted
+            } else {
+                theme.text_primary
+            }),
+        }
+    }
+}
 
 /// Wrap dialog content in a centered backdrop with modal styling.
 ///

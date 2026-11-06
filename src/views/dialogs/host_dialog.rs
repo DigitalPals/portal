@@ -15,9 +15,9 @@ use crate::validation::{validate_hostname, validate_port, validate_username};
 use crate::views::components::toggle_group;
 
 use super::common::{
-    ERROR_COLOR, destructive_button_style, dialog_input_style, dialog_input_style_with_error,
-    dialog_pick_list_menu_style, dialog_pick_list_style, primary_button_style,
-    secondary_button_style,
+    ERROR_COLOR, destructive_button_style, dialog_checkbox_style, dialog_input_style,
+    dialog_input_style_with_error, dialog_pick_list_menu_style, dialog_pick_list_style,
+    primary_button_style, secondary_button_style,
 };
 
 /// Widget ID for host dialog fields (for keyboard navigation)
@@ -974,6 +974,7 @@ pub fn host_dialog_view(
                 .size(fonts.label)
                 .color(theme.text_secondary),
             checkbox(agent_forwarding)
+                .style(dialog_checkbox_style(theme))
                 .label("Enable SSH Agent Forwarding")
                 .on_toggle(|value| {
                     Message::Dialog(DialogMessage::FieldChanged(
@@ -1121,6 +1122,7 @@ pub fn host_dialog_view(
                     let description_text = forward.description.clone();
                     let mut row_content = row![
                         checkbox(forward.enabled)
+                            .style(dialog_checkbox_style(theme))
                             .label("Enabled")
                             .on_toggle(move |value| {
                                 Message::Dialog(DialogMessage::PortForwardToggleEnabled(
@@ -1240,6 +1242,7 @@ pub fn host_dialog_view(
                     ]
                     .spacing(4),
                     checkbox(editor.enabled)
+                        .style(dialog_checkbox_style(theme))
                         .label("Enabled")
                         .on_toggle(|value| {
                             Message::Dialog(DialogMessage::PortForwardFieldChanged(
