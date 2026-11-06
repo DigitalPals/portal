@@ -103,6 +103,7 @@ pub fn terminal_view_with_status<'a>(
     session_start: Instant,
     host_name: &'a str,
     status_message: Option<String>,
+    disconnected: Option<(&'a str, bool)>,
     font_size: f32,
     scroll_speed: f32,
     terminal_font: TerminalFont,
@@ -148,6 +149,7 @@ pub fn terminal_view_with_status<'a>(
         .keybindings(keybindings)
         .focus_token(focus_token)
         .keyboard_input(!search.open)
+        .read_only(disconnected.is_some())
         .search_highlights(
             &search.matches,
             search.current,
@@ -181,7 +183,89 @@ pub fn terminal_view_with_status<'a>(
 
     let status_bar = terminal_status_bar(theme, fonts, host_name, session_start, status_message);
 
-    column![terminal_area, status_bar].into()
+    let mut content = column![terminal_area];
+    if let Some((reason, reconnecting)) = disconnected {
+        content = content.push(disconnected_bar(
+            theme,
+            fonts,
+            session_id,
+            reason,
+            reconnecting,
+        ));
+    }
+    content.push(status_bar).into()
+}
+
+fn disconnected_bar<'a>(
+    theme: Theme,
+    fonts: ScaledFonts,
+    session_id: SessionId,
+    reason: &'a str,
+    reconnecting: bool,
+) -> Element<'a, Message> {
+    let reconnect = button(
+        text(if reconnecting {
+            "Reconnecting…"
+        } else {
+            "Reconnect"
+        })
+        .size(fonts.body),
+    )
+    .padding([8, 16])
+    .style(move |_theme, status| button::Style {
+        background: Some(
+            if matches!(status, button::Status::Hovered | button::Status::Pressed) {
+                theme.hover
+            } else {
+                theme.surface
+            }
+            .into(),
+        ),
+        text_color: if reconnecting {
+            theme.text_muted
+        } else {
+            theme.accent
+        },
+        border: iced::Border {
+            color: theme.focus_ring,
+            width: 1.0,
+            radius: RADIUS_MD.into(),
+        },
+        ..Default::default()
+    })
+    .on_press_maybe(
+        (!reconnecting).then_some(Message::Session(SessionMessage::ReconnectNow(session_id))),
+    );
+    container(
+        row![
+            column![
+                text("Disconnected")
+                    .size(fonts.body)
+                    .color(theme.text_primary),
+                text(reason).size(fonts.small).color(theme.text_secondary),
+            ]
+            .spacing(4)
+            .width(Fill),
+            text("Enter to reconnect")
+                .size(fonts.small)
+                .color(theme.text_muted),
+            reconnect,
+        ]
+        .spacing(16)
+        .align_y(Alignment::Center),
+    )
+    .padding([12, 16])
+    .width(Fill)
+    .style(move |_theme| container::Style {
+        background: Some(theme.surface.into()),
+        border: iced::Border {
+            color: theme.border,
+            width: 1.0,
+            ..Default::default()
+        },
+        ..Default::default()
+    })
+    .into()
 }
 
 /// Small icon/text button used inside the terminal search bar.
@@ -355,6 +439,7 @@ mod tests {
             Instant::now(),
             "host",
             None,
+            None,
             16.0,
             4.0,
             TerminalFont::default(),
@@ -377,6 +462,40 @@ mod tests {
         ui.point_at(Point::new(center.x + offset_from_case_button, center.y));
         let _ = ui.simulate(iced_test::simulator::click());
         (session_id, ui.into_messages().collect())
+    }
+
+    #[test]
+    fn disconnected_bar_reconnects_the_correct_tab_in_every_theme() {
+        let session_id = uuid::Uuid::new_v4();
+        for theme in ThemeId::all() {
+            let mut ui = iced_test::simulator(disconnected_bar(
+                get_theme(*theme),
+                ScaledFonts::new(1.0),
+                session_id,
+                "The host refused the connection.",
+                false,
+            ));
+            assert!(ui.find("Disconnected").is_ok());
+            assert!(ui.find("The host refused the connection.").is_ok());
+            ui.click("Reconnect").unwrap();
+            assert!(ui.into_messages().any(|message| matches!(
+                message, Message::Session(SessionMessage::ReconnectNow(id)) if id == session_id
+            )));
+        }
+    }
+
+    #[test]
+    fn disconnected_bar_disables_duplicate_reconnects_while_connecting() {
+        let session_id = uuid::Uuid::new_v4();
+        let mut ui = iced_test::simulator(disconnected_bar(
+            get_theme(ThemeId::default()),
+            ScaledFonts::new(1.0),
+            session_id,
+            "The connection was lost.",
+            true,
+        ));
+        ui.click("Reconnecting…").unwrap();
+        assert!(ui.into_messages().next().is_none());
     }
 
     #[test]
@@ -427,6 +546,7 @@ mod tests {
             &session,
             Instant::now(),
             "host",
+            None,
             None,
             font_size,
             4.0,
@@ -493,6 +613,7 @@ mod tests {
             &session,
             Instant::now(),
             "host",
+            None,
             None,
             16.0,
             4.0,

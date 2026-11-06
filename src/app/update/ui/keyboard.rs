@@ -300,6 +300,17 @@ pub(super) fn handle_keyboard_event(
         return Task::done(Message::Ui(UiMessage::CommandPaletteToggle));
     }
 
+    if let View::Terminal(session_id) = portal.ui.active_view
+        && modifiers.is_empty()
+        && matches!(key, Key::Named(keyboard::key::Named::Enter))
+        && portal
+            .sessions
+            .get(session_id)
+            .is_some_and(|session| session.disconnected_reason.is_some())
+    {
+        return portal.update(Message::Session(SessionMessage::ReconnectNow(session_id)));
+    }
+
     // Terminal captured: leave ordinary shell keys to the terminal widget.
     if portal.ui.terminal_captured {
         // Ctrl+Escape exits captured mode

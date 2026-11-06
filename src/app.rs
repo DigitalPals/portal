@@ -939,6 +939,10 @@ impl Portal {
                         session.session_start,
                         &session.host_name,
                         status_message,
+                        session
+                            .disconnected_reason
+                            .as_deref()
+                            .map(|reason| (reason, session.reconnect_in_progress)),
                         self.prefs.terminal_font_size,
                         self.prefs.terminal_scroll_speed,
                         self.prefs.terminal_font,

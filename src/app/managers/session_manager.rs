@@ -43,6 +43,10 @@ pub struct ActiveSession {
     pub history_entry_id: Uuid,
     /// Transient status message (message, shown_at) - auto-expires after 3 seconds
     pub status_message: Option<(String, Instant)>,
+    /// Persistent explanation shown while the terminal is disconnected.
+    pub disconnected_reason: Option<String>,
+    /// A connection attempt is running; prevents duplicate manual retries.
+    pub reconnect_in_progress: bool,
     /// Number of reconnect attempts made for this session
     pub reconnect_attempts: u32,
     /// Next scheduled reconnect attempt time (if any)
@@ -235,6 +239,8 @@ mod tests {
             host_id: None,
             history_entry_id: Uuid::new_v4(),
             status_message: None,
+            disconnected_reason: None,
+            reconnect_in_progress: false,
             reconnect_attempts: 0,
             reconnect_next_attempt: None,
             last_terminal_size: terminal_size,
