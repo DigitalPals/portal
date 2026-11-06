@@ -226,6 +226,8 @@ pub struct TerminalWidget<'a, Message> {
     /// Whether keyboard input is forwarded to the terminal. Disabled while the
     /// search bar owns the keyboard so keystrokes are not sent to the PTY.
     keyboard_input: bool,
+    /// Keep selection, copying, and scrolling available without sending remote input.
+    read_only: bool,
     /// Search matches to highlight, in grid coordinates.
     search_matches: &'a [Match],
     /// Index of the active match within `search_matches`.
@@ -260,6 +262,7 @@ impl<'a, Message> TerminalWidget<'a, Message> {
             scroll_speed: TERMINAL_SCROLL_SPEED_BASE,
             focus_token: 0,
             keyboard_input: true,
+            read_only: false,
             search_matches: &[],
             search_current: None,
             search_version: 0,
@@ -322,6 +325,12 @@ impl<'a, Message> TerminalWidget<'a, Message> {
     /// Disable while another widget (e.g. the search bar) owns the keyboard.
     pub fn keyboard_input(mut self, enabled: bool) -> Self {
         self.keyboard_input = enabled;
+        self
+    }
+
+    /// Retain local terminal interaction after the remote connection ends.
+    pub fn read_only(mut self, read_only: bool) -> Self {
+        self.read_only = read_only;
         self
     }
 
@@ -781,7 +790,7 @@ impl<'a, Message> TerminalWidget<'a, Message> {
     }
 
     fn mouse_reporting_enabled(&self) -> bool {
-        self.terminal_mode().intersects(TermMode::MOUSE_MODE)
+        !self.read_only && self.terminal_mode().intersects(TermMode::MOUSE_MODE)
     }
 
     fn mouse_button_report(
@@ -1958,7 +1967,10 @@ where
                         state.render_cache.borrow_mut().needs_refresh = true;
                         shell.request_redraw();
                     }
-                } else if alternate_scroll && let Some(bytes) = alternate_scroll_sequence(delta) {
+                } else if !self.read_only
+                    && alternate_scroll
+                    && let Some(bytes) = alternate_scroll_sequence(delta)
+                {
                     shell.publish((self.on_input)(bytes));
                 }
             }
@@ -2026,6 +2038,10 @@ where
                     {
                         clipboard.write(iced::advanced::clipboard::Kind::Standard, text_content);
                     }
+                    return;
+                }
+
+                if self.read_only && !is_select_all {
                     return;
                 }
 
@@ -2303,6 +2319,37 @@ where
 mod tests {
     use super::*;
     use crate::terminal::backend::{TerminalBackend, TerminalSize};
+
+    #[test]
+    fn disconnected_terminal_keeps_selection_and_scrolling_without_remote_input() {
+        let (backend, _events) = TerminalBackend::new(TerminalSize::new(80, 24));
+        for _ in 0..80 {
+            backend.process_input(b"saved output\r\n");
+        }
+        // A remote program may have left mouse reporting enabled when it dropped.
+        backend.process_input(b"\x1b[?1000h");
+        let term = backend.term();
+        let widget = TerminalWidget::new(term.clone(), |bytes| bytes).read_only(true);
+        assert!(!widget.mouse_reporting_enabled());
+        let element: iced::Element<'_, Vec<u8>> = widget.into();
+        let mut ui = iced_test::simulator(element);
+        ui.point_at(iced::Point::new(80.0, 40.0));
+        ui.simulate(iced_test::simulator::click());
+        let mut select_all = iced_test::simulator::press_key(Key::Character("a".into()), None);
+        if let Event::Keyboard(keyboard::Event::KeyPressed { modifiers, .. }) = &mut select_all {
+            *modifiers = keyboard::Modifiers::CTRL | keyboard::Modifiers::SHIFT;
+        }
+        ui.simulate([select_all]);
+        assert!(term.lock().selection.is_some());
+        ui.typewrite("ignored");
+        ui.tap_key(Key::Named(keyboard::key::Named::Enter));
+        assert!(term.lock().selection.is_some());
+        ui.simulate([Event::Mouse(mouse::Event::WheelScrolled {
+            delta: mouse::ScrollDelta::Lines { x: 0.0, y: 3.0 },
+        })]);
+        assert!(term.lock().grid().display_offset() > 0);
+        assert!(ui.into_messages().next().is_none());
+    }
 
     #[test]
     fn cell_metrics_round_to_integer_pixels() {
