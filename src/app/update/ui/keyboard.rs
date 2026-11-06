@@ -291,6 +291,17 @@ pub(super) fn handle_keyboard_event(
         }
     }
 
+    if let View::Terminal(session_id) = portal.ui.active_view
+        && modifiers.is_empty()
+        && matches!(key, Key::Named(keyboard::key::Named::Enter))
+        && portal
+            .sessions
+            .get(session_id)
+            .is_some_and(|session| session.disconnected_reason.is_some())
+    {
+        return portal.update(Message::Session(SessionMessage::ReconnectNow(session_id)));
+    }
+
     // Priority 3: Terminal captured - only Ctrl+Escape exits
     if portal.ui.terminal_captured {
         // Ctrl+Escape exits captured mode

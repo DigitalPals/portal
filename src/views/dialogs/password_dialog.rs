@@ -44,6 +44,8 @@ pub struct PasswordDialogState {
     pub is_ssh: bool,
     /// The connection kind
     pub connection_kind: PasswordConnectionKind,
+    /// Existing terminal tab to reuse when reconnecting over SSH.
+    pub reconnect_session_id: Option<crate::message::SessionId>,
     /// For SFTP: the tab and pane IDs
     pub sftp_context: Option<SftpConnectionContext>,
 }
@@ -75,6 +77,7 @@ impl PasswordDialogState {
             host_id,
             is_ssh: true,
             connection_kind: PasswordConnectionKind::Ssh,
+            reconnect_session_id: None,
             sftp_context: None,
         }
     }
@@ -100,6 +103,7 @@ impl PasswordDialogState {
             host_id,
             is_ssh: false,
             connection_kind: PasswordConnectionKind::Sftp,
+            reconnect_session_id: None,
             sftp_context: Some(SftpConnectionContext { tab_id, pane_id }),
         }
     }
@@ -123,6 +127,7 @@ impl PasswordDialogState {
             host_id,
             is_ssh: false,
             connection_kind: PasswordConnectionKind::Vnc,
+            reconnect_session_id: None,
             sftp_context: None,
         }
     }
