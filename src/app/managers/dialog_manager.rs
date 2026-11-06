@@ -44,6 +44,8 @@ pub enum ActiveDialog {
     SessionChoice(SessionChoiceDialogState),
     /// Warning before connecting VNC to a non-private target without a tunnel
     VncCleartextWarning(VncCleartextDialogState),
+    /// Confirmation before closing a file with unsaved edits
+    UnsavedFile(Uuid),
     /// Portal Hub onboarding wizard
     PortalHubOnboarding,
     /// Portal Hub sync conflict resolver
@@ -93,6 +95,7 @@ impl DialogManager {
                 | ActiveDialog::PassphrasePrompt(_)
                 | ActiveDialog::VncCleartextWarning(_)
                 | ActiveDialog::SessionChoice(_)
+                | ActiveDialog::UnsavedFile(_)
         )
     }
 
@@ -164,6 +167,26 @@ impl DialogManager {
     /// Get a reference to the active dialog
     pub fn active(&self) -> &ActiveDialog {
         &self.active
+    }
+
+    pub fn open_unsaved_file(&mut self, viewer_id: Uuid) {
+        if matches!(self.active, ActiveDialog::UnsavedFile(id) if id == viewer_id)
+            || self.pending.iter().any(
+                |(dialog, _)| matches!(dialog, ActiveDialog::UnsavedFile(id) if *id == viewer_id),
+            )
+        {
+            return;
+        }
+        self.present(ActiveDialog::UnsavedFile(viewer_id), None);
+    }
+
+    pub fn close_unsaved_file(&mut self, viewer_id: Uuid) {
+        self.pending.retain(
+            |(dialog, _)| !matches!(dialog, ActiveDialog::UnsavedFile(id) if *id == viewer_id),
+        );
+        if matches!(self.active, ActiveDialog::UnsavedFile(id) if id == viewer_id) {
+            self.close();
+        }
     }
 
     // ---- Host dialog operations ----
