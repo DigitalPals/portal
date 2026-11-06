@@ -858,6 +858,7 @@ impl Portal {
             View::Settings => settings_page_view(
                 SettingsPageContext {
                     current_theme: self.prefs.theme_id,
+                    keybindings: self.prefs.keybindings.clone(),
                     terminal_font_size: self.prefs.terminal_font_size,
                     terminal_scroll_speed: self.prefs.terminal_scroll_speed,
                     terminal_font: self.prefs.terminal_font,
