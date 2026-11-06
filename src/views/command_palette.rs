@@ -3,11 +3,32 @@ use iced::{Alignment, Element, Fill, Length};
 
 use crate::config::{HostsConfig, Protocol, SnippetsConfig};
 use crate::icons::{self, icon_with_color};
+use crate::keybindings::KeybindingsConfig;
 use crate::message::{CommandAction, Message, UiMessage};
 use crate::theme::{BORDER_RADIUS, CARD_BORDER_RADIUS, ScaledFonts, Theme};
+use crate::widgets::mouse_area;
 
 pub fn command_input_id() -> iced::widget::Id {
     iced::widget::Id::new("command_palette_input")
+}
+
+pub fn command_list_id() -> iced::widget::Id {
+    iced::widget::Id::new("command_palette_list")
+}
+
+/// Move within the displayed results, wrapping at either end.
+pub fn move_selection(selected: usize, count: usize, next: bool) -> usize {
+    if count == 0 {
+        return 0;
+    }
+    let selected = selected.min(count - 1);
+    if next {
+        (selected + 1) % count
+    } else if selected == 0 {
+        count - 1
+    } else {
+        selected - 1
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -119,15 +140,21 @@ pub fn available_commands(
     commands
 }
 
-pub fn first_matching_action(commands: &[CommandItem], query: &str) -> Option<CommandAction> {
+pub fn selected_matching_action(
+    commands: &[CommandItem],
+    query: &str,
+    selected: usize,
+) -> Option<CommandAction> {
     filter_commands(commands, query)
-        .first()
+        .get(selected)
         .map(|item| item.action.clone())
 }
 
 pub fn command_palette_view(
     query: &str,
     commands: &[CommandItem],
+    selected: usize,
+    keybindings: &KeybindingsConfig,
     theme: Theme,
     fonts: ScaledFonts,
 ) -> Element<'static, Message> {
@@ -174,11 +201,13 @@ pub fn command_palette_view(
     } else {
         let rows: Vec<Element<'static, Message>> = filtered
             .into_iter()
-            .take(10)
             .enumerate()
-            .map(|(index, item)| command_row(index == 0, item, theme, fonts))
+            .map(|(index, item)| {
+                command_row(index, index == selected, item, keybindings, theme, fonts)
+            })
             .collect();
         scrollable(Column::with_children(rows).spacing(4))
+            .id(command_list_id())
             .height(Length::Fixed(420.0))
             .into()
     };
@@ -246,8 +275,10 @@ fn command(
 }
 
 fn command_row(
+    index: usize,
     selected: bool,
     item: CommandItem,
+    keybindings: &KeybindingsConfig,
     theme: Theme,
     fonts: ScaledFonts,
 ) -> Element<'static, Message> {
@@ -262,7 +293,8 @@ fn command_row(
         theme.text_secondary
     };
 
-    button(
+    let shortcut = command_shortcut(&item.action, keybindings);
+    let command_button = button(
         row![
             container(icon_with_color(item.icon, 17, icon_color))
                 .width(32)
@@ -289,6 +321,10 @@ fn command_row(
             ]
             .spacing(2)
             .width(Fill),
+            text(shortcut)
+                .size(fonts.label)
+                .color(theme.text_secondary)
+                .wrapping(text::Wrapping::None),
             if selected {
                 text("Enter").size(fonts.label).color(theme.text_secondary)
             } else {
@@ -302,7 +338,7 @@ fn command_row(
     .width(Fill)
     .style(move |_theme, status| {
         let bg = match status {
-            button::Status::Hovered => theme.hover,
+            button::Status::Hovered if !selected => theme.hover,
             _ => background,
         };
         button::Style {
@@ -310,7 +346,7 @@ fn command_row(
             text_color: theme.text_primary,
             border: iced::Border {
                 color: if selected {
-                    theme.accent
+                    theme.focus_ring
                 } else {
                     iced::Color::TRANSPARENT
                 },
@@ -320,11 +356,27 @@ fn command_row(
             ..Default::default()
         }
     })
-    .on_press(Message::Ui(UiMessage::CommandPaletteRun(item.action)))
-    .into()
+    .on_press(Message::Ui(UiMessage::CommandPaletteRun(item.action)));
+
+    mouse_area(command_button)
+        .on_hover(Message::Ui(UiMessage::CommandPaletteSelect(index)))
+        .into()
 }
 
-fn filter_commands(commands: &[CommandItem], query: &str) -> Vec<CommandItem> {
+fn command_shortcut(action: &CommandAction, keybindings: &KeybindingsConfig) -> String {
+    // NewConnection opens the same quick-connect dialog as this palette command.
+    let bindings = match action {
+        CommandAction::QuickConnect => &keybindings.new_connection,
+        _ => return String::new(),
+    };
+    bindings
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(" / ")
+}
+
+pub fn filter_commands(commands: &[CommandItem], query: &str) -> Vec<CommandItem> {
     let query = query.trim().to_lowercase();
     if query.is_empty() {
         return commands.iter().take(10).cloned().collect();
@@ -336,6 +388,151 @@ fn filter_commands(commands: &[CommandItem], query: &str) -> Vec<CommandItem> {
             item.title.to_lowercase().contains(&query)
                 || item.subtitle.to_lowercase().contains(&query)
         })
+        .take(10)
         .cloned()
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::keybindings::Keybinding;
+    use crate::theme::{ThemeId, get_theme};
+
+    fn commands() -> Vec<CommandItem> {
+        available_commands(&HostsConfig::default(), &SnippetsConfig::default(), false)
+    }
+
+    #[test]
+    fn selection_moves_both_directions_and_wraps() {
+        assert_eq!(move_selection(0, 3, true), 1);
+        assert_eq!(move_selection(1, 3, false), 0);
+        assert_eq!(move_selection(2, 3, true), 0);
+        assert_eq!(move_selection(0, 3, false), 2);
+    }
+
+    #[test]
+    fn selection_handles_empty_single_and_stale_results() {
+        for next in [false, true] {
+            assert_eq!(move_selection(0, 0, next), 0);
+            assert_eq!(move_selection(5, 0, next), 0);
+            assert_eq!(move_selection(0, 1, next), 0);
+            assert!(move_selection(99, 3, next) < 3);
+        }
+    }
+
+    #[test]
+    fn activation_uses_selected_filtered_result() {
+        let commands = commands();
+        assert_eq!(
+            selected_matching_action(&commands, "", 2),
+            Some(CommandAction::Snippets)
+        );
+        // "Open" matches subtitles too: SFTP is the second filtered result.
+        assert_eq!(
+            selected_matching_action(&commands, " OPEN ", 1),
+            Some(CommandAction::Sftp)
+        );
+        assert_eq!(selected_matching_action(&commands, "unmatched", 0), None);
+        assert_eq!(selected_matching_action(&commands, "settings", 1), None);
+    }
+
+    #[test]
+    fn navigation_and_activation_only_include_displayed_results() {
+        let commands: Vec<_> = (0..15)
+            .map(|index| {
+                command(
+                    format!("Host {index}"),
+                    "Connect",
+                    CommandAction::Hosts,
+                    icons::ui::SERVER,
+                )
+            })
+            .collect();
+        for query in ["", "host"] {
+            assert_eq!(filter_commands(&commands, query).len(), 10);
+            assert_eq!(selected_matching_action(&commands, query, 10), None);
+            assert_eq!(
+                move_selection(9, filter_commands(&commands, query).len(), true),
+                0
+            );
+        }
+    }
+
+    #[test]
+    fn shortcut_hint_uses_custom_bindings_and_respects_unbinding() {
+        let mut config = KeybindingsConfig {
+            new_connection: vec![
+                Keybinding::parse("Alt+O").unwrap(),
+                Keybinding::parse("Super+F2").unwrap(),
+            ],
+            ..Default::default()
+        };
+        assert_eq!(
+            command_shortcut(&CommandAction::QuickConnect, &config),
+            "Alt+O / Super+F2"
+        );
+        assert!(command_shortcut(&CommandAction::LocalTerminal, &config).is_empty());
+        config.new_connection.clear();
+        assert!(command_shortcut(&CommandAction::QuickConnect, &config).is_empty());
+    }
+
+    #[test]
+    fn palette_shows_shortcuts_and_emits_hover_selection_in_every_theme() {
+        let commands = commands();
+        for &theme_id in ThemeId::all() {
+            let view = command_palette_view(
+                "",
+                &commands,
+                0,
+                &KeybindingsConfig::default(),
+                get_theme(theme_id),
+                ScaledFonts::new(1.0),
+            );
+            let mut ui = iced_test::simulator(view);
+            assert!(ui.find("Ctrl+Shift+O").is_ok(), "{theme_id}");
+            let target = ui
+                .find("Snippets")
+                .unwrap()
+                .visible_bounds()
+                .unwrap()
+                .center();
+            ui.point_at(target);
+            ui.simulate([iced::Event::Mouse(iced::mouse::Event::CursorMoved {
+                position: target,
+            })]);
+            assert!(
+                ui.into_messages().any(|message| matches!(
+                    message,
+                    Message::Ui(UiMessage::CommandPaletteSelect(2))
+                )),
+                "{theme_id}"
+            );
+        }
+    }
+
+    #[test]
+    fn stationary_pointer_does_not_override_keyboard_selection() {
+        let view = command_palette_view(
+            "",
+            &commands(),
+            1,
+            &KeybindingsConfig::default(),
+            get_theme(ThemeId::default()),
+            ScaledFonts::new(1.0),
+        );
+        let mut ui = iced_test::simulator(view);
+        let target = ui
+            .find("Snippets")
+            .unwrap()
+            .visible_bounds()
+            .unwrap()
+            .center();
+        ui.point_at(target);
+        ui.tap_key(iced::keyboard::key::Named::ArrowDown);
+        assert!(
+            !ui.into_messages()
+                .any(|message| matches!(message, Message::Ui(UiMessage::CommandPaletteSelect(_))))
+        );
+    }
 }

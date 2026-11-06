@@ -103,6 +103,9 @@ fn ssh_event_listener(session_id: SessionId, event_rx: mpsc::Receiver<SshEvent>)
                 .map(|event| (event, state))
         }),
         move |event| match event {
+            SshEvent::ConnectionStep(step) => {
+                Message::Session(SessionMessage::ConnectionStep { session_id, step })
+            }
             SshEvent::Data(data) => Message::Session(SessionMessage::Data(session_id, data)),
             SshEvent::Disconnected { clean } => {
                 Message::Session(SessionMessage::Disconnected { session_id, clean })
@@ -613,7 +616,7 @@ fn map_ssh_connect_error(
         }
         _ => Message::Session(SessionMessage::ConnectFailed {
             session_id,
-            error: format!("Connection failed: {}", error),
+            error: error.to_string(),
         }),
     }
 }

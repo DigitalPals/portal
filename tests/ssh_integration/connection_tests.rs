@@ -30,6 +30,9 @@ pub(super) fn spawn_host_key_handler(
     let handle = tokio::spawn(async move {
         while let Some(event) = event_rx.recv().await {
             match event {
+                SshEvent::ConnectionStep(step) => {
+                    tracing::debug!(step, "SSH connection progress");
+                }
                 SshEvent::HostKeyVerification(req) => {
                     accept_count_clone.fetch_add(1, Ordering::SeqCst);
                     match *req {

@@ -54,6 +54,10 @@ pub struct FileViewerState {
     pub is_modified: bool,
     /// Whether a save operation is in progress
     pub is_saving: bool,
+    /// Snapshot being written, so newer edits remain marked as unsaved.
+    saving_text: Option<String>,
+    /// Last save error, retained until the next save attempt.
+    pub save_error: Option<String>,
     /// 1-based line to scroll to once text content loads (from a Ctrl+clicked
     /// `path:line` terminal link)
     pub pending_goto_line: Option<usize>,
@@ -75,6 +79,8 @@ impl FileViewerState {
             content: ViewerContent::Loading,
             is_modified: false,
             is_saving: false,
+            saving_text: None,
+            save_error: None,
             pending_goto_line: None,
         }
     }
@@ -102,6 +108,29 @@ impl FileViewerState {
     pub fn mark_saved(&mut self) {
         self.is_modified = false;
         self.is_saving = false;
+    }
+
+    /// Capture the content before starting an asynchronous save.
+    pub fn begin_save(&mut self) -> Option<String> {
+        if self.is_saving {
+            return None;
+        }
+        let text = self.get_text()?;
+        self.saving_text = Some(text.clone());
+        self.is_saving = true;
+        self.save_error = None;
+        Some(text)
+    }
+
+    /// Only clear the modified mark if the current content was saved.
+    pub fn finish_save(&mut self, result: &Result<(), String>) {
+        let saved_text = self.saving_text.take();
+        self.is_saving = false;
+        match result {
+            Ok(()) if self.get_text() == saved_text => self.mark_saved(),
+            Ok(()) => {}
+            Err(error) => self.save_error = Some(error.clone()),
+        }
     }
 
     /// Toggle markdown preview mode
