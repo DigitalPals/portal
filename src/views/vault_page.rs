@@ -788,11 +788,19 @@ where
             .on_action(on_action)
             .height(Length::Fixed(height))
             .padding(10)
-            .style(move |_theme, _status| text_editor::Style {
+            .style(move |_theme, status| text_editor::Style {
                 background: theme.background.into(),
                 border: iced::Border {
-                    color: theme.border,
-                    width: 1.0,
+                    color: if matches!(status, text_editor::Status::Focused { .. }) {
+                        theme.focus_ring
+                    } else {
+                        theme.border
+                    },
+                    width: if matches!(status, text_editor::Status::Focused { .. }) {
+                        2.0
+                    } else {
+                        1.0
+                    },
                     radius: BORDER_RADIUS.into(),
                 },
                 placeholder: theme.text_muted,
