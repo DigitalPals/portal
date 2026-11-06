@@ -574,6 +574,18 @@ impl Portal {
 
     pub(super) fn close_tab(&mut self, tab_id: Uuid) {
         if self
+            .file_viewers
+            .get(tab_id)
+            .is_some_and(|viewer| viewer.is_modified || viewer.is_saving)
+        {
+            self.dialogs.open_unsaved_file(tab_id);
+            return;
+        }
+        self.close_tab_without_confirmation(tab_id);
+    }
+
+    pub(super) fn close_tab_without_confirmation(&mut self, tab_id: Uuid) {
+        if self
             .pending_connect
             .as_ref()
             .is_some_and(|pending| pending.is_for_draft(tab_id))

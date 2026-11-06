@@ -1213,6 +1213,17 @@ impl Portal {
 
         // Overlay dialog if open - host key dialog takes priority as it's connection-critical
         let with_dialog: Element<'_, Message> = match self.dialogs.active() {
+            ActiveDialog::UnsavedFile(viewer_id) => {
+                if let Some(viewer) = self.file_viewers.get(*viewer_id) {
+                    let dialog =
+                        crate::views::dialogs::unsaved_file_dialog::unsaved_file_dialog_view(
+                            viewer, theme, fonts,
+                        );
+                    stack![main_layout, dialog].into()
+                } else {
+                    main_layout
+                }
+            }
             ActiveDialog::HostKey(host_key_state) => {
                 let dialog = host_key_dialog_view(host_key_state, theme, fonts);
                 stack![main_layout, dialog].into()
