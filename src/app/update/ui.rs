@@ -11,6 +11,7 @@ use crate::message::{
     CommandAction, HostMessage, Message, ProxySessionsMessage, SessionMessage, SftpMessage,
     SidebarMenuItem, SnippetMessage, UiMessage,
 };
+use crate::views::command_palette::{available_commands, command_list_id, filter_commands};
 
 /// Handle UI state messages.
 pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
@@ -48,6 +49,7 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
             portal.ui.command_palette_open = !portal.ui.command_palette_open;
             if portal.ui.command_palette_open {
                 portal.ui.command_palette_query.clear();
+                portal.ui.command_palette_selected = 0;
                 iced::widget::operation::focus(crate::views::command_palette::command_input_id())
             } else {
                 Task::none()
@@ -59,6 +61,23 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
         }
         UiMessage::CommandPaletteChanged(query) => {
             portal.ui.command_palette_query = query;
+            portal.ui.command_palette_selected = 0;
+            iced::widget::operation::snap_to(
+                command_list_id(),
+                iced::widget::operation::RelativeOffset::START,
+            )
+        }
+        UiMessage::CommandPaletteSelect(index) => {
+            let commands = available_commands(
+                &portal.config.hosts,
+                &portal.config.snippets,
+                portal.prefs.portal_hub.sync_configured(),
+            );
+            if portal.ui.command_palette_open
+                && index < filter_commands(&commands, &portal.ui.command_palette_query).len()
+            {
+                portal.ui.command_palette_selected = index;
+            }
             Task::none()
         }
         UiMessage::CommandPaletteRun(action) => run_command_action(portal, action),
@@ -441,6 +460,26 @@ fn handle_sidebar_item_select(portal: &mut Portal, item: SidebarMenuItem) -> Tas
 mod tests {
     use super::*;
     use uuid::Uuid;
+
+    #[test]
+    fn command_palette_resets_selection_when_opened_and_filtered() {
+        let mut portal = Portal::test_state();
+        portal.ui.command_palette_selected = 5;
+        let _ = handle_ui(&mut portal, UiMessage::CommandPaletteToggle);
+        assert_eq!(portal.ui.command_palette_selected, 0);
+        assert!(portal.ui.command_palette_open);
+
+        let _ = handle_ui(&mut portal, UiMessage::CommandPaletteSelect(5));
+        assert_eq!(portal.ui.command_palette_selected, 5);
+        let _ = handle_ui(
+            &mut portal,
+            UiMessage::CommandPaletteChanged("settings".to_string()),
+        );
+        assert_eq!(portal.ui.command_palette_selected, 0);
+        // A hover from the previous list cannot select an invalid filtered row.
+        let _ = handle_ui(&mut portal, UiMessage::CommandPaletteSelect(5));
+        assert_eq!(portal.ui.command_palette_selected, 0);
+    }
 
     #[test]
     fn responsive_resize_preserves_auto_hidden_terminal_sidebar() {
