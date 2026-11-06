@@ -64,8 +64,8 @@ use crate::views::vnc_view::vnc_viewer_view;
 
 pub use self::managers::ActiveSession;
 use self::managers::{
-    ActiveDialog, DialogManager, FileViewerManager, ProxySessionsState, SessionManager,
-    SftpManager, SnippetExecutionManager, TransferManager, VncActiveSession,
+    ActiveDialog, DialogManager, FileViewerManager, ProxySessionsState, SessionBackend,
+    SessionManager, SftpManager, SnippetExecutionManager, TransferManager, VncActiveSession,
 };
 use self::view_model::HostGridCache;
 
@@ -938,6 +938,7 @@ impl Portal {
                         &session.terminal,
                         session.session_start,
                         &session.host_name,
+                        matches!(&session.backend, SessionBackend::Ssh(_)),
                         status_message,
                         session
                             .disconnected_reason
