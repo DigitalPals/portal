@@ -1,5 +1,7 @@
 # Rust
 /target/
+__pycache__/
+*.py[cod]
 
 # IDE
 .idea/

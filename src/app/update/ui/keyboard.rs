@@ -632,9 +632,9 @@ fn handle_dialog_keyboard(
             Task::none()
         }
         _ => {
-            // Other dialogs: just handle Escape
+            // Route cancellation through the owner so draft tasks are invalidated.
             if let Key::Named(keyboard::key::Named::Escape) = key {
-                portal.dialogs.close();
+                return portal.update(Message::Dialog(DialogMessage::Close));
             }
             Task::none()
         }

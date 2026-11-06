@@ -1,10 +1,11 @@
 use std::collections::HashMap;
-use std::io::{Read, Write};
-use std::net::TcpListener;
 use std::time::Duration;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpListener;
 
 use data_encoding::BASE64URL_NOPAD;
 use rand::RngCore;
+use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -51,13 +52,13 @@ pub struct HubCapabilities {
     pub vault_enrollment: bool,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Serialize, Deserialize)]
 struct StoredTokens {
     access_token: String,
     refresh_token: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct TokenResponse {
     access_token: String,
     refresh_token: String,
@@ -68,17 +69,45 @@ struct MeResponse {
     username: String,
 }
 
-pub async fn authenticate(settings: PortalHubSettings) -> Result<HubAuthSummary, String> {
+/// Tokens acquired for a draft stay in memory until the user finishes setup.
+#[derive(Debug, Clone)]
+pub struct PendingHubAuth {
+    pub summary: HubAuthSummary,
+    access_token: SecretString,
+    refresh_token: SecretString,
+}
+
+impl PendingHubAuth {
+    #[cfg(test)]
+    pub(crate) fn test_auth(hub_url: &str) -> Self {
+        Self {
+            summary: HubAuthSummary {
+                username: "owner".into(),
+                hub_url: hub_url.into(),
+            },
+            access_token: SecretString::from("test-access-secret"),
+            refresh_token: SecretString::from("test-refresh-secret"),
+        }
+    }
+
+    pub fn commit(&self) -> Result<(), String> {
+        store_tokens(
+            &self.summary.hub_url,
+            self.access_token.expose_secret(),
+            self.refresh_token.expose_secret(),
+        )
+    }
+}
+
+pub async fn authenticate(settings: PortalHubSettings) -> Result<PendingHubAuth, String> {
     let hub_url = settings.effective_web_url();
     if hub_url.is_empty() {
         return Err("Portal Hub web URL is not configured".to_string());
     }
 
     let listener = TcpListener::bind("127.0.0.1:0")
+        .await
         .map_err(|error| format!("failed to start local OAuth callback listener: {}", error))?;
-    listener
-        .set_nonblocking(false)
-        .map_err(|error| format!("failed to configure OAuth callback listener: {}", error))?;
     let callback_addr = listener
         .local_addr()
         .map_err(|error| format!("failed to read OAuth callback address: {}", error))?;
@@ -98,9 +127,12 @@ pub async fn authenticate(settings: PortalHubSettings) -> Result<HubAuthSummary,
     open::that(&authorize_url)
         .map_err(|error| format!("failed to open browser for Portal Hub sign-in: {}", error))?;
 
-    let code = tokio::task::spawn_blocking(move || wait_for_callback(listener, &state))
-        .await
-        .map_err(|error| format!("OAuth callback task failed: {}", error))??;
+    let code = tokio::time::timeout(
+        Duration::from_secs(300),
+        wait_for_callback(listener, &state),
+    )
+    .await
+    .map_err(|_| "Sign-in timed out. Select Sign in to try again.".to_string())??;
 
     let client = http::client();
     let token: TokenResponse = client
@@ -126,8 +158,6 @@ pub async fn authenticate(settings: PortalHubSettings) -> Result<HubAuthSummary,
         .await
         .map_err(|error| format!("failed to parse Portal Hub token response: {}", error))?;
 
-    store_tokens(&hub_url, &token.access_token, &token.refresh_token)?;
-
     let me: MeResponse = client
         .get(format!("{}/api/me", hub_url))
         .bearer_auth(&token.access_token)
@@ -140,9 +170,13 @@ pub async fn authenticate(settings: PortalHubSettings) -> Result<HubAuthSummary,
         .await
         .map_err(|error| format!("failed to parse Portal Hub user response: {}", error))?;
 
-    Ok(HubAuthSummary {
-        username: me.username,
-        hub_url,
+    Ok(PendingHubAuth {
+        summary: HubAuthSummary {
+            username: me.username,
+            hub_url,
+        },
+        access_token: token.access_token.into(),
+        refresh_token: token.refresh_token.into(),
     })
 }
 
@@ -248,25 +282,16 @@ fn keyring_entry(hub_url: &str) -> Result<keyring::Entry, String> {
         .map_err(|error| format!("failed to open OS keychain: {}", error))
 }
 
-fn wait_for_callback(listener: TcpListener, expected_state: &str) -> Result<String, String> {
-    listener
-        .set_nonblocking(false)
-        .map_err(|error| format!("failed to configure OAuth callback listener: {}", error))?;
-    listener
-        .set_ttl(64)
-        .map_err(|error| format!("failed to configure OAuth callback listener: {}", error))?;
-
+async fn wait_for_callback(listener: TcpListener, expected_state: &str) -> Result<String, String> {
     let (mut stream, _) = listener
         .accept()
-        .map_err(|error| format!("failed to accept OAuth callback: {}", error))?;
-    stream
-        .set_read_timeout(Some(Duration::from_secs(10)))
-        .map_err(|error| format!("failed to configure OAuth callback timeout: {}", error))?;
-
+        .await
+        .map_err(|_| "Could not receive the sign-in callback")?;
     let mut buffer = [0u8; 4096];
-    let read = stream
-        .read(&mut buffer)
-        .map_err(|error| format!("failed to read OAuth callback: {}", error))?;
+    let read = tokio::time::timeout(Duration::from_secs(10), stream.read(&mut buffer))
+        .await
+        .map_err(|_| "Sign-in callback timed out")?
+        .map_err(|_| "Could not read the sign-in callback")?;
     let request = String::from_utf8_lossy(&buffer[..read]);
     let first_line = request.lines().next().unwrap_or_default();
     let path = first_line
@@ -291,7 +316,7 @@ fn wait_for_callback(listener: TcpListener, expected_state: &str) -> Result<Stri
 
     let _ = stream.write_all(
         b"HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nConnection: close\r\n\r\n<html><body><h1>Portal Hub sign-in complete</h1><p>You can return to Portal.</p></body></html>",
-    );
+    ).await;
     Ok(code)
 }
 

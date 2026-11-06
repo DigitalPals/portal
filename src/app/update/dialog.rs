@@ -24,7 +24,17 @@ use uuid::Uuid;
 pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
     match msg {
         DialogMessage::Close => {
-            portal.dialogs.close();
+            if matches!(
+                portal.dialogs.active(),
+                crate::app::managers::ActiveDialog::PortalHubOnboarding
+            ) {
+                portal
+                    .dialogs
+                    .close_onboarding(portal.ui.portal_hub_wizard.managed.operation);
+                portal.ui.portal_hub_wizard.cancel();
+            } else {
+                portal.dialogs.close();
+            }
             Task::none()
         }
         DialogMessage::Submit => {

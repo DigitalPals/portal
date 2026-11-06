@@ -50,6 +50,7 @@ pub struct SettingsPageContext {
     pub portal_hub_sync_error: Option<String>,
     pub portal_hub_sync_status: Option<String>,
     pub portal_hub_conflict_count: usize,
+    pub portal_hub_cleanup_warnings: Vec<String>,
     /// Hosts eligible for Hub routing (SSH + agent/public-key auth).
     pub hub_eligible_hosts: usize,
     /// Eligible hosts that currently resolve to Hub routing.
@@ -977,7 +978,14 @@ fn portal_hub_sections(
                 "Portal Hub",
                 theme,
                 fonts,
-                vec![portal_hub_intro_setting(theme, fonts)],
+                std::iter::once(portal_hub_intro_setting(theme, fonts))
+                    .chain(context.portal_hub_cleanup_warnings.iter().map(|warning| {
+                        text(warning.clone())
+                            .size(fonts.label)
+                            .color(crate::views::dialogs::common::ERROR_COLOR)
+                            .into()
+                    }))
+                    .collect(),
             ),
             portal_hub_diagnostics_section(context, theme, fonts),
         ];
@@ -992,6 +1000,13 @@ fn portal_hub_sections(
                 portal_hub_account_summary(context, theme, fonts),
                 portal_hub_service_toggles(&context.portal_hub, theme, fonts),
                 portal_hub_sync_status_setting(context, theme, fonts),
+                column(context.portal_hub_cleanup_warnings.iter().map(|warning| {
+                    text(warning.clone())
+                        .size(fonts.label)
+                        .color(crate::views::dialogs::common::ERROR_COLOR)
+                        .into()
+                }))
+                .into(),
                 portal_hub_status_setting(
                     context.portal_hub_status.clone(),
                     context.portal_hub_status_error.clone(),
@@ -1177,6 +1192,8 @@ fn portal_hub_account_summary(
         .spacing(4),
         Space::new().width(Length::Fill),
         manage_button,
+        small_settings_button("Manage server", theme, fonts)
+            .on_press(Message::Ui(UiMessage::PortalHubOpenManagement)),
         logout_button,
     ]
     .spacing(8)

@@ -211,8 +211,11 @@ fn check_capabilities(
     };
 
     let mut missing = Vec::new();
-    if info.api_version < 2 {
-        missing.push(format!("API version {} is older than 2", info.api_version));
+    if info.api_version != 2 {
+        missing.push(format!(
+            "API version {} is unsupported; expected 2",
+            info.api_version
+        ));
     }
     if !info.capabilities.web_proxy {
         missing.push("web proxy support is missing".to_string());

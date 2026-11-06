@@ -1,0 +1,173 @@
+{
+  "name": "portal-hub-7bdf71ad-a270-440e-8ceb-590652b47293",
+  "networks": {
+    "default": {
+      "labels": {
+        "io.portal.hub.deployment": "7bdf71ad-a270-440e-8ceb-590652b47293",
+        "io.portal.hub.manager": "portal-hub-deploy-v1",
+        "io.portal.hub.owner": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      }
+    }
+  },
+  "services": {
+    "hub": {
+      "cap_drop": [
+        "ALL"
+      ],
+      "command": [
+        "web",
+        "--bind",
+        "127.0.0.1:8080"
+      ],
+      "depends_on": {
+        "tailscale": {
+          "condition": "service_started",
+          "restart": true
+        }
+      },
+      "environment": {
+        "HOME": "/var/lib/portal-hub",
+        "PORTAL_HUB_LOGGING_MODE": "full",
+        "PORTAL_HUB_MAX_LOG_BYTES": "16777216",
+        "PORTAL_HUB_NETWORK_MODE": "sidecar",
+        "PORTAL_HUB_PUBLIC_URL": "http://127.0.0.1:8080",
+        "PORTAL_HUB_REQUIRE_BOOTSTRAP": "true",
+        "PORTAL_HUB_RUN_DIR": "/run/portal-hub",
+        "PORTAL_HUB_STATE_DIR": "/var/lib/portal-hub"
+      },
+      "healthcheck": {
+        "interval": "15s",
+        "retries": 4,
+        "start_period": "30s",
+        "test": [
+          "CMD",
+          "curl",
+          "--noproxy",
+          "*",
+          "--fail",
+          "--silent",
+          "--max-time",
+          "5",
+          "http://127.0.0.1:8080/api/info"
+        ],
+        "timeout": "8s"
+      },
+      "image": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "init": true,
+      "labels": {
+        "io.portal.hub.deployment": "7bdf71ad-a270-440e-8ceb-590652b47293",
+        "io.portal.hub.manager": "portal-hub-deploy-v1",
+        "io.portal.hub.owner": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      },
+      "logging": {
+        "driver": "local",
+        "options": {
+          "max-file": "3",
+          "max-size": "10m"
+        }
+      },
+      "network_mode": "service:tailscale",
+      "pull_policy": "never",
+      "read_only": true,
+      "restart": "unless-stopped",
+      "security_opt": [
+        "no-new-privileges:true"
+      ],
+      "stop_grace_period": "30s",
+      "tmpfs": [
+        "/run/portal-hub:rw,nosuid,nodev,noexec,uid=10001,gid=10001,mode=0700,size=64m",
+        "/tmp:rw,nosuid,nodev,mode=1777,size=64m"
+      ],
+      "user": "10001:10001",
+      "volumes": [
+        {
+          "bind": {
+            "create_host_path": false
+          },
+          "source": "/opt/portal-hub/7bdf71ad-a270-440e-8ceb-590652b47293/hub-data",
+          "target": "/var/lib/portal-hub",
+          "type": "bind"
+        }
+      ]
+    },
+    "tailscale": {
+      "cap_add": [
+        "NET_ADMIN",
+        "NET_RAW"
+      ],
+      "cap_drop": [
+        "ALL"
+      ],
+      "devices": [
+        "/dev/net/tun:/dev/net/tun:rw"
+      ],
+      "environment": {
+        "TS_ACCEPT_DNS": "true",
+        "TS_AUTH_ONCE": "true",
+        "TS_BOOT_TIMEOUT": "30m",
+        "TS_HOSTNAME": "portal-hub",
+        "TS_SERVE_CONFIG": "/config/serve.json",
+        "TS_SOCKET": "/run/tailscale/tailscaled.sock",
+        "TS_STATE_DIR": "/var/lib/tailscale",
+        "TS_USERSPACE": "false"
+      },
+      "healthcheck": {
+        "interval": "30s",
+        "retries": 3,
+        "start_period": "30m",
+        "test": [
+          "CMD",
+          "tailscale",
+          "--socket=/run/tailscale/tailscaled.sock",
+          "status",
+          "--json"
+        ],
+        "timeout": "10s"
+      },
+      "hostname": "portal-hub",
+      "image": "tailscale/tailscale:v1.104.4@sha256:ed6480b33c6eb67c9cbd203ed42b9fb57e361986725b6856def71b7a3d9e276c",
+      "init": true,
+      "labels": {
+        "io.portal.hub.deployment": "7bdf71ad-a270-440e-8ceb-590652b47293",
+        "io.portal.hub.manager": "portal-hub-deploy-v1",
+        "io.portal.hub.owner": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+      },
+      "logging": {
+        "driver": "local",
+        "options": {
+          "max-file": "3",
+          "max-size": "10m"
+        }
+      },
+      "pull_policy": "never",
+      "restart": "unless-stopped",
+      "security_opt": [
+        "no-new-privileges:true"
+      ],
+      "stop_grace_period": "30s",
+      "tmpfs": [
+        "/tmp:rw,nosuid,nodev,noexec,mode=1777,size=64m",
+        "/run:rw,nosuid,nodev,noexec,mode=0755,size=16m"
+      ],
+      "volumes": [
+        {
+          "bind": {
+            "create_host_path": false
+          },
+          "source": "/opt/portal-hub/7bdf71ad-a270-440e-8ceb-590652b47293/tailscale-state",
+          "target": "/var/lib/tailscale",
+          "type": "bind"
+        },
+        {
+          "bind": {
+            "create_host_path": false
+          },
+          "read_only": true,
+          "source": "/opt/portal-hub/7bdf71ad-a270-440e-8ceb-590652b47293/serve",
+          "target": "/config",
+          "type": "bind"
+        }
+      ]
+    }
+  }
+}

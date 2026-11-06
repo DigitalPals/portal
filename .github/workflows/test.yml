@@ -79,6 +79,9 @@ jobs:
         env:
           RUST_LOG: debug
 
+      - name: Test Hub management SSH, SFTP and sudo
+        run: python3 scripts/test-hub-ssh.py
+
       - name: Collect Docker logs on failure
         if: failure()
         run: |
@@ -87,7 +90,7 @@ jobs:
 
       - name: Upload Docker logs
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: docker-logs
           path: tests/docker/docker-logs.txt
@@ -105,12 +108,6 @@ jobs:
       - name: Checkout Portal
         uses: actions/checkout@v6
 
-      - name: Checkout Portal Hub contracts
-        uses: actions/checkout@v6
-        with:
-          repository: DigitalPals/portal-hub
-          path: portal-hub
-
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -127,7 +124,73 @@ jobs:
       - name: Run contract-backed unit tests
         run: cargo test --lib
         env:
-          PORTAL_HUB_CONTRACT_DIR: ${{ github.workspace }}/portal-hub/contracts/portal-hub/v2
+          PORTAL_HUB_CONTRACT_DIR: ${{ github.workspace }}/hub/contracts/portal-hub/v2
+
+  hub-tests:
+    name: Hub Runtime (${{ matrix.arch }})
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            arch: amd64
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          components: clippy
+      - name: Install Hub test prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y openssh-server openssh-client dtach util-linux pkg-config
+          sudo mkdir -p /run/sshd
+      - uses: Swatinem/rust-cache@v2
+      - name: Test Hub and compatibility fixtures
+        run: cargo test --locked -p portal-hub
+      - name: Check Hub
+        run: cargo clippy --locked -p portal-hub --all-targets -- -D warnings
+      - name: Test deployment manager
+        run: python3 -m unittest discover -s deploy/hub/tests -v
+      - name: Build Hub container
+        run: docker build -f deploy/hub/Dockerfile -t portal-hub:ci .
+      - name: Validate actual container bootstrap and restart
+        run: python3 scripts/test-hub-container.py portal-hub:ci
+      - name: Validate pinned Tailscale networking
+        run: python3 scripts/test-hub-sidecar.py portal-hub:ci
+      - name: Validate real Docker image import
+        run: |
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("hub/Cargo.toml", "rb"))["package"]["version"])')
+          docker tag portal-hub:ci "localhost/portal-hub:$version"
+          python3 scripts/test-hub-image-import.py "localhost/portal-hub:$version"
+      - name: Validate real bind-mount guards
+        run: sudo --preserve-env=GITHUB_ACTIONS python3 scripts/test-hub-mounts.py
+
+  android-contracts:
+    name: Android Compatibility
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Checkout Android client
+        uses: actions/checkout@v6
+        with:
+          repository: DigitalPals/portal-android
+          path: portal-android
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@v3
+      - name: Check Android contract and pairing compatibility
+        working-directory: portal-android
+        env:
+          PORTAL_HUB_CONTRACT_DIR: ${{ github.workspace }}/hub/contracts/portal-hub/v2
+        run: |
+          ./gradlew testOssDebugUnitTest \
+            --tests org.connectbot.portal.PortalHubContractTest \
+            --tests org.connectbot.portal.PortalHubRepositoryTest
 
   clippy:
     name: Clippy
@@ -165,7 +228,7 @@ jobs:
           components: rustfmt
 
       - name: Check formatting
-        run: cargo fmt -- --check
+        run: cargo fmt --all -- --check
 
   security-audit:
     name: Security Audit
