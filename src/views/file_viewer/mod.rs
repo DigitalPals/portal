@@ -238,9 +238,17 @@ fn text_editor_view(
         })
         .height(Fill)
         .padding(16)
-        .style(move |_theme, _status| text_editor::Style {
+        .style(move |_theme, status| text_editor::Style {
             background: theme.background.into(),
-            border: iced::Border::default(),
+            border: iced::Border {
+                color: theme.focus_ring,
+                width: if matches!(status, text_editor::Status::Focused { .. }) {
+                    2.0
+                } else {
+                    0.0
+                },
+                ..Default::default()
+            },
             placeholder: theme.text_muted,
             value: theme.text_primary,
             selection: theme.selected,
