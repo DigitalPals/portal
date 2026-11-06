@@ -64,3 +64,61 @@ impl std::fmt::Debug for AuthPromptResponse {
         }
     }
 }
+
+/// Reuse the existing masked credential dialog for non-terminal SSH work.
+pub async fn request_secret(
+    host: &crate::config::Host,
+    events: &tokio::sync::mpsc::Sender<super::SshEvent>,
+    title: &str,
+    prompt: &str,
+) -> Result<SecretString, crate::error::SshError> {
+    let (responder, response) = oneshot::channel();
+    let request = AuthPromptRequest {
+        host: host.hostname.clone(),
+        port: host.port,
+        username: host.effective_username(),
+        name: title.into(),
+        instructions: "Used for this connection only. It is never saved.".into(),
+        prompts: vec![AuthPrompt {
+            prompt: prompt.into(),
+            echo: false,
+        }],
+        responder,
+    };
+    let cancelled = || {
+        crate::error::SshError::AuthenticationFailed(
+            "Credential request cancelled or timed out".into(),
+        )
+    };
+    events
+        .send(super::SshEvent::AuthPrompt(Box::new(request)))
+        .await
+        .map_err(|_| cancelled())?;
+    match tokio::time::timeout(std::time::Duration::from_secs(120), response).await {
+        Ok(Ok(AuthPromptResponse::Submit(mut values))) if values.len() == 1 => Ok(values.remove(0)),
+        _ => Err(cancelled()),
+    }
+}
+
+pub async fn resolve_interactive(
+    host: &crate::config::Host,
+    events: &tokio::sync::mpsc::Sender<super::SshEvent>,
+) -> Result<super::auth::ResolvedAuth, crate::error::SshError> {
+    use super::auth::ResolvedAuth;
+    use crate::config::AuthMethod;
+    use crate::error::SshError;
+    let password = if matches!(host.auth, AuthMethod::Password) {
+        Some(request_secret(host, events, "SSH sign-in", "SSH password").await?)
+    } else {
+        None
+    };
+    match ResolvedAuth::resolve(&host.auth, password, None).await {
+        Err(SshError::KeyFilePassphraseRequired(_))
+        | Err(SshError::KeyFilePassphraseInvalid(_)) => {
+            let passphrase =
+                request_secret(host, events, "Unlock SSH key", "Key passphrase").await?;
+            ResolvedAuth::resolve(&host.auth, None, Some(passphrase)).await
+        }
+        result => result,
+    }
+}

@@ -26,7 +26,7 @@ use crate::ssh::host_key_verification::{
     HostKeyInfo, HostKeyVerificationRequest, HostKeyVerificationResponse,
 };
 
-const MIN_SUPPORTED_WEB_PROXY_API_VERSION: u16 = 2;
+const SUPPORTED_WEB_PROXY_API_VERSION: u16 = 2;
 // Keep the dashboard cheap: previews are only thumbnails. Full-ish replay is
 // requested when actually resuming a session.
 const SESSION_LIST_PREVIEW_BYTES: u64 = 16 * 1024;
@@ -779,10 +779,10 @@ pub async fn list_active_sessions(
             api_version,
             sessions,
         } => {
-            if api_version < MIN_SUPPORTED_WEB_PROXY_API_VERSION {
+            if api_version != SUPPORTED_WEB_PROXY_API_VERSION {
                 return Err(format!(
-                    "Portal Hub session API version {} is too old; Portal requires {}",
-                    api_version, MIN_SUPPORTED_WEB_PROXY_API_VERSION
+                    "Portal Hub session API version {} is unsupported; Portal supports {}",
+                    api_version, SUPPORTED_WEB_PROXY_API_VERSION
                 ));
             }
             sessions
@@ -870,10 +870,10 @@ pub async fn check_proxy_status(settings: &PortalHubSettings) -> Result<ProxySta
         "failed to parse Portal Hub info",
     )
     .await?;
-    if raw.api_version < MIN_SUPPORTED_WEB_PROXY_API_VERSION {
+    if raw.api_version != SUPPORTED_WEB_PROXY_API_VERSION {
         return Err(format!(
-            "Portal Hub API version {} is too old; Portal requires {}",
-            raw.api_version, MIN_SUPPORTED_WEB_PROXY_API_VERSION
+            "Portal Hub API version {} is unsupported; Portal supports {}",
+            raw.api_version, SUPPORTED_WEB_PROXY_API_VERSION
         ));
     }
     if !raw.capabilities.web_proxy {

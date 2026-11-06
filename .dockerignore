@@ -1,0 +1,10 @@
+.git
+.direnv
+target
+result
+result-*
+**/__pycache__
+**/*.pyc
+.env
+.env.*
+*.log

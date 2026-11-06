@@ -93,10 +93,62 @@ pub struct LocalSyncProfile {
 
 #[derive(Debug, Clone)]
 pub struct SyncConflict {
+    /// Origin of both payloads. Never resolve them against another Hub.
+    pub hub_url: String,
     pub service: String,
     pub local: Value,
     pub hub: Value,
     pub expected_revision: String,
+}
+
+/// Identity and consent captured when an asynchronous sync operation starts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SyncContext {
+    pub request: uuid::Uuid,
+    pub auth_generation: uuid::Uuid,
+    pub hub_url: String,
+    services: Vec<&'static str>,
+}
+
+impl SyncContext {
+    pub fn new(settings: &PortalHubSettings, auth_generation: uuid::Uuid) -> Self {
+        Self {
+            request: uuid::Uuid::new_v4(),
+            auth_generation,
+            hub_url: settings.effective_web_url(),
+            services: enabled_service_names(settings),
+        }
+    }
+
+    pub fn matches(&self, settings: &PortalHubSettings, auth_generation: uuid::Uuid) -> bool {
+        self.auth_generation == auth_generation
+            && self.hub_url == settings.effective_web_url()
+            && self.services == enabled_service_names(settings)
+    }
+}
+
+/// Validate the whole batch before reading local state or sending any payload.
+pub fn validate_conflicts(
+    settings: &PortalHubSettings,
+    conflicts: &[SyncConflict],
+) -> Result<(), String> {
+    let endpoint = settings.effective_web_url();
+    let enabled = enabled_service_names(settings);
+    if endpoint.is_empty() || conflicts.is_empty() {
+        return Err("No current Portal Hub conflicts to resolve".into());
+    }
+    for conflict in conflicts {
+        if conflict.hub_url != endpoint {
+            return Err(
+                "These conflicts belong to another Hub. Sync again to review current conflicts."
+                    .into(),
+            );
+        }
+        if !enabled.contains(&conflict.service.as_str()) {
+            return Err("Sync consent changed. Sync again to review enabled services.".into());
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -254,9 +306,9 @@ pub async fn http_sync_put(
 }
 
 fn validate_legacy_sync_response(response: &HubSyncResponse) -> Result<(), String> {
-    if response.api_version < 1 {
+    if !matches!(response.api_version, 1 | 2) {
         return Err(format!(
-            "Portal Hub sync API version {} is too old; Portal requires 1",
+            "Portal Hub sync API version {} is unsupported; Portal supports 1 and 2",
             response.api_version
         ));
     }
@@ -355,6 +407,7 @@ pub async fn run_bidirectional_sync(
                     );
                 } else {
                     conflicts.push(SyncConflict {
+                        hub_url: hub_url.clone(),
                         service: service.to_string(),
                         local: local_payload,
                         hub: hub_service.payload,
@@ -450,6 +503,10 @@ pub async fn resolve_sync_conflicts(
     profile: LocalSyncProfile,
     conflicts: Vec<(SyncConflict, ConflictChoice)>,
 ) -> Result<String, String> {
+    validate_conflicts(
+        &settings,
+        &conflicts.iter().map(|(c, _)| c.clone()).collect::<Vec<_>>(),
+    )?;
     let hub_url = web_url(&settings)?;
     let mut local_state = load_local_sync_state(&hub_url)?;
     let mut updates = HashMap::new();
@@ -533,7 +590,7 @@ pub async fn clear_remote_service(
 
 pub async fn http_sync_v2_get(settings: &PortalHubSettings) -> Result<HubSyncV2Response, String> {
     let hub_url = web_url(settings)?;
-    http::authenticated_json(
+    let response: HubSyncV2Response = http::authenticated_json(
         &hub_url,
         true,
         |client, token| {
@@ -545,7 +602,9 @@ pub async fn http_sync_v2_get(settings: &PortalHubSettings) -> Result<HubSyncV2R
         "Portal Hub sync get failed",
         "failed to parse Portal Hub sync state",
     )
-    .await
+    .await?;
+    validate_sync_v2_version(response.api_version)?;
+    Ok(response)
 }
 
 pub fn sync_revision_event_stream(
@@ -626,7 +685,7 @@ async fn http_sync_v2_put_values(
 ) -> Result<HubSyncV2Response, String> {
     let hub_url = web_url(settings)?;
     let body = json!({ "services": services });
-    http::authenticated_json(
+    let response: HubSyncV2Response = http::authenticated_json(
         &hub_url,
         false,
         |client, token| {
@@ -639,7 +698,9 @@ async fn http_sync_v2_put_values(
         "Portal Hub sync update failed",
         "failed to parse Portal Hub sync response",
     )
-    .await
+    .await?;
+    validate_sync_v2_version(response.api_version)?;
+    Ok(response)
 }
 fn enabled_service_payloads(
     settings: &PortalHubSettings,
@@ -917,9 +978,19 @@ fn parse_sync_revision_event(raw: &str) -> Result<Option<HubSyncRevisionEvent>, 
         return Ok(None);
     }
 
-    serde_json::from_str(&data)
-        .map(Some)
-        .map_err(|error| format!("failed to parse Portal Hub sync event: {}", error))
+    let event: HubSyncRevisionEvent = serde_json::from_str(&data)
+        .map_err(|error| format!("failed to parse Portal Hub sync event: {}", error))?;
+    validate_sync_v2_version(event.api_version)?;
+    Ok(Some(event))
+}
+
+fn validate_sync_v2_version(version: u16) -> Result<(), String> {
+    if version != 2 {
+        return Err(format!(
+            "Portal Hub sync API version {version} is unsupported; Portal supports 2"
+        ));
+    }
+    Ok(())
 }
 
 fn next_sse_event_boundary(buffer: &str) -> Option<(usize, usize)> {
@@ -954,6 +1025,73 @@ mod tests {
     use super::*;
     use crate::config::hosts::HubRouting;
     use crate::config::{AuthMethod, Host, Protocol};
+
+    #[tokio::test]
+    async fn conflict_resolution_rejects_cross_hub_and_disabled_payloads_before_io() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let mut settings = PortalHubSettings::default();
+        settings.apply_discovered_web_url(&format!("http://{}", listener.local_addr().unwrap()));
+        let profile = LocalSyncProfile {
+            hosts: Default::default(),
+            settings: Default::default(),
+            snippets: Default::default(),
+            vault: Default::default(),
+        };
+        let conflict = SyncConflict {
+            hub_url: "https://hub-a.example".into(),
+            service: HOSTS.into(),
+            local: json!({"private":"A-only data"}),
+            hub: json!({"private":"A remote data"}),
+            expected_revision: "a1".into(),
+        };
+        for choice in [ConflictChoice::Local, ConflictChoice::Hub] {
+            let error = resolve_sync_conflicts(
+                settings.clone(),
+                profile.clone(),
+                vec![(conflict.clone(), choice)],
+            )
+            .await
+            .unwrap_err();
+            assert!(error.contains("another Hub"), "{error}");
+            assert!(
+                matches!(listener.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock)
+            );
+        }
+        let enabled = SyncConflict {
+            hub_url: settings.effective_web_url(),
+            ..conflict
+        };
+        // A mixed batch must fail completely, without uploading its enabled part.
+        for service in [HOSTS, SETTINGS, SNIPPETS, VAULT] {
+            let disabled = SyncConflict {
+                service: service.into(),
+                ..enabled.clone()
+            };
+            let mut consent = settings.clone();
+            match service {
+                HOSTS => consent.hosts_sync_enabled = false,
+                SETTINGS => consent.settings_sync_enabled = false,
+                SNIPPETS => consent.snippets_sync_enabled = false,
+                VAULT => consent.key_vault_enabled = false,
+                _ => unreachable!(),
+            }
+            let error = resolve_sync_conflicts(
+                consent,
+                profile.clone(),
+                vec![
+                    (enabled.clone(), ConflictChoice::Local),
+                    (disabled, ConflictChoice::Hub),
+                ],
+            )
+            .await
+            .unwrap_err();
+            assert!(error.contains("consent changed"), "{error}");
+            assert!(
+                matches!(listener.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock)
+            );
+        }
+    }
 
     #[test]
     fn sync_request_contains_profile_and_vault_sections() {
@@ -1165,6 +1303,32 @@ mod tests {
         assert_eq!(
             next_sse_event_boundary("event: sync\r\n\r\n"),
             Some((11, 4))
+        );
+    }
+    #[test]
+    fn sync_version_validation_keeps_legacy_support_but_rejects_future_versions() {
+        for version in [1, 2] {
+            let response = HubSyncResponse {
+                api_version: version,
+                revision: String::new(),
+                profile: Value::Null,
+                vault: Value::Null,
+            };
+            assert!(validate_legacy_sync_response(&response).is_ok());
+        }
+        for version in [0, 3, u16::MAX] {
+            let response = HubSyncResponse {
+                api_version: version,
+                revision: String::new(),
+                profile: Value::Null,
+                vault: Value::Null,
+            };
+            assert!(validate_legacy_sync_response(&response).is_err());
+            assert!(validate_sync_v2_version(version).is_err());
+        }
+        assert!(
+            parse_sync_revision_event("event: sync\ndata: {\"api_version\":3,\"services\":{}}")
+                .is_err()
         );
     }
 }

@@ -198,7 +198,7 @@ The VNC widget uses a custom wgpu shader (`src/vnc/widget.rs`) with a `FrameBuff
 
 ## Release Process
 
-Releases are triggered by pushing a `v*` tag whose version matches `Cargo.toml` (there is no separate release branch). Follow the preflight checklist in `AGENTS.md` before tagging (fmt, audit, `nix build` when deps changed, green CI on main).
+Releases are triggered by pushing a `v*` tag whose version matches `Cargo.toml` (there is no separate release branch). Follow the preflight checklist in `AGENTS.md` before tagging (fmt, audit, `./run.sh build` when deps changed, green CI on main). The Nix flake provides development tools only; NixOS distribution will use Flatpak in the future.
 
 1. **Update version** in `Cargo.toml`:
    ```toml
@@ -221,7 +221,6 @@ Releases are triggered by pushing a `v*` tag whose version matches `Cargo.toml` 
 4. **Automated CI/CD** (`.github/workflows/release.yml`) will:
    - Build for Linux (x86_64, arm64)
    - Create DEB, RPM, tarball, and x86_64 AppImage packages
-   - Push Nix build to Cachix
    - Add `SHA256SUMS` for release asset verification
    - Create GitHub release with tag `vX.Y.Z`
 

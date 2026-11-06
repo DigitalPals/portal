@@ -220,54 +220,11 @@ Example:
 RUST_LOG=portal=info PORTAL_LOG_DIR=/var/log/portal ./portal
 ```
 
-### NixOS / Nix Flakes
+### NixOS
 
-Portal is available as a Nix flake with binaries cached on [Cachix](https://app.cachix.org/cache/digitalpals).
-
-**Run directly:**
-
-```bash
-nix run github:DigitalPals/portal/vX.Y.Z
-```
-
-**Install in NixOS configuration** (`flake.nix`):
-
-```nix
-{
-  inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    # Use a release tag for stable builds with Cachix cache hits.
-    # Don't use inputs.nixpkgs.follows for portal - it breaks cachix
-    portal.url = "github:DigitalPals/portal/vX.Y.Z";
-  };
-
-  outputs = { nixpkgs, portal, ... }: {
-    nixosConfigurations.yourhostname = nixpkgs.lib.nixosSystem {
-      system = "x86_64-linux";
-      modules = [
-        ({ pkgs, ... }: {
-          # Enable cachix for pre-built binaries
-          nix.settings.substituters = [ "https://digitalpals.cachix.org" ];
-          nix.settings.trusted-public-keys = [ "digitalpals.cachix.org-1:YWuWBw08EbEeTsIccpPfRTaqksfo4QtAVQaTRljYFm8=" ];
-
-          environment.systemPackages = [ portal.packages.${pkgs.system}.default ];
-        })
-      ];
-    };
-  };
-}
-```
-
-> **Note:** Do not add `inputs.nixpkgs.follows = "nixpkgs"` to the portal input. This changes the derivation hash and prevents cachix from providing pre-built binaries.
-
-> **Note:** Replace `vX.Y.Z` with a published release tag. The `main` branch may contain unreleased development changes.
-
-**Build from source:**
-
-```bash
-nix build
-./result/bin/portal
-```
+Flatpak is the planned distribution format for NixOS; it is not available yet.
+Nix package builds and Cachix releases are no longer supported. The repository's
+flake provides development tools through `nix develop` only.
 
 ## Quick Start
 
@@ -279,19 +236,66 @@ That's it. You're in.
 
 ## Portal Hub Beta
 
-Portal can route SSH terminal sessions through [Portal Hub](https://github.com/DigitalPals/portal-hub) so remote shells survive a Portal crash, laptop sleep, or network drop. Portal Hub can also store synced hosts, settings, snippets, and encrypted private-key vault items. The hub is intended to run on a small Linux host or LXC reachable only over Tailscale.
+Portal Hub now lives in this repository under [`hub/`](hub/), alongside the
+desktop client. It remains a separate headless service for persistent SSH
+sessions, synced hosts/settings/snippets, and encrypted vault storage.
+
+Portal can install and manage Hub on an SSH server using Docker Compose and a
+dedicated Tailscale container. The Hub receives its own persistent tailnet
+identity and private HTTPS address; the Docker host does not need to join
+Tailscale. Desktop and Android clients still need their own Tailscale connection.
 
 To use it:
 
-1. Deploy Portal Hub and restrict access with Tailscale ACLs.
-2. Start the Portal Hub web server and create the first owner account.
-3. In Portal settings, choose **Set up Portal Hub** and enter its URL or address. The port is optional; include `:port` only when the Hub uses a custom web port.
-4. Check the connection, then use **Sign in** to authenticate through the browser.
-5. Choose the profile-sync, Vault, and default host-routing options for this device.
-6. Review which SSH Agent or Public Key hosts should use persistent Hub sessions.
-7. Open the Sessions view to see active proxy sessions, terminal thumbnails, and resume an existing session.
+1. Add the server as an SSH host with an independent local key, SSH agent, or
+   password. Administrative access through root or sudo is needed for deployment.
+2. In Settings → Portal Hub, start setup and choose to install on a server.
+   Check the server, review the changes, and approve Docker installation if needed.
+3. Install Hub, open the Tailscale sign-in page, and refresh status after login
+   or device approval. No Tailscale API key is needed.
+4. Create the Hub owner and enable private HTTPS, completing any Tailscale HTTPS
+   consent in the browser. Unclaimed managed Hubs cannot be registered remotely.
+5. Verify the connection and sign in, then choose profile sync, Vault and routing.
+   Settings and tokens stay in a draft until you finish; cancellation preserves
+   the current working Hub configuration.
+6. Open Sessions to resume terminals. Reopen Hub setup to resume a saved
+   deployment or manage updates, private backups, diagnostics and removal.
+
+Choose the existing-Hub option to connect to a manually operated service. Existing
+API v2 and Android pairing remain supported.
+
+Managed deployments require a Linux amd64/arm64 host with TUN access, Python 3.9+
+and Docker Compose 2.20+. Docker inside an LXC also requires suitable nesting/TUN
+permissions from its host. Networking policy must allow clients to reach Hub and
+Hub to reach the selected SSH targets. This deployment does not publish public
+Hub ports or enable Tailscale Funnel.
+
+The integrated `0.5.0-beta.17` image must be published before the default registry
+install is available. For a local or unpublished build, select a Docker image tar
+in setup. See [building and exporting an image](deploy/hub/README.md#images-and-building).
 
 Typing `exit` in the remote shell closes the real session. Closing the Portal tab or losing connectivity only detaches Portal from the proxy session.
+
+Container replacement terminates live sessions. Updates and consistent backups
+check active sessions and require explicit interruption consent. Uninstall keeps
+Hub data and Tailscale identity unless separately requested through the management
+protocol. Keep direct SSH access to the Docker host for recovery.
+
+Build/test the integrated service from this repository root:
+
+```sh
+cargo build -p portal-hub
+cargo test -p portal-hub
+python3 -m unittest discover -s deploy/hub/tests -v
+python3 scripts/test-hub-container.py portal-hub:dev --build
+```
+
+The container test uses a disposable resource lease on managed development hosts.
+It validates real image bootstrap and restart without joining a tailnet. Hub
+source provenance is recorded in [hub/PROVENANCE.md](hub/PROVENANCE.md).
+Desktop `v*` releases and Hub `hub-v*` image releases are independent; both build
+from the same workspace and lockfile. Details: [deployment protocol](deploy/hub/README.md)
+and [runtime state and bootstrap](hub/docs/integrated-runtime.md).
 
 For SSH hosts that authenticate with a private key (key file or vault key),
 Portal sends the decrypted key to Portal Hub over TLS when the proxied session

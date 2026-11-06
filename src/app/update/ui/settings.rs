@@ -6,8 +6,8 @@ use crate::config::settings::{
     SettingsConfig, TERMINAL_SCROLL_SPEED_MAX, TERMINAL_SCROLL_SPEED_MIN,
 };
 use crate::hub::sync::{
-    ConflictChoice, LocalSyncProfile, PortalHubSyncService, SyncRunActivity, SyncRunOrigin,
-    SyncRunResult,
+    ConflictChoice, LocalSyncProfile, PortalHubSyncService, SyncContext, SyncRunActivity,
+    SyncRunOrigin, SyncRunResult,
 };
 use crate::hub::vault::HubVaultConfig;
 use crate::message::{Message, UiMessage, VaultMessage};
@@ -187,21 +187,25 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
         }
         UiMessage::PortalHubHostsSyncChanged(enabled) => {
             portal.prefs.portal_hub.hosts_sync_enabled = enabled;
+            invalidate_hub_sync(portal);
             save_settings_and_queue_sync(portal);
             return portal_hub_sync_task(portal, SyncRunOrigin::Manual, true);
         }
         UiMessage::PortalHubSettingsSyncChanged(enabled) => {
             portal.prefs.portal_hub.settings_sync_enabled = enabled;
+            invalidate_hub_sync(portal);
             save_settings_and_queue_sync(portal);
             return portal_hub_sync_task(portal, SyncRunOrigin::Manual, true);
         }
         UiMessage::PortalHubSnippetsSyncChanged(enabled) => {
             portal.prefs.portal_hub.snippets_sync_enabled = enabled;
+            invalidate_hub_sync(portal);
             save_settings_and_queue_sync(portal);
             return portal_hub_sync_task(portal, SyncRunOrigin::Manual, true);
         }
         UiMessage::PortalHubKeyVaultChanged(enabled) => {
             portal.prefs.portal_hub.key_vault_enabled = enabled;
+            invalidate_hub_sync(portal);
             save_settings_and_queue_sync(portal);
             return portal_hub_sync_task(portal, SyncRunOrigin::Manual, true);
         }
@@ -210,6 +214,7 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
         }
         UiMessage::PortalHubDisableSyncKeepData(service) => {
             set_portal_hub_sync_service(&mut portal.prefs.portal_hub, service, false);
+            invalidate_hub_sync(portal);
             save_settings_and_queue_sync(portal);
             portal.dialogs.close();
             portal.toast_manager.push(Toast::success(format!(
@@ -219,19 +224,29 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
         }
         UiMessage::PortalHubDisableSyncDeleteData(service) => {
             set_portal_hub_sync_service(&mut portal.prefs.portal_hub, service, false);
+            invalidate_hub_sync(portal);
             save_settings_and_queue_sync(portal);
             portal.dialogs.close();
             portal.ui.portal_hub_sync_loading = true;
             portal.ui.portal_hub_sync_error = None;
             let settings = portal.prefs.portal_hub.clone();
+            let context = begin_hub_sync(portal);
             return Task::perform(
                 async move { crate::hub::sync::clear_remote_service(&settings, service).await },
                 move |result| {
-                    Message::Ui(UiMessage::PortalHubDisableSyncDeleteDone(service, result))
+                    Message::Ui(UiMessage::PortalHubDisableSyncDeleteDone(
+                        context.clone(),
+                        service,
+                        result,
+                    ))
                 },
             );
         }
-        UiMessage::PortalHubDisableSyncDeleteDone(service, result) => {
+        UiMessage::PortalHubDisableSyncDeleteDone(context, _service, result) => {
+            if !accepts_hub_sync(portal, &context) {
+                return Task::none();
+            }
+            portal.ui.portal_hub_sync_context = None;
             portal.ui.portal_hub_sync_loading = false;
             match result {
                 Ok(message) => {
@@ -240,8 +255,6 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
                     portal.toast_manager.push(Toast::success(message));
                 }
                 Err(error) => {
-                    set_portal_hub_sync_service(&mut portal.prefs.portal_hub, service, true);
-                    save_settings_and_queue_sync(portal);
                     portal.ui.portal_hub_sync_error = Some(error.clone());
                     portal.toast_manager.push(Toast::error(format!(
                         "Portal Hub data deletion failed: {}",
@@ -258,6 +271,25 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
                     crate::views::dialogs::portal_hub_dialogs::PortalHubOnboardingField::WebUrl,
                 ),
             );
+        }
+        UiMessage::PortalHubOpenManagement => {
+            init_portal_hub_wizard(portal);
+            let current = portal.prefs.portal_hub.effective_web_url();
+            let wizard = &mut portal.ui.portal_hub_wizard;
+            wizard.managed.choice = crate::hub::deployment::SetupChoice::Server;
+            if let Some(record) = wizard
+                .managed
+                .records
+                .iter()
+                .find(|record| record.public_url.as_deref() == Some(current.as_str()))
+                .cloned()
+            {
+                wizard.managed.host_id = Some(record.ssh_host_id);
+                wizard.managed.hostname = record.hostname.clone();
+                wizard.managed.image = record.hub_image.clone();
+                wizard.managed.selected = Some(record);
+            }
+            portal.dialogs.open_portal_hub_onboarding();
         }
         UiMessage::PortalHubOpenDefaultsReview => {
             init_portal_hub_wizard(portal);
@@ -290,13 +322,10 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
             return apply_portal_hub_wizard(portal);
         }
         UiMessage::PortalHubWizardSkip => {
-            portal.prefs.portal_hub.default_for_new_ssh_hosts = false;
-            save_settings_and_queue_sync(portal);
-            portal.ui.hub_prompt_dismissed = false;
-            portal.dialogs.close();
-            portal.toast_manager.push(Toast::success(
-                "Signed in to Portal Hub — hosts still connect directly",
-            ));
+            portal
+                .dialogs
+                .close_onboarding(portal.ui.portal_hub_wizard.managed.operation);
+            portal.ui.portal_hub_wizard.cancel();
         }
         UiMessage::PortalHubOpenGithub => {
             if let Err(error) = open::that("https://github.com/DigitalPals/portal-hub") {
@@ -336,51 +365,78 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
             clear_portal_hub_status(portal);
             save_settings_and_queue_sync(portal);
         }
+        UiMessage::PortalHubManagement(message) => {
+            return super::hub_management::handle(portal, message);
+        }
         UiMessage::PortalHubWebUrlChanged(url) => {
-            if portal.ui.portal_hub_status_loading || portal.ui.portal_hub_auth_loading {
-                return Task::none();
+            if portal.ui.portal_hub_wizard.active {
+                portal.ui.portal_hub_wizard.edit_endpoint(url);
             }
-            portal.ui.portal_hub_wizard.hub_url_input = url;
-            portal.ui.portal_hub_wizard.connection_dirty = true;
-            portal.ui.portal_hub_auth_error = None;
-            clear_portal_hub_status(portal);
         }
         UiMessage::PortalHubCheckStatus => {
-            if let Err(error) = commit_portal_hub_wizard_connection(portal) {
-                portal.ui.portal_hub_status = None;
-                portal.ui.portal_hub_status_error = Some(error);
-                portal.ui.portal_hub_status_loading = false;
-                return Task::none();
+            let wizard = &mut portal.ui.portal_hub_wizard;
+            if wizard.active {
+                if wizard.status_loading || wizard.auth_loading {
+                    return Task::none();
+                }
+                let settings = match wizard.checked_settings() {
+                    Ok(settings) => settings,
+                    Err(error) => {
+                        wizard.status_error = Some(error);
+                        return Task::none();
+                    }
+                };
+                wizard.status_loading = true;
+                wizard.status_error = None;
+                let generation = wizard.generation;
+                return Task::perform(
+                    async move { crate::proxy::check_proxy_status(&settings).await },
+                    move |result| {
+                        Message::Ui(UiMessage::PortalHubDraftStatusLoaded(generation, result))
+                    },
+                );
             }
-
-            portal.ui.portal_hub_status = None;
-            portal.ui.portal_hub_status_error = None;
             portal.ui.portal_hub_status_loading = true;
+            let request = uuid::Uuid::new_v4();
+            portal.ui.portal_hub_status_request = request;
             let settings = portal.prefs.portal_hub.clone();
+            let endpoint = settings.effective_web_url();
             return Task::perform(
                 async move { crate::proxy::check_proxy_status(&settings).await },
-                |result| Message::Ui(UiMessage::PortalHubStatusLoaded(result)),
+                move |result| {
+                    Message::Ui(UiMessage::PortalHubStatusLoaded(
+                        request,
+                        endpoint.clone(),
+                        result,
+                    ))
+                },
             );
         }
-        UiMessage::PortalHubStatusLoaded(result) => {
-            portal.ui.portal_hub_status_loading = false;
-            if portal.ui.portal_hub_wizard.connection_dirty {
+        UiMessage::PortalHubDraftStatusLoaded(generation, result) => {
+            let wizard = &mut portal.ui.portal_hub_wizard;
+            if !wizard.accepts(generation) {
                 return Task::none();
             }
+            if let Ok(status) = &result {
+                apply_portal_hub_discovery(&mut wizard.draft, status);
+            }
+            wizard.receive_status(generation, result);
+        }
+        UiMessage::PortalHubStatusLoaded(request, endpoint, result) => {
+            if portal.ui.portal_hub_status_request != request
+                || portal.prefs.portal_hub.effective_web_url() != endpoint
+            {
+                return Task::none();
+            }
+            portal.ui.portal_hub_status_loading = false;
             match result {
                 Ok(status) => {
                     apply_portal_hub_discovery(&mut portal.prefs.portal_hub, &status);
-                    portal.ui.portal_hub_wizard.hub_url_input =
-                        portal.prefs.portal_hub.web_url_input_value();
-                    save_settings_and_queue_sync(portal);
+                    portal.save_settings();
                     portal.ui.portal_hub_status = Some(status);
                     portal.ui.portal_hub_status_error = None;
-                    portal
-                        .toast_manager
-                        .push(Toast::success("Portal Hub settings detected"));
                 }
                 Err(error) => {
-                    portal.ui.portal_hub_status = None;
                     portal.ui.portal_hub_status_error = Some(error);
                 }
             }
@@ -409,79 +465,160 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
             portal.ui.portal_hub_diagnostics = Some(report);
         }
         UiMessage::PortalHubAuthenticate => {
-            if let Err(error) = commit_portal_hub_wizard_connection(portal) {
-                portal.ui.portal_hub_auth_user = None;
-                portal.ui.portal_hub_auth_error = Some(error);
-                portal.ui.portal_hub_auth_loading = false;
+            let endpoint = if portal.ui.portal_hub_wizard.active {
+                portal.ui.portal_hub_wizard.draft.effective_web_url()
+            } else {
+                portal.prefs.portal_hub.effective_web_url()
+            };
+            if portal
+                .ui
+                .portal_hub_logout
+                .as_ref()
+                .is_some_and(|(_, url)| *url == endpoint)
+            {
+                portal.ui.portal_hub_wizard.auth_error =
+                    Some("Wait for sign out to finish, then sign in again.".into());
                 return Task::none();
             }
-
-            portal.ui.portal_hub_auth_user = None;
+            let wizard = &mut portal.ui.portal_hub_wizard;
+            if wizard.active {
+                if wizard.connection_dirty || wizard.status.is_none() || wizard.auth_loading {
+                    return Task::none();
+                }
+                wizard.auth_loading = true;
+                wizard.auth_error = None;
+                let settings = wizard.draft.clone();
+                let generation = wizard.generation;
+                let (abort, registration) = futures::future::AbortHandle::new_pair();
+                wizard.auth_abort = Some(abort);
+                return Task::perform(
+                    async move {
+                        futures::future::Abortable::new(authenticate_hub(settings), registration)
+                            .await
+                    },
+                    move |result| match result {
+                        Ok(result) => {
+                            Message::Ui(UiMessage::PortalHubDraftAuthenticated(generation, result))
+                        }
+                        Err(_) => Message::Noop,
+                    },
+                );
+            }
+            if portal.ui.portal_hub_auth_loading {
+                return Task::none();
+            }
             portal.ui.portal_hub_auth_error = None;
             portal.ui.portal_hub_auth_loading = true;
+            let request = uuid::Uuid::new_v4();
+            portal.ui.portal_hub_auth_request = request;
             let settings = portal.prefs.portal_hub.clone();
-            return Task::perform(
-                async move {
-                    let info = crate::hub::auth::fetch_hub_info(&settings).await?;
-                    validate_portal_hub_info(&info)?;
-                    let summary = crate::hub::auth::authenticate(settings).await?;
-                    Ok((info, summary))
-                },
-                |result| Message::Ui(UiMessage::PortalHubAuthenticated(result)),
-            );
+            let endpoint = settings.effective_web_url();
+            return Task::perform(authenticate_hub(settings), move |result| {
+                Message::Ui(UiMessage::PortalHubAuthenticated(
+                    request,
+                    endpoint.clone(),
+                    result,
+                ))
+            });
         }
-        UiMessage::PortalHubAuthenticated(result) => {
-            portal.ui.portal_hub_auth_loading = false;
-            if portal.ui.portal_hub_wizard.connection_dirty {
-                portal.ui.portal_hub_auth_error = Some(
-                    "The Hub address changed during sign-in. Check the new address to continue."
-                        .to_string(),
-                );
+        UiMessage::PortalHubDraftAuthenticated(generation, result) => {
+            let wizard = &mut portal.ui.portal_hub_wizard;
+            if !wizard.accepts(generation) {
                 return Task::none();
             }
+            wizard.auth_loading = false;
+            wizard.auth_abort = None;
             match result {
-                Ok((info, summary)) => {
+                Ok((info, auth)) => {
+                    apply_portal_hub_info(&mut wizard.draft, &info);
+                    wizard.receive_auth(generation, auth);
+                }
+                Err(error) => {
+                    wizard.auth_error = Some(error);
+                }
+            }
+        }
+        UiMessage::PortalHubAuthenticated(request, endpoint, result) => {
+            if portal.ui.portal_hub_auth_request != request
+                || portal.prefs.portal_hub.effective_web_url() != endpoint
+            {
+                return Task::none();
+            }
+            portal.ui.portal_hub_auth_loading = false;
+            match result {
+                Ok((info, auth)) => {
+                    if let Err(error) = auth.commit() {
+                        portal.ui.portal_hub_auth_error = Some(error);
+                        return Task::none();
+                    }
                     apply_portal_hub_info(&mut portal.prefs.portal_hub, &info);
-                    portal.ui.portal_hub_wizard.hub_url_input =
-                        portal.prefs.portal_hub.web_url_input_value();
-                    save_settings_and_queue_sync(portal);
-                    portal.ui.portal_hub_auth_user =
-                        Some(format!("{} @ {}", summary.username, summary.hub_url));
+                    portal.prefs.portal_hub.enabled = true;
+                    portal.ui.portal_hub_auth_user = Some(format!(
+                        "{} @ {}",
+                        auth.summary.username, auth.summary.hub_url
+                    ));
                     portal.ui.portal_hub_auth_error = None;
+                    save_settings_and_queue_sync(portal);
                     portal
                         .toast_manager
-                        .push(Toast::success("Signed in to Portal Hub. Sync is enabled."));
+                        .push(Toast::success("Signed in to Portal Hub"));
                     return portal_hub_sync_task(portal, SyncRunOrigin::Login, true);
                 }
                 Err(error) => {
-                    portal.ui.portal_hub_auth_user = None;
                     portal.ui.portal_hub_auth_error = Some(error);
                 }
             }
         }
         UiMessage::PortalHubLogout => {
+            if portal.ui.portal_hub_logout.is_some() {
+                return Task::none();
+            }
+            let endpoint = portal.prefs.portal_hub.effective_web_url();
+            portal
+                .ui
+                .portal_hub_wizard
+                .invalidate_inherited_auth(portal.ui.portal_hub_auth_request, &endpoint);
+            let request = uuid::Uuid::new_v4();
+            portal.ui.portal_hub_auth_request = request;
+            portal.ui.portal_hub_logout = Some((request, endpoint.clone()));
+            // Stop exposing the old account immediately, including to newly opened drafts.
+            portal.ui.portal_hub_auth_user = None;
+            invalidate_hub_sync(portal);
             portal.ui.portal_hub_auth_loading = true;
             portal.ui.portal_hub_auth_error = None;
             let settings = portal.prefs.portal_hub.clone();
             return Task::perform(
                 async move { crate::hub::auth::logout(&settings) },
-                |result| Message::Ui(UiMessage::PortalHubLoggedOut(result)),
+                move |result| {
+                    Message::Ui(UiMessage::PortalHubLoggedOut(
+                        request,
+                        endpoint.clone(),
+                        result,
+                    ))
+                },
             );
         }
-        UiMessage::PortalHubLoggedOut(result) => {
+        UiMessage::PortalHubLoggedOut(request, endpoint, result) => {
+            if portal.ui.portal_hub_logout.as_ref() != Some(&(request, endpoint.clone())) {
+                return Task::none();
+            }
+            portal.ui.portal_hub_logout = None;
+            if portal.ui.portal_hub_auth_request != request
+                || portal.prefs.portal_hub.effective_web_url() != endpoint
+            {
+                if result.is_err() {
+                    portal.toast_manager.push(Toast::error("Could not remove the previous Hub account from the keychain. Sign out of that Hub again to retry."));
+                }
+                return Task::none();
+            }
             portal.ui.portal_hub_auth_loading = false;
             match result {
                 Ok(()) => {
                     portal.prefs.portal_hub.enabled = false;
                     portal.ui.portal_hub_auth_user = None;
                     portal.ui.portal_hub_auth_error = None;
-                    portal.ui.portal_hub_sync_loading = false;
                     portal.ui.portal_hub_sync_error = None;
                     portal.ui.portal_hub_sync_status = None;
-                    portal.ui.portal_hub_local_sync_pending = false;
-                    portal.ui.portal_hub_remote_sync_pending = false;
-                    portal.ui.portal_hub_conflicts.clear();
-                    portal.ui.portal_hub_conflict_choices.clear();
                     clear_portal_hub_status(portal);
                     save_settings_and_queue_sync(portal);
                     portal
@@ -571,45 +708,52 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
             portal.ui.portal_hub_local_sync_pending = false;
             return portal_hub_sync_task(portal, SyncRunOrigin::Background, false);
         }
-        UiMessage::PortalHubRemoteRevisions(result) => match result {
-            Ok(event) => {
-                match crate::hub::sync::remote_revisions_require_sync(
-                    &portal.prefs.portal_hub,
-                    &event.services,
-                ) {
-                    Ok(true) => {
-                        return portal_hub_sync_task(portal, SyncRunOrigin::RemoteEvent, true);
-                    }
-                    Ok(false) => {
-                        portal.ui.portal_hub_sync_status =
-                            Some("Portal Hub is up to date".to_string());
-                    }
-                    Err(error) => {
-                        portal.ui.portal_hub_sync_error = Some(error.clone());
-                        tracing::warn!("Portal Hub sync event handling failed: {}", error);
+        UiMessage::PortalHubRemoteRevisions(generation, endpoint, result) => {
+            if generation != portal.ui.portal_hub_auth_request
+                || endpoint != portal.prefs.portal_hub.effective_web_url()
+            {
+                return Task::none();
+            }
+            match result {
+                Ok(event) => {
+                    match crate::hub::sync::remote_revisions_require_sync(
+                        &portal.prefs.portal_hub,
+                        &event.services,
+                    ) {
+                        Ok(true) => {
+                            return portal_hub_sync_task(portal, SyncRunOrigin::RemoteEvent, true);
+                        }
+                        Ok(false) => {
+                            portal.ui.portal_hub_sync_status =
+                                Some("Portal Hub is up to date".to_string());
+                        }
+                        Err(error) => {
+                            portal.ui.portal_hub_sync_error = Some(error.clone());
+                            tracing::warn!("Portal Hub sync event handling failed: {}", error);
+                        }
                     }
                 }
+                Err(error) => {
+                    tracing::warn!("Portal Hub sync event stream disconnected: {}", error);
+                }
             }
-            Err(error) => {
-                tracing::warn!("Portal Hub sync event stream disconnected: {}", error);
+        }
+        UiMessage::PortalHubSyncDone(context, origin, result) => {
+            if !accepts_hub_sync(portal, &context) {
+                return Task::none();
             }
-        },
-        UiMessage::PortalHubSyncDone(origin, result) => {
+            portal.ui.portal_hub_sync_context = None;
+            portal.ui.portal_hub_sync_abort = None;
             portal.ui.portal_hub_sync_loading = false;
             match result {
                 Ok(SyncRunResult::Synced(summary)) => {
                     let message = summary.message().to_string();
                     portal.ui.portal_hub_sync_error = None;
                     portal.ui.portal_hub_sync_status = Some(message.clone());
+                    portal.ui.portal_hub_conflict_context = None;
                     portal.ui.portal_hub_conflicts.clear();
                     portal.ui.portal_hub_conflict_choices.clear();
                     reload_synced_config(portal);
-                    if matches!(
-                        portal.dialogs.active(),
-                        crate::app::managers::ActiveDialog::PortalHubOnboarding
-                    ) {
-                        portal.dialogs.close();
-                    }
                     if should_show_sync_success(origin, summary.activity) {
                         portal.toast_manager.push(Toast::success(message));
                     }
@@ -619,8 +763,16 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
                     portal.ui.portal_hub_sync_status = Some("Conflicts need review".to_string());
                     portal.ui.portal_hub_conflict_choices =
                         vec![ConflictChoice::Local; conflicts.len()];
+                    if crate::hub::sync::validate_conflicts(&portal.prefs.portal_hub, &conflicts)
+                        .is_err()
+                    {
+                        return Task::none();
+                    }
+                    portal.ui.portal_hub_conflict_context = Some(context);
                     portal.ui.portal_hub_conflicts = conflicts;
-                    portal.dialogs.open_portal_hub_conflicts();
+                    if !portal.ui.portal_hub_wizard.active {
+                        portal.dialogs.open_portal_hub_conflicts();
+                    }
                 }
                 Err(error) => {
                     portal.ui.portal_hub_sync_error = Some(error.clone());
@@ -650,7 +802,23 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
             }
         }
         UiMessage::PortalHubResolveConflicts => {
-            if portal.ui.portal_hub_conflicts.is_empty() {
+            if portal.ui.portal_hub_conflicts.is_empty() || portal.ui.portal_hub_sync_loading {
+                return Task::none();
+            }
+            if !portal
+                .ui
+                .portal_hub_conflict_context
+                .as_ref()
+                .is_some_and(|context| {
+                    context.matches(&portal.prefs.portal_hub, portal.ui.portal_hub_auth_request)
+                })
+                || crate::hub::sync::validate_conflicts(
+                    &portal.prefs.portal_hub,
+                    &portal.ui.portal_hub_conflicts,
+                )
+                .is_err()
+            {
+                invalidate_hub_sync(portal);
                 return Task::none();
             }
             if !matches!(
@@ -660,7 +828,9 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
                 portal.dialogs.open_portal_hub_conflicts();
                 return Task::none();
             }
-            portal.ui.portal_hub_sync_loading = true;
+            let context = begin_hub_sync(portal);
+            let (abort, registration) = futures::future::AbortHandle::new_pair();
+            portal.ui.portal_hub_sync_abort = Some(abort);
             let settings = portal.prefs.portal_hub.clone();
             let profile = current_sync_profile(portal);
             let conflicts = portal
@@ -671,20 +841,35 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
                 .zip(portal.ui.portal_hub_conflict_choices.clone())
                 .collect::<Vec<_>>();
             return Task::perform(
-                async move {
-                    let vault = HubVaultConfig::load()?;
-                    let profile = LocalSyncProfile { vault, ..profile };
-                    crate::hub::sync::resolve_sync_conflicts(settings, profile, conflicts).await
+                futures::future::Abortable::new(
+                    async move {
+                        let vault = HubVaultConfig::load()?;
+                        let profile = LocalSyncProfile { vault, ..profile };
+                        crate::hub::sync::resolve_sync_conflicts(settings, profile, conflicts).await
+                    },
+                    registration,
+                ),
+                move |result| match result {
+                    Ok(result) => Message::Ui(UiMessage::PortalHubResolveConflictsDone(
+                        context.clone(),
+                        result,
+                    )),
+                    Err(_) => Message::Noop,
                 },
-                |result| Message::Ui(UiMessage::PortalHubResolveConflictsDone(result)),
             );
         }
-        UiMessage::PortalHubResolveConflictsDone(result) => {
+        UiMessage::PortalHubResolveConflictsDone(context, result) => {
+            if !accepts_hub_sync(portal, &context) {
+                return Task::none();
+            }
+            portal.ui.portal_hub_sync_context = None;
+            portal.ui.portal_hub_sync_abort = None;
             portal.ui.portal_hub_sync_loading = false;
             match result {
                 Ok(message) => {
                     portal.ui.portal_hub_sync_error = None;
                     portal.ui.portal_hub_sync_status = Some(message.clone());
+                    portal.ui.portal_hub_conflict_context = None;
                     portal.ui.portal_hub_conflicts.clear();
                     portal.ui.portal_hub_conflict_choices.clear();
                     reload_synced_config(portal);
@@ -711,12 +896,38 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
     Task::none()
 }
 
+fn begin_hub_sync(portal: &mut Portal) -> SyncContext {
+    let context = SyncContext::new(&portal.prefs.portal_hub, portal.ui.portal_hub_auth_request);
+    portal.ui.portal_hub_sync_context = Some(context.clone());
+    portal.ui.portal_hub_sync_loading = true;
+    context
+}
+
+fn accepts_hub_sync(portal: &Portal, context: &SyncContext) -> bool {
+    portal.ui.portal_hub_sync_context.as_ref() == Some(context)
+        && context.matches(&portal.prefs.portal_hub, portal.ui.portal_hub_auth_request)
+}
+
+fn invalidate_hub_sync(portal: &mut Portal) {
+    if let Some(abort) = portal.ui.portal_hub_sync_abort.take() {
+        abort.abort();
+    }
+    portal.ui.portal_hub_sync_context = None;
+    portal.ui.portal_hub_conflict_context = None;
+    portal.ui.portal_hub_sync_loading = false;
+    portal.ui.portal_hub_conflicts.clear();
+    portal.ui.portal_hub_conflict_choices.clear();
+    portal.ui.portal_hub_local_sync_pending = false;
+    portal.ui.portal_hub_remote_sync_pending = false;
+    portal.dialogs.close_portal_hub_conflicts();
+}
+
 pub(crate) fn portal_hub_sync_task(
     portal: &mut Portal,
     origin: SyncRunOrigin,
     force: bool,
 ) -> Task<Message> {
-    if !portal.prefs.portal_hub.sync_configured() {
+    if portal.ui.portal_hub_auth_user.is_none() || !portal.prefs.portal_hub.sync_configured() {
         return Task::none();
     }
     if portal.ui.portal_hub_sync_loading {
@@ -727,12 +938,14 @@ pub(crate) fn portal_hub_sync_task(
         }
         return Task::none();
     }
+    let context = begin_hub_sync(portal);
     let settings = portal.prefs.portal_hub.clone();
     let profile = current_sync_profile(portal);
     let vault = match HubVaultConfig::load() {
         Ok(vault) => vault,
         Err(error) => {
             return Task::done(Message::Ui(UiMessage::PortalHubSyncDone(
+                context,
                 origin,
                 Err(error),
             )));
@@ -744,6 +957,7 @@ pub(crate) fn portal_hub_sync_task(
         match crate::hub::sync::local_sync_changes_pending(&settings, &profile) {
             Ok(false) => {
                 return Task::done(Message::Ui(UiMessage::PortalHubSyncDone(
+                    context,
                     origin,
                     Ok(SyncRunResult::Synced(
                         crate::hub::sync::SyncRunSummary::new(SyncRunActivity::NoChanges),
@@ -753,6 +967,7 @@ pub(crate) fn portal_hub_sync_task(
             Ok(true) => {}
             Err(error) => {
                 return Task::done(Message::Ui(UiMessage::PortalHubSyncDone(
+                    context,
                     origin,
                     Err(error),
                 )));
@@ -764,112 +979,173 @@ pub(crate) fn portal_hub_sync_task(
     portal.ui.portal_hub_sync_error = None;
     portal.ui.portal_hub_local_sync_pending = false;
     portal.ui.portal_hub_remote_sync_pending = false;
+    let (abort, registration) = futures::future::AbortHandle::new_pair();
+    portal.ui.portal_hub_sync_abort = Some(abort);
     Task::perform(
-        async move { crate::hub::sync::run_bidirectional_sync(settings, profile).await },
-        move |result| Message::Ui(UiMessage::PortalHubSyncDone(origin, result)),
+        futures::future::Abortable::new(
+            crate::hub::sync::run_bidirectional_sync(settings, profile),
+            registration,
+        ),
+        move |result| match result {
+            Ok(result) => Message::Ui(UiMessage::PortalHubSyncDone(
+                context.clone(),
+                origin,
+                result,
+            )),
+            Err(_) => Message::Noop,
+        },
     )
 }
 
 /// Reset the onboarding Defaults state: every eligible host selected, toggles
 /// seeded from current preferences.
 fn init_portal_hub_wizard(portal: &mut Portal) {
-    let wizard = &mut portal.ui.portal_hub_wizard;
-    wizard.hub_url_input = portal.prefs.portal_hub.web_url_input_value();
-    wizard.connection_dirty = false;
-    wizard.excluded_hosts.clear();
-    wizard.route_default = portal.prefs.portal_hub.default_for_new_ssh_hosts
-        || !portal.prefs.portal_hub.is_configured();
-    wizard.prefer_vault = portal.prefs.portal_hub.prefer_vault_keys;
-    wizard.sync_all = portal.prefs.portal_hub.hosts_sync_enabled
-        && portal.prefs.portal_hub.settings_sync_enabled
-        && portal.prefs.portal_hub.snippets_sync_enabled
-        && portal.prefs.portal_hub.key_vault_enabled;
-}
-
-/// Validate and commit the draft connection address immediately before a
-/// network action. Cancelling midway through editing therefore leaves the
-/// working Portal Hub configuration untouched.
-fn commit_portal_hub_wizard_connection(portal: &mut Portal) -> Result<(), String> {
-    let normalized = portal
-        .prefs
-        .portal_hub
-        .normalize_web_url_input(&portal.ui.portal_hub_wizard.hub_url_input)?;
-    let endpoint_changed = normalized != portal.prefs.portal_hub.effective_web_url();
-
     portal
-        .prefs
-        .portal_hub
-        .apply_discovered_web_url(&normalized);
-    portal.ui.portal_hub_wizard.hub_url_input = normalized;
-    portal.ui.portal_hub_wizard.connection_dirty = false;
-
-    if endpoint_changed {
-        portal.ui.portal_hub_auth_user = None;
-        portal.ui.portal_hub_auth_error = None;
-    }
-    portal.save_settings();
-    Ok(())
+        .dialogs
+        .close_onboarding(portal.ui.portal_hub_wizard.managed.operation);
+    portal.ui.portal_hub_wizard.cancel();
+    let mut wizard = crate::app::PortalHubWizardState::begin(portal.prefs.portal_hub.clone());
+    wizard.status = portal.ui.portal_hub_status.clone();
+    wizard.inherit_auth(
+        portal.ui.portal_hub_auth_request,
+        portal.ui.portal_hub_auth_user.clone(),
+    );
+    wizard.managed = crate::hub::deployment::ManagedHubState::load();
+    portal.ui.portal_hub_wizard = wizard;
 }
 
-/// Apply the onboarding Defaults step: write routing for every eligible host
-/// (selected hosts follow Auto, unchecked hosts become Direct) and persist the
-/// global defaults the user consented to.
+async fn authenticate_hub(
+    settings: crate::config::settings::PortalHubSettings,
+) -> Result<(crate::hub::auth::HubInfo, crate::hub::auth::PendingHubAuth), String> {
+    let info = crate::hub::auth::fetch_hub_info(&settings).await?;
+    validate_portal_hub_info(&info)?;
+    let auth = crate::hub::auth::authenticate(settings).await?;
+    Ok((info, auth))
+}
+
+/// Publish the draft only after all writes succeed. A failed write restores the
+/// previous files; background sync sees the old in-memory context throughout.
 fn apply_portal_hub_wizard(portal: &mut Portal) -> Task<Message> {
-    let route_default = portal.ui.portal_hub_wizard.route_default;
-    let prefer_vault = portal.ui.portal_hub_wizard.prefer_vault;
-    let sync_all = portal.ui.portal_hub_wizard.sync_all;
-    let excluded = portal.ui.portal_hub_wizard.excluded_hosts.clone();
-
-    portal.prefs.portal_hub.default_for_new_ssh_hosts = route_default;
-    portal.prefs.portal_hub.prefer_vault_keys = prefer_vault;
-    portal.prefs.portal_hub.hosts_sync_enabled = sync_all;
-    portal.prefs.portal_hub.settings_sync_enabled = sync_all;
-    portal.prefs.portal_hub.snippets_sync_enabled = sync_all;
-    portal.prefs.portal_hub.key_vault_enabled = sync_all;
-
-    let now = chrono::Utc::now();
-    let mut enabled_count = 0usize;
-    for host in &mut portal.config.hosts.hosts {
+    let wizard = &portal.ui.portal_hub_wizard;
+    if !wizard.can_finish() {
+        return Task::none();
+    }
+    if portal.ui.portal_hub_sync_loading {
+        portal.ui.portal_hub_wizard.auth_error =
+            Some("Wait for the current Hub sync to finish, then save again.".into());
+        return Task::none();
+    }
+    if portal
+        .ui
+        .portal_hub_logout
+        .as_ref()
+        .is_some_and(|(_, url)| *url == wizard.draft.effective_web_url())
+    {
+        portal.ui.portal_hub_wizard.auth_error =
+            Some("Wait for sign out to finish, then sign in again.".into());
+        return Task::none();
+    }
+    if wizard.auth.is_none()
+        && !wizard
+            .inherited_auth
+            .as_ref()
+            .is_some_and(|(generation, endpoint)| {
+                *generation == portal.ui.portal_hub_auth_request
+                    && *endpoint == portal.prefs.portal_hub.effective_web_url()
+                    && portal.ui.portal_hub_auth_user.is_some()
+            })
+    {
+        portal.ui.portal_hub_wizard.auth_user = None;
+        portal.ui.portal_hub_wizard.auth_error = Some("Sign in again before saving.".into());
+        return Task::none();
+    }
+    let previous_settings = current_settings_config(portal);
+    let previous_hosts = portal.config.hosts.clone();
+    let mut settings = previous_settings.clone();
+    settings.portal_hub = wizard.draft.clone();
+    let hub = &mut settings.portal_hub;
+    hub.enabled = true;
+    hub.default_for_new_ssh_hosts = wizard.route_default;
+    hub.prefer_vault_keys = wizard.prefer_vault;
+    hub.hosts_sync_enabled = wizard.sync_all;
+    hub.settings_sync_enabled = wizard.sync_all;
+    hub.snippets_sync_enabled = wizard.sync_all;
+    hub.key_vault_enabled = wizard.sync_all;
+    let mut hosts = previous_hosts.clone();
+    let recovery_hosts = wizard.managed.recovery_hosts(&previous_hosts.hosts);
+    for host in &mut hosts.hosts {
         if !host.hub_eligible() {
             continue;
         }
-        let routing = if excluded.contains(&host.id) {
-            crate::config::hosts::HubRouting::Direct
-        } else {
-            crate::config::hosts::HubRouting::Auto
-        };
+        // Keep the management host and each of its bastions independent of Hub.
+        let recovery = recovery_hosts.contains(&host.id);
+        let routing =
+            if recovery || wizard.excluded_hosts.contains(&host.id) || !wizard.route_default {
+                crate::config::hosts::HubRouting::Direct
+            } else {
+                crate::config::hosts::HubRouting::Auto
+            };
         if host.hub_routing != routing {
             host.hub_routing = routing;
-            host.updated_at = now;
-        }
-        if routing == crate::config::hosts::HubRouting::Auto && route_default {
-            enabled_count += 1;
+            host.updated_at = chrono::Utc::now();
         }
     }
-    if let Err(error) = portal.config.hosts.save() {
-        tracing::error!("Failed to save hosts after Hub defaults: {}", error);
-        portal
-            .toast_manager
-            .push(Toast::error("Could not save host routing changes"));
+    let result = (|| -> Result<(), String> {
+        hosts
+            .save()
+            .map_err(|_| "Could not save host routing".to_string())?;
+        settings
+            .save()
+            .map_err(|_| "Could not save Hub settings".to_string())?;
+        if let Some(auth) = &wizard.auth {
+            auth.commit()?;
+        }
+        Ok(())
+    })();
+    if let Err(error) = result {
+        let hosts_restored = previous_hosts.save().is_ok();
+        let settings_restored = previous_settings.save().is_ok();
+        let restored = hosts_restored && settings_restored;
+        portal.ui.portal_hub_wizard.auth_error = Some(if restored {
+            error
+        } else {
+            format!(
+                "{error}. Previous settings could not be restored on disk; check free space and file permissions before closing Portal."
+            )
+        });
+        return Task::none();
     }
-    save_settings_and_queue_sync(portal);
+    publish_portal_hub_wizard(portal, settings.portal_hub, hosts)
+}
 
+/// In-memory publication boundary, reached only after the draft is persisted.
+fn publish_portal_hub_wizard(
+    portal: &mut Portal,
+    settings: crate::config::settings::PortalHubSettings,
+    hosts: crate::config::HostsConfig,
+) -> Task<Message> {
+    let wizard = &portal.ui.portal_hub_wizard;
+    portal.prefs.portal_hub = settings;
+    portal.ui.portal_hub_auth_request = uuid::Uuid::new_v4();
+    portal.ui.portal_hub_status_request = uuid::Uuid::new_v4();
+    portal.ui.portal_hub_status_loading = false;
+    portal.ui.portal_hub_auth_loading = false;
+    portal.config.hosts = hosts;
+    portal.ui.portal_hub_auth_user = wizard.auth_user.clone();
+    portal.ui.portal_hub_auth_error = None;
+    portal.ui.portal_hub_status = wizard.status.clone();
+    invalidate_hub_sync(portal);
+    portal.ui.portal_hub_local_sync_pending = false;
+    portal.ui.portal_hub_remote_sync_pending = false;
+    portal
+        .dialogs
+        .close_onboarding(portal.ui.portal_hub_wizard.managed.operation);
+    portal.ui.portal_hub_wizard.cancel();
     portal.ui.hub_prompt_dismissed = true;
-    portal.dialogs.close();
-    portal.toast_manager.push(Toast::success(if route_default {
-        format!(
-            "Portal Hub enabled — {} host{} now connect via Hub",
-            enabled_count,
-            if enabled_count == 1 { "" } else { "s" }
-        )
-    } else {
-        "Portal Hub defaults saved — hosts still connect directly".to_string()
-    }));
-
-    if portal.prefs.portal_hub.sync_configured() {
-        return Task::done(Message::Ui(UiMessage::PortalHubSyncNow));
-    }
-    Task::none()
+    portal
+        .toast_manager
+        .push(Toast::success("Portal Hub settings saved"));
+    portal_hub_sync_task(portal, SyncRunOrigin::Login, true)
 }
 
 pub(crate) fn queue_portal_hub_local_sync(portal: &mut Portal) {
@@ -980,6 +1256,7 @@ fn current_settings_config(portal: &Portal) -> SettingsConfig {
 }
 
 fn clear_portal_hub_status(portal: &mut Portal) {
+    invalidate_hub_sync(portal);
     portal.ui.portal_hub_status = None;
     portal.ui.portal_hub_status_error = None;
     portal.ui.portal_hub_status_loading = false;
@@ -991,44 +1268,28 @@ fn apply_portal_hub_discovery(
     settings: &mut crate::config::settings::PortalHubSettings,
     status: &crate::proxy::ProxyStatus,
 ) {
-    settings.enabled = status.web_proxy;
-    settings.hosts_sync_enabled = status.sync_v2;
-    settings.settings_sync_enabled = status.sync_v2;
-    settings.snippets_sync_enabled = status.sync_v2;
-    settings.key_vault_enabled = status.key_vault;
     settings.port = status.ssh_port.unwrap_or(2222);
     settings.username = status
         .ssh_username
         .clone()
         .unwrap_or_else(|| "portal-hub".to_string());
-    if !status.public_url.trim().is_empty() {
-        settings.apply_discovered_web_url(&status.public_url);
-    }
 }
 
 fn apply_portal_hub_info(
     settings: &mut crate::config::settings::PortalHubSettings,
     info: &crate::hub::auth::HubInfo,
 ) {
-    settings.enabled = info.capabilities.web_proxy;
-    settings.hosts_sync_enabled = info.capabilities.sync_v2;
-    settings.settings_sync_enabled = info.capabilities.sync_v2;
-    settings.snippets_sync_enabled = info.capabilities.sync_v2;
-    settings.key_vault_enabled = info.capabilities.key_vault;
     settings.port = info.ssh_port.unwrap_or(2222);
     settings.username = info
         .ssh_username
         .clone()
         .unwrap_or_else(|| "portal-hub".to_string());
-    if !info.public_url.trim().is_empty() {
-        settings.apply_discovered_web_url(&info.public_url);
-    }
 }
 
 fn validate_portal_hub_info(info: &crate::hub::auth::HubInfo) -> Result<(), String> {
-    if info.api_version < 2 {
+    if info.api_version != 2 {
         return Err(format!(
-            "Portal Hub API version {} is too old; Portal requires 2",
+            "Portal Hub API version {} is unsupported; Portal supports API 2",
             info.api_version
         ));
     }
@@ -1039,4 +1300,292 @@ fn validate_portal_hub_info(info: &crate::hub::auth::HubInfo) -> Result<(), Stri
         return Err("Portal Hub does not advertise sync v2 support".to_string());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod hub_onboarding_tests {
+    use super::*;
+    use crate::{app::PortalHubWizardState, hub::sync::SyncConflict};
+
+    fn connected_portal() -> Portal {
+        let mut portal = Portal::test_state();
+        portal
+            .prefs
+            .portal_hub
+            .apply_discovered_web_url("https://hub-a.example");
+        portal.ui.portal_hub_auth_user = Some("owner @ https://hub-a.example".into());
+        portal.ui.portal_hub_auth_request = uuid::Uuid::new_v4();
+        portal.ui.portal_hub_status = Some(crate::proxy::ProxyStatus {
+            version: "test".into(),
+            api_version: 2,
+            metadata_schema_version: 2,
+            public_url: "https://hub-a.example".into(),
+            ssh_port: Some(2222),
+            ssh_username: None,
+            sync_v2: true,
+            sync_events: true,
+            web_proxy: true,
+            session_titles: true,
+            key_vault: true,
+            vault_enrollment: true,
+        });
+        portal
+    }
+
+    fn conflict() -> SyncConflict {
+        SyncConflict {
+            hub_url: "https://hub-a.example".into(),
+            service: "hosts".into(),
+            local: serde_json::json!({"private": "Hub A local payload"}),
+            hub: serde_json::json!({"private": "Hub A remote payload"}),
+            expected_revision: "a1".into(),
+        }
+    }
+
+    fn receive_conflict(portal: &mut Portal) -> SyncContext {
+        let context = begin_hub_sync(portal);
+        let task = handle_settings_message(
+            portal,
+            UiMessage::PortalHubSyncDone(
+                context.clone(),
+                SyncRunOrigin::Manual,
+                Ok(SyncRunResult::Conflicts(vec![conflict()])),
+            ),
+        );
+        assert_eq!(task.units(), 0);
+        assert_eq!(portal.ui.portal_hub_conflicts.len(), 1);
+        context
+    }
+
+    #[test]
+    fn publishing_hub_b_without_sync_discards_a_conflicts_and_rejects_late_results() {
+        let mut portal = connected_portal();
+        let a = receive_conflict(&mut portal);
+        let mut b = portal.prefs.portal_hub.clone();
+        b.apply_discovered_web_url("https://hub-b.example");
+        b.hosts_sync_enabled = false;
+        b.settings_sync_enabled = false;
+        b.snippets_sync_enabled = false;
+        b.key_vault_enabled = false;
+        portal.ui.portal_hub_wizard = PortalHubWizardState::begin(b.clone());
+        portal.ui.portal_hub_wizard.auth_user = Some("owner @ https://hub-b.example".into());
+        assert_eq!(
+            publish_portal_hub_wizard(&mut portal, b, Default::default()).units(),
+            0
+        );
+        assert!(portal.ui.portal_hub_conflicts.is_empty());
+        assert_eq!(
+            handle_settings_message(&mut portal, UiMessage::PortalHubResolveConflicts).units(),
+            0
+        );
+        let b = begin_hub_sync(&mut portal);
+        for event in [
+            UiMessage::PortalHubSyncDone(
+                a.clone(),
+                SyncRunOrigin::Manual,
+                Ok(SyncRunResult::Conflicts(vec![conflict()])),
+            ),
+            UiMessage::PortalHubSyncDone(
+                a.clone(),
+                SyncRunOrigin::Manual,
+                Ok(SyncRunResult::Synced(
+                    crate::hub::sync::SyncRunSummary::new(SyncRunActivity::AppliedRemoteChanges),
+                )),
+            ),
+            UiMessage::PortalHubResolveConflictsDone(a, Ok("old completion".into())),
+        ] {
+            assert_eq!(handle_settings_message(&mut portal, event).units(), 0);
+            assert!(portal.ui.portal_hub_conflicts.is_empty());
+            assert!(portal.ui.portal_hub_sync_loading);
+            assert_eq!(portal.ui.portal_hub_sync_context.as_ref(), Some(&b));
+            assert_eq!(
+                portal.ui.portal_hub_auth_user.as_deref(),
+                Some("owner @ https://hub-b.example")
+            );
+        }
+    }
+
+    #[test]
+    fn disabled_service_cannot_dispatch_conflict_resolution() {
+        let mut portal = connected_portal();
+        receive_conflict(&mut portal);
+        portal.prefs.portal_hub.hosts_sync_enabled = false;
+        let task = handle_settings_message(&mut portal, UiMessage::PortalHubResolveConflicts);
+        assert_eq!(task.units(), 0);
+        assert!(portal.ui.portal_hub_conflicts.is_empty());
+        assert!(!portal.ui.portal_hub_sync_loading);
+    }
+
+    #[test]
+    fn older_generation_cannot_replace_new_sync_at_the_same_endpoint() {
+        let mut portal = connected_portal();
+        let old = begin_hub_sync(&mut portal);
+        invalidate_hub_sync(&mut portal);
+        let current = begin_hub_sync(&mut portal);
+        let _ = handle_settings_message(
+            &mut portal,
+            UiMessage::PortalHubSyncDone(
+                old,
+                SyncRunOrigin::Manual,
+                Ok(SyncRunResult::Conflicts(vec![conflict()])),
+            ),
+        );
+        assert!(portal.ui.portal_hub_conflicts.is_empty());
+        assert!(accepts_hub_sync(&portal, &current));
+        assert!(portal.ui.portal_hub_sync_loading);
+    }
+
+    #[test]
+    fn delayed_logout_invalidates_existing_and_newly_opened_drafts() {
+        let mut portal = connected_portal();
+        let _ = handle_settings_message(&mut portal, UiMessage::PortalHubOpenOnboarding);
+        assert!(portal.ui.portal_hub_wizard.can_finish());
+        let logout = handle_settings_message(&mut portal, UiMessage::PortalHubLogout);
+        assert_eq!(logout.units(), 1); // Keep the keychain worker pending.
+        assert!(!portal.ui.portal_hub_wizard.can_finish());
+        assert!(portal.ui.portal_hub_auth_user.is_none());
+        let _ = handle_settings_message(&mut portal, UiMessage::PortalHubOpenOnboarding);
+        assert!(!portal.ui.portal_hub_wizard.can_finish());
+        assert!(portal.ui.portal_hub_wizard.auth_user.is_none());
+        assert_eq!(
+            handle_settings_message(&mut portal, UiMessage::PortalHubWizardApply).units(),
+            0
+        );
+        assert_eq!(
+            handle_settings_message(&mut portal, UiMessage::PortalHubAuthenticate).units(),
+            0
+        );
+    }
+
+    #[test]
+    fn completed_delayed_logout_cannot_be_undone_by_finishing_an_inherited_draft() {
+        if Portal::isolate_config_test() {
+            return;
+        }
+        let mut portal = connected_portal();
+        let _ = handle_settings_message(&mut portal, UiMessage::PortalHubLogout);
+        let (request, endpoint) = portal.ui.portal_hub_logout.clone().unwrap();
+        let _ = handle_settings_message(&mut portal, UiMessage::PortalHubOpenOnboarding);
+        assert!(portal.ui.portal_hub_wizard.status.is_some());
+        let _ = handle_settings_message(
+            &mut portal,
+            UiMessage::PortalHubLoggedOut(request, endpoint, Ok(())),
+        );
+        assert!(portal.ui.portal_hub_logout.is_none());
+        assert!(!portal.ui.portal_hub_wizard.can_finish());
+        assert_eq!(
+            handle_settings_message(&mut portal, UiMessage::PortalHubWizardApply).units(),
+            0
+        );
+        assert!(portal.ui.portal_hub_auth_user.is_none());
+        assert!(portal.ui.portal_hub_wizard.auth_user.is_none());
+        assert!(!portal.prefs.portal_hub.enabled);
+        assert!(!SettingsConfig::load().unwrap().portal_hub.enabled);
+        assert!(portal.ui.portal_hub_wizard.active);
+    }
+
+    #[tokio::test]
+    async fn disabling_a_service_aborts_active_sync_and_rejects_late_conflicts() {
+        if Portal::isolate_config_test() {
+            return;
+        }
+        let mut portal = connected_portal();
+        let context = begin_hub_sync(&mut portal);
+        let (abort, registration) = futures::future::AbortHandle::new_pair();
+        portal.ui.portal_hub_sync_abort = Some(abort);
+        let _ = handle_settings_message(
+            &mut portal,
+            UiMessage::PortalHubDisableSyncKeepData(PortalHubSyncService::Hosts),
+        );
+        assert!(
+            futures::future::Abortable::new(std::future::pending::<()>(), registration)
+                .await
+                .is_err()
+        );
+        assert!(
+            !SettingsConfig::load()
+                .unwrap()
+                .portal_hub
+                .hosts_sync_enabled
+        );
+        let _ = handle_settings_message(
+            &mut portal,
+            UiMessage::PortalHubSyncDone(
+                context,
+                SyncRunOrigin::Manual,
+                Ok(SyncRunResult::Conflicts(vec![conflict()])),
+            ),
+        );
+        assert!(portal.ui.portal_hub_conflicts.is_empty());
+        assert!(!portal.ui.portal_hub_sync_loading);
+    }
+
+    #[test]
+    fn delayed_logout_keeps_new_authentication_for_a_different_origin() {
+        let mut portal = connected_portal();
+        let _ = handle_settings_message(&mut portal, UiMessage::PortalHubLogout);
+        let (request, endpoint) = portal.ui.portal_hub_logout.clone().unwrap();
+        let _ = handle_settings_message(&mut portal, UiMessage::PortalHubOpenOnboarding);
+        let wizard = &mut portal.ui.portal_hub_wizard;
+        wizard.edit_endpoint("https://hub-b.example".into());
+        wizard.checked_settings().unwrap();
+        wizard.receive_auth(
+            wizard.generation,
+            crate::hub::auth::PendingHubAuth::test_auth("https://hub-b.example"),
+        );
+        let _ = handle_settings_message(
+            &mut portal,
+            UiMessage::PortalHubLoggedOut(uuid::Uuid::new_v4(), endpoint.clone(), Ok(())),
+        );
+        assert!(portal.ui.portal_hub_logout.is_some());
+        let mut b = portal.ui.portal_hub_wizard.draft.clone();
+        b.hosts_sync_enabled = false;
+        b.settings_sync_enabled = false;
+        b.snippets_sync_enabled = false;
+        b.key_vault_enabled = false;
+        let expected_user = portal.ui.portal_hub_wizard.auth_user.clone();
+        let _ = publish_portal_hub_wizard(&mut portal, b, Default::default());
+        let _ = handle_settings_message(
+            &mut portal,
+            UiMessage::PortalHubLoggedOut(request, endpoint, Ok(())),
+        );
+        assert!(portal.ui.portal_hub_logout.is_none());
+        assert_eq!(portal.ui.portal_hub_auth_user, expected_user);
+        assert_eq!(
+            portal.prefs.portal_hub.effective_web_url(),
+            "https://hub-b.example"
+        );
+    }
+    fn info(version: u16) -> crate::hub::auth::HubInfo {
+        serde_json::from_value(serde_json::json!({
+            "api_version": version, "public_url": "https://different.example",
+            "capabilities": {"web_proxy":true,"sync_v2":true,"key_vault":true},
+            "ssh_port":2222, "ssh_username":"portal-hub"
+        }))
+        .unwrap()
+    }
+    #[test]
+    fn discovery_preserves_consent_and_the_selected_origin() {
+        let mut settings = crate::config::settings::PortalHubSettings::default();
+        settings.apply_discovered_web_url("https://chosen.example");
+        settings.enabled = false;
+        settings.hosts_sync_enabled = false;
+        settings.settings_sync_enabled = true;
+        settings.snippets_sync_enabled = false;
+        settings.key_vault_enabled = false;
+        apply_portal_hub_info(&mut settings, &info(2));
+        assert!(!settings.enabled);
+        assert!(!settings.hosts_sync_enabled);
+        assert!(settings.settings_sync_enabled);
+        assert!(!settings.snippets_sync_enabled);
+        assert!(!settings.key_vault_enabled);
+        assert_eq!(settings.effective_web_url(), "https://chosen.example");
+    }
+    #[test]
+    fn negotiation_rejects_newer_unknown_api_versions() {
+        assert!(validate_portal_hub_info(&info(2)).is_ok());
+        for version in [0, 1, 3, u16::MAX] {
+            assert!(validate_portal_hub_info(&info(version)).is_err());
+        }
+    }
 }

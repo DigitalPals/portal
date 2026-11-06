@@ -41,33 +41,22 @@ pub(crate) mod contract_test_support {
 
     use serde_json::Value;
 
-    fn contract_dir() -> (PathBuf, bool) {
+    fn contract_dir() -> PathBuf {
         if let Some(path) = std::env::var_os("PORTAL_HUB_CONTRACT_DIR") {
-            return (PathBuf::from(path), true);
+            return PathBuf::from(path);
         }
 
-        (
-            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../portal-hub/contracts/portal-hub/v2"),
-            false,
-        )
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("hub/contracts/portal-hub/v2")
     }
 
     pub(crate) fn assert_portal_hub_contract(schema_name: &str, instance: &Value) {
-        let (dir, explicit_dir) = contract_dir();
+        let dir = contract_dir();
         let path = dir.join(format!("{schema_name}.schema.json"));
-        if !path.exists() {
-            if explicit_dir {
-                panic!(
-                    "Portal Hub contract check required, but schema is missing: {}",
-                    path.display()
-                );
-            }
-            eprintln!(
-                "Skipping Portal Hub contract check; set PORTAL_HUB_CONTRACT_DIR or place schemas at {}",
-                path.display()
-            );
-            return;
-        }
+        assert!(
+            path.exists(),
+            "Portal Hub contract check required, but schema is missing: {}",
+            path.display()
+        );
 
         let schema: Value = serde_json::from_str(
             &std::fs::read_to_string(&path)

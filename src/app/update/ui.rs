@@ -1,5 +1,6 @@
 //! UI state message handlers
 
+mod hub_management;
 mod keyboard;
 pub(crate) mod settings;
 
@@ -103,7 +104,7 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
         | UiMessage::PortalHubDisableSyncRequested(_)
         | UiMessage::PortalHubDisableSyncKeepData(_)
         | UiMessage::PortalHubDisableSyncDeleteData(_)
-        | UiMessage::PortalHubDisableSyncDeleteDone(_, _)
+        | UiMessage::PortalHubDisableSyncDeleteDone(..)
         | UiMessage::PortalHubPreferVaultKeys(_)
         | UiMessage::PortalHubWizardToggleHost(_)
         | UiMessage::PortalHubWizardRouteDefault(_)
@@ -113,27 +114,31 @@ pub fn handle_ui(portal: &mut Portal, msg: UiMessage) -> Task<Message> {
         | UiMessage::PortalHubWizardSkip
         | UiMessage::PortalHubOpenDefaultsReview
         | UiMessage::PortalHubDefaultsPromptDismiss
+        | UiMessage::PortalHubOpenManagement
         | UiMessage::PortalHubOpenOnboarding
         | UiMessage::PortalHubOpenGithub
         | UiMessage::PortalHubCheckStatus
-        | UiMessage::PortalHubStatusLoaded(_)
+        | UiMessage::PortalHubStatusLoaded(_, _, _)
+        | UiMessage::PortalHubDraftStatusLoaded(_, _)
+        | UiMessage::PortalHubDraftAuthenticated(_, _)
+        | UiMessage::PortalHubManagement(_)
         | UiMessage::PortalHubRunDiagnostics
         | UiMessage::PortalHubDiagnosticsDone(_)
         | UiMessage::PortalHubAuthenticate
-        | UiMessage::PortalHubAuthenticated(_)
+        | UiMessage::PortalHubAuthenticated(_, _, _)
         | UiMessage::PortalHubLogout
-        | UiMessage::PortalHubLoggedOut(_)
+        | UiMessage::PortalHubLoggedOut(..)
         | UiMessage::PortalHubUploadLocalProfile
         | UiMessage::PortalHubUploadLocalProfileDone(_)
         | UiMessage::PortalHubPullProfile
         | UiMessage::PortalHubPullProfileDone(_)
         | UiMessage::PortalHubSyncNow
         | UiMessage::PortalHubLocalSyncDue
-        | UiMessage::PortalHubRemoteRevisions(_)
-        | UiMessage::PortalHubSyncDone(_, _)
+        | UiMessage::PortalHubRemoteRevisions(..)
+        | UiMessage::PortalHubSyncDone(..)
         | UiMessage::PortalHubConflictChoiceChanged(_, _)
         | UiMessage::PortalHubResolveConflicts
-        | UiMessage::PortalHubResolveConflictsDone(_)) => {
+        | UiMessage::PortalHubResolveConflictsDone(..)) => {
             settings::handle_settings_message(portal, msg)
         }
         UiMessage::WindowResized(size) => {

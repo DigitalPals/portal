@@ -1,0 +1,5138 @@
+use std::collections::HashMap;
+use std::convert::Infallible;
+use std::fmt::Write as _;
+use std::fs::{self, OpenOptions};
+use std::future::IntoFuture;
+use std::io::{self, Read, Write};
+use std::net::SocketAddr;
+use std::os::unix::fs::OpenOptionsExt;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::Duration;
+
+use anyhow::{Context, Result, anyhow, bail};
+use argon2::password_hash::{SaltString, rand_core::OsRng};
+use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
+use axum::Router;
+use axum::extract::ws::{Message as WsMessage, WebSocket, WebSocketUpgrade};
+use axum::extract::{Json, Path as AxumPath, Query, State};
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::sse::{Event, KeepAlive, Sse};
+use axum::response::{Html, IntoResponse, Redirect, Response};
+use axum::routing::{delete, get, post};
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use chrono::{DateTime, Duration as ChronoDuration, Utc};
+use futures_util::{SinkExt, StreamExt as FuturesStreamExt};
+use portable_pty::{ChildKiller, PtySize, native_pty_system};
+use qrcode::{QrCode, render::svg};
+use rand::RngCore;
+use rusqlite::{Connection, OptionalExtension, Transaction, TransactionBehavior, params};
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
+use tokio::process::Command as TokioCommand;
+use tokio::sync::broadcast;
+use tokio::sync::{mpsc, oneshot};
+use tokio::time::timeout;
+use tokio_stream::once;
+use tokio_stream::wrappers::BroadcastStream;
+use tower_http::trace::TraceLayer;
+use url::{Host, Url};
+use uuid::Uuid;
+
+const DESKTOP_CLIENT_ID: &str = "portal-desktop";
+const ANDROID_CLIENT_ID: &str = "portal-android";
+const ANDROID_REDIRECT_SCHEME: &str = "com.digitalpals.portal.android";
+const ANDROID_REDIRECT_PATH: &str = "/oauth2redirect";
+const ACCESS_TOKEN_TTL_HOURS: i64 = 24;
+const REFRESH_TOKEN_TTL_DAYS: i64 = 90;
+const AUTH_CODE_TTL_MINUTES: i64 = 5;
+const MIN_PASSWORD_LEN: usize = 12;
+const MAX_SESSION_DISPLAY_NAME_CHARS: usize = 80;
+const MAX_WEB_SESSION_PREVIEW_BYTES: u64 = 64 * 1024;
+const WEB_TERMINAL_OUTPUT_COALESCE_DELAY: Duration = Duration::from_millis(4);
+const WEB_TERMINAL_OUTPUT_FRAME_TARGET_BYTES: usize = 64 * 1024;
+const WEB_TERMINAL_UPLOAD_MAX_BYTES: usize = 64 * 1024 * 1024;
+const WEB_TERMINAL_UPLOAD_TIMEOUT: Duration = Duration::from_secs(45);
+const WEB_TERMINAL_OS_DETECTION_TIMEOUT: Duration = Duration::from_secs(10);
+const OS_RELEASE_MARKER: &str = "__PORTAL_OS_RELEASE__\n";
+const HOST_KEY_SCAN_TIMEOUT_SECS: &str = "5";
+const HOST_KEY_RESPONSE_TIMEOUT: Duration = Duration::from_secs(60);
+
+const PORTAL_ASCII_LOGO: &str = r#"                                  .             oooo
+                                .o8             `888
+oo.ooooo.   .ooooo.  oooo d8b .o888oo  .oooo.    888
+ 888' `88b d88' `88b `888""8P   888   `P  )88b   888
+ 888   888 888   888  888       888    .oP"888   888
+ 888   888 888   888  888       888 . d8(  888   888
+ 888bod8P' `Y8bod8P' d888b      "888" `Y888""8o o888o
+ 888
+o888o"#;
+
+#[derive(Clone)]
+struct AppState {
+    db: Arc<Mutex<Connection>>,
+    state_dir: PathBuf,
+    public_url: String,
+    ssh_port: u16,
+    sync_events: broadcast::Sender<SyncRevisionEvent>,
+    vault_events: broadcast::Sender<VaultEnrollmentEvent>,
+    require_bootstrap: bool,
+    stopping: Arc<AtomicBool>,
+}
+
+#[derive(Debug, Deserialize)]
+struct VaultEnrollmentCreateRequest {
+    device_name: String,
+    public_key_algorithm: String,
+    public_key_der_base64: String,
+    #[serde(default)]
+    pairing_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct VaultEnrollmentApproveRequest {
+    encrypted_secret_base64: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct VaultEnrollmentListQuery {
+    status: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AuditListQuery {
+    limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct VaultEnrollment {
+    id: String,
+    device_name: String,
+    public_key_algorithm: String,
+    public_key_der_base64: String,
+    status: String,
+    encrypted_secret_base64: Option<String>,
+    pairing_id: Option<String>,
+    created_at: String,
+    updated_at: String,
+    approved_at: Option<String>,
+    revoked_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct VaultAuditEvent {
+    timestamp: String,
+    event: String,
+    detail: Value,
+}
+
+#[derive(Debug, Deserialize, Clone, Serialize)]
+struct AuthorizeQuery {
+    response_type: String,
+    client_id: String,
+    redirect_uri: String,
+    code_challenge: String,
+    code_challenge_method: String,
+    state: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct RegisterRequest {
+    username: String,
+    password: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct LoginRequest {
+    username: String,
+    password: String,
+    oauth: AuthorizeQuery,
+}
+
+#[derive(Debug, Serialize)]
+struct LoginFinishResponse {
+    redirect_uri: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct TokenRequest {
+    grant_type: String,
+    code: Option<String>,
+    refresh_token: Option<String>,
+    redirect_uri: Option<String>,
+    client_id: Option<String>,
+    code_verifier: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct TokenResponse {
+    access_token: String,
+    token_type: &'static str,
+    expires_in: i64,
+    refresh_token: String,
+}
+
+#[derive(Debug, Serialize)]
+struct MeResponse {
+    id: String,
+    username: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SyncState {
+    revision: String,
+    profile: Value,
+    vault: Value,
+}
+
+#[derive(Debug, Deserialize)]
+struct SyncPutRequest {
+    expected_revision: String,
+    profile: Value,
+    vault: Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SyncServiceState {
+    revision: String,
+    payload: Value,
+    tombstones: Value,
+}
+
+#[derive(Debug, Clone)]
+struct SyncRevisionEvent {
+    user_id: String,
+    services: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone)]
+struct VaultEnrollmentEvent {
+    user_id: String,
+    enrollment_id: String,
+    enrollment: VaultEnrollment,
+}
+
+#[derive(Debug, Deserialize)]
+struct SyncV2PutRequest {
+    services: HashMap<String, SyncV2ServicePut>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SyncV2ServicePut {
+    expected_revision: String,
+    payload: Value,
+    #[serde(default = "default_tombstones")]
+    tombstones: Value,
+}
+
+#[derive(Debug, Deserialize)]
+struct SessionsQuery {
+    #[serde(default)]
+    active: bool,
+    #[serde(default)]
+    include_preview: bool,
+    #[serde(default = "default_preview_bytes")]
+    preview_bytes: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct WebTerminalStart {
+    session_id: Uuid,
+    target_host: String,
+    target_port: u16,
+    target_user: String,
+    cols: u16,
+    rows: u16,
+    #[serde(default)]
+    replay_bytes: Option<u64>,
+    #[serde(default)]
+    private_key: Option<String>,
+    #[serde(default)]
+    detect_os: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum WebTerminalControl {
+    Resize {
+        cols: u16,
+        rows: u16,
+    },
+    HostKeyResponse {
+        accepted: bool,
+    },
+    UploadFile {
+        request_id: Uuid,
+        filename: String,
+        contents_base64: String,
+    },
+}
+
+#[derive(Debug, Serialize)]
+struct WebTerminalHostKeyVerification {
+    #[serde(rename = "type")]
+    message_type: &'static str,
+    host: String,
+    port: u16,
+    fingerprint: String,
+    key_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    old_fingerprint: Option<String>,
+}
+
+#[derive(Clone)]
+struct WebTerminalUploadTarget {
+    target_host: String,
+    target_port: u16,
+    target_user: String,
+    known_hosts_path: PathBuf,
+    identity_file: Option<PathBuf>,
+    control_path: Option<PathBuf>,
+}
+
+struct WebTerminalUploadResult {
+    request_id: Uuid,
+    result: Result<String, String>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct TargetOsDetection {
+    uname: String,
+    os_release: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct ScannedHostKey {
+    key_type: String,
+    key_blob: String,
+    fingerprint: String,
+}
+
+#[derive(Debug)]
+struct PendingHostKeyVerification {
+    challenge: WebTerminalHostKeyVerification,
+    scanned_keys: Vec<ScannedHostKey>,
+}
+
+#[derive(Debug)]
+enum TerminalHostKeyStatus {
+    Known,
+    VerificationRequired(PendingHostKeyVerification),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct SessionMetadata {
+    schema_version: u16,
+    session_id: Uuid,
+    session_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    display_name: Option<String>,
+    target_host: String,
+    target_port: u16,
+    target_user: String,
+    created_at: DateTime<Utc>,
+    updated_at: DateTime<Utc>,
+    ended_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    process_group_id: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    process_id: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    runtime_generation: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct ListedSession {
+    #[serde(flatten)]
+    metadata: SessionMetadata,
+    active: bool,
+    last_output_at: Option<DateTime<Utc>>,
+    preview_base64: Option<String>,
+    preview_truncated: bool,
+}
+
+pub fn run(state_dir: PathBuf, bind: String, public_url: Option<String>) -> Result<()> {
+    let rt = tokio::runtime::Runtime::new().context("failed to start Tokio runtime")?;
+    let ssh_port = std::env::var("PORTAL_HUB_SSH_PORT")
+        .ok()
+        .and_then(|value| value.parse::<u16>().ok())
+        .filter(|port| *port > 0)
+        .unwrap_or(2222);
+    rt.block_on(run_async(state_dir, bind, public_url, ssh_port))
+}
+
+async fn run_async(
+    state_dir: PathBuf,
+    bind: String,
+    public_url: Option<String>,
+    ssh_port: u16,
+) -> Result<()> {
+    let _service_lock = crate::runtime::service_lock(&state_dir)?;
+    let hub_state = super::State::new(state_dir.clone());
+    hub_state.reconcile_sessions()?;
+    crate::runtime::clear_identities(&state_dir)?;
+    let db = open_db(&state_dir)?;
+
+    let bind_addr: SocketAddr = bind
+        .parse()
+        .with_context(|| format!("invalid bind address: {bind}"))?;
+    let public_url = match public_url {
+        Some(public_url) => canonicalize_public_url(&public_url)?,
+        None => {
+            if bind_addr.ip().is_loopback() {
+                format!("http://portal-hub.localhost:{}", bind_addr.port())
+            } else {
+                format!("http://{bind_addr}")
+            }
+        }
+    };
+    let (sync_events, _) = broadcast::channel(256);
+    let (vault_events, _) = broadcast::channel(256);
+    let state = AppState {
+        db: Arc::new(Mutex::new(db)),
+        state_dir,
+        public_url,
+        ssh_port,
+        sync_events,
+        vault_events,
+        require_bootstrap: crate::runtime::require_bootstrap(),
+        stopping: Arc::new(AtomicBool::new(false)),
+    };
+
+    let app = Router::new()
+        .route("/", get(root))
+        .route("/admin", get(admin_page))
+        .route("/pair/android", get(android_pairing_page))
+        .route("/auth/register", post(register))
+        .route("/auth/login", post(login))
+        .route("/oauth/authorize", get(authorize_page))
+        .route("/oauth/token", post(token))
+        .route("/api/info", get(api_info))
+        .route("/api/me", get(api_me))
+        .route("/api/sessions", get(api_sessions))
+        .route(
+            "/api/sessions/:id",
+            delete(api_session_delete).patch(api_session_update),
+        )
+        .route("/api/sessions/terminal", get(api_session_terminal))
+        .route("/api/sync", get(api_sync_get).put(api_sync_put))
+        .route("/api/sync/v2", get(api_sync_v2_get).put(api_sync_v2_put))
+        .route("/api/sync/v2/events", get(api_sync_v2_events))
+        .route(
+            "/api/vault/enrollments",
+            get(api_vault_enrollments).post(api_vault_enrollment_create),
+        )
+        .route("/api/vault/enrollments/audit", get(api_vault_audit_events))
+        .route("/api/vault/enrollments/:id", get(api_vault_enrollment_get))
+        .route(
+            "/api/vault/enrollments/:id/events",
+            get(api_vault_enrollment_events),
+        )
+        .route(
+            "/api/vault/enrollments/:id/approve",
+            post(api_vault_enrollment_approve),
+        )
+        .route(
+            "/api/vault/enrollments/:id/revoke",
+            post(api_vault_enrollment_revoke),
+        )
+        .layer(TraceLayer::new_for_http())
+        .with_state(state.clone());
+
+    let listener = tokio::net::TcpListener::bind(bind_addr)
+        .await
+        .with_context(|| format!("failed to bind {bind_addr}"))?;
+    eprintln!("Portal Hub web listening on {bind_addr}");
+    let (stop_tx, stop_rx) = oneshot::channel::<()>();
+    let server = axum::serve(listener, app)
+        .with_graceful_shutdown(async {
+            let _ = stop_rx.await;
+        })
+        .into_future();
+    tokio::pin!(server);
+    let mut prune_tick = tokio::time::interval(Duration::from_secs(3600));
+    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+    let mut server_done = false;
+    loop {
+        tokio::select! {
+            result = &mut server => { result?; server_done = true; break; }
+            _ = terminate.recv() => break,
+            _ = tokio::signal::ctrl_c() => break,
+            _ = prune_tick.tick() => {
+                if let Err(error) = hub_state.reconcile_sessions().and_then(|()| super::prune_sessions(
+                    &hub_state, super::DEFAULT_PRUNE_ENDED_OLDER_THAN_DAYS,
+                    super::configured_max_log_bytes(), false)) {
+                    eprintln!("Portal Hub scheduled pruning failed: {error}");
+                }
+            }
+        }
+    }
+    state.stopping.store(true, Ordering::SeqCst);
+    let _ = stop_tx.send(());
+    // Bound draining so SSE/websocket clients cannot keep a container alive.
+    if !server_done {
+        let _ = timeout(Duration::from_secs(5), &mut server).await;
+    }
+    for metadata in hub_state.load_sessions()? {
+        if metadata.ended_at.is_none()
+            && let Err(error) = delete_session(&state.state_dir, metadata.session_id)
+        {
+            eprintln!("Portal Hub session shutdown failed: {error}");
+        }
+    }
+    crate::runtime::clear_identities(&state.state_dir)?;
+    Ok(())
+}
+
+fn open_db(state_dir: &Path) -> Result<Connection> {
+    crate::runtime::private_dir(state_dir)?;
+    let path = state_dir.join("hub.db");
+    // Reject symlinks before SQLite opens the owner credentials database.
+    if fs::symlink_metadata(&path).is_ok_and(|meta| !meta.is_file()) {
+        bail!("invalid Hub database file");
+    }
+    let db = Connection::open(&path).context("failed to open Portal Hub database")?;
+    db.busy_timeout(Duration::from_secs(15))?;
+    init_db(&db)?;
+    Ok(db)
+}
+
+pub fn bootstrap_status_cli(state_dir: &Path, _json: bool) -> Result<()> {
+    local_bootstrap_only()?;
+    println!("{}", json!({"owner_exists": owner_exists(state_dir)?}));
+    Ok(())
+}
+
+pub(super) fn owner_exists(state_dir: &Path) -> Result<bool> {
+    if !state_dir.join("hub.db").exists() {
+        return Ok(false);
+    }
+    let db = Connection::open_with_flags(
+        state_dir.join("hub.db"),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )?;
+    db.busy_timeout(Duration::from_secs(15))?;
+    Ok(db.query_row("SELECT EXISTS(SELECT 1 FROM users)", [], |row| row.get(0))?)
+}
+
+fn local_bootstrap_only() -> Result<()> {
+    if std::env::var_os("SSH_ORIGINAL_COMMAND").is_some() {
+        bail!("bootstrap is only available to the local service administrator");
+    }
+    Ok(())
+}
+
+pub fn bootstrap_owner_cli(state_dir: &Path, _json: bool) -> Result<()> {
+    local_bootstrap_only()?;
+    let mut input = Vec::new();
+    io::stdin().take(8193).read_to_end(&mut input)?;
+    if input.len() > 8192 {
+        bail!("bootstrap request exceeds size limit");
+    }
+    // Do not include serde errors: a malformed request may contain credentials.
+    let request: RegisterRequest =
+        serde_json::from_slice(&input).map_err(|_| anyhow!("invalid bootstrap JSON request"))?;
+    let created = bootstrap_owner(&open_db(state_dir)?, request)?;
+    println!("{}", json!({"owner_exists": true, "created": created}));
+    Ok(())
+}
+
+fn bootstrap_owner(db: &Connection, request: RegisterRequest) -> Result<bool> {
+    validate_username(&request.username)?;
+    validate_password(&request.password)?;
+    let username = request.username.trim();
+    let password_hash = hash_password(&request.password)?;
+    // SQLite owns the arbitration across CLI processes and the HTTP server.
+    // An immediate transaction prevents two different first owners racing.
+    let tx = Transaction::new_unchecked(db, TransactionBehavior::Immediate)?;
+    let existing: Option<(String, String)> = tx
+        .query_row(
+            "SELECT username, COALESCE(password_hash, '') FROM users LIMIT 1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .optional()?;
+    if let Some((existing_username, existing_hash)) = existing {
+        if existing_username != username
+            || !verify_password(&request.password, &existing_hash).unwrap_or(false)
+        {
+            bail!("owner already exists; credentials do not match");
+        }
+        tx.commit()?;
+        return Ok(false);
+    }
+    let user_id = Uuid::new_v4();
+    insert_user(&tx, user_id, username, &password_hash)?;
+    audit_db(
+        &tx,
+        "owner_created",
+        Some(&user_id.to_string()),
+        json!({"auth_method":"local_bootstrap"}),
+    )?;
+    tx.commit()?;
+    Ok(true)
+}
+
+fn init_db(db: &Connection) -> Result<()> {
+    let tx = Transaction::new_unchecked(db, TransactionBehavior::Immediate)?;
+    tx.execute_batch(
+        r#"
+        CREATE TABLE IF NOT EXISTS users (
+            id TEXT PRIMARY KEY,
+            username TEXT NOT NULL UNIQUE,
+            password_hash TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS auth_codes (
+            code TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            client_id TEXT NOT NULL,
+            redirect_uri TEXT NOT NULL,
+            code_challenge TEXT NOT NULL,
+            expires_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS access_tokens (
+            token_hash TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS refresh_tokens (
+            token_hash TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS profiles (
+            user_id TEXT PRIMARY KEY,
+            revision TEXT NOT NULL,
+            profile TEXT NOT NULL,
+            vault TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS sync_services (
+            user_id TEXT NOT NULL,
+            service TEXT NOT NULL,
+            revision TEXT NOT NULL,
+            payload TEXT NOT NULL,
+            tombstones TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            PRIMARY KEY(user_id, service)
+        );
+        CREATE TABLE IF NOT EXISTS audit_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT NOT NULL,
+            event TEXT NOT NULL,
+            user_id TEXT,
+            detail TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS vault_enrollments (
+            id TEXT PRIMARY KEY,
+            user_id TEXT NOT NULL,
+            device_name TEXT NOT NULL,
+            public_key_algorithm TEXT NOT NULL,
+            public_key_der_base64 TEXT NOT NULL,
+            encrypted_secret_base64 TEXT,
+            pairing_id TEXT,
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            approved_at TEXT,
+            revoked_at TEXT
+        );
+        CREATE TABLE IF NOT EXISTS android_pairing_sessions (
+            id TEXT PRIMARY KEY,
+            public_url TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
+            consumed_at TEXT
+        );
+        "#,
+    )?;
+    ensure_password_hash_column(&tx)?;
+    ensure_vault_enrollment_columns(&tx)?;
+    tx.commit()?;
+    Ok(())
+}
+
+async fn root(State(state): State<AppState>) -> Response {
+    if user_count(&state).unwrap_or(0) == 0 {
+        Redirect::to("/admin").into_response()
+    } else {
+        Html(page(
+            "Portal Hub",
+            &format!(
+                r#"<section class="panel">
+                    <p class="eyebrow">Hub online</p>
+                    <h1>Portal Hub is running.</h1>
+                    <p class="lead">Desktop clients can authenticate and sync through <code>{}</code>.</p>
+                    {}
+                  </section>"#,
+                html_escape(&state.public_url),
+                android_pairing_panel(&state)
+            ),
+        ))
+        .into_response()
+    }
+}
+
+async fn admin_page(
+    State(state): State<AppState>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Response {
+    let continue_url = admin_continue_url(&params).unwrap_or_default();
+    if state.require_bootstrap
+        && (user_count(&state).unwrap_or(0) == 0
+            || owner_missing_password(&state).ok().flatten().is_some())
+    {
+        return Html(page("Portal Hub setup", "<section class=\"panel\"><h1>Complete setup in Portal.</h1><p>The service administrator must establish the owner through the managed setup connection.</p></section>")).into_response();
+    }
+    if user_count(&state).unwrap_or(0) > 0 {
+        if let Ok(Some(username)) = owner_missing_password(&state) {
+            return Html(page(
+                "Set Portal Hub Password",
+                &format!(
+                    r#"<section class="panel setup-panel">
+                        <div id="setup-error" class="error" hidden></div>
+                        <form id="owner-form" class="flow" autocomplete="off" data-password-only="true" data-continue-url="{}">
+                          <p class="eyebrow">Owner password</p>
+                          <h1>Set a password.</h1>
+                          <p class="lead">This existing owner account needs a password before Portal desktop can sign in.</p>
+                          <label>Account name<input id="username" name="username" autocomplete="username" required minlength="2" maxlength="64" readonly value="{}"></label>
+                          <label>Password<input id="password" name="password" type="password" autocomplete="new-password" required minlength="{}" maxlength="256"></label>
+                          <label>Confirm password<input id="password-confirm" name="password-confirm" type="password" autocomplete="new-password" required minlength="{}" maxlength="256"></label>
+                          <button type="submit" id="create-button">Set password</button>
+                        </form>
+                      </section>"#,
+                    html_escape(&continue_url),
+                    html_escape(&username),
+                    MIN_PASSWORD_LEN,
+                    MIN_PASSWORD_LEN
+                ),
+            ))
+            .into_response();
+        }
+        return Html(page(
+            "Portal Hub",
+            &format!(
+                r#"<section class="panel">
+                <p class="eyebrow">Owner exists</p>
+                <h1>Portal Hub is ready.</h1>
+                <p class="lead">Continue through Portal desktop sign-in to authenticate with your password.</p>
+                {}
+                {}
+              </section>"#,
+                continue_button_html(&continue_url),
+                android_pairing_panel(&state)
+            ),
+        ))
+        .into_response();
+    }
+
+    Html(page(
+        "Create Portal Hub Owner",
+        &format!(
+            r#"<section class="panel setup-panel">
+            <div class="steps" aria-label="Setup progress">
+              <span class="step-dot active" data-step-dot="1">1</span>
+              <span class="step-line"></span>
+              <span class="step-dot" data-step-dot="2">2</span>
+            </div>
+            <div id="setup-error" class="error" hidden></div>
+            <form id="owner-form" class="flow" autocomplete="off" data-continue-url="{}">
+              <div class="wizard-step" data-step="1">
+                <p class="eyebrow">First owner</p>
+                <h1>Name this account.</h1>
+                <p class="lead">This name is stored on the Hub and shown in Portal after sign-in.</p>
+                <label>Account name<input id="username" name="username" autocomplete="username" required minlength="2" maxlength="64" autofocus></label>
+                <button type="button" id="next-button">Next</button>
+              </div>
+              <div class="wizard-step" data-step="2" hidden>
+                <p class="eyebrow">Password</p>
+                <h1>Create a password.</h1>
+                <p class="lead">This password protects Portal desktop sign-in to this Hub.</p>
+                <label>Password<input id="password" name="password" type="password" autocomplete="new-password" required minlength="12" maxlength="256"></label>
+                <label>Confirm password<input id="password-confirm" name="password-confirm" type="password" autocomplete="new-password" required minlength="12" maxlength="256"></label>
+                <div class="security-callout">
+                  <span class="security-icon" aria-hidden="true"></span>
+                  <div>
+                    <strong>Use a unique password.</strong>
+                    <p>The Hub stores only an Argon2 password hash.</p>
+                  </div>
+                </div>
+                <div class="actions">
+                  <button type="button" class="secondary" id="back-button">Back</button>
+                  <button type="submit" id="create-button">Create owner</button>
+                </div>
+              </div>
+            </form>
+          </section>"#,
+            html_escape(&continue_url)
+        ),
+    ))
+    .into_response()
+}
+
+async fn android_pairing_page(State(state): State<AppState>) -> Response {
+    Html(page(
+        "Pair Portal Android",
+        &format!(
+            r#"<section class="panel">
+                <p class="eyebrow">Android pairing</p>
+                <h1>Pair Portal Android.</h1>
+                <p class="lead">Scan this QR code on Android to select this Hub, sign in, and request vault access automatically.</p>
+                {}
+              </section>"#,
+            android_pairing_panel(&state)
+        ),
+    ))
+    .into_response()
+}
+
+async fn authorize_page(
+    State(state): State<AppState>,
+    Query(query): Query<AuthorizeQuery>,
+) -> Response {
+    if let Err(error) = validate_authorize_query(&query) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Html(page("Invalid Request", &error_panel(&error.to_string()))),
+        )
+            .into_response();
+    }
+    if user_count(&state).unwrap_or(0) == 0 {
+        let location = authorize_path("/admin", &query);
+        return Redirect::to(&location).into_response();
+    }
+
+    Html(page(
+        "Sign In To Portal Hub",
+        r#"<section class="panel auth-panel">
+            <p class="eyebrow">Portal desktop sign-in</p>
+            <h1>Sign in.</h1>
+            <p class="lead">Portal Hub will confirm your password, then return you to Portal.</p>
+            <div id="login-error" class="error" hidden></div>
+            <form id="login-form" class="flow" autocomplete="on">
+              <label>Account name<input id="username" name="username" autocomplete="username" required autofocus></label>
+              <label>Password<input id="password" name="password" type="password" autocomplete="current-password" required></label>
+              <button type="submit" id="login-button">Sign in</button>
+            </form>
+          </section>"#,
+    ))
+    .into_response()
+}
+
+async fn register(State(state): State<AppState>, Json(request): Json<RegisterRequest>) -> Response {
+    if state.require_bootstrap {
+        return json_error(
+            StatusCode::FORBIDDEN,
+            anyhow!("owner setup requires local bootstrap"),
+        );
+    }
+    match register_inner(&state, request) {
+        Ok(()) => Json(json!({"ok": true})).into_response(),
+        Err(error) => json_error(StatusCode::BAD_REQUEST, error),
+    }
+}
+
+fn register_inner(state: &AppState, request: RegisterRequest) -> Result<()> {
+    if state.require_bootstrap {
+        bail!("owner setup requires local bootstrap");
+    }
+    validate_username(&request.username)?;
+    validate_password(&request.password)?;
+    let username = request.username.trim().to_string();
+    let user_id = Uuid::new_v4();
+    let password_hash = hash_password(&request.password)?;
+    let db = state
+        .db
+        .lock()
+        .map_err(|_| anyhow!("database lock poisoned"))?;
+
+    let db = Transaction::new_unchecked(&db, TransactionBehavior::Immediate)?;
+    let count: i64 = db.query_row("SELECT COUNT(*) FROM users", [], |row| row.get(0))?;
+    if count == 0 {
+        insert_user(&db, user_id, &username, &password_hash)?;
+        audit_db(
+            &db,
+            "owner_created",
+            Some(&user_id.to_string()),
+            json!({"username": username, "auth_method": "password"}),
+        )?;
+        db.commit()?;
+        return Ok(());
+    }
+
+    let existing = db
+        .query_row(
+            "SELECT id, COALESCE(password_hash, '') FROM users WHERE username = ?1",
+            [username.as_str()],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()?;
+    let Some((existing_user_id, existing_password_hash)) = existing else {
+        bail!("owner account already exists");
+    };
+    if !existing_password_hash.is_empty() {
+        bail!("owner account already exists");
+    }
+    db.execute(
+        "UPDATE users SET password_hash = ?1 WHERE id = ?2",
+        params![password_hash, existing_user_id],
+    )?;
+    audit_db(
+        &db,
+        "owner_password_set",
+        Some(&existing_user_id),
+        json!({"username": username, "auth_method": "password"}),
+    )?;
+    db.commit()?;
+    Ok(())
+}
+
+async fn login(State(state): State<AppState>, Json(request): Json<LoginRequest>) -> Response {
+    match login_inner(&state, request) {
+        Ok(response) => Json(response).into_response(),
+        Err(error) => json_error(StatusCode::UNAUTHORIZED, error),
+    }
+}
+
+fn login_inner(state: &AppState, request: LoginRequest) -> Result<LoginFinishResponse> {
+    validate_authorize_query(&request.oauth)?;
+    validate_username(&request.username)?;
+    if request.password.is_empty() {
+        bail!("missing password");
+    }
+    let username = request.username.trim().to_string();
+    let db = state
+        .db
+        .lock()
+        .map_err(|_| anyhow!("database lock poisoned"))?;
+    let Some((user_id, password_hash)) = db
+        .query_row(
+            "SELECT id, COALESCE(password_hash, '') FROM users WHERE username = ?1",
+            [username.as_str()],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()?
+    else {
+        audit_db(
+            &db,
+            "login_failed",
+            None,
+            json!({"username": username, "reason": "unknown_user"}),
+        )?;
+        bail!("unknown account");
+    };
+    if password_hash.is_empty() {
+        audit_db(
+            &db,
+            "login_failed",
+            Some(&user_id),
+            json!({"username": username, "reason": "password_not_set"}),
+        )?;
+        bail!("this account needs a password");
+    }
+    if !verify_password(&request.password, &password_hash)? {
+        audit_db(
+            &db,
+            "login_failed",
+            Some(&user_id),
+            json!({"username": username, "reason": "invalid_password"}),
+        )?;
+        bail!("invalid password");
+    }
+
+    let code = random_token();
+    let expires_at = (Utc::now() + ChronoDuration::minutes(AUTH_CODE_TTL_MINUTES)).to_rfc3339();
+    db.execute(
+        "INSERT INTO auth_codes (code, user_id, client_id, redirect_uri, code_challenge, expires_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        params![
+            code,
+            user_id,
+            request.oauth.client_id,
+            request.oauth.redirect_uri,
+            request.oauth.code_challenge,
+            expires_at
+        ],
+    )?;
+    audit_db(
+        &db,
+        "login_success",
+        Some(&user_id),
+        json!({"client_id": request.oauth.client_id, "auth_method": "password"}),
+    )?;
+
+    Ok(LoginFinishResponse {
+        redirect_uri: format!(
+            "{}?code={}&state={}",
+            request.oauth.redirect_uri,
+            urlencoding::encode(&code),
+            urlencoding::encode(&request.oauth.state)
+        ),
+    })
+}
+
+async fn token(
+    State(state): State<AppState>,
+    axum::Form(request): axum::Form<TokenRequest>,
+) -> Response {
+    match token_inner(&state, request) {
+        Ok(response) => Json(response).into_response(),
+        Err(error) => json_error(StatusCode::BAD_REQUEST, error),
+    }
+}
+
+fn token_inner(state: &AppState, request: TokenRequest) -> Result<TokenResponse> {
+    match request.grant_type.as_str() {
+        "authorization_code" => exchange_authorization_code(state, request),
+        "refresh_token" => exchange_refresh_token(state, request),
+        _ => bail!("unsupported grant_type"),
+    }
+}
+
+fn exchange_authorization_code(state: &AppState, request: TokenRequest) -> Result<TokenResponse> {
+    let code = request.code.ok_or_else(|| anyhow!("missing code"))?;
+    let verifier = request
+        .code_verifier
+        .ok_or_else(|| anyhow!("missing code_verifier"))?;
+    let redirect_uri = request
+        .redirect_uri
+        .ok_or_else(|| anyhow!("missing redirect_uri"))?;
+    let client_id = request
+        .client_id
+        .ok_or_else(|| anyhow!("missing client_id"))?;
+    let db = state
+        .db
+        .lock()
+        .map_err(|_| anyhow!("database lock poisoned"))?;
+    let Some((user_id, stored_client_id, stored_redirect_uri, challenge, expires_at)) = db
+        .query_row(
+            "SELECT user_id, client_id, redirect_uri, code_challenge, expires_at FROM auth_codes WHERE code = ?1",
+            [&code],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                    row.get::<_, String>(3)?,
+                    row.get::<_, String>(4)?,
+                ))
+            },
+        )
+        .optional()?
+    else {
+        bail!("invalid code");
+    };
+    if stored_client_id != client_id || stored_redirect_uri != redirect_uri {
+        bail!("invalid code binding");
+    }
+    if DateTime::parse_from_rfc3339(&expires_at)?.with_timezone(&Utc) < Utc::now() {
+        bail!("authorization code expired");
+    }
+    if pkce_challenge(&verifier) != challenge {
+        bail!("invalid code_verifier");
+    }
+    db.execute("DELETE FROM auth_codes WHERE code = ?1", [&code])?;
+    issue_tokens(&db, &user_id, &client_id)
+}
+
+fn exchange_refresh_token(state: &AppState, request: TokenRequest) -> Result<TokenResponse> {
+    let client_id = request.client_id.unwrap_or_else(|| "unknown".to_string());
+    if client_id != "unknown" && !is_supported_client_id(&client_id) {
+        bail!("unknown client_id");
+    }
+    let refresh_token = request
+        .refresh_token
+        .ok_or_else(|| anyhow!("missing refresh_token"))?;
+    let refresh_hash = token_hash(&refresh_token);
+    let db = state
+        .db
+        .lock()
+        .map_err(|_| anyhow!("database lock poisoned"))?;
+    let Some((user_id, expires_at)) = db
+        .query_row(
+            "SELECT user_id, expires_at FROM refresh_tokens WHERE token_hash = ?1",
+            [&refresh_hash],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        )
+        .optional()?
+    else {
+        bail!("invalid refresh_token");
+    };
+    if DateTime::parse_from_rfc3339(&expires_at)?.with_timezone(&Utc) < Utc::now() {
+        bail!("refresh_token expired");
+    }
+    db.execute(
+        "DELETE FROM refresh_tokens WHERE token_hash = ?1",
+        [&refresh_hash],
+    )?;
+    issue_tokens(&db, &user_id, &client_id)
+}
+
+async fn api_me(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    match authenticated_user(&state, &headers) {
+        Ok((id, username)) => Json(MeResponse { id, username }).into_response(),
+        Err(response) => response,
+    }
+}
+
+async fn api_info(State(state): State<AppState>) -> Response {
+    Json(json!({
+        "api_version": 2,
+        "version": env!("CARGO_PKG_VERSION"),
+        "public_url": state.public_url,
+        "capabilities": {
+            "sync_v2": true,
+            "sync_events": true,
+            "web_proxy": true,
+            "session_titles": true,
+            "key_vault": true,
+            "vault_enrollment": true,
+            "vault_enrollment_events": true,
+            "android_pairing_sessions": true
+        },
+        "ssh_port": state.ssh_port,
+        "ssh_username": "portal-hub",
+    }))
+    .into_response()
+}
+
+async fn api_sessions(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<SessionsQuery>,
+) -> Response {
+    let (user_id, _) = match authenticated_user(&state, &headers) {
+        Ok(user) => user,
+        Err(response) => return response,
+    };
+    match listed_sessions(&state.state_dir, query) {
+        Ok(sessions) => {
+            audit(
+                &state,
+                "sessions_list",
+                &user_id,
+                json!({"count": sessions.len()}),
+            );
+            Json(json!({
+                "api_version": 2,
+                "generated_at": Utc::now(),
+                "sessions": sessions,
+            }))
+            .into_response()
+        }
+        Err(error) => json_error(StatusCode::INTERNAL_SERVER_ERROR, error),
+    }
+}
+
+async fn api_session_delete(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(session_id): AxumPath<Uuid>,
+) -> Response {
+    let (user_id, _) = match authenticated_user(&state, &headers) {
+        Ok(user) => user,
+        Err(response) => return response,
+    };
+
+    match delete_session(&state.state_dir, session_id) {
+        Ok(killed) => {
+            audit(
+                &state,
+                "session_delete",
+                &user_id,
+                json!({"session_id": session_id, "process_signaled": killed}),
+            );
+            Json(json!({
+                "api_version": 2,
+                "session_id": session_id,
+                "deleted": true,
+                "process_signaled": killed,
+            }))
+            .into_response()
+        }
+        Err(error) if error.to_string().contains("not found") => {
+            json_error(StatusCode::NOT_FOUND, error)
+        }
+        Err(error) => json_error(StatusCode::INTERNAL_SERVER_ERROR, error),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct SessionUpdateRequest {
+    display_name: Value,
+}
+
+async fn api_session_update(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(session_id): AxumPath<Uuid>,
+    Json(request): Json<SessionUpdateRequest>,
+) -> Response {
+    let (user_id, _) = match authenticated_user(&state, &headers) {
+        Ok(user) => user,
+        Err(response) => return response,
+    };
+
+    let display_name = match validate_session_display_name(request.display_name) {
+        Ok(display_name) => display_name,
+        Err(error) => return json_error(StatusCode::BAD_REQUEST, error),
+    };
+
+    match update_session_display_name(&state.state_dir, session_id, display_name) {
+        Ok(metadata) => {
+            audit(
+                &state,
+                "session_update",
+                &user_id,
+                json!({
+                    "session_id": session_id,
+                    "display_name": metadata.display_name,
+                }),
+            );
+            Json(json!({
+                "api_version": 2,
+                "session_id": session_id,
+                "display_name": metadata.display_name,
+                "updated_at": metadata.updated_at,
+            }))
+            .into_response()
+        }
+        Err(error) if error.to_string().contains("not found") => {
+            json_error(StatusCode::NOT_FOUND, error)
+        }
+        Err(error) => json_error(StatusCode::INTERNAL_SERVER_ERROR, error),
+    }
+}
+
+async fn api_sync_get(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    let (user_id, _) = match authenticated_user(&state, &headers) {
+        Ok(user) => user,
+        Err(response) => return response,
+    };
+    match load_profile(&state, &user_id) {
+        Ok(profile) => Json(json!({
+            "api_version": 1,
+            "generated_at": Utc::now(),
+            "revision": profile.revision,
+            "profile": profile.profile,
+            "vault": profile.vault,
+        }))
+        .into_response(),
+        Err(error) => json_error(StatusCode::INTERNAL_SERVER_ERROR, error),
+    }
+}
+
+async fn api_sync_put(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<SyncPutRequest>,
+) -> Response {
+    let (user_id, _) = match authenticated_user(&state, &headers) {
+        Ok(user) => user,
+        Err(response) => return response,
+    };
+    match save_profile(&state, &user_id, request) {
+        Ok(profile) => Json(json!({
+            "api_version": 1,
+            "generated_at": Utc::now(),
+            "revision": profile.revision,
+            "profile": profile.profile,
+            "vault": profile.vault,
+        }))
+        .into_response(),
+        Err(error) if error.to_string().contains("revision conflict") => {
+            json_error(StatusCode::CONFLICT, error)
+        }
+        Err(error) => json_error(StatusCode::INTERNAL_SERVER_ERROR, error),
+    }
+}
+
+async fn api_session_terminal(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    ws: WebSocketUpgrade,
+) -> Response {
+    if let Err(response) = authenticated_user(&state, &headers) {
+        return response;
+    }
+
+    ws.on_upgrade(move |socket| handle_terminal_socket(state, socket))
+        .into_response()
+}
+
+async fn handle_terminal_socket(state: AppState, socket: WebSocket) {
+    let (mut ws_tx, mut ws_rx) = socket.split();
+
+    let Some(Ok(WsMessage::Text(start_message))) = ws_rx.next().await else {
+        let _ = ws_tx
+            .send(WsMessage::Text(
+                json!({"type": "error", "message": "missing terminal start request"}).to_string(),
+            ))
+            .await;
+        return;
+    };
+
+    let start: WebTerminalStart = match serde_json::from_str(&start_message) {
+        Ok(start) => start,
+        Err(error) => {
+            let _ = ws_tx
+                .send(WsMessage::Text(
+                    json!({"type": "error", "message": format!("invalid terminal start request: {}", error)})
+                        .to_string(),
+                ))
+                .await;
+            return;
+        }
+    };
+
+    if let Err(error) = verify_terminal_host_key(&state, &start, &mut ws_tx, &mut ws_rx).await {
+        let _ = ws_tx
+            .send(WsMessage::Text(
+                json!({"type": "error", "message": error.to_string()}).to_string(),
+            ))
+            .await;
+        return;
+    }
+
+    let mut terminal = match spawn_terminal_pty(&state, &start) {
+        Ok(terminal) => terminal,
+        Err(error) => {
+            eprintln!("Portal Hub terminal spawn failed: {error}");
+            let _ = ws_tx
+                .send(WsMessage::Text(
+                    json!({"type": "error", "message": error.to_string()}).to_string(),
+                ))
+                .await;
+            return;
+        }
+    };
+
+    let _ = ws_tx
+        .send(WsMessage::Text(
+            json!({"type": "started", "session_id": start.session_id}).to_string(),
+        ))
+        .await;
+
+    let (upload_result_tx, mut upload_result_rx) = mpsc::channel::<WebTerminalUploadResult>(8);
+    let (os_detection_tx, mut os_detection_rx) = oneshot::channel();
+    let mut os_detection_pending = start.detect_os;
+    if start.detect_os {
+        let target = terminal.upload_target.clone();
+        tokio::spawn(async move {
+            let _ = os_detection_tx.send(detect_target_os(&target).await);
+        });
+    }
+
+    let mut shutdown_tick = tokio::time::interval(Duration::from_millis(250));
+    loop {
+        tokio::select! {
+            _ = shutdown_tick.tick() => {
+                if state.stopping.load(Ordering::SeqCst) { break; }
+            }
+            output = terminal.output_rx.recv() => {
+                let Some(output) = output else {
+                    let _ = ws_tx
+                        .send(WsMessage::Text(json!({"type": "closed"}).to_string()))
+                        .await;
+                    let _ = ws_tx.send(WsMessage::Close(None)).await;
+                    break;
+                };
+                let output = coalesce_terminal_output(&mut terminal.output_rx, output).await;
+                if ws_tx.send(WsMessage::Binary(output)).await.is_err() {
+                    break;
+                }
+            }
+            child_exit = terminal.child_exit_rx.recv() => {
+                if child_exit.is_some() {
+                    let _ = ws_tx
+                        .send(WsMessage::Text(json!({"type": "closed"}).to_string()))
+                        .await;
+                    let _ = ws_tx.send(WsMessage::Close(None)).await;
+                    break;
+                }
+            }
+            upload_result = upload_result_rx.recv() => {
+                let Some(upload_result) = upload_result else {
+                    continue;
+                };
+                let payload = match upload_result.result {
+                    Ok(path) => json!({
+                        "type": "upload_file_result",
+                        "request_id": upload_result.request_id,
+                        "path": path,
+                    }),
+                    Err(error) => json!({
+                        "type": "upload_file_result",
+                        "request_id": upload_result.request_id,
+                        "error": error,
+                    }),
+                };
+                if ws_tx
+                    .send(WsMessage::Text(payload.to_string()))
+                    .await
+                    .is_err()
+                {
+                    break;
+                }
+            }
+            os_detection = &mut os_detection_rx, if os_detection_pending => {
+                os_detection_pending = false;
+                match os_detection {
+                    Ok(Ok(detection)) => {
+                        let mut payload = json!({
+                            "type": "os_detected",
+                            "uname": detection.uname,
+                        });
+                        if let Some(os_release) = detection.os_release {
+                            payload["os_release"] = Value::String(os_release);
+                        }
+                        if ws_tx
+                            .send(WsMessage::Text(payload.to_string()))
+                            .await
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    Ok(Err(error)) => {
+                        eprintln!("Portal Hub target OS detection failed: {error:#}");
+                    }
+                    Err(_) => {
+                        eprintln!("Portal Hub target OS detection task ended unexpectedly");
+                    }
+                }
+            }
+            message = ws_rx.next() => {
+                let Some(message) = message else {
+                    break;
+                };
+                match message {
+                    Ok(WsMessage::Binary(data)) => {
+                        if let Err(error) = terminal
+                            .writer
+                            .write_all(&data)
+                            .and_then(|_| terminal.writer.flush())
+                        {
+                            let _ = ws_tx
+                                .send(WsMessage::Text(
+                                    json!({"type": "error", "message": format!("terminal write failed: {}", error)})
+                                        .to_string(),
+                                ))
+                                .await;
+                            break;
+                        }
+                    }
+                    Ok(WsMessage::Text(text)) => {
+                        match serde_json::from_str::<WebTerminalControl>(&text) {
+                            Ok(WebTerminalControl::Resize { cols, rows }) => {
+                                let _ = terminal.master.resize(PtySize {
+                                    rows,
+                                    cols,
+                                    pixel_width: 0,
+                                    pixel_height: 0,
+                                });
+                            }
+                            Ok(WebTerminalControl::UploadFile {
+                                request_id,
+                                filename,
+                                contents_base64,
+                            }) => {
+                                let upload_target = terminal.upload_target.clone();
+                                let upload_result_tx = upload_result_tx.clone();
+                                tokio::spawn(async move {
+                                    let result = upload_file_to_target(
+                                        upload_target,
+                                        filename,
+                                        contents_base64,
+                                    )
+                                    .await
+                                    .map_err(|error| error.to_string());
+                                    let _ = upload_result_tx
+                                        .send(WebTerminalUploadResult { request_id, result })
+                                        .await;
+                                });
+                            }
+                            Ok(WebTerminalControl::HostKeyResponse { .. }) | Err(_) => {}
+                        }
+                    }
+                    Ok(WsMessage::Close(_)) => break,
+                    Ok(WsMessage::Ping(data)) => {
+                        let _ = ws_tx.send(WsMessage::Pong(data)).await;
+                    }
+                    Ok(WsMessage::Pong(_)) => {}
+                    Err(_) => break,
+                }
+            }
+        }
+    }
+
+    let _ = terminal.child_killer.kill();
+}
+
+async fn coalesce_terminal_output(
+    output_rx: &mut mpsc::Receiver<Vec<u8>>,
+    mut output: Vec<u8>,
+) -> Vec<u8> {
+    drain_ready_terminal_output(output_rx, &mut output);
+    if output.len() >= WEB_TERMINAL_OUTPUT_FRAME_TARGET_BYTES {
+        return output;
+    }
+
+    let delay = tokio::time::sleep(WEB_TERMINAL_OUTPUT_COALESCE_DELAY);
+    tokio::pin!(delay);
+
+    loop {
+        tokio::select! {
+            _ = &mut delay => break,
+            next = output_rx.recv() => {
+                let Some(next) = next else {
+                    break;
+                };
+                output.extend_from_slice(&next);
+                if output.len() >= WEB_TERMINAL_OUTPUT_FRAME_TARGET_BYTES {
+                    break;
+                }
+            }
+        }
+    }
+
+    output
+}
+
+async fn upload_file_to_target(
+    target: WebTerminalUploadTarget,
+    filename: String,
+    contents_base64: String,
+) -> Result<String> {
+    validate_upload_filename(&filename)?;
+    let max_base64_len = WEB_TERMINAL_UPLOAD_MAX_BYTES.div_ceil(3) * 4 + 4;
+    if contents_base64.len() > max_base64_len {
+        bail!("upload payload is too large");
+    }
+
+    let contents = BASE64_STANDARD
+        .decode(contents_base64.as_bytes())
+        .context("upload payload is not valid base64")?;
+    if contents.is_empty() {
+        bail!("upload payload is empty");
+    }
+    if contents.len() > WEB_TERMINAL_UPLOAD_MAX_BYTES {
+        bail!("upload payload is too large");
+    }
+
+    let mut command = target_upload_ssh_command(&target, &filename);
+    command.stdin(Stdio::piped());
+    command.stdout(Stdio::piped());
+    command.stderr(Stdio::piped());
+    command.kill_on_drop(true);
+
+    let mut child = command
+        .spawn()
+        .context("failed to start target upload SSH command")?;
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| anyhow!("failed to open target upload stdin"))?;
+
+    let stream_result = {
+        use tokio::io::AsyncWriteExt;
+        timeout(WEB_TERMINAL_UPLOAD_TIMEOUT, async {
+            stdin
+                .write_all(&contents)
+                .await
+                .context("failed to stream upload payload to target")?;
+            stdin
+                .shutdown()
+                .await
+                .context("failed to close target upload stdin")?;
+            Ok::<(), anyhow::Error>(())
+        })
+        .await
+        .context("target upload timed out while streaming payload")?
+    };
+    if let Err(error) = stream_result {
+        drop(stdin);
+        let output = wait_for_target_upload(child).await?;
+        return Err(target_upload_stream_error(error, &output));
+    }
+    drop(stdin);
+
+    let output = wait_for_target_upload(child).await?;
+
+    if !output.status.success() {
+        bail!(
+            "target upload failed: {}",
+            command_output_message(&output.stderr)
+        );
+    }
+
+    let stdout =
+        String::from_utf8(output.stdout).context("target upload returned non-UTF-8 output")?;
+    let path = stdout
+        .lines()
+        .rev()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .ok_or_else(|| anyhow!("target upload did not return a remote path"))?;
+    if !path.starts_with('/') {
+        bail!("target upload returned a non-absolute path: {path}");
+    }
+
+    Ok(path.to_string())
+}
+
+async fn wait_for_target_upload(child: tokio::process::Child) -> Result<std::process::Output> {
+    timeout(WEB_TERMINAL_UPLOAD_TIMEOUT, child.wait_with_output())
+        .await
+        .context("target upload timed out")?
+        .context("failed to wait for target upload command")
+}
+
+fn target_upload_stream_error(
+    stream_error: anyhow::Error,
+    output: &std::process::Output,
+) -> anyhow::Error {
+    if output.status.success() {
+        return stream_error;
+    }
+
+    anyhow!(
+        "target upload failed before reading payload: {}",
+        command_output_message(&output.stderr)
+    )
+}
+
+fn target_upload_ssh_command(target: &WebTerminalUploadTarget, filename: &str) -> TokioCommand {
+    let mut command = TokioCommand::new("ssh");
+    command
+        .arg("-F")
+        .arg("/dev/null")
+        .arg("-o")
+        .arg("ForwardAgent=yes")
+        .arg("-o")
+        .arg(if target.identity_file.is_some() {
+            "IdentitiesOnly=yes"
+        } else {
+            "IdentitiesOnly=no"
+        })
+        .arg("-o")
+        .arg("StrictHostKeyChecking=accept-new")
+        .arg("-o")
+        .arg(format!(
+            "UserKnownHostsFile={}",
+            target.known_hosts_path.display()
+        ))
+        .arg("-o")
+        .arg("BatchMode=yes")
+        .arg("-o")
+        .arg("ConnectTimeout=10")
+        .arg("-p")
+        .arg(target.target_port.to_string())
+        .arg("-l")
+        .arg(&target.target_user);
+
+    if let Some(identity_file) = &target.identity_file {
+        command.arg("-i").arg(identity_file);
+    }
+    if let Some(control_path) = &target.control_path {
+        command
+            .arg("-o")
+            .arg("ControlMaster=auto")
+            .arg("-o")
+            .arg(format!("ControlPath={}", control_path.display()));
+    }
+
+    command
+        .arg(&target.target_host)
+        .arg(remote_upload_shell_command(filename));
+    command
+}
+
+async fn detect_target_os(target: &WebTerminalUploadTarget) -> Result<TargetOsDetection> {
+    timeout(WEB_TERMINAL_OS_DETECTION_TIMEOUT, async {
+        let control_path = target
+            .control_path
+            .as_ref()
+            .ok_or_else(|| anyhow!("target SSH control socket is unavailable"))?;
+        while !control_path.exists() {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        // Let the user-facing SSH process request its PTY and shell before an
+        // exec channel is opened. Some PAM setups otherwise consume login/MOTD
+        // output on the metadata channel instead of the visible terminal.
+        tokio::time::sleep(Duration::from_millis(250)).await;
+
+        let output = target_os_detection_ssh_command(target)
+            .output()
+            .await
+            .context("failed to run target OS detection command")?;
+        if !output.status.success() {
+            bail!(
+                "target OS detection command failed: {}",
+                command_output_message(&output.stderr)
+            );
+        }
+        parse_target_os_output(&output.stdout)
+    })
+    .await
+    .context("target OS detection timed out")?
+}
+
+fn target_os_detection_ssh_command(target: &WebTerminalUploadTarget) -> TokioCommand {
+    let mut command = TokioCommand::new("ssh");
+    command
+        .arg("-F")
+        .arg("/dev/null")
+        .arg("-o")
+        .arg("BatchMode=yes")
+        .arg("-o")
+        .arg("ControlMaster=no")
+        .arg("-o")
+        .arg(format!(
+            "UserKnownHostsFile={}",
+            target.known_hosts_path.display()
+        ))
+        .arg("-p")
+        .arg(target.target_port.to_string())
+        .arg("-l")
+        .arg(&target.target_user);
+
+    if let Some(control_path) = &target.control_path {
+        command
+            .arg("-o")
+            .arg(format!("ControlPath={}", control_path.display()));
+    }
+
+    command.arg(&target.target_host).arg(concat!(
+        "uname -s 2>/dev/null; ",
+        "printf '__PORTAL_OS_RELEASE__\\n'; ",
+        "if [ -r /etc/os-release ]; then cat /etc/os-release; fi"
+    ));
+    command
+}
+
+fn parse_target_os_output(output: &[u8]) -> Result<TargetOsDetection> {
+    let output =
+        std::str::from_utf8(output).context("target OS detection returned non-UTF-8 output")?;
+    let (uname, os_release) = output
+        .split_once(OS_RELEASE_MARKER)
+        .ok_or_else(|| anyhow!("target OS detection output is missing its marker"))?;
+    let uname = uname.trim();
+    if uname.is_empty() {
+        bail!("target OS detection returned an empty uname");
+    }
+    let os_release = os_release.trim();
+
+    Ok(TargetOsDetection {
+        uname: uname.to_string(),
+        os_release: (!os_release.is_empty()).then(|| os_release.to_string()),
+    })
+}
+
+fn remote_upload_shell_command(filename: &str) -> String {
+    let script = format!(
+        concat!(
+            "filename={}; ",
+            "dir=\"${{XDG_CACHE_HOME:-$HOME/.cache}}/portal/pastes\"; ",
+            "umask 077; ",
+            "mkdir -p \"$dir\"; ",
+            "chmod 700 \"${{XDG_CACHE_HOME:-$HOME/.cache}}/portal\" \"$dir\" 2>/dev/null || true; ",
+            "path=\"$dir/$filename\"; ",
+            "if [ -e \"$path\" ]; then echo \"remote paste file already exists\" >&2; exit 73; fi; ",
+            "cat > \"$path\"; ",
+            "chmod 600 \"$path\" 2>/dev/null || true; ",
+            "printf \"%s\\n\" \"$path\""
+        ),
+        super::shell_quote(filename)
+    );
+
+    format!("/bin/sh -c {}", super::shell_quote(&script))
+}
+
+fn validate_upload_filename(filename: &str) -> Result<()> {
+    if filename.is_empty() || filename.len() > 160 {
+        bail!("invalid upload filename length");
+    }
+    if !filename.ends_with(".png") {
+        bail!("upload filename must end in .png");
+    }
+    if filename.starts_with('.') {
+        bail!("upload filename must not be hidden");
+    }
+    if !filename
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+    {
+        bail!("upload filename contains unsupported characters");
+    }
+    Ok(())
+}
+
+fn command_output_message(stderr: &[u8]) -> String {
+    let message = String::from_utf8_lossy(stderr);
+    let trimmed = message.trim();
+    if trimmed.is_empty() {
+        return "ssh command exited unsuccessfully".to_string();
+    }
+    trimmed.chars().take(4096).collect()
+}
+
+fn drain_ready_terminal_output(output_rx: &mut mpsc::Receiver<Vec<u8>>, output: &mut Vec<u8>) {
+    while output.len() < WEB_TERMINAL_OUTPUT_FRAME_TARGET_BYTES {
+        match output_rx.try_recv() {
+            Ok(next) => output.extend_from_slice(&next),
+            Err(mpsc::error::TryRecvError::Empty | mpsc::error::TryRecvError::Disconnected) => {
+                break;
+            }
+        }
+    }
+}
+
+async fn verify_terminal_host_key(
+    state: &AppState,
+    start: &WebTerminalStart,
+    ws_tx: &mut futures_util::stream::SplitSink<WebSocket, WsMessage>,
+    ws_rx: &mut futures_util::stream::SplitStream<WebSocket>,
+) -> Result<()> {
+    let known_hosts = known_hosts_path(&state.state_dir);
+    let host = start.target_host.clone();
+    let port = start.target_port;
+    let status =
+        tokio::task::spawn_blocking(move || terminal_host_key_status(&known_hosts, &host, port))
+            .await
+            .context("host key verification task failed")??;
+
+    let TerminalHostKeyStatus::VerificationRequired(pending) = status else {
+        return Ok(());
+    };
+
+    ws_tx
+        .send(WsMessage::Text(serde_json::to_string(&pending.challenge)?))
+        .await
+        .context("failed to send host key verification request")?;
+
+    let accepted = wait_for_host_key_response(ws_tx, ws_rx).await?;
+    if !accepted {
+        bail!("host key rejected by user");
+    }
+
+    let known_hosts = known_hosts_path(&state.state_dir);
+    let host = start.target_host.clone();
+    let port = start.target_port;
+    tokio::task::spawn_blocking(move || {
+        accept_terminal_host_key(&known_hosts, &host, port, &pending.scanned_keys)
+    })
+    .await
+    .context("host key update task failed")??;
+
+    Ok(())
+}
+
+async fn wait_for_host_key_response(
+    ws_tx: &mut futures_util::stream::SplitSink<WebSocket, WsMessage>,
+    ws_rx: &mut futures_util::stream::SplitStream<WebSocket>,
+) -> Result<bool> {
+    loop {
+        let message = timeout(HOST_KEY_RESPONSE_TIMEOUT, ws_rx.next())
+            .await
+            .context("timed out waiting for host key response")?
+            .ok_or_else(|| anyhow!("terminal socket closed during host key verification"))?
+            .context("terminal socket failed during host key verification")?;
+
+        match message {
+            WsMessage::Text(text) => match serde_json::from_str::<WebTerminalControl>(&text) {
+                Ok(WebTerminalControl::HostKeyResponse { accepted }) => return Ok(accepted),
+                Ok(WebTerminalControl::Resize { .. } | WebTerminalControl::UploadFile { .. }) => {}
+                Err(_) => {}
+            },
+            WsMessage::Close(_) => bail!("terminal socket closed during host key verification"),
+            WsMessage::Ping(data) => {
+                let _ = ws_tx.send(WsMessage::Pong(data)).await;
+            }
+            WsMessage::Pong(_) | WsMessage::Binary(_) => {}
+        }
+    }
+}
+
+fn terminal_host_key_status(
+    known_hosts_path: &Path,
+    host: &str,
+    port: u16,
+) -> Result<TerminalHostKeyStatus> {
+    let scanned_keys = scan_host_keys(host, port)?;
+    let known_keys = known_host_keys(known_hosts_path, host, port)?;
+
+    if known_keys.is_empty() {
+        let first = scanned_keys
+            .first()
+            .ok_or_else(|| anyhow!("ssh-keyscan returned no host keys for {host}:{port}"))?;
+        return Ok(TerminalHostKeyStatus::VerificationRequired(
+            PendingHostKeyVerification {
+                challenge: WebTerminalHostKeyVerification {
+                    message_type: "host_key_verification",
+                    host: host.to_string(),
+                    port,
+                    fingerprint: first.fingerprint.clone(),
+                    key_type: first.key_type.clone(),
+                    old_fingerprint: None,
+                },
+                scanned_keys,
+            },
+        ));
+    }
+
+    if scanned_keys.iter().any(|scanned| {
+        known_keys
+            .iter()
+            .any(|known| known.key_blob == scanned.key_blob)
+    }) {
+        return Ok(TerminalHostKeyStatus::Known);
+    }
+
+    let first = scanned_keys
+        .first()
+        .ok_or_else(|| anyhow!("ssh-keyscan returned no host keys for {host}:{port}"))?;
+    let old_fingerprint = known_keys
+        .iter()
+        .find_map(|key| {
+            if key.fingerprint.is_empty() {
+                None
+            } else {
+                Some(key.fingerprint.clone())
+            }
+        })
+        .unwrap_or_else(|| "unknown".to_string());
+
+    Ok(TerminalHostKeyStatus::VerificationRequired(
+        PendingHostKeyVerification {
+            challenge: WebTerminalHostKeyVerification {
+                message_type: "host_key_verification",
+                host: host.to_string(),
+                port,
+                fingerprint: first.fingerprint.clone(),
+                key_type: first.key_type.clone(),
+                old_fingerprint: Some(old_fingerprint),
+            },
+            scanned_keys,
+        },
+    ))
+}
+
+fn scan_host_keys(host: &str, port: u16) -> Result<Vec<ScannedHostKey>> {
+    let output = Command::new("ssh-keyscan")
+        .args([
+            "-T",
+            HOST_KEY_SCAN_TIMEOUT_SECS,
+            "-p",
+            &port.to_string(),
+            host,
+        ])
+        .output()
+        .with_context(|| format!("failed to scan host key for {host}:{port}"))?;
+
+    if !output.status.success() && output.stdout.is_empty() {
+        bail!(
+            "ssh-keyscan failed for {}:{}: {}",
+            host,
+            port,
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+
+    let mut keys = Vec::new();
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        if let Some(key) = parse_known_host_key_line(line)? {
+            keys.push(key);
+        }
+    }
+
+    if keys.is_empty() {
+        bail!("ssh-keyscan returned no usable host keys for {host}:{port}");
+    }
+
+    Ok(keys)
+}
+
+fn known_host_keys(known_hosts_path: &Path, host: &str, port: u16) -> Result<Vec<ScannedHostKey>> {
+    if !known_hosts_path.exists() {
+        return Ok(Vec::new());
+    }
+
+    let marker = host_marker(host, port);
+    let output = Command::new("ssh-keygen")
+        .arg("-F")
+        .arg(&marker)
+        .arg("-f")
+        .arg(known_hosts_path)
+        .output()
+        .with_context(|| format!("failed to inspect known_hosts for {marker}"))?;
+
+    if !output.status.success() {
+        return Ok(Vec::new());
+    }
+
+    let mut keys = Vec::new();
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        if let Some(key) = parse_known_host_key_line(line)? {
+            keys.push(key);
+        }
+    }
+
+    Ok(keys)
+}
+
+fn accept_terminal_host_key(
+    known_hosts_path: &Path,
+    host: &str,
+    port: u16,
+    scanned_keys: &[ScannedHostKey],
+) -> Result<()> {
+    let marker = host_marker(host, port);
+    if let Some(parent) = known_hosts_path.parent() {
+        fs::create_dir_all(parent).context("failed to create ssh state directory")?;
+    }
+
+    if known_hosts_path.exists() {
+        let _ = Command::new("ssh-keygen")
+            .arg("-R")
+            .arg(&marker)
+            .arg("-f")
+            .arg(known_hosts_path)
+            .output();
+
+        let old_path = known_hosts_path.with_extension("old");
+        let _ = fs::remove_file(old_path);
+    }
+
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .mode(0o600)
+        .open(known_hosts_path)
+        .with_context(|| format!("failed to open {}", known_hosts_path.display()))?;
+
+    for key in scanned_keys {
+        writeln!(file, "{} {} {}", marker, key.key_type, key.key_blob)
+            .context("failed to write known_hosts entry")?;
+    }
+
+    Ok(())
+}
+
+fn parse_known_host_key_line(line: &str) -> Result<Option<ScannedHostKey>> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() || trimmed.starts_with('#') {
+        return Ok(None);
+    }
+
+    let fields: Vec<&str> = trimmed.split_whitespace().collect();
+    if fields.len() < 3 {
+        return Ok(None);
+    }
+
+    let normalized_line = format!("{} {} {}", fields[0], fields[1], fields[2]);
+    Ok(Some(ScannedHostKey {
+        key_type: fields[1].to_string(),
+        key_blob: fields[2].to_string(),
+        fingerprint: fingerprint_known_host_line(&normalized_line)?,
+    }))
+}
+
+fn fingerprint_known_host_line(line: &str) -> Result<String> {
+    let mut child = Command::new("ssh-keygen")
+        .arg("-l")
+        .arg("-f")
+        .arg("-")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("failed to start ssh-keygen for host key fingerprint")?;
+
+    {
+        let stdin = child
+            .stdin
+            .as_mut()
+            .ok_or_else(|| anyhow!("failed to open ssh-keygen stdin"))?;
+        writeln!(stdin, "{line}").context("failed to pass host key to ssh-keygen")?;
+    }
+
+    let output = child
+        .wait_with_output()
+        .context("failed to read ssh-keygen fingerprint")?;
+    if !output.status.success() {
+        bail!(
+            "failed to fingerprint host key: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Ok(stdout
+        .split_whitespace()
+        .nth(1)
+        .unwrap_or("unknown")
+        .to_string())
+}
+
+fn host_marker(host: &str, port: u16) -> String {
+    if port == 22 {
+        host.to_string()
+    } else {
+        format!("[{host}]:{port}")
+    }
+}
+
+fn known_hosts_path(state_dir: &Path) -> PathBuf {
+    ssh_dir(state_dir).join("known_hosts")
+}
+
+struct TerminalPty {
+    master: Box<dyn portable_pty::MasterPty + Send>,
+    child_killer: Box<dyn ChildKiller + Send + Sync>,
+    writer: Box<dyn std::io::Write + Send>,
+    output_rx: mpsc::Receiver<Vec<u8>>,
+    child_exit_rx: mpsc::Receiver<()>,
+    identity_file: Option<PathBuf>,
+    upload_target: WebTerminalUploadTarget,
+}
+
+fn spawn_terminal_pty(state: &AppState, start: &WebTerminalStart) -> Result<TerminalPty> {
+    if state.stopping.load(Ordering::SeqCst) {
+        bail!("Portal Hub is shutting down");
+    }
+    let pty_system = native_pty_system();
+    let pair = pty_system
+        .openpty(PtySize {
+            rows: start.rows,
+            cols: start.cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .context("failed to open terminal pty")?;
+
+    let identity_file = write_web_identity_file(state, start.private_key.as_deref())?;
+    let hub_state = super::State::new(state.state_dir.clone());
+    let control_path = hub_state.control_socket_path(start.session_id);
+    let upload_target = WebTerminalUploadTarget {
+        target_host: start.target_host.clone(),
+        target_port: start.target_port,
+        target_user: start.target_user.clone(),
+        known_hosts_path: known_hosts_path(&state.state_dir),
+        identity_file: identity_file.clone(),
+        control_path: Some(control_path.clone()),
+    };
+    let attach_request = super::AttachRequest {
+        session_id: start.session_id,
+        target_host: start.target_host.clone(),
+        target_port: start.target_port,
+        target_user: start.target_user.clone(),
+        cols: start.cols,
+        rows: start.rows,
+        max_log_bytes: super::configured_max_log_bytes(),
+        logging_mode: super::configured_logging_mode(),
+        allowed_targets: super::configured_allowed_targets(),
+        identity_file: identity_file.clone(),
+        batch_mode: false,
+        control_path: Some(control_path),
+        replay_bytes: start.replay_bytes.unwrap_or(0),
+    };
+    let prepared = super::prepare_attach_session(&hub_state, attach_request).inspect_err(|_| {
+        if let Some(path) = &identity_file {
+            let _ = fs::remove_file(path);
+        }
+    })?;
+    let child = match spawn_prepared_attach_command(&*pair.slave, &prepared, true) {
+        Ok(child) => child,
+        Err(primary_error) => {
+            eprintln!(
+                "Portal Hub terminal controlling-tty spawn failed: {primary_error:#}; retrying without controlling tty"
+            );
+            spawn_prepared_attach_command(&*pair.slave, &prepared, false)
+                .inspect_err(|_| {
+                    if let Some(path) = &identity_file {
+                        let _ = fs::remove_file(path);
+                    }
+                })
+                .with_context(|| {
+                    format!(
+                        "failed to start Portal Hub terminal session after controlling-tty retry; first error: {primary_error:#}"
+                    )
+                })?
+        }
+    };
+    let mut prepared = prepared;
+    prepared.record_process_id(
+        &hub_state,
+        child.process_id().and_then(|id| i32::try_from(id).ok()),
+    )?;
+    let child_killer = child.clone_killer();
+    drop(pair.slave);
+
+    let mut reader = pair
+        .master
+        .try_clone_reader()
+        .context("failed to read terminal pty")?;
+    let writer = pair
+        .master
+        .take_writer()
+        .context("failed to write terminal pty")?;
+    let (output_tx, output_rx) = mpsc::channel(256);
+    queue_replay_output(&prepared, &output_tx)?;
+    thread::spawn(move || {
+        let mut buffer = [0u8; 8192];
+        loop {
+            match reader.read(&mut buffer) {
+                Ok(0) => break,
+                Ok(n) => {
+                    if output_tx.blocking_send(buffer[..n].to_vec()).is_err() {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+    });
+    let (child_exit_tx, child_exit_rx) = mpsc::channel(1);
+    thread::spawn(move || {
+        let mut child = child;
+        match child.wait() {
+            Ok(status) => {
+                if let Err(error) =
+                    super::finish_attach_session(&hub_state, prepared, status.success())
+                {
+                    eprintln!("Portal Hub terminal session finalization failed: {error:#}");
+                }
+            }
+            Err(error) => {
+                eprintln!("Portal Hub terminal session wait failed: {error}");
+            }
+        }
+        let _ = child_exit_tx.blocking_send(());
+    });
+
+    Ok(TerminalPty {
+        master: pair.master,
+        child_killer,
+        writer,
+        output_rx,
+        child_exit_rx,
+        identity_file,
+        upload_target,
+    })
+}
+
+fn queue_replay_output(
+    prepared: &super::PreparedAttach,
+    output_tx: &mpsc::Sender<Vec<u8>>,
+) -> Result<()> {
+    if prepared.logging_mode != super::LoggingMode::Full
+        || !prepared.should_replay
+        || prepared.replay_bytes == 0
+    {
+        return Ok(());
+    }
+
+    thread::sleep(Duration::from_millis(75));
+    let Some((replay, truncated)) = super::read_log_tail(
+        &prepared.log_path,
+        prepared.replay_bytes.min(super::MAX_REPLAY_BYTES),
+    )?
+    else {
+        return Ok(());
+    };
+
+    if truncated
+        && !queue_replay_chunk(output_tx, b"\r\n[Portal Hub replay truncated]\r\n".to_vec())?
+    {
+        return Ok(());
+    }
+    let _ = queue_replay_chunk(output_tx, replay)?;
+    Ok(())
+}
+
+fn queue_replay_chunk(output_tx: &mpsc::Sender<Vec<u8>>, output: Vec<u8>) -> Result<bool> {
+    match output_tx.try_send(output) {
+        Ok(()) => Ok(true),
+        Err(mpsc::error::TrySendError::Closed(_)) => Ok(false),
+        Err(mpsc::error::TrySendError::Full(_)) => {
+            Err(anyhow!("terminal replay output channel is full"))
+        }
+    }
+}
+
+fn spawn_prepared_attach_command(
+    slave: &dyn portable_pty::SlavePty,
+    prepared: &super::PreparedAttach,
+    controlling_tty: bool,
+) -> Result<Box<dyn portable_pty::Child + Send + Sync>> {
+    slave
+        .spawn_command(prepared.command_builder(controlling_tty))
+        .context("failed to start Portal Hub terminal session")
+}
+
+impl Drop for TerminalPty {
+    fn drop(&mut self) {
+        if let Some(path) = self.identity_file.take() {
+            let _ = fs::remove_file(path);
+        }
+    }
+}
+
+fn write_web_identity_file(state: &AppState, private_key: Option<&str>) -> Result<Option<PathBuf>> {
+    let Some(private_key) = private_key else {
+        return Ok(None);
+    };
+    let key_dir = crate::runtime::ensure(&state.state_dir)?.join("web-identities");
+    let path = key_dir.join(format!("{}.key", Uuid::new_v4()));
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&path)
+        .context("failed to create web identity file")?;
+    file.write_all(private_key.as_bytes())
+        .context("failed to write web identity file")?;
+    if !private_key.ends_with('\n') {
+        file.write_all(b"\n")
+            .context("failed to finish web identity file")?;
+    }
+    Ok(Some(path))
+}
+
+async fn api_sync_v2_get(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    let (user_id, _) = match authenticated_user(&state, &headers) {
+        Ok(user) => user,
+        Err(response) => return response,
+    };
+    match load_sync_v2(&state, &user_id) {
+        Ok(services) => Json(json!({
+            "api_version": 2,
+            "generated_at": Utc::now(),
+            "services": services,
+        }))
+        .into_response(),
+        Err(error) => json_error(StatusCode::INTERNAL_SERVER_ERROR, error),
+    }
+}
+
+async fn api_sync_v2_put(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<SyncV2PutRequest>,
+) -> Response {
+    let (user_id, _) = match authenticated_user(&state, &headers) {
+        Ok(user) => user,
+        Err(response) => return response,
+    };
+    match save_sync_v2(&state, &user_id, request) {
+        Ok(services) => {
+            broadcast_sync_revisions(&state, &user_id, &services);
+            Json(json!({
+                "api_version": 2,
+                "generated_at": Utc::now(),
+                "services": services,
+            }))
+            .into_response()
+        }
+        Err(error) if error.to_string().contains("revision conflict") => {
+            json_error(StatusCode::CONFLICT, error)
+        }
+        Err(error) => json_error(StatusCode::INTERNAL_SERVER_ERROR, error),
+    }
+}
+
+async fn api_sync_v2_events(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    let (user_id, _) = match authenticated_user(&state, &headers) {
+        Ok(user) => user,
+        Err(response) => return response,
+    };
+
+    let initial_services = match load_sync_v2(&state, &user_id) {
+        Ok(services) => revision_map(&services),
+        Err(error) => return json_error(StatusCode::INTERNAL_SERVER_ERROR, error),
+    };
+    let initial = once(Ok::<Event, Infallible>(
+        sync_event(initial_services).unwrap_or_else(|error| error_event(error.to_string())),
+    ));
+
+    let stream_user_id = user_id;
+    let update_state = state.clone();
+    let updates = BroadcastStream::new(state.sync_events.subscribe()).filter_map(move |event| {
+        let stream_user_id = stream_user_id.clone();
+        let update_state = update_state.clone();
+        async move {
+            match event {
+                Ok(event) if event.user_id == stream_user_id => {
+                    Some(Ok(sync_event(event.services)
+                        .unwrap_or_else(|error| error_event(error.to_string()))))
+                }
+                Ok(_) => None,
+                Err(tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(_)) => {
+                    let event = load_sync_v2(&update_state, &stream_user_id)
+                        .map(|services| revision_map(&services))
+                        .and_then(|revisions| sync_event(revisions).map_err(Into::into))
+                        .unwrap_or_else(|error| error_event(error.to_string()));
+                    Some(Ok(event))
+                }
+            }
+        }
+    });
+
+    let stream = initial.chain(updates);
+    Sse::new(stream)
+        .keep_alive(KeepAlive::default())
+        .into_response()
+}
+
+async fn api_vault_enrollment_create(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<VaultEnrollmentCreateRequest>,
+) -> Response {
+    let (user_id, _) = match authenticated_user(&state, &headers) {
+        Ok(user) => user,
+        Err(response) => return response,
+    };
+    match create_vault_enrollment(&state, &user_id, request) {
+        Ok(enrollment) => Json(enrollment).into_response(),
+        Err(error) => json_error(StatusCode::BAD_REQUEST, error),
+    }
+}
+
+async fn api_vault_enrollments(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<VaultEnrollmentListQuery>,
+) -> Response {
+    let (user_id, _) = match authenticated_user(&state, &headers) {
+        Ok(user) => user,
+        Err(response) => return response,
+    };
+    match list_vault_enrollments(&state, &user_id, query.status.as_deref()) {
+        Ok(enrollments) => Json(json!({ "enrollments": enrollments })).into_response(),
+        Err(error) => json_error(StatusCode::INTERNAL_SERVER_ERROR, error),
+    }
+}
+
+async fn api_vault_enrollment_get(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+) -> Response {
+    let (user_id, _) = match authenticated_user(&state, &headers) {
+        Ok(user) => user,
+        Err(response) => return response,
+    };
+    match load_vault_enrollment(&state, &user_id, &id) {
+        Ok(Some(enrollment)) => Json(enrollment).into_response(),
+        Ok(None) => json_error(
+            StatusCode::NOT_FOUND,
+            anyhow!("vault enrollment was not found"),
+        ),
+        Err(error) => json_error(StatusCode::INTERNAL_SERVER_ERROR, error),
+    }
+}
+
+async fn api_vault_enrollment_approve(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+    Json(request): Json<VaultEnrollmentApproveRequest>,
+) -> Response {
+    let (user_id, _) = match authenticated_user(&state, &headers) {
+        Ok(user) => user,
+        Err(response) => return response,
+    };
+    match approve_vault_enrollment(&state, &user_id, &id, request) {
+        Ok(enrollment) => Json(enrollment).into_response(),
+        Err(error) if error.to_string().contains("not found") => {
+            json_error(StatusCode::NOT_FOUND, error)
+        }
+        Err(error) => json_error(StatusCode::BAD_REQUEST, error),
+    }
+}
+
+async fn api_vault_enrollment_revoke(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+) -> Response {
+    let (user_id, _) = match authenticated_user(&state, &headers) {
+        Ok(user) => user,
+        Err(response) => return response,
+    };
+    match revoke_vault_enrollment(&state, &user_id, &id) {
+        Ok(enrollment) => Json(enrollment).into_response(),
+        Err(error) => json_error(StatusCode::BAD_REQUEST, error),
+    }
+}
+
+async fn api_vault_enrollment_events(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    AxumPath(id): AxumPath<String>,
+) -> Response {
+    let (user_id, _) = match authenticated_user(&state, &headers) {
+        Ok(user) => user,
+        Err(response) => return response,
+    };
+    let initial = match load_vault_enrollment(&state, &user_id, &id) {
+        Ok(Some(enrollment)) => once(Ok::<Event, Infallible>(
+            vault_enrollment_event(&enrollment)
+                .unwrap_or_else(|error| error_event(error.to_string())),
+        )),
+        Ok(None) => {
+            return json_error(StatusCode::NOT_FOUND, anyhow!("vault enrollment not found"));
+        }
+        Err(error) => return json_error(StatusCode::INTERNAL_SERVER_ERROR, error),
+    };
+    let updates = BroadcastStream::new(state.vault_events.subscribe()).filter_map(move |event| {
+        let user_id = user_id.clone();
+        let id = id.clone();
+        async move {
+            match event {
+                Ok(event) if event.user_id == user_id && event.enrollment_id == id => {
+                    Some(Ok(vault_enrollment_event(&event.enrollment)
+                        .unwrap_or_else(|error| error_event(error.to_string()))))
+                }
+                Ok(_) => None,
+                Err(tokio_stream::wrappers::errors::BroadcastStreamRecvError::Lagged(_)) => None,
+            }
+        }
+    });
+    Sse::new(initial.chain(updates))
+        .keep_alive(KeepAlive::default())
+        .into_response()
+}
+
+async fn api_vault_audit_events(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<AuditListQuery>,
+) -> Response {
+    let (user_id, _) = match authenticated_user(&state, &headers) {
+        Ok(user) => user,
+        Err(response) => return response,
+    };
+    match list_vault_audit_events(&state, &user_id, query.limit.unwrap_or(50)) {
+        Ok(events) => Json(json!({"events": events})).into_response(),
+        Err(error) => json_error(StatusCode::INTERNAL_SERVER_ERROR, error),
+    }
+}
+
+fn listed_sessions(
+    state_dir: &std::path::Path,
+    query: SessionsQuery,
+) -> Result<Vec<ListedSession>> {
+    ensure_session_dirs(state_dir)?;
+    let mut sessions = Vec::new();
+    for entry in std::fs::read_dir(sessions_dir(state_dir))? {
+        let path = entry?.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("json") {
+            continue;
+        }
+        let content = std::fs::read_to_string(&path)
+            .with_context(|| format!("failed to read {}", path.display()))?;
+        let metadata: SessionMetadata = serde_json::from_str(&content)?;
+        let active = metadata.ended_at.is_none()
+            && crate::runtime::session_live(
+                state_dir,
+                metadata.session_id,
+                metadata.runtime_generation.as_deref(),
+            )?;
+        if query.active && !active {
+            continue;
+        }
+        let (preview_base64, preview_truncated, last_output_at) = if query.include_preview {
+            session_preview(state_dir, metadata.session_id, query.preview_bytes)?
+        } else {
+            (None, false, None)
+        };
+        sessions.push(ListedSession {
+            metadata,
+            active,
+            last_output_at,
+            preview_base64,
+            preview_truncated,
+        });
+    }
+    sessions.sort_by_key(|session| session.metadata.updated_at);
+    sessions.reverse();
+    Ok(sessions)
+}
+
+fn delete_session(state_dir: &std::path::Path, session_id: Uuid) -> Result<bool> {
+    ensure_session_dirs(state_dir)?;
+    let mut metadata = load_session_metadata(state_dir, session_id)?
+        .with_context(|| format!("session {session_id} not found"))?;
+    let socket_path = sessions_socket_path(state_dir, session_id);
+    let was_active = metadata.ended_at.is_none()
+        && crate::runtime::session_live(
+            state_dir,
+            session_id,
+            metadata.runtime_generation.as_deref(),
+        )?;
+    let process_signaled = if was_active {
+        crate::runtime::terminate_socket(&socket_path)?
+    } else {
+        false
+    };
+    remove_file_if_exists(&socket_path)?;
+    remove_file_if_exists(
+        crate::runtime::run_dir(state_dir)
+            .join("ctl")
+            .join(session_id.to_string()),
+    )?;
+
+    let now = Utc::now();
+    metadata.updated_at = now;
+    metadata.ended_at = Some(now);
+    metadata.process_group_id = None;
+    metadata.process_id = None;
+    save_session_metadata(state_dir, &metadata)?;
+
+    Ok(process_signaled)
+}
+
+fn validate_session_display_name(display_name: Value) -> Result<Option<String>> {
+    let display_name = match display_name {
+        Value::Null => return Ok(None),
+        Value::String(display_name) => display_name,
+        _ => bail!("session display_name must be a string or null"),
+    };
+    let display_name = display_name.trim();
+    if display_name.is_empty() {
+        bail!("session display_name must not be empty");
+    }
+    if display_name.chars().count() > MAX_SESSION_DISPLAY_NAME_CHARS {
+        bail!("session display_name must be at most {MAX_SESSION_DISPLAY_NAME_CHARS} characters");
+    }
+    if display_name.chars().any(char::is_control) {
+        bail!("session display_name must not contain control characters");
+    }
+    Ok(Some(display_name.to_string()))
+}
+
+fn update_session_display_name(
+    state_dir: &std::path::Path,
+    session_id: Uuid,
+    display_name: Option<String>,
+) -> Result<SessionMetadata> {
+    let mut metadata = load_session_metadata(state_dir, session_id)?
+        .with_context(|| format!("session {session_id} not found"))?;
+    metadata.schema_version = crate::METADATA_SCHEMA_VERSION;
+    metadata.display_name = display_name;
+    metadata.updated_at = Utc::now();
+    save_session_metadata(state_dir, &metadata)?;
+    Ok(metadata)
+}
+
+fn load_session_metadata(
+    state_dir: &std::path::Path,
+    session_id: Uuid,
+) -> Result<Option<SessionMetadata>> {
+    let path = sessions_dir(state_dir).join(format!("{session_id}.json"));
+    if !path.exists() {
+        return Ok(None);
+    }
+    let content = std::fs::read_to_string(&path)
+        .with_context(|| format!("failed to read {}", path.display()))?;
+    Ok(Some(serde_json::from_str(&content)?))
+}
+
+fn save_session_metadata(state_dir: &std::path::Path, metadata: &SessionMetadata) -> Result<()> {
+    let path = sessions_dir(state_dir).join(format!("{}.json", metadata.session_id));
+    let temp = with_temp_extension(&path);
+    std::fs::write(&temp, serde_json::to_vec_pretty(metadata)?)
+        .with_context(|| format!("failed to write {}", temp.display()))?;
+    std::fs::rename(&temp, &path).with_context(|| format!("failed to move {}", path.display()))?;
+    Ok(())
+}
+
+fn with_temp_extension(path: &std::path::Path) -> PathBuf {
+    let extension = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| format!("{ext}.tmp"))
+        .unwrap_or_else(|| "tmp".to_string());
+    path.with_extension(format!("{}.{}", extension, Uuid::new_v4()))
+}
+
+fn remove_file_if_exists(path: impl AsRef<std::path::Path>) -> Result<()> {
+    match fs::remove_file(path.as_ref()) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => {
+            Err(error).with_context(|| format!("failed to remove {}", path.as_ref().display()))
+        }
+    }
+}
+
+fn session_preview(
+    state_dir: &std::path::Path,
+    session_id: Uuid,
+    preview_bytes: u64,
+) -> Result<(Option<String>, bool, Option<DateTime<Utc>>)> {
+    let path = logs_dir(state_dir).join(format!("{session_id}.typescript"));
+    if !path.exists() {
+        return Ok((None, false, None));
+    }
+    let metadata = std::fs::metadata(&path)?;
+    let modified = metadata.modified().ok().map(DateTime::<Utc>::from);
+    let len = metadata.len();
+    let take = preview_bytes.min(MAX_WEB_SESSION_PREVIEW_BYTES).min(len);
+    let mut file = std::fs::File::open(&path)?;
+    use std::io::Seek;
+    if len > take {
+        file.seek(std::io::SeekFrom::Start(len - take))?;
+    }
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+    if len <= take {
+        strip_script_header(&mut bytes);
+    }
+    Ok((Some(BASE64_STANDARD.encode(bytes)), len > take, modified))
+}
+
+fn strip_script_header(bytes: &mut Vec<u8>) {
+    if !bytes.starts_with(b"Script started on ") {
+        return;
+    }
+
+    if let Some(line_end) = bytes.iter().position(|byte| *byte == b'\n') {
+        bytes.drain(..=line_end);
+    }
+}
+
+fn default_preview_bytes() -> u64 {
+    512 * 1024
+}
+
+fn ensure_session_dirs(state_dir: &std::path::Path) -> Result<()> {
+    super::State::new(state_dir.to_path_buf()).ensure_dirs()
+}
+
+fn sessions_dir(state_dir: &std::path::Path) -> PathBuf {
+    state_dir.join("sessions")
+}
+
+fn logs_dir(state_dir: &std::path::Path) -> PathBuf {
+    state_dir.join("logs")
+}
+
+fn sockets_dir(state_dir: &std::path::Path) -> PathBuf {
+    crate::runtime::run_dir(state_dir).join("sockets")
+}
+
+fn ssh_dir(state_dir: &std::path::Path) -> PathBuf {
+    state_dir.join("ssh")
+}
+
+fn sessions_socket_path(state_dir: &std::path::Path, id: Uuid) -> PathBuf {
+    sockets_dir(state_dir).join(id.to_string())
+}
+
+#[allow(clippy::result_large_err)]
+fn authenticated_user(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> std::result::Result<(String, String), Response> {
+    let Some(header) = headers.get(axum::http::header::AUTHORIZATION) else {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"error": "missing bearer token"})),
+        )
+            .into_response());
+    };
+    let Ok(value) = header.to_str() else {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"error": "invalid authorization header"})),
+        )
+            .into_response());
+    };
+    let Some(token) = value.strip_prefix("Bearer ") else {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"error": "invalid authorization scheme"})),
+        )
+            .into_response());
+    };
+    let hash = token_hash(token);
+    let db = state.db.lock().map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "database lock failed"})),
+        )
+            .into_response()
+    })?;
+    let row = db
+        .query_row(
+            "SELECT users.id, users.username, access_tokens.expires_at FROM access_tokens JOIN users ON users.id = access_tokens.user_id WHERE access_tokens.token_hash = ?1",
+            [&hash],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?)),
+        )
+        .optional()
+        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": "token lookup failed"}))).into_response())?;
+    let Some((user_id, username, expires_at)) = row else {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"error": "invalid bearer token"})),
+        )
+            .into_response());
+    };
+    if DateTime::parse_from_rfc3339(&expires_at)
+        .map(|date| date.with_timezone(&Utc) < Utc::now())
+        .unwrap_or(true)
+    {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"error": "expired bearer token"})),
+        )
+            .into_response());
+    }
+    Ok((user_id, username))
+}
+
+fn load_profile(state: &AppState, user_id: &str) -> Result<SyncState> {
+    let db = state
+        .db
+        .lock()
+        .map_err(|_| anyhow!("database lock poisoned"))?;
+    let row = db
+        .query_row(
+            "SELECT revision, profile, vault FROM profiles WHERE user_id = ?1",
+            [user_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            },
+        )
+        .optional()?;
+    if let Some((revision, profile, vault)) = row {
+        return Ok(SyncState {
+            revision,
+            profile: serde_json::from_str(&profile)?,
+            vault: serde_json::from_str(&vault)?,
+        });
+    }
+    Ok(SyncState {
+        revision: "0".to_string(),
+        profile: json!({"hosts": {"hosts": [], "groups": []}, "settings": {}, "snippets": {"snippets": []}}),
+        vault: json!({"keys": []}),
+    })
+}
+
+fn save_profile(state: &AppState, user_id: &str, request: SyncPutRequest) -> Result<SyncState> {
+    let current = load_profile(state, user_id)?;
+    if current.revision != request.expected_revision {
+        bail!(
+            "revision conflict: expected {}, current {}",
+            request.expected_revision,
+            current.revision
+        );
+    }
+    let next = SyncState {
+        revision: Uuid::new_v4().to_string(),
+        profile: request.profile,
+        vault: request.vault,
+    };
+    let db = state
+        .db
+        .lock()
+        .map_err(|_| anyhow!("database lock poisoned"))?;
+    db.execute(
+        "INSERT INTO profiles (user_id, revision, profile, vault, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)
+         ON CONFLICT(user_id) DO UPDATE SET revision = excluded.revision, profile = excluded.profile, vault = excluded.vault, updated_at = excluded.updated_at",
+        params![
+            user_id,
+            next.revision,
+            serde_json::to_string(&next.profile)?,
+            serde_json::to_string(&next.vault)?,
+            Utc::now().to_rfc3339()
+        ],
+    )?;
+    audit_db(
+        &db,
+        "sync_put",
+        Some(user_id),
+        json!({"revision": next.revision, "vault_key_count": vault_key_count(&next.vault)}),
+    )?;
+    Ok(next)
+}
+
+fn load_sync_v2(state: &AppState, user_id: &str) -> Result<HashMap<String, SyncServiceState>> {
+    let legacy = load_profile(state, user_id)?;
+    let mut services = default_sync_v2_from_legacy(&legacy);
+    let db = state
+        .db
+        .lock()
+        .map_err(|_| anyhow!("database lock poisoned"))?;
+    let mut stmt = db.prepare(
+        "SELECT service, revision, payload, tombstones FROM sync_services WHERE user_id = ?1",
+    )?;
+    let rows = stmt.query_map([user_id], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            row.get::<_, String>(1)?,
+            row.get::<_, String>(2)?,
+            row.get::<_, String>(3)?,
+        ))
+    })?;
+
+    for row in rows {
+        let (service, revision, payload, tombstones) = row?;
+        let state = SyncServiceState {
+            revision,
+            payload: serde_json::from_str(&payload)?,
+            tombstones: serde_json::from_str(&tombstones)?,
+        };
+        services.insert(service, state);
+    }
+    Ok(services)
+}
+
+fn save_sync_v2(
+    state: &AppState,
+    user_id: &str,
+    request: SyncV2PutRequest,
+) -> Result<HashMap<String, SyncServiceState>> {
+    validate_sync_service_names(request.services.keys())?;
+    let mut services = load_sync_v2(state, user_id)?;
+    for (service, put) in &request.services {
+        let current = services
+            .get(service)
+            .cloned()
+            .unwrap_or_else(|| default_service_state(service));
+        if current.revision != put.expected_revision {
+            bail!(
+                "revision conflict for {}: expected {}, current {}",
+                service,
+                put.expected_revision,
+                current.revision
+            );
+        }
+    }
+
+    let db = state
+        .db
+        .lock()
+        .map_err(|_| anyhow!("database lock poisoned"))?;
+    let now = Utc::now().to_rfc3339();
+    for (service, put) in request.services {
+        let next = SyncServiceState {
+            revision: Uuid::new_v4().to_string(),
+            payload: put.payload,
+            tombstones: put.tombstones,
+        };
+        db.execute(
+            "INSERT INTO sync_services (user_id, service, revision, payload, tombstones, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(user_id, service) DO UPDATE SET
+               revision = excluded.revision,
+               payload = excluded.payload,
+               tombstones = excluded.tombstones,
+               updated_at = excluded.updated_at",
+            params![
+                user_id,
+                service,
+                next.revision,
+                serde_json::to_string(&next.payload)?,
+                serde_json::to_string(&next.tombstones)?,
+                now,
+            ],
+        )?;
+        services.insert(service, next);
+    }
+
+    save_legacy_profile_from_services(&db, user_id, &services)?;
+    audit_db(
+        &db,
+        "sync_v2_put",
+        Some(user_id),
+        json!({"services": services.keys().cloned().collect::<Vec<_>>()}),
+    )?;
+    Ok(services)
+}
+
+fn create_vault_enrollment(
+    state: &AppState,
+    user_id: &str,
+    request: VaultEnrollmentCreateRequest,
+) -> Result<VaultEnrollment> {
+    let device_name = request.device_name.trim();
+    if device_name.is_empty() || device_name.len() > 100 {
+        bail!("device_name must be between 1 and 100 characters");
+    }
+    if request.public_key_algorithm != "RSA-OAEP-SHA256" {
+        bail!("unsupported vault enrollment public key algorithm");
+    }
+    BASE64_STANDARD
+        .decode(request.public_key_der_base64.as_bytes())
+        .context("public_key_der_base64 is not valid base64")?;
+    if let Some(pairing_id) = request.pairing_id.as_deref() {
+        consume_android_pairing_session(state, pairing_id)?;
+    }
+
+    let now = Utc::now().to_rfc3339();
+    let enrollment = VaultEnrollment {
+        id: Uuid::new_v4().to_string(),
+        device_name: device_name.to_string(),
+        public_key_algorithm: request.public_key_algorithm,
+        public_key_der_base64: request.public_key_der_base64,
+        status: "pending".to_string(),
+        encrypted_secret_base64: None,
+        pairing_id: request.pairing_id,
+        created_at: now.clone(),
+        updated_at: now,
+        approved_at: None,
+        revoked_at: None,
+    };
+    let db = state
+        .db
+        .lock()
+        .map_err(|_| anyhow!("database lock poisoned"))?;
+    db.execute(
+        "INSERT INTO vault_enrollments
+         (id, user_id, device_name, public_key_algorithm, public_key_der_base64, encrypted_secret_base64, pairing_id, status, created_at, updated_at, approved_at, revoked_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, NULL, ?6, ?7, ?8, ?9, NULL, NULL)",
+        params![
+            enrollment.id,
+            user_id,
+            enrollment.device_name,
+            enrollment.public_key_algorithm,
+            enrollment.public_key_der_base64,
+            enrollment.pairing_id,
+            enrollment.status,
+            enrollment.created_at,
+            enrollment.updated_at,
+        ],
+    )?;
+    audit_db(
+        &db,
+        "vault_enrollment_create",
+        Some(user_id),
+        json!({"enrollment_id": enrollment.id, "device_name": enrollment.device_name}),
+    )?;
+    Ok(enrollment)
+}
+
+fn consume_android_pairing_session(state: &AppState, pairing_id: &str) -> Result<()> {
+    let db = state
+        .db
+        .lock()
+        .map_err(|_| anyhow!("database lock poisoned"))?;
+    let Some((expires_at, consumed_at)) = db
+        .query_row(
+            "SELECT expires_at, consumed_at FROM android_pairing_sessions WHERE id = ?1",
+            [pairing_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
+        )
+        .optional()?
+    else {
+        bail!("pairing session was not found");
+    };
+    if consumed_at.is_some() {
+        bail!("pairing session was already used");
+    }
+    if DateTime::parse_from_rfc3339(&expires_at)?.with_timezone(&Utc) < Utc::now() {
+        bail!("pairing session expired");
+    }
+    db.execute(
+        "UPDATE android_pairing_sessions SET consumed_at = ?1 WHERE id = ?2",
+        params![Utc::now().to_rfc3339(), pairing_id],
+    )?;
+    Ok(())
+}
+
+fn list_vault_enrollments(
+    state: &AppState,
+    user_id: &str,
+    status: Option<&str>,
+) -> Result<Vec<VaultEnrollment>> {
+    let status = status.unwrap_or("pending");
+    let db = state
+        .db
+        .lock()
+        .map_err(|_| anyhow!("database lock poisoned"))?;
+    let mut stmt = if status == "all" {
+        db.prepare(
+            "SELECT id, device_name, public_key_algorithm, public_key_der_base64, status,
+                    encrypted_secret_base64, pairing_id, created_at, updated_at, approved_at, revoked_at
+             FROM vault_enrollments
+             WHERE user_id = ?1
+             ORDER BY created_at DESC",
+        )?
+    } else {
+        db.prepare(
+            "SELECT id, device_name, public_key_algorithm, public_key_der_base64, status,
+                    encrypted_secret_base64, pairing_id, created_at, updated_at, approved_at, revoked_at
+             FROM vault_enrollments
+             WHERE user_id = ?1 AND status = ?2
+             ORDER BY created_at DESC",
+        )?
+    };
+    let rows = if status == "all" {
+        stmt.query_map(params![user_id], vault_enrollment_from_row)?
+    } else {
+        stmt.query_map(params![user_id, status], vault_enrollment_from_row)?
+    };
+    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+}
+
+fn load_vault_enrollment(
+    state: &AppState,
+    user_id: &str,
+    id: &str,
+) -> Result<Option<VaultEnrollment>> {
+    let db = state
+        .db
+        .lock()
+        .map_err(|_| anyhow!("database lock poisoned"))?;
+    db.query_row(
+        "SELECT id, device_name, public_key_algorithm, public_key_der_base64, status,
+                encrypted_secret_base64, pairing_id, created_at, updated_at, approved_at, revoked_at
+         FROM vault_enrollments
+         WHERE user_id = ?1 AND id = ?2",
+        params![user_id, id],
+        vault_enrollment_from_row,
+    )
+    .optional()
+    .map_err(Into::into)
+}
+
+fn approve_vault_enrollment(
+    state: &AppState,
+    user_id: &str,
+    id: &str,
+    request: VaultEnrollmentApproveRequest,
+) -> Result<VaultEnrollment> {
+    BASE64_STANDARD
+        .decode(request.encrypted_secret_base64.as_bytes())
+        .context("encrypted_secret_base64 is not valid base64")?;
+    let existing = load_vault_enrollment(state, user_id, id)?
+        .ok_or_else(|| anyhow!("vault enrollment was not found"))?;
+    if existing.status != "pending" {
+        bail!("vault enrollment is already {}", existing.status);
+    }
+
+    let now = Utc::now().to_rfc3339();
+    let db = state
+        .db
+        .lock()
+        .map_err(|_| anyhow!("database lock poisoned"))?;
+    db.execute(
+        "UPDATE vault_enrollments
+         SET encrypted_secret_base64 = ?1, status = 'approved', updated_at = ?2, approved_at = ?2
+         WHERE user_id = ?3 AND id = ?4 AND status = 'pending'",
+        params![request.encrypted_secret_base64, now, user_id, id],
+    )?;
+    audit_db(
+        &db,
+        "vault_enrollment_approve",
+        Some(user_id),
+        json!({"enrollment_id": id}),
+    )?;
+    drop(db);
+    let enrollment = load_vault_enrollment(state, user_id, id)?
+        .ok_or_else(|| anyhow!("vault enrollment was not found"))?;
+    broadcast_vault_enrollment(state, user_id, &enrollment);
+    Ok(enrollment)
+}
+
+fn revoke_vault_enrollment(state: &AppState, user_id: &str, id: &str) -> Result<VaultEnrollment> {
+    let existing = load_vault_enrollment(state, user_id, id)?
+        .ok_or_else(|| anyhow!("vault enrollment was not found"))?;
+    if existing.status == "revoked" {
+        return Ok(existing);
+    }
+
+    let now = Utc::now().to_rfc3339();
+    let db = state
+        .db
+        .lock()
+        .map_err(|_| anyhow!("database lock poisoned"))?;
+    db.execute(
+        "UPDATE vault_enrollments
+         SET status = 'revoked', encrypted_secret_base64 = NULL, updated_at = ?1, revoked_at = ?1
+         WHERE user_id = ?2 AND id = ?3",
+        params![now, user_id, id],
+    )?;
+    audit_db(
+        &db,
+        "vault_enrollment_revoke",
+        Some(user_id),
+        json!({"enrollment_id": id, "previous_status": existing.status}),
+    )?;
+    drop(db);
+    let enrollment = load_vault_enrollment(state, user_id, id)?
+        .ok_or_else(|| anyhow!("vault enrollment was not found"))?;
+    broadcast_vault_enrollment(state, user_id, &enrollment);
+    Ok(enrollment)
+}
+
+fn list_vault_audit_events(
+    state: &AppState,
+    user_id: &str,
+    limit: usize,
+) -> Result<Vec<VaultAuditEvent>> {
+    let limit = limit.clamp(1, 200) as i64;
+    let db = state
+        .db
+        .lock()
+        .map_err(|_| anyhow!("database lock poisoned"))?;
+    let mut stmt = db.prepare(
+        "SELECT timestamp, event, detail FROM audit_events
+         WHERE user_id = ?1 AND event LIKE 'vault_enrollment_%'
+         ORDER BY id DESC
+         LIMIT ?2",
+    )?;
+    let rows = stmt.query_map(params![user_id, limit], |row| {
+        let detail: String = row.get(2)?;
+        Ok(VaultAuditEvent {
+            timestamp: row.get(0)?,
+            event: row.get(1)?,
+            detail: serde_json::from_str(&detail).unwrap_or_else(|_| json!({})),
+        })
+    })?;
+    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+}
+
+fn vault_enrollment_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<VaultEnrollment> {
+    Ok(VaultEnrollment {
+        id: row.get(0)?,
+        device_name: row.get(1)?,
+        public_key_algorithm: row.get(2)?,
+        public_key_der_base64: row.get(3)?,
+        status: row.get(4)?,
+        encrypted_secret_base64: row.get(5)?,
+        pairing_id: row.get(6)?,
+        created_at: row.get(7)?,
+        updated_at: row.get(8)?,
+        approved_at: row.get(9)?,
+        revoked_at: row.get(10)?,
+    })
+}
+
+fn broadcast_sync_revisions(
+    state: &AppState,
+    user_id: &str,
+    services: &HashMap<String, SyncServiceState>,
+) {
+    let _ = state.sync_events.send(SyncRevisionEvent {
+        user_id: user_id.to_string(),
+        services: revision_map(services),
+    });
+}
+
+fn revision_map(services: &HashMap<String, SyncServiceState>) -> HashMap<String, String> {
+    services
+        .iter()
+        .map(|(service, state)| (service.clone(), state.revision.clone()))
+        .collect()
+}
+
+fn sync_event(services: HashMap<String, String>) -> Result<Event, serde_json::Error> {
+    serde_json::to_string(&json!({
+        "api_version": 2,
+        "generated_at": Utc::now(),
+        "services": services,
+    }))
+    .map(|data| Event::default().event("sync").data(data))
+}
+
+fn broadcast_vault_enrollment(state: &AppState, user_id: &str, enrollment: &VaultEnrollment) {
+    let _ = state.vault_events.send(VaultEnrollmentEvent {
+        user_id: user_id.to_string(),
+        enrollment_id: enrollment.id.clone(),
+        enrollment: enrollment.clone(),
+    });
+}
+
+fn vault_enrollment_event(enrollment: &VaultEnrollment) -> Result<Event, serde_json::Error> {
+    vault_enrollment_event_payload(enrollment)
+        .map(|data| Event::default().event("vault_enrollment").data(data))
+}
+
+fn vault_enrollment_event_payload(
+    enrollment: &VaultEnrollment,
+) -> Result<String, serde_json::Error> {
+    serde_json::to_string(&json!({
+        "type": "vault_enrollment",
+        "enrollment": enrollment,
+    }))
+}
+
+fn error_event(message: String) -> Event {
+    Event::default().event("error").data(message)
+}
+
+fn default_sync_v2_from_legacy(legacy: &SyncState) -> HashMap<String, SyncServiceState> {
+    let mut services = HashMap::new();
+    services.insert(
+        "hosts".to_string(),
+        SyncServiceState {
+            revision: legacy.revision.clone(),
+            payload: legacy
+                .profile
+                .get("hosts")
+                .cloned()
+                .unwrap_or_else(|| json!({"hosts": [], "groups": []})),
+            tombstones: default_tombstones(),
+        },
+    );
+    services.insert(
+        "settings".to_string(),
+        SyncServiceState {
+            revision: legacy.revision.clone(),
+            payload: legacy
+                .profile
+                .get("settings")
+                .cloned()
+                .unwrap_or_else(|| json!({})),
+            tombstones: default_tombstones(),
+        },
+    );
+    services.insert(
+        "snippets".to_string(),
+        SyncServiceState {
+            revision: legacy.revision.clone(),
+            payload: legacy
+                .profile
+                .get("snippets")
+                .cloned()
+                .unwrap_or_else(|| json!({"snippets": []})),
+            tombstones: default_tombstones(),
+        },
+    );
+    services.insert(
+        "vault".to_string(),
+        SyncServiceState {
+            revision: legacy.revision.clone(),
+            payload: legacy.vault.clone(),
+            tombstones: default_tombstones(),
+        },
+    );
+    services
+}
+
+fn default_service_state(service: &str) -> SyncServiceState {
+    SyncServiceState {
+        revision: "0".to_string(),
+        payload: match service {
+            "hosts" => json!({"hosts": [], "groups": []}),
+            "settings" => json!({}),
+            "snippets" => json!({"snippets": []}),
+            "vault" => json!({"keys": []}),
+            _ => json!(null),
+        },
+        tombstones: default_tombstones(),
+    }
+}
+
+fn save_legacy_profile_from_services(
+    db: &Connection,
+    user_id: &str,
+    services: &HashMap<String, SyncServiceState>,
+) -> Result<()> {
+    let revision = Uuid::new_v4().to_string();
+    let profile = json!({
+        "hosts": services.get("hosts").map(|service| service.payload.clone()).unwrap_or_else(|| json!({"hosts": [], "groups": []})),
+        "settings": services.get("settings").map(|service| service.payload.clone()).unwrap_or_else(|| json!({})),
+        "snippets": services.get("snippets").map(|service| service.payload.clone()).unwrap_or_else(|| json!({"snippets": []})),
+    });
+    let vault = services
+        .get("vault")
+        .map(|service| service.payload.clone())
+        .unwrap_or_else(|| json!({"keys": []}));
+    db.execute(
+        "INSERT INTO profiles (user_id, revision, profile, vault, updated_at) VALUES (?1, ?2, ?3, ?4, ?5)
+         ON CONFLICT(user_id) DO UPDATE SET revision = excluded.revision, profile = excluded.profile, vault = excluded.vault, updated_at = excluded.updated_at",
+        params![
+            user_id,
+            revision,
+            serde_json::to_string(&profile)?,
+            serde_json::to_string(&vault)?,
+            Utc::now().to_rfc3339()
+        ],
+    )?;
+    Ok(())
+}
+
+fn validate_sync_service_names<'a>(services: impl Iterator<Item = &'a String>) -> Result<()> {
+    for service in services {
+        if !matches!(
+            service.as_str(),
+            "hosts" | "settings" | "snippets" | "vault"
+        ) {
+            bail!("unknown sync service: {service}");
+        }
+    }
+    Ok(())
+}
+
+fn default_tombstones() -> Value {
+    json!([])
+}
+
+fn issue_tokens(db: &Connection, user_id: &str, client_id: &str) -> Result<TokenResponse> {
+    let access_token = random_token();
+    let refresh_token = random_token();
+    let now = Utc::now();
+    let access_expires = now + ChronoDuration::hours(ACCESS_TOKEN_TTL_HOURS);
+    let refresh_expires = now + ChronoDuration::days(REFRESH_TOKEN_TTL_DAYS);
+    db.execute(
+        "INSERT INTO access_tokens (token_hash, user_id, expires_at, created_at) VALUES (?1, ?2, ?3, ?4)",
+        params![token_hash(&access_token), user_id, access_expires.to_rfc3339(), now.to_rfc3339()],
+    )?;
+    db.execute(
+        "INSERT INTO refresh_tokens (token_hash, user_id, expires_at, created_at) VALUES (?1, ?2, ?3, ?4)",
+        params![token_hash(&refresh_token), user_id, refresh_expires.to_rfc3339(), now.to_rfc3339()],
+    )?;
+    audit_db(
+        db,
+        "token_issued",
+        Some(user_id),
+        json!({"client_id": client_id}),
+    )?;
+    Ok(TokenResponse {
+        access_token,
+        token_type: "Bearer",
+        expires_in: ACCESS_TOKEN_TTL_HOURS * 3600,
+        refresh_token,
+    })
+}
+
+fn user_count(state: &AppState) -> Result<i64> {
+    let db = state
+        .db
+        .lock()
+        .map_err(|_| anyhow!("database lock poisoned"))?;
+    Ok(db.query_row("SELECT COUNT(*) FROM users", [], |row| row.get(0))?)
+}
+
+fn validate_authorize_query(query: &AuthorizeQuery) -> Result<()> {
+    if query.response_type != "code" {
+        bail!("unsupported response_type");
+    }
+    if !is_supported_client_id(&query.client_id) {
+        bail!("unknown client_id");
+    }
+    if query.code_challenge_method != "S256" {
+        bail!("unsupported code_challenge_method");
+    }
+    if query.code_challenge.len() < 32 || query.state.len() < 16 {
+        bail!("invalid OAuth request");
+    }
+    let redirect = Url::parse(&query.redirect_uri)?;
+    if query.client_id == DESKTOP_CLIENT_ID {
+        if redirect.scheme() != "http" {
+            bail!("redirect_uri must use loopback http");
+        }
+        let host = redirect.host_str().unwrap_or_default();
+        if host != "127.0.0.1" && host != "localhost" && host != "::1" {
+            bail!("redirect_uri must be loopback");
+        }
+    } else if redirect.scheme() != ANDROID_REDIRECT_SCHEME
+        || redirect.path() != ANDROID_REDIRECT_PATH
+    {
+        bail!("redirect_uri is not registered for Portal Android");
+    }
+    Ok(())
+}
+
+fn is_supported_client_id(client_id: &str) -> bool {
+    client_id == DESKTOP_CLIENT_ID || client_id == ANDROID_CLIENT_ID
+}
+
+fn canonicalize_public_url(input: &str) -> Result<String> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        bail!("public_url must not be empty");
+    }
+    let url = Url::parse(trimmed).context("public_url must be an absolute URL")?;
+    if !matches!(url.scheme(), "http" | "https") {
+        bail!("public_url must use http or https");
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        bail!("public_url must not include credentials");
+    }
+    let host = match url
+        .host()
+        .ok_or_else(|| anyhow!("public_url must include a host"))?
+    {
+        Host::Domain(domain) => domain.to_string(),
+        Host::Ipv4(ip) => ip.to_string(),
+        Host::Ipv6(ip) => format!("[{ip}]"),
+    };
+    Ok(match url.port() {
+        Some(port) => format!("{}://{}:{}", url.scheme(), host, port),
+        None => format!("{}://{}", url.scheme(), host),
+    })
+}
+
+fn admin_continue_url(params: &HashMap<String, String>) -> Option<String> {
+    let query = AuthorizeQuery {
+        response_type: params.get("response_type")?.clone(),
+        client_id: params.get("client_id")?.clone(),
+        redirect_uri: params.get("redirect_uri")?.clone(),
+        code_challenge: params.get("code_challenge")?.clone(),
+        code_challenge_method: params.get("code_challenge_method")?.clone(),
+        state: params.get("state")?.clone(),
+    };
+    validate_authorize_query(&query).ok()?;
+    Some(authorize_path("/oauth/authorize", &query))
+}
+
+fn authorize_path(path: &str, query: &AuthorizeQuery) -> String {
+    format!(
+        "{}?response_type={}&client_id={}&redirect_uri={}&code_challenge={}&code_challenge_method={}&state={}",
+        path,
+        urlencoding::encode(&query.response_type),
+        urlencoding::encode(&query.client_id),
+        urlencoding::encode(&query.redirect_uri),
+        urlencoding::encode(&query.code_challenge),
+        urlencoding::encode(&query.code_challenge_method),
+        urlencoding::encode(&query.state)
+    )
+}
+
+fn continue_button_html(continue_url: &str) -> String {
+    if continue_url.is_empty() {
+        return String::new();
+    }
+    format!(
+        r#"<a class="button-link" href="{}">Continue to sign in</a>"#,
+        html_escape(continue_url)
+    )
+}
+
+fn create_android_pairing_session(state: &AppState) -> Result<String> {
+    let id = Uuid::new_v4().to_string();
+    let created_at = Utc::now();
+    let expires_at = created_at + ChronoDuration::minutes(10);
+    let db = state
+        .db
+        .lock()
+        .map_err(|_| anyhow!("database lock poisoned"))?;
+    db.execute(
+        "INSERT INTO android_pairing_sessions (id, public_url, created_at, expires_at, consumed_at)
+         VALUES (?1, ?2, ?3, ?4, NULL)",
+        params![
+            id,
+            state.public_url,
+            created_at.to_rfc3339(),
+            expires_at.to_rfc3339()
+        ],
+    )?;
+    Ok(id)
+}
+
+fn android_pairing_link(public_url: &str, pairing_id: Option<&str>) -> String {
+    let mut link = format!(
+        "com.digitalpals.portal.android:/pair?hub_url={}",
+        urlencoding::encode(public_url),
+    );
+    if let Some(pairing_id) = pairing_id {
+        write!(&mut link, "&pairing_id={}", urlencoding::encode(pairing_id)).ok();
+    }
+    link
+}
+
+fn android_pairing_panel(state: &AppState) -> String {
+    let pairing_id = create_android_pairing_session(state).ok();
+    let link = android_pairing_link(&state.public_url, pairing_id.as_deref());
+    let qr_svg = QrCode::new(link.as_bytes())
+        .map(|code| {
+            code.render::<svg::Color<'_>>()
+                .min_dimensions(224, 224)
+                .quiet_zone(true)
+                .build()
+        })
+        .unwrap_or_else(|_| String::new());
+    format!(
+        r#"<div class="pairing-panel">
+            <div class="qr-code" aria-label="Portal Android pairing QR code">{}</div>
+            <div class="pairing-copy">
+              <strong>Portal Android</strong>
+              <p>Open this on your Android device. The pairing code expires in 10 minutes; after sign-in, Portal Android creates a vault access request and waits for desktop approval.</p>
+              <a class="button-link compact" href="{}">Open Portal Android</a>
+              <code>{}</code>
+            </div>
+          </div>"#,
+        qr_svg,
+        html_escape(&link),
+        html_escape(&link)
+    )
+}
+
+fn validate_username(username: &str) -> Result<()> {
+    let username = username.trim();
+    if username.len() < 2 || username.len() > 64 {
+        bail!("account name must be 2-64 characters");
+    }
+    if !username
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-' | b'@'))
+    {
+        bail!("account name may only contain letters, numbers, dots, dashes, underscores, and @");
+    }
+    Ok(())
+}
+
+fn validate_password(password: &str) -> Result<()> {
+    if password.len() < MIN_PASSWORD_LEN {
+        bail!("password must be at least {MIN_PASSWORD_LEN} characters");
+    }
+    if password.len() > 256 {
+        bail!("password must be 256 characters or fewer");
+    }
+    Ok(())
+}
+
+fn insert_user(db: &Connection, user_id: Uuid, username: &str, password_hash: &str) -> Result<()> {
+    let now = Utc::now().to_rfc3339();
+    if user_table_has_column(db, "totp_secret")? {
+        db.execute(
+            "INSERT INTO users (id, username, password_hash, totp_secret, created_at) VALUES (?1, ?2, ?3, '', ?4)",
+            params![user_id.to_string(), username.trim(), password_hash, now],
+        )?;
+    } else {
+        db.execute(
+            "INSERT INTO users (id, username, password_hash, created_at) VALUES (?1, ?2, ?3, ?4)",
+            params![user_id.to_string(), username.trim(), password_hash, now],
+        )?;
+    }
+    Ok(())
+}
+
+fn ensure_password_hash_column(db: &Connection) -> Result<()> {
+    if !user_table_has_column(db, "password_hash")? {
+        db.execute(
+            "ALTER TABLE users ADD COLUMN password_hash TEXT NOT NULL DEFAULT ''",
+            [],
+        )?;
+    }
+    Ok(())
+}
+
+fn ensure_vault_enrollment_columns(db: &Connection) -> Result<()> {
+    let columns = db
+        .prepare("PRAGMA table_info(vault_enrollments)")?
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<Vec<_>, _>>()?;
+    if !columns.iter().any(|column| column == "pairing_id") {
+        db.execute(
+            "ALTER TABLE vault_enrollments ADD COLUMN pairing_id TEXT",
+            [],
+        )?;
+    }
+    if !columns.iter().any(|column| column == "revoked_at") {
+        db.execute(
+            "ALTER TABLE vault_enrollments ADD COLUMN revoked_at TEXT",
+            [],
+        )?;
+    }
+    Ok(())
+}
+
+fn user_table_has_column(db: &Connection, name: &str) -> Result<bool> {
+    let mut statement = db.prepare("PRAGMA table_info(users)")?;
+    let mut rows = statement.query([])?;
+    while let Some(row) = rows.next()? {
+        let column_name: String = row.get(1)?;
+        if column_name == name {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn owner_missing_password(state: &AppState) -> Result<Option<String>> {
+    let db = state
+        .db
+        .lock()
+        .map_err(|_| anyhow!("database lock poisoned"))?;
+    let mut statement = db.prepare("SELECT username, COALESCE(password_hash, '') FROM users")?;
+    let rows = statement.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
+    let mut missing = None;
+    for row in rows {
+        let (username, password_hash) = row?;
+        if password_hash.is_empty() {
+            if missing.is_some() {
+                return Ok(None);
+            }
+            missing = Some(username);
+        }
+    }
+    Ok(missing)
+}
+
+fn hash_password(password: &str) -> Result<String> {
+    let salt = SaltString::generate(&mut OsRng);
+    Ok(Argon2::default()
+        .hash_password(password.as_bytes(), &salt)
+        .map_err(|error| anyhow!("failed to hash password: {error}"))?
+        .to_string())
+}
+
+fn verify_password(password: &str, password_hash: &str) -> Result<bool> {
+    let parsed_hash = PasswordHash::new(password_hash)
+        .map_err(|error| anyhow!("stored password hash is invalid: {error}"))?;
+    Ok(Argon2::default()
+        .verify_password(password.as_bytes(), &parsed_hash)
+        .is_ok())
+}
+
+fn pkce_challenge(verifier: &str) -> String {
+    URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()))
+}
+
+fn token_hash(token: &str) -> String {
+    hex_lower(&Sha256::digest(token.as_bytes()))
+}
+
+fn random_token() -> String {
+    let mut bytes = [0u8; 32];
+    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    URL_SAFE_NO_PAD.encode(bytes)
+}
+
+fn audit(state: &AppState, event: &str, user_id: &str, detail: Value) {
+    if let Ok(db) = state.db.lock() {
+        let _ = audit_db(&db, event, Some(user_id), detail);
+    }
+}
+
+fn audit_db(db: &Connection, event: &str, user_id: Option<&str>, detail: Value) -> Result<()> {
+    db.execute(
+        "INSERT INTO audit_events (timestamp, event, user_id, detail) VALUES (?1, ?2, ?3, ?4)",
+        params![
+            Utc::now().to_rfc3339(),
+            event,
+            user_id,
+            serde_json::to_string(&detail)?
+        ],
+    )?;
+    Ok(())
+}
+
+fn vault_key_count(vault: &Value) -> usize {
+    vault
+        .get("keys")
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len)
+}
+
+fn hex_lower(bytes: &[u8]) -> String {
+    let mut hex = String::with_capacity(bytes.len() * 2);
+    for &byte in bytes {
+        write!(&mut hex, "{byte:02x}").expect("writing to a string should not fail");
+    }
+    hex
+}
+
+fn json_error(status: StatusCode, error: anyhow::Error) -> Response {
+    (status, Json(json!({"error": error.to_string()}))).into_response()
+}
+
+fn error_panel(error: &str) -> String {
+    format!(
+        r#"<section class="panel"><p class="eyebrow">Request failed</p><h1>Something needs attention.</h1><p class="lead">{}</p></section>"#,
+        html_escape(error)
+    )
+}
+
+fn page(title: &str, body: &str) -> String {
+    format!(
+        r#"<!doctype html>
+        <html lang="en">
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <title>{title}</title>
+          <style>
+            :root {{
+              color-scheme: dark;
+              --bg: #090b10;
+              --surface: #121720;
+              --surface-2: #171d28;
+              --line: #2a3444;
+              --line-strong: #4b5b70;
+              --text: #edf2f7;
+              --muted: #aab7c8;
+              --soft: #7f8da3;
+              --accent: #63d2ff;
+              --accent-2: #9be564;
+              --danger: #ff8f8f;
+              --shadow: rgba(0, 0, 0, 0.45);
+            }}
+            * {{ box-sizing: border-box; }}
+            body {{
+              margin: 0;
+              min-height: 100vh;
+              background:
+                radial-gradient(circle at top left, rgba(99, 210, 255, 0.11), transparent 34rem),
+                linear-gradient(145deg, #080a0f 0%, #0d1118 48%, #101620 100%);
+              color: var(--text);
+              font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            }}
+            body::before {{
+              content: "";
+              position: fixed;
+              inset: 0;
+              pointer-events: none;
+              background-image: linear-gradient(rgba(255,255,255,0.035) 1px, transparent 1px);
+              background-size: 100% 4px;
+              opacity: 0.18;
+            }}
+            main {{
+              width: min(1120px, calc(100vw - 32px));
+              min-height: 100vh;
+              margin: 0 auto;
+              display: grid;
+              grid-template-columns: minmax(0, 1fr) minmax(360px, 480px);
+              align-items: center;
+              gap: clamp(28px, 6vw, 88px);
+              padding: 56px 0;
+              position: relative;
+            }}
+            .brand {{
+              min-width: 0;
+            }}
+            .logo {{
+              margin: 0;
+              color: #c7f4ff;
+              font: 700 clamp(7px, 0.92vw, 12px) / 1.05 ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+              white-space: pre;
+              text-shadow: 0 0 26px rgba(99, 210, 255, 0.22);
+            }}
+            .brand-copy {{
+              max-width: 520px;
+              margin-top: 34px;
+              color: var(--muted);
+              font-size: 17px;
+              line-height: 1.65;
+            }}
+            .shell-label {{
+              display: inline-flex;
+              align-items: center;
+              gap: 8px;
+              margin-bottom: 28px;
+              color: var(--accent-2);
+              font: 700 12px / 1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+              letter-spacing: 0;
+            }}
+            .shell-label::before {{
+              content: "";
+              width: 8px;
+              height: 8px;
+              border-radius: 50%;
+              background: var(--accent-2);
+              box-shadow: 0 0 16px rgba(155, 229, 100, 0.7);
+            }}
+            .panel {{
+              width: 100%;
+              border: 1px solid var(--line);
+              background: rgba(18, 23, 32, 0.88);
+              box-shadow: 0 24px 80px var(--shadow);
+              border-radius: 8px;
+              padding: clamp(26px, 4vw, 38px);
+              backdrop-filter: blur(18px);
+            }}
+            .eyebrow {{
+              margin: 0 0 14px;
+              color: var(--accent);
+              font: 700 12px / 1.3 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            }}
+            h1 {{
+              margin: 0;
+              font-size: clamp(31px, 4.4vw, 48px);
+              line-height: 1.04;
+              letter-spacing: 0;
+            }}
+            .lead {{
+              margin: 18px 0 0;
+              color: var(--muted);
+              font-size: 16px;
+              line-height: 1.55;
+            }}
+            label {{
+              display: block;
+              margin-top: 28px;
+              color: var(--muted);
+              font-weight: 700;
+              font-size: 13px;
+            }}
+            input {{
+              width: 100%;
+              margin-top: 9px;
+              padding: 14px 14px;
+              border: 1px solid var(--line-strong);
+              border-radius: 7px;
+              background: #0b1017;
+              color: var(--text);
+              font: inherit;
+              outline: none;
+            }}
+            input:focus {{
+              border-color: var(--accent);
+              box-shadow: 0 0 0 3px rgba(99, 210, 255, 0.14);
+            }}
+            button {{
+              width: 100%;
+              margin-top: 22px;
+              min-height: 48px;
+              border: 1px solid rgba(99, 210, 255, 0.4);
+              border-radius: 7px;
+              background: var(--accent);
+              color: #061017;
+              font: 800 15px / 1 system-ui, sans-serif;
+              cursor: pointer;
+            }}
+            button:hover {{ filter: brightness(1.04); }}
+            button:disabled {{ opacity: 0.58; cursor: wait; }}
+            button.secondary {{
+              background: transparent;
+              border-color: var(--line-strong);
+              color: var(--text);
+            }}
+            .button-link {{
+              display: grid;
+              place-items: center;
+              width: 100%;
+              min-height: 48px;
+              margin-top: 22px;
+              border: 1px solid rgba(99, 210, 255, 0.4);
+              border-radius: 7px;
+              background: var(--accent);
+              color: #061017;
+              font: 800 15px / 1 system-ui, sans-serif;
+              text-decoration: none;
+            }}
+            .button-link:hover {{ filter: brightness(1.04); }}
+            .button-link.compact {{
+              min-height: 42px;
+              margin-top: 14px;
+              font-size: 14px;
+            }}
+            .pairing-panel {{
+              display: grid;
+              grid-template-columns: 224px minmax(0, 1fr);
+              gap: 18px;
+              align-items: start;
+              margin-top: 26px;
+              padding: 16px;
+              border: 1px solid var(--line);
+              border-radius: 8px;
+              background: var(--surface-2);
+            }}
+            .qr-code {{
+              display: grid;
+              place-items: center;
+              width: 224px;
+              height: 224px;
+              border-radius: 7px;
+              background: #ffffff;
+              overflow: hidden;
+            }}
+            .qr-code svg {{
+              display: block;
+              width: 224px;
+              height: 224px;
+            }}
+            .pairing-copy strong {{
+              display: block;
+              color: var(--text);
+              margin-bottom: 8px;
+            }}
+            .pairing-copy p {{
+              margin: 0;
+              color: var(--muted);
+              line-height: 1.5;
+            }}
+            .pairing-copy code {{
+              display: block;
+              margin-top: 14px;
+              font-size: 12px;
+            }}
+            .actions {{
+              display: grid;
+              grid-template-columns: 1fr 1fr;
+              gap: 12px;
+              margin-top: 6px;
+            }}
+            .actions button {{ margin-top: 16px; }}
+            .steps {{
+              display: flex;
+              align-items: center;
+              gap: 12px;
+              margin-bottom: 28px;
+            }}
+            .step-dot {{
+              display: grid;
+              place-items: center;
+              width: 30px;
+              height: 30px;
+              border: 1px solid var(--line-strong);
+              border-radius: 50%;
+              color: var(--soft);
+              font: 800 12px / 1 ui-monospace, monospace;
+            }}
+            .step-dot.active {{
+              border-color: var(--accent);
+              color: var(--accent);
+              box-shadow: 0 0 0 3px rgba(99, 210, 255, 0.11);
+            }}
+            .step-line {{
+              height: 1px;
+              flex: 1;
+              background: var(--line);
+            }}
+            .security-callout {{
+              display: grid;
+              grid-template-columns: 42px 1fr;
+              gap: 14px;
+              align-items: start;
+              margin-top: 24px;
+              padding: 16px;
+              border: 1px solid var(--line);
+              border-radius: 8px;
+              background: var(--surface-2);
+              color: var(--muted);
+            }}
+            .security-callout strong {{
+              display: block;
+              color: var(--text);
+              margin-bottom: 5px;
+            }}
+            .security-callout p {{ margin: 0; line-height: 1.45; }}
+            .security-icon {{
+              width: 42px;
+              height: 42px;
+              border-radius: 8px;
+              border: 1px solid rgba(155, 229, 100, 0.35);
+              background:
+                linear-gradient(135deg, rgba(155, 229, 100, 0.2), rgba(99, 210, 255, 0.08)),
+              #0c1219;
+              position: relative;
+            }}
+            .security-icon::before {{
+              content: "";
+              position: absolute;
+              left: 13px;
+              top: 9px;
+              width: 16px;
+              height: 16px;
+              border: 2px solid var(--accent-2);
+              border-radius: 50%;
+            }}
+            .security-icon::after {{
+              content: "";
+              position: absolute;
+              left: 20px;
+              top: 24px;
+              width: 2px;
+              height: 11px;
+              background: var(--accent-2);
+              box-shadow: 6px 5px 0 var(--accent-2), 11px 1px 0 var(--accent-2);
+            }}
+            .error {{
+              margin-bottom: 18px;
+              padding: 12px 14px;
+              border: 1px solid rgba(255, 143, 143, 0.38);
+              border-radius: 7px;
+              background: rgba(255, 143, 143, 0.08);
+              color: var(--danger);
+            }}
+            code {{
+              color: var(--accent-2);
+              word-break: break-all;
+            }}
+            @media (max-width: 840px) {{
+              main {{
+                grid-template-columns: 1fr;
+                align-items: start;
+                padding: 32px 0;
+              }}
+              .brand-copy {{ margin-top: 20px; }}
+              .panel {{ padding: 24px; }}
+              .pairing-panel {{ grid-template-columns: 1fr; }}
+              .qr-code {{ margin: 0 auto; }}
+            }}
+            @media (max-width: 480px) {{
+              main {{ width: min(100vw - 24px, 1120px); }}
+              .actions {{ grid-template-columns: 1fr; }}
+              .logo {{ font-size: 6px; }}
+            }}
+          </style>
+        </head>
+        <body>
+          <main>
+            <section class="brand" aria-label="Portal Hub">
+              <div class="shell-label">PORTAL HUB</div>
+              <pre class="logo">{}</pre>
+              <p class="brand-copy">A private command center for persistent sessions, synced SSH profiles, and encrypted key material.</p>
+            </section>
+            {}
+          </main>
+          <script>
+            {}
+          </script>
+        </body>
+        </html>"#,
+        html_escape(PORTAL_ASCII_LOGO),
+        body,
+        password_script()
+    )
+}
+
+fn password_script() -> &'static str {
+    r#"
+      function showError(id, message) {
+        const node = document.getElementById(id);
+        if (!node) return;
+        node.textContent = message;
+        node.hidden = false;
+      }
+      function clearError(id) {
+        const node = document.getElementById(id);
+        if (!node) return;
+        node.textContent = "";
+        node.hidden = true;
+      }
+      async function postJSON(url, body) {
+        const response = await fetch(url, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        const json = await response.json().catch(() => ({}));
+        if (!response.ok) throw new Error(json.error || "Request failed");
+        return json;
+      }
+      function setSetupStep(step) {
+        document.querySelectorAll("[data-step]").forEach((node) => {
+          node.hidden = node.dataset.step !== String(step);
+        });
+        document.querySelectorAll("[data-step-dot]").forEach((node) => {
+          node.classList.toggle("active", node.dataset.stepDot === String(step));
+        });
+      }
+      function ownerSetupSuccessHTML(continueUrl) {
+        const lead = continueUrl
+          ? "Continue to sign in with the password you just created."
+          : "Return to Portal and sign in to Portal Hub.";
+        const action = continueUrl
+          ? `<a class="button-link" href="${continueUrl}">Continue to sign in</a>`
+          : "";
+        return `<p class="eyebrow">Owner ready</p><h1>Password saved.</h1><p class="lead">${lead}</p>${action}`;
+      }
+      function initOwnerWizard() {
+        const form = document.getElementById("owner-form");
+        const username = document.getElementById("username");
+        const password = document.getElementById("password");
+        const confirmation = document.getElementById("password-confirm");
+        const next = document.getElementById("next-button");
+        const back = document.getElementById("back-button");
+        const submit = document.getElementById("create-button");
+        if (!form || !username || !password || !confirmation || !submit) return;
+        if (next && back) {
+          next.addEventListener("click", () => {
+            clearError("setup-error");
+            if (!username.reportValidity()) return;
+            setSetupStep(2);
+            password.focus();
+          });
+          back.addEventListener("click", () => {
+            clearError("setup-error");
+            setSetupStep(1);
+            username.focus();
+          });
+        }
+        form.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          clearError("setup-error");
+          if (!username.reportValidity() || !password.reportValidity() || !confirmation.reportValidity()) return;
+          if (password.value !== confirmation.value) {
+            showError("setup-error", "Passwords do not match");
+            confirmation.focus();
+            return;
+          }
+          submit.disabled = true;
+          const originalText = submit.textContent;
+          submit.textContent = "Saving...";
+          try {
+            await postJSON("/auth/register", { username: username.value, password: password.value });
+            document.querySelector(".setup-panel").innerHTML =
+              ownerSetupSuccessHTML(form.dataset.continueUrl || "");
+          } catch (error) {
+            showError("setup-error", error.message || String(error));
+          } finally {
+            submit.disabled = false;
+            submit.textContent = originalText;
+          }
+        });
+      }
+      function initPasswordLogin() {
+        const form = document.getElementById("login-form");
+        const username = document.getElementById("username");
+        const password = document.getElementById("password");
+        const submit = document.getElementById("login-button");
+        if (!form || !username || !password || !submit) return;
+        form.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          clearError("login-error");
+          if (!username.reportValidity() || !password.reportValidity()) return;
+          submit.disabled = true;
+          const originalText = submit.textContent;
+          submit.textContent = "Signing in...";
+          try {
+            const oauth = Object.fromEntries(new URLSearchParams(window.location.search).entries());
+            const finish = await postJSON("/auth/login", { username: username.value, password: password.value, oauth });
+            window.location.assign(finish.redirect_uri);
+          } catch (error) {
+            showError("login-error", error.message || String(error));
+          } finally {
+            submit.disabled = false;
+            submit.textContent = originalText;
+          }
+        });
+      }
+      if (document.getElementById("owner-form")) {
+        initOwnerWizard();
+      }
+      if (document.getElementById("login-form")) {
+        initPasswordLogin();
+      }
+    "#
+}
+
+fn html_escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_state() -> AppState {
+        let db = Connection::open_in_memory().unwrap();
+        init_db(&db).unwrap();
+        let (sync_events, _) = broadcast::channel(16);
+        let (vault_events, _) = broadcast::channel(16);
+        AppState {
+            db: Arc::new(Mutex::new(db)),
+            state_dir: std::path::PathBuf::from("/tmp")
+                .join(format!("portal-hub-test-{}", Uuid::new_v4())),
+            public_url: "http://portal-hub.localhost:8080".to_string(),
+            ssh_port: 2222,
+            sync_events,
+            vault_events,
+            require_bootstrap: crate::runtime::require_bootstrap(),
+            stopping: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    fn owner_request(username: &str) -> RegisterRequest {
+        RegisterRequest {
+            username: username.into(),
+            password: "unique-test-password".into(),
+        }
+    }
+
+    #[test]
+    fn bootstrap_never_replaces_owner_or_password() {
+        let state = test_state();
+        let db = state.db.lock().unwrap();
+        assert!(bootstrap_owner(&db, owner_request("owner")).unwrap());
+        let initial_hash: String = db
+            .query_row("SELECT password_hash FROM users", [], |r| r.get(0))
+            .unwrap();
+        assert!(!bootstrap_owner(&db, owner_request("owner")).unwrap());
+        assert!(bootstrap_owner(&db, owner_request("intruder")).is_err());
+        assert!(
+            bootstrap_owner(
+                &db,
+                RegisterRequest {
+                    username: "owner".into(),
+                    password: "a-different-password".into()
+                }
+            )
+            .is_err()
+        );
+        let hash: String = db
+            .query_row("SELECT password_hash FROM users", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(hash, initial_hash);
+        assert_eq!(
+            db.query_row("SELECT COUNT(*) FROM users", [], |r| r.get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            db.query_row(
+                "SELECT COUNT(*) FROM audit_events WHERE event = 'owner_created'",
+                [],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn managed_registration_is_forbidden_even_for_legacy_password_setup() {
+        let mut state = test_state();
+        state.require_bootstrap = true;
+        assert_eq!(
+            register(State(state.clone()), Json(owner_request("owner")))
+                .await
+                .status(),
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(user_count(&state).unwrap(), 0);
+        {
+            let db = state.db.lock().unwrap();
+            insert_user(&db, Uuid::new_v4(), "owner", "").unwrap();
+            assert!(bootstrap_owner(&db, owner_request("owner")).is_err());
+        }
+        assert!(register_inner(&state, owner_request("owner")).is_err());
+        assert_eq!(
+            owner_missing_password(&state).unwrap().as_deref(),
+            Some("owner")
+        );
+        state.require_bootstrap = false;
+        register_inner(&state, owner_request("owner")).unwrap();
+        assert!(owner_missing_password(&state).unwrap().is_none());
+    }
+
+    #[test]
+    fn public_registration_and_local_bootstrap_arbitrate_one_owner() {
+        let mut state = test_state();
+        state.db = Arc::new(Mutex::new(open_db(&state.state_dir).unwrap()));
+        let db = open_db(&state.state_dir).unwrap();
+        let barrier = Arc::new(std::sync::Barrier::new(2));
+        let thread_barrier = barrier.clone();
+        let attempt = thread::spawn(move || {
+            thread_barrier.wait();
+            bootstrap_owner(&db, owner_request("local-owner"))
+        });
+        barrier.wait();
+        let public = register_inner(&state, owner_request("public-owner"));
+        let local = attempt.join().unwrap();
+        assert_ne!(public.is_ok(), local.is_ok());
+        assert_eq!(user_count(&state).unwrap(), 1);
+        fs::remove_dir_all(&state.state_dir).unwrap();
+    }
+
+    #[test]
+    fn identities_are_private_and_ephemeral_and_stale_pid_is_never_signaled() {
+        use std::os::unix::fs::PermissionsExt;
+        let state = test_state();
+        let identity = write_web_identity_file(&state, Some("test-only-private-key"))
+            .unwrap()
+            .unwrap();
+        assert!(identity.starts_with(crate::runtime::run_dir(&state.state_dir)));
+        assert!(!state.state_dir.join("web-identities").exists());
+        assert_eq!(
+            fs::metadata(&identity).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        let hub = crate::State::new(state.state_dir.clone());
+        hub.ensure_dirs().unwrap();
+        let session_id = Uuid::new_v4();
+        let metadata = SessionMetadata {
+            schema_version: 2,
+            session_id,
+            session_name: "stale".into(),
+            display_name: None,
+            target_host: "example.com".into(),
+            target_port: 22,
+            target_user: "user".into(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            ended_at: None,
+            process_id: Some(std::process::id() as i32),
+            process_group_id: Some(unsafe { libc::getpgrp() }),
+            runtime_generation: Some("previous-container".into()),
+        };
+        save_session_metadata(&state.state_dir, &metadata).unwrap();
+        let _listener = std::os::unix::net::UnixListener::bind(sessions_socket_path(
+            &state.state_dir,
+            session_id,
+        ))
+        .unwrap();
+        assert!(!delete_session(&state.state_dir, session_id).unwrap());
+        let ended = load_session_metadata(&state.state_dir, session_id)
+            .unwrap()
+            .unwrap();
+        assert!(ended.ended_at.is_some());
+        assert!(ended.process_id.is_none());
+        assert!(ended.process_group_id.is_none());
+        crate::runtime::clear_identities(&state.state_dir).unwrap();
+        assert!(!identity.exists());
+        fs::remove_dir_all(&state.state_dir).unwrap();
+    }
+
+    fn test_oauth() -> AuthorizeQuery {
+        AuthorizeQuery {
+            response_type: "code".to_string(),
+            client_id: DESKTOP_CLIENT_ID.to_string(),
+            redirect_uri: "http://127.0.0.1:49152/callback".to_string(),
+            code_challenge: "abcdefghijklmnopqrstuvwxyz123456".to_string(),
+            code_challenge_method: "S256".to_string(),
+            state: "state-state-state".to_string(),
+        }
+    }
+
+    #[tokio::test]
+    async fn terminal_output_coalesces_ready_chunks() {
+        let (tx, mut rx) = mpsc::channel(4);
+        tx.send(b"second".to_vec()).await.unwrap();
+        tx.send(b"third".to_vec()).await.unwrap();
+        drop(tx);
+
+        let output = coalesce_terminal_output(&mut rx, b"first".to_vec()).await;
+
+        assert_eq!(output, b"firstsecondthird");
+    }
+
+    #[tokio::test]
+    async fn terminal_output_waits_briefly_for_followup_chunk() {
+        let (tx, mut rx) = mpsc::channel(4);
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(1)).await;
+            tx.send(b"second".to_vec()).await.unwrap();
+        });
+
+        let output = coalesce_terminal_output(&mut rx, b"first".to_vec()).await;
+
+        assert_eq!(output, b"firstsecond");
+    }
+
+    #[tokio::test]
+    async fn terminal_output_stops_coalescing_at_frame_target() {
+        let (tx, mut rx) = mpsc::channel(4);
+        tx.send(vec![b'b'; WEB_TERMINAL_OUTPUT_FRAME_TARGET_BYTES])
+            .await
+            .unwrap();
+        tx.send(b"remaining".to_vec()).await.unwrap();
+
+        let output = coalesce_terminal_output(&mut rx, b"first".to_vec()).await;
+
+        assert!(output.len() >= WEB_TERMINAL_OUTPUT_FRAME_TARGET_BYTES);
+        assert_eq!(rx.try_recv().unwrap(), b"remaining");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn terminal_replay_queue_is_safe_inside_tokio_runtime() {
+        let state = test_state();
+        let session_id = Uuid::new_v4();
+        let log_path = state
+            .state_dir
+            .join("logs")
+            .join(format!("{session_id}.typescript"));
+        fs::create_dir_all(log_path.parent().unwrap()).unwrap();
+        fs::write(&log_path, b"previous output").unwrap();
+        let now = Utc::now();
+        let prepared = crate::PreparedAttach {
+            session_id,
+            target_host: "example.internal".to_string(),
+            target_port: 22,
+            target_user: "john".to_string(),
+            cols: 120,
+            rows: 30,
+            max_log_bytes: 1024,
+            logging_mode: crate::LoggingMode::Full,
+            socket_path: state.state_dir.join("sockets").join(session_id.to_string()),
+            log_path,
+            metadata: crate::SessionMetadata {
+                schema_version: crate::METADATA_SCHEMA_VERSION,
+                session_id,
+                session_name: format!("portal-{session_id}"),
+                display_name: None,
+                target_host: "example.internal".to_string(),
+                target_port: 22,
+                target_user: "john".to_string(),
+                created_at: now,
+                updated_at: now,
+                ended_at: None,
+                process_group_id: None,
+                process_id: None,
+                runtime_generation: None,
+            },
+            should_replay: true,
+            replay_bytes: 1024,
+            argv: vec![std::ffi::OsString::from("dtach")],
+        };
+        let (tx, mut rx) = mpsc::channel(4);
+
+        queue_replay_output(&prepared, &tx).unwrap();
+
+        assert_eq!(rx.recv().await.unwrap(), b"previous output");
+    }
+
+    #[test]
+    fn password_hash_verifies_only_original_password() {
+        let hash = hash_password("correct horse battery staple").unwrap();
+
+        assert!(verify_password("correct horse battery staple", &hash).unwrap());
+        assert!(!verify_password("wrong horse battery staple", &hash).unwrap());
+    }
+
+    #[test]
+    fn password_login_issues_oauth_redirect() {
+        let state = test_state();
+        register_inner(
+            &state,
+            RegisterRequest {
+                username: "owner".to_string(),
+                password: "correct horse battery staple".to_string(),
+            },
+        )
+        .unwrap();
+
+        let response = login_inner(
+            &state,
+            LoginRequest {
+                username: "owner".to_string(),
+                password: "correct horse battery staple".to_string(),
+                oauth: test_oauth(),
+            },
+        )
+        .unwrap();
+
+        assert!(
+            response
+                .redirect_uri
+                .starts_with("http://127.0.0.1:49152/callback?code=")
+        );
+        assert!(response.redirect_uri.contains("&state=state-state-state"));
+    }
+
+    #[test]
+    fn android_oauth_redirect_is_accepted() {
+        let mut query = test_oauth();
+        query.client_id = ANDROID_CLIENT_ID.to_string();
+        query.redirect_uri = format!("{ANDROID_REDIRECT_SCHEME}:{ANDROID_REDIRECT_PATH}");
+
+        validate_authorize_query(&query).unwrap();
+    }
+
+    #[test]
+    fn android_pairing_link_encodes_hub_url() {
+        let link = android_pairing_link("https://portal-hub.example.ts.net:8080", Some("pair-1"));
+
+        assert_eq!(
+            link,
+            "com.digitalpals.portal.android:/pair?hub_url=https%3A%2F%2Fportal-hub.example.ts.net%3A8080&pairing_id=pair-1"
+        );
+    }
+
+    #[test]
+    fn host_marker_uses_openssh_port_format() {
+        assert_eq!(host_marker("example.internal", 22), "example.internal");
+        assert_eq!(
+            host_marker("example.internal", 2222),
+            "[example.internal]:2222"
+        );
+    }
+
+    #[test]
+    fn host_key_response_control_deserializes() {
+        let control: WebTerminalControl =
+            serde_json::from_value(json!({"type": "host_key_response", "accepted": true})).unwrap();
+
+        match control {
+            WebTerminalControl::HostKeyResponse { accepted } => assert!(accepted),
+            WebTerminalControl::Resize { .. } | WebTerminalControl::UploadFile { .. } => {
+                panic!("expected host key response")
+            }
+        }
+    }
+
+    #[test]
+    fn upload_file_control_deserializes() {
+        let request_id = Uuid::new_v4();
+        let control: WebTerminalControl = serde_json::from_value(json!({
+            "type": "upload_file",
+            "request_id": request_id,
+            "filename": "portal-paste-20260703-120000-abc.png",
+            "contents_base64": "cG5n"
+        }))
+        .unwrap();
+
+        match control {
+            WebTerminalControl::UploadFile {
+                request_id: parsed_id,
+                filename,
+                contents_base64,
+            } => {
+                assert_eq!(parsed_id, request_id);
+                assert_eq!(filename, "portal-paste-20260703-120000-abc.png");
+                assert_eq!(contents_base64, "cG5n");
+            }
+            WebTerminalControl::Resize { .. } | WebTerminalControl::HostKeyResponse { .. } => {
+                panic!("expected upload file")
+            }
+        }
+    }
+
+    #[test]
+    fn upload_filename_validation_rejects_path_traversal() {
+        validate_upload_filename("portal-paste-20260703-120000-abc.png").unwrap();
+        assert!(validate_upload_filename("../secret.png").is_err());
+        assert!(validate_upload_filename("portal-paste.png;touch-owned.png").is_err());
+        assert!(validate_upload_filename(".hidden.png").is_err());
+        assert!(validate_upload_filename("portal-paste.jpg").is_err());
+    }
+
+    #[test]
+    fn remote_upload_command_writes_private_cache_path() {
+        let command = remote_upload_shell_command("portal-paste-20260703-120000-abc.png");
+
+        assert!(command.starts_with("/bin/sh -c "));
+        assert!(!command.starts_with("filename="));
+        assert!(!command.contains("\\''"));
+        assert!(command.contains("portal/pastes"));
+        assert!(command.contains("umask 077"));
+        assert!(command.contains("chmod 600"));
+        assert!(command.contains("cat > \"$path\""));
+    }
+
+    #[test]
+    fn target_os_detection_parses_linux_distribution_data() {
+        let detection =
+            parse_target_os_output(b"Linux\n__PORTAL_OS_RELEASE__\nID=ubuntu\nID_LIKE=debian\n")
+                .unwrap();
+
+        assert_eq!(
+            detection,
+            TargetOsDetection {
+                uname: "Linux".to_string(),
+                os_release: Some("ID=ubuntu\nID_LIKE=debian".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn target_os_detection_accepts_non_linux_without_os_release() {
+        let detection = parse_target_os_output(b"FreeBSD\n__PORTAL_OS_RELEASE__\n").unwrap();
+
+        assert_eq!(
+            detection,
+            TargetOsDetection {
+                uname: "FreeBSD".to_string(),
+                os_release: None,
+            }
+        );
+    }
+
+    #[test]
+    fn target_os_detection_rejects_malformed_output() {
+        assert!(parse_target_os_output(b"Linux\nID=ubuntu\n").is_err());
+        assert!(parse_target_os_output(b"__PORTAL_OS_RELEASE__\nID=ubuntu\n").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn target_upload_stream_error_prefers_ssh_stderr() {
+        use std::os::unix::process::ExitStatusExt;
+
+        let output = std::process::Output {
+            status: std::process::ExitStatus::from_raw(255 << 8),
+            stdout: Vec::new(),
+            stderr: b"Permission denied (publickey,password).\n".to_vec(),
+        };
+        let error = target_upload_stream_error(
+            anyhow!("failed to stream upload payload to target"),
+            &output,
+        );
+
+        assert_eq!(
+            error.to_string(),
+            "target upload failed before reading payload: Permission denied (publickey,password)."
+        );
+    }
+
+    #[test]
+    fn android_vault_pairing_flow_smoke() {
+        let state = test_state();
+        register_inner(
+            &state,
+            RegisterRequest {
+                username: "owner".to_string(),
+                password: "correct horse battery staple".to_string(),
+            },
+        )
+        .unwrap();
+        let user_id: String = state
+            .db
+            .lock()
+            .unwrap()
+            .query_row("SELECT id FROM users WHERE username = 'owner'", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+
+        let pairing_id = create_android_pairing_session(&state).unwrap();
+        let pairing_link = android_pairing_link(&state.public_url, Some(&pairing_id));
+        assert!(pairing_link.starts_with("com.digitalpals.portal.android:/pair?hub_url="));
+
+        let enrollment = create_vault_enrollment(
+            &state,
+            &user_id,
+            VaultEnrollmentCreateRequest {
+                device_name: "Pixel Smoke Test".to_string(),
+                public_key_algorithm: "RSA-OAEP-SHA256".to_string(),
+                public_key_der_base64: BASE64_STANDARD.encode(b"public-key-der"),
+                pairing_id: Some(pairing_id),
+            },
+        )
+        .unwrap();
+        assert_eq!(enrollment.status, "pending");
+        assert!(enrollment.pairing_id.is_some());
+        assert!(enrollment.encrypted_secret_base64.is_none());
+
+        let pending = list_vault_enrollments(&state, &user_id, Some("pending")).unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].id, enrollment.id);
+
+        let approved = approve_vault_enrollment(
+            &state,
+            &user_id,
+            &enrollment.id,
+            VaultEnrollmentApproveRequest {
+                encrypted_secret_base64: BASE64_STANDARD.encode(b"encrypted-vault-secret"),
+            },
+        )
+        .unwrap();
+        assert_eq!(approved.status, "approved");
+        assert_eq!(
+            approved.encrypted_secret_base64.as_deref(),
+            Some(BASE64_STANDARD.encode(b"encrypted-vault-secret").as_str())
+        );
+        assert!(approved.approved_at.is_some());
+
+        let revoked = revoke_vault_enrollment(&state, &user_id, &enrollment.id).unwrap();
+        assert_eq!(revoked.status, "revoked");
+        assert!(revoked.revoked_at.is_some());
+
+        assert!(
+            list_vault_enrollments(&state, &user_id, Some("pending"))
+                .unwrap()
+                .is_empty()
+        );
+        let loaded = load_vault_enrollment(&state, &user_id, &enrollment.id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(loaded.status, "revoked");
+
+        let audit = list_vault_audit_events(&state, &user_id, 10).unwrap();
+        let audit_events = audit
+            .iter()
+            .map(|event| event.event.as_str())
+            .collect::<Vec<_>>();
+        assert!(audit_events.contains(&"vault_enrollment_create"));
+        assert!(audit_events.contains(&"vault_enrollment_approve"));
+        assert!(audit_events.contains(&"vault_enrollment_revoke"));
+    }
+
+    #[test]
+    fn android_pairing_sessions_are_single_use_and_expire() {
+        let state = test_state();
+        let pairing_id = create_android_pairing_session(&state).unwrap();
+
+        consume_android_pairing_session(&state, &pairing_id).unwrap();
+        assert!(
+            consume_android_pairing_session(&state, &pairing_id)
+                .unwrap_err()
+                .to_string()
+                .contains("already used")
+        );
+
+        let expired_id = create_android_pairing_session(&state).unwrap();
+        state
+            .db
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE android_pairing_sessions SET expires_at = ?1 WHERE id = ?2",
+                params![
+                    (Utc::now() - ChronoDuration::minutes(1)).to_rfc3339(),
+                    expired_id
+                ],
+            )
+            .unwrap();
+        assert!(
+            consume_android_pairing_session(&state, &expired_id)
+                .unwrap_err()
+                .to_string()
+                .contains("expired")
+        );
+    }
+
+    #[test]
+    fn vault_enrollment_event_serializes_enrollment_payload() {
+        let enrollment = VaultEnrollment {
+            id: Uuid::new_v4().to_string(),
+            device_name: "Pixel".to_string(),
+            public_key_algorithm: "RSA-OAEP-SHA256".to_string(),
+            public_key_der_base64: BASE64_STANDARD.encode(b"public-key"),
+            status: "approved".to_string(),
+            encrypted_secret_base64: Some(BASE64_STANDARD.encode(b"secret")),
+            pairing_id: Some(Uuid::new_v4().to_string()),
+            created_at: Utc::now().to_rfc3339(),
+            updated_at: Utc::now().to_rfc3339(),
+            approved_at: Some(Utc::now().to_rfc3339()),
+            revoked_at: None,
+        };
+
+        let payload = vault_enrollment_event_payload(&enrollment).unwrap();
+
+        assert!(payload.contains("vault_enrollment"));
+        assert!(payload.contains(&enrollment.id));
+        assert!(payload.contains("\"status\":\"approved\""));
+    }
+
+    #[test]
+    fn android_oauth_rejects_loopback_redirect() {
+        let mut query = test_oauth();
+        query.client_id = ANDROID_CLIENT_ID.to_string();
+
+        let error = validate_authorize_query(&query).unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("redirect_uri is not registered for Portal Android")
+        );
+    }
+
+    #[test]
+    fn admin_continue_url_preserves_valid_oauth_query() {
+        let query = test_oauth();
+        let params = HashMap::from([
+            ("response_type".to_string(), query.response_type),
+            ("client_id".to_string(), query.client_id),
+            ("redirect_uri".to_string(), query.redirect_uri),
+            ("code_challenge".to_string(), query.code_challenge),
+            (
+                "code_challenge_method".to_string(),
+                query.code_challenge_method,
+            ),
+            ("state".to_string(), query.state),
+        ]);
+
+        let continue_url = admin_continue_url(&params).unwrap();
+
+        assert!(continue_url.starts_with("/oauth/authorize?"));
+        assert!(continue_url.contains("client_id=portal-desktop"));
+        assert!(continue_url.contains("redirect_uri=http%3A%2F%2F127.0.0.1%3A49152%2Fcallback"));
+    }
+
+    #[test]
+    fn public_url_is_canonicalized_to_origin() {
+        assert_eq!(
+            canonicalize_public_url("https://portal-hub.example.ts.net/").unwrap(),
+            "https://portal-hub.example.ts.net"
+        );
+        assert_eq!(
+            canonicalize_public_url("https://portal-hub.example.ts.net:8443/path?x=1").unwrap(),
+            "https://portal-hub.example.ts.net:8443"
+        );
+    }
+
+    #[test]
+    fn public_url_rejects_non_http_urls() {
+        assert!(canonicalize_public_url("portal-hub.example.ts.net").is_err());
+        assert!(canonicalize_public_url("ssh://portal-hub.example.ts.net").is_err());
+    }
+
+    #[test]
+    fn session_preview_strips_script_recorder_header() {
+        let state_dir =
+            std::path::PathBuf::from("/tmp").join(format!("portal-hub-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(logs_dir(&state_dir)).unwrap();
+        let session_id = Uuid::new_v4();
+        std::fs::write(
+            logs_dir(&state_dir).join(format!("{session_id}.typescript")),
+            b"Script started on 2026-04-27 14:29:29+00:00 [COMMAND=\"ssh host\"]\nreal motd\n",
+        )
+        .unwrap();
+
+        let (preview_base64, truncated, _) = session_preview(&state_dir, session_id, 1024).unwrap();
+        let preview = BASE64_STANDARD.decode(preview_base64.unwrap()).unwrap();
+        let _ = std::fs::remove_dir_all(&state_dir);
+
+        assert!(!truncated);
+        assert_eq!(preview, b"real motd\n");
+    }
+
+    #[test]
+    fn session_preview_caps_requested_bytes() {
+        let state_dir =
+            std::path::PathBuf::from("/tmp").join(format!("portal-hub-test-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(logs_dir(&state_dir)).unwrap();
+        let session_id = Uuid::new_v4();
+        std::fs::write(
+            logs_dir(&state_dir).join(format!("{session_id}.typescript")),
+            vec![b'x'; (MAX_WEB_SESSION_PREVIEW_BYTES + 1) as usize],
+        )
+        .unwrap();
+
+        let (preview_base64, truncated, _) =
+            session_preview(&state_dir, session_id, MAX_WEB_SESSION_PREVIEW_BYTES * 8).unwrap();
+        let preview = BASE64_STANDARD.decode(preview_base64.unwrap()).unwrap();
+        let _ = std::fs::remove_dir_all(&state_dir);
+
+        assert!(truncated);
+        assert_eq!(preview.len(), MAX_WEB_SESSION_PREVIEW_BYTES as usize);
+    }
+
+    #[test]
+    fn delete_session_marks_metadata_ended_and_removes_socket() {
+        let state_dir =
+            std::path::PathBuf::from("/tmp").join(format!("portal-hub-test-{}", Uuid::new_v4()));
+        ensure_session_dirs(&state_dir).unwrap();
+        let session_id = Uuid::new_v4();
+        let now = Utc::now();
+        let metadata = SessionMetadata {
+            schema_version: 1,
+            session_id,
+            session_name: format!("portal-{session_id}"),
+            display_name: None,
+            target_host: "example.internal".to_string(),
+            target_port: 22,
+            target_user: "john".to_string(),
+            created_at: now,
+            updated_at: now,
+            ended_at: None,
+            process_group_id: None,
+            process_id: None,
+            runtime_generation: None,
+        };
+        save_session_metadata(&state_dir, &metadata).unwrap();
+        std::fs::write(sessions_socket_path(&state_dir, session_id), b"").unwrap();
+
+        let signaled = delete_session(&state_dir, session_id).unwrap();
+        let metadata = load_session_metadata(&state_dir, session_id)
+            .unwrap()
+            .unwrap();
+        let _ = std::fs::remove_dir_all(&state_dir);
+
+        assert!(!signaled);
+        assert!(metadata.ended_at.is_some());
+        assert!(metadata.process_group_id.is_none());
+        assert!(metadata.process_id.is_none());
+        assert!(!sessions_socket_path(&state_dir, session_id).exists());
+    }
+
+    #[test]
+    fn session_display_name_validation_and_persistence_are_strict() {
+        let state_dir =
+            std::path::PathBuf::from("/tmp").join(format!("portal-hub-test-{}", Uuid::new_v4()));
+        ensure_session_dirs(&state_dir).unwrap();
+        let session_id = Uuid::new_v4();
+        let now = Utc::now();
+        save_session_metadata(
+            &state_dir,
+            &SessionMetadata {
+                schema_version: 1,
+                session_id,
+                session_name: format!("portal-{session_id}"),
+                display_name: None,
+                target_host: "example.internal".to_string(),
+                target_port: 22,
+                target_user: "john".to_string(),
+                created_at: now,
+                updated_at: now,
+                ended_at: None,
+                process_group_id: None,
+                process_id: None,
+                runtime_generation: None,
+            },
+        )
+        .unwrap();
+
+        let name = validate_session_display_name(json!("  Production deploy  ")).unwrap();
+        let metadata = update_session_display_name(&state_dir, session_id, name).unwrap();
+        assert_eq!(metadata.schema_version, crate::METADATA_SCHEMA_VERSION);
+        assert_eq!(metadata.display_name.as_deref(), Some("Production deploy"));
+        assert!(metadata.updated_at >= now);
+
+        let reloaded = load_session_metadata(&state_dir, session_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(reloaded.display_name.as_deref(), Some("Production deploy"));
+        assert!(
+            validate_session_display_name(Value::Null)
+                .unwrap()
+                .is_none()
+        );
+        assert!(validate_session_display_name(json!("")).is_err());
+        assert!(validate_session_display_name(json!("line\nbreak")).is_err());
+        assert!(validate_session_display_name(json!(42)).is_err());
+        assert!(validate_session_display_name(json!("x".repeat(81))).is_err());
+
+        let _ = std::fs::remove_dir_all(&state_dir);
+    }
+
+    #[test]
+    fn owner_registration_supports_legacy_totp_column() {
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch(
+            r#"
+            CREATE TABLE users (
+                id TEXT PRIMARY KEY,
+                username TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                totp_secret TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+            "#,
+        )
+        .unwrap();
+        init_db(&db).unwrap();
+        let (sync_events, _) = broadcast::channel(16);
+        let (vault_events, _) = broadcast::channel(16);
+        let state = AppState {
+            db: Arc::new(Mutex::new(db)),
+            state_dir: std::path::PathBuf::from("/tmp")
+                .join(format!("portal-hub-test-{}", Uuid::new_v4())),
+            public_url: "http://portal-hub.localhost:8080".to_string(),
+            ssh_port: 2222,
+            sync_events,
+            vault_events,
+            require_bootstrap: crate::runtime::require_bootstrap(),
+            stopping: Arc::new(AtomicBool::new(false)),
+        };
+
+        register_inner(
+            &state,
+            RegisterRequest {
+                username: "owner".to_string(),
+                password: "correct horse battery staple".to_string(),
+            },
+        )
+        .unwrap();
+
+        let db = state.db.lock().unwrap();
+        let (password_hash, totp_secret): (String, String) = db
+            .query_row(
+                "SELECT password_hash, totp_secret FROM users WHERE username = 'owner'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert!(!password_hash.is_empty());
+        assert!(totp_secret.is_empty());
+    }
+
+    #[test]
+    fn sync_v2_defaults_to_service_payloads() {
+        let state = test_state();
+        let services = load_sync_v2(&state, "user-1").unwrap();
+
+        assert_eq!(services.get("hosts").unwrap().revision, "0");
+        assert!(
+            services
+                .get("hosts")
+                .unwrap()
+                .payload
+                .get("hosts")
+                .is_some()
+        );
+        assert!(services.get("settings").unwrap().payload.is_object());
+        assert!(
+            services
+                .get("snippets")
+                .unwrap()
+                .payload
+                .get("snippets")
+                .is_some()
+        );
+        assert!(services.get("vault").unwrap().payload.get("keys").is_some());
+    }
+
+    #[test]
+    fn sync_v2_updates_one_service_and_rejects_stale_revision() {
+        let state = test_state();
+        let mut services = HashMap::new();
+        services.insert(
+            "hosts".to_string(),
+            SyncV2ServicePut {
+                expected_revision: "0".to_string(),
+                payload: json!({"hosts": [{"id": "host-1"}], "groups": []}),
+                tombstones: json!([]),
+            },
+        );
+
+        let updated = save_sync_v2(&state, "user-1", SyncV2PutRequest { services }).unwrap();
+        let revision = updated.get("hosts").unwrap().revision.clone();
+        assert_ne!(revision, "0");
+
+        let mut stale = HashMap::new();
+        stale.insert(
+            "hosts".to_string(),
+            SyncV2ServicePut {
+                expected_revision: "0".to_string(),
+                payload: json!({"hosts": [], "groups": []}),
+                tombstones: json!([]),
+            },
+        );
+        let error = save_sync_v2(&state, "user-1", SyncV2PutRequest { services: stale })
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("revision conflict for hosts"));
+    }
+
+    #[test]
+    fn sync_revision_map_contains_service_revisions_only() {
+        let mut services = HashMap::new();
+        services.insert(
+            "hosts".to_string(),
+            SyncServiceState {
+                revision: "rev-hosts".to_string(),
+                payload: json!({"hosts": []}),
+                tombstones: json!([]),
+            },
+        );
+
+        let revisions = revision_map(&services);
+
+        assert_eq!(revisions.get("hosts"), Some(&"rev-hosts".to_string()));
+        assert_eq!(revisions.len(), 1);
+    }
+
+    #[test]
+    fn sync_event_serializes_revision_payload() {
+        let mut revisions = HashMap::new();
+        revisions.insert("settings".to_string(), "rev-settings".to_string());
+
+        let event = sync_event(revisions).unwrap();
+        let debug = format!("{event:?}");
+
+        assert!(debug.contains("sync"));
+        assert!(debug.contains("rev-settings"));
+    }
+}

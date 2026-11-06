@@ -3,6 +3,9 @@
 //! Consolidates dialog state into a single enum, ensuring only one dialog
 //! can be open at a time and simplifying state management.
 
+use std::collections::VecDeque;
+use uuid::Uuid;
+
 use crate::views::dialogs::about_dialog::AboutDialogState;
 use crate::views::dialogs::auth_prompt_dialog::AuthPromptDialogState;
 use crate::views::dialogs::connecting_dialog::ConnectingDialogState;
@@ -53,6 +56,8 @@ pub enum ActiveDialog {
 #[derive(Default)]
 pub struct DialogManager {
     active: ActiveDialog,
+    owner: Option<Uuid>,
+    pending: VecDeque<(ActiveDialog, Option<Uuid>)>,
     /// Current focused field index in host dialog (for Tab navigation)
     pub host_dialog_focus: usize,
 }
@@ -63,6 +68,7 @@ impl DialogManager {
         Self {
             active: ActiveDialog::None,
             host_dialog_focus: 0,
+            ..Self::default()
         }
     }
 
@@ -73,7 +79,86 @@ impl DialogManager {
 
     /// Close any open dialog
     pub fn close(&mut self) {
-        self.active = ActiveDialog::None;
+        let (dialog, owner) = self.pending.pop_front().unwrap_or_default();
+        self.active = dialog;
+        self.owner = owner;
+    }
+
+    fn is_prompt(dialog: &ActiveDialog) -> bool {
+        matches!(
+            dialog,
+            ActiveDialog::AuthPrompt(_)
+                | ActiveDialog::HostKey(_)
+                | ActiveDialog::PasswordPrompt(_)
+                | ActiveDialog::PassphrasePrompt(_)
+                | ActiveDialog::VncCleartextWarning(_)
+                | ActiveDialog::SessionChoice(_)
+        )
+    }
+
+    fn enqueue(&mut self, dialog: ActiveDialog, owner: Option<Uuid>) {
+        // Prompts are FIFO ahead of suspended screens; responders remain alive.
+        let index = if Self::is_prompt(&dialog) {
+            self.pending
+                .iter()
+                .position(|(d, _)| !Self::is_prompt(d))
+                .unwrap_or(self.pending.len())
+        } else {
+            self.pending.len()
+        };
+        if matches!(dialog, ActiveDialog::PortalHubOnboarding)
+            && self
+                .pending
+                .iter()
+                .any(|(d, _)| matches!(d, ActiveDialog::PortalHubOnboarding))
+        {
+            return;
+        }
+        self.pending.insert(index, (dialog, owner));
+    }
+
+    fn present(&mut self, dialog: ActiveDialog, owner: Option<Uuid>) {
+        if Self::is_prompt(&self.active) {
+            self.enqueue(dialog, owner);
+            return;
+        }
+        if Self::is_prompt(&dialog)
+            && !matches!(
+                self.active,
+                ActiveDialog::None | ActiveDialog::Connecting(_)
+            )
+        {
+            let previous = std::mem::take(&mut self.active);
+            let previous_owner = self.owner.take();
+            self.enqueue(previous, previous_owner);
+        }
+        self.active = dialog;
+        self.owner = owner;
+    }
+
+    pub fn open_management_auth(&mut self, operation: Uuid, state: AuthPromptDialogState) {
+        self.present(ActiveDialog::AuthPrompt(state), Some(operation));
+    }
+
+    pub fn open_management_host_key(&mut self, operation: Uuid, state: HostKeyDialogState) {
+        self.present(ActiveDialog::HostKey(state), Some(operation));
+    }
+
+    /// Completion/cancellation retires only this operation's prompts.
+    pub fn finish_management(&mut self, operation: Uuid) {
+        self.pending.retain(|(_, owner)| *owner != Some(operation));
+        if self.owner == Some(operation) {
+            self.close();
+        }
+    }
+
+    pub fn close_onboarding(&mut self, operation: Uuid) {
+        self.pending
+            .retain(|(dialog, _)| !matches!(dialog, ActiveDialog::PortalHubOnboarding));
+        self.finish_management(operation);
+        if matches!(self.active, ActiveDialog::PortalHubOnboarding) {
+            self.close();
+        }
     }
 
     /// Get a reference to the active dialog
@@ -85,7 +170,7 @@ impl DialogManager {
 
     /// Open the host dialog with the given state
     pub fn open_host(&mut self, state: HostDialogState) {
-        self.active = ActiveDialog::Host(state);
+        self.present(ActiveDialog::Host(state), None);
         self.host_dialog_focus = 0; // Reset focus to first field
     }
 
@@ -101,7 +186,7 @@ impl DialogManager {
 
     /// Open the host key dialog with the given state
     pub fn open_host_key(&mut self, state: HostKeyDialogState) {
-        self.active = ActiveDialog::HostKey(state);
+        self.present(ActiveDialog::HostKey(state), None);
     }
 
     /// Get mutable host key dialog state if it's the active dialog
@@ -116,7 +201,7 @@ impl DialogManager {
 
     /// Open the keyboard-interactive auth prompt dialog
     pub fn open_auth_prompt(&mut self, state: AuthPromptDialogState) {
-        self.active = ActiveDialog::AuthPrompt(state);
+        self.present(ActiveDialog::AuthPrompt(state), None);
     }
 
     /// Get mutable auth prompt dialog state if it's the active dialog
@@ -131,14 +216,14 @@ impl DialogManager {
 
     /// Open the About dialog
     pub fn open_about(&mut self) {
-        self.active = ActiveDialog::About(AboutDialogState::new());
+        self.present(ActiveDialog::About(AboutDialogState::new()), None);
     }
 
     // ---- Password dialog operations ----
 
     /// Open the password dialog with the given state
     pub fn open_password(&mut self, state: PasswordDialogState) {
-        self.active = ActiveDialog::PasswordPrompt(state);
+        self.present(ActiveDialog::PasswordPrompt(state), None);
     }
 
     /// Get password dialog state if it's the active dialog
@@ -161,7 +246,7 @@ impl DialogManager {
 
     /// Open the passphrase dialog with the given state
     pub fn open_passphrase(&mut self, state: PassphraseDialogState) {
-        self.active = ActiveDialog::PassphrasePrompt(state);
+        self.present(ActiveDialog::PassphrasePrompt(state), None);
     }
 
     /// Get passphrase dialog state if it's the active dialog
@@ -184,20 +269,28 @@ impl DialogManager {
 
     /// Open the quick connect dialog
     pub fn open_quick_connect(&mut self) {
-        self.active = ActiveDialog::QuickConnect(QuickConnectDialogState::new());
+        self.present(
+            ActiveDialog::QuickConnect(QuickConnectDialogState::new()),
+            None,
+        );
     }
 
     // ---- Connecting dialog operations ----
 
     /// Open the connecting dialog
     pub fn open_connecting(&mut self, host_name: String, protocol: &str) {
-        self.active = ActiveDialog::Connecting(ConnectingDialogState::new(host_name, protocol));
+        self.present(
+            ActiveDialog::Connecting(ConnectingDialogState::new(host_name, protocol)),
+            None,
+        );
     }
 
     /// Close the dialog only if it's the connecting dialog
     pub fn close_connecting(&mut self) {
+        self.pending
+            .retain(|(dialog, _)| !matches!(dialog, ActiveDialog::Connecting(_)));
         if matches!(self.active, ActiveDialog::Connecting(_)) {
-            self.active = ActiveDialog::None;
+            self.close();
         }
     }
 
@@ -211,14 +304,14 @@ impl DialogManager {
 
     /// Open the duplicate host session choice dialog.
     pub fn open_session_choice(&mut self, state: SessionChoiceDialogState) {
-        self.active = ActiveDialog::SessionChoice(state);
+        self.present(ActiveDialog::SessionChoice(state), None);
     }
 
     // ---- Unencrypted VNC warning dialog operations ----
 
     /// Open the unencrypted-VNC warning dialog
     pub fn open_vnc_cleartext(&mut self, state: VncCleartextDialogState) {
-        self.active = ActiveDialog::VncCleartextWarning(state);
+        self.present(ActiveDialog::VncCleartextWarning(state), None);
     }
 
     /// Get mutable unencrypted-VNC warning dialog state if it is active
@@ -231,12 +324,20 @@ impl DialogManager {
 
     /// Open the Portal Hub onboarding wizard.
     pub fn open_portal_hub_onboarding(&mut self) {
-        self.active = ActiveDialog::PortalHubOnboarding;
+        self.present(ActiveDialog::PortalHubOnboarding, None);
     }
 
     /// Open the Portal Hub conflict resolver.
     pub fn open_portal_hub_conflicts(&mut self) {
-        self.active = ActiveDialog::PortalHubConflicts;
+        self.present(ActiveDialog::PortalHubConflicts, None);
+    }
+
+    pub fn close_portal_hub_conflicts(&mut self) {
+        self.pending
+            .retain(|(dialog, _)| !matches!(dialog, ActiveDialog::PortalHubConflicts));
+        if matches!(self.active, ActiveDialog::PortalHubConflicts) {
+            self.close();
+        }
     }
 
     /// Open confirmation before disabling a Portal Hub sync service.
@@ -244,7 +345,7 @@ impl DialogManager {
         &mut self,
         service: crate::hub::sync::PortalHubSyncService,
     ) {
-        self.active = ActiveDialog::PortalHubDisableSync(service);
+        self.present(ActiveDialog::PortalHubDisableSync(service), None);
     }
 
     /// Get mutable session choice dialog state if it is active.

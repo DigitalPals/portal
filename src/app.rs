@@ -1,6 +1,6 @@
 mod actions;
 pub mod managers;
-mod services;
+pub(crate) mod services;
 mod update;
 mod view_model;
 
@@ -234,12 +234,19 @@ pub struct UiState {
     pub portal_hub_status: Option<crate::proxy::ProxyStatus>,
     pub portal_hub_status_error: Option<String>,
     pub portal_hub_status_loading: bool,
+    pub portal_hub_status_request: Uuid,
     pub portal_hub_diagnostics_loading: bool,
     pub portal_hub_diagnostics: Option<crate::hub::diagnostics::PortalHubDiagnosticsReport>,
     pub portal_hub_auth_user: Option<String>,
     pub portal_hub_auth_error: Option<String>,
     pub portal_hub_auth_loading: bool,
+    pub portal_hub_auth_request: Uuid,
+    pub portal_hub_logout: Option<(Uuid, String)>,
     pub portal_hub_sync_loading: bool,
+    pub portal_hub_sync_context: Option<crate::hub::sync::SyncContext>,
+    pub portal_hub_sync_abort: Option<futures::future::AbortHandle>,
+    pub portal_hub_conflict_context: Option<crate::hub::sync::SyncContext>,
+    pub portal_hub_cleanup_warnings: Vec<String>,
     pub portal_hub_sync_error: Option<String>,
     pub portal_hub_sync_status: Option<String>,
     pub portal_hub_local_sync_pending: bool,
@@ -254,23 +261,7 @@ pub struct UiState {
     pub hovered_drop_files: Vec<std::path::PathBuf>,
 }
 
-/// Draft state for the Portal Hub onboarding flow.
-#[derive(Debug, Default)]
-pub struct PortalHubWizardState {
-    /// Draft Hub URL/address. It is only committed when the user submits it,
-    /// so typing or cancelling the dialog cannot corrupt the saved endpoint.
-    pub hub_url_input: String,
-    /// The draft address has changed since it was last checked.
-    pub connection_dirty: bool,
-    /// Eligible hosts excluded from the bulk enable (checked by default).
-    pub excluded_hosts: std::collections::HashSet<Uuid>,
-    /// "Route eligible hosts via Portal Hub" toggle.
-    pub route_default: bool,
-    /// "Prefer Vault keys" toggle.
-    pub prefer_vault: bool,
-    /// "Enable all sync services" toggle.
-    pub sync_all: bool,
-}
+pub use crate::hub::onboarding::PortalHubWizardState;
 
 /// User preference state (theme, fonts, sizing).
 #[derive(Debug)]
@@ -300,7 +291,7 @@ pub struct PreferencesState {
 }
 
 /// Configuration-backed state.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct ConfigState {
     pub hosts: HostsConfig,
     pub snippets: SnippetsConfig,
@@ -611,7 +602,65 @@ impl Portal {
         let system_ui_scale = crate::platform::detect_system_ui_scale();
         tracing::info!("System UI scale: {}", system_ui_scale);
 
-        let mut app = Self {
+        let mut app = Self::from_config(
+            ConfigState {
+                hosts: hosts_config,
+                snippets: snippets_config,
+                history: history_config,
+                snippet_history,
+                vault: vault_config,
+            },
+            settings_config.clone(),
+            system_ui_scale,
+        );
+
+        // Initialize the global passphrase cache with the configured timeout
+        services::connection::init_passphrase_cache(settings_config.credential_timeout);
+
+        // Initialize security audit logging if enabled
+        if settings_config.security_audit_enabled {
+            let audit_dir = settings_config.security_audit_dir.clone().or_else(|| {
+                crate::config::paths::config_dir().map(|dir| dir.join("logs").join("security"))
+            });
+            match crate::security_log::init_audit_log_dir(audit_dir) {
+                Ok(Some(path)) => {
+                    tracing::info!("Security audit logging enabled at {}", path.display());
+                }
+                Ok(None) => {
+                    tracing::warn!("Security audit logging disabled: no audit directory available");
+                }
+                Err(error) => {
+                    tracing::warn!("Security audit logging disabled: {}", error);
+                }
+            }
+        } else {
+            crate::security_log::init_audit_log(None);
+        }
+
+        let hub_url = app.prefs.portal_hub.effective_web_url();
+        if !hub_url.is_empty()
+            && crate::hub::auth::load_access_token(&hub_url)
+                .ok()
+                .flatten()
+                .is_some()
+        {
+            app.ui.portal_hub_auth_user = Some(format!("Authenticated @ {}", hub_url));
+        }
+
+        // Focus the search input on startup and check for offline local sync changes.
+        let mut startup_tasks = vec![iced::widget::operation::focus(search_input_id())];
+        if app.ui.portal_hub_auth_user.is_some() && app.prefs.portal_hub.sync_configured() {
+            startup_tasks.push(Task::done(Message::Ui(UiMessage::PortalHubLocalSyncDue)));
+        }
+        (app, Task::batch(startup_tasks))
+    }
+
+    fn from_config(
+        config: ConfigState,
+        settings_config: SettingsConfig,
+        system_ui_scale: f32,
+    ) -> Self {
+        Self {
             ui: UiState {
                 active_view: View::HostGrid,
                 search_query: String::new(),
@@ -638,12 +687,19 @@ impl Portal {
                 portal_hub_status: None,
                 portal_hub_status_error: None,
                 portal_hub_status_loading: false,
+                portal_hub_status_request: Uuid::nil(),
                 portal_hub_diagnostics_loading: false,
                 portal_hub_diagnostics: None,
                 portal_hub_auth_user: None,
                 portal_hub_auth_error: None,
                 portal_hub_auth_loading: false,
+                portal_hub_auth_request: Uuid::nil(),
+                portal_hub_logout: None,
                 portal_hub_sync_loading: false,
+                portal_hub_sync_context: None,
+                portal_hub_sync_abort: None,
+                portal_hub_conflict_context: None,
+                portal_hub_cleanup_warnings: Vec::new(),
                 portal_hub_sync_error: None,
                 portal_hub_sync_status: None,
                 portal_hub_local_sync_pending: false,
@@ -690,13 +746,7 @@ impl Portal {
                 security_audit_dir: settings_config.security_audit_dir.clone(),
                 keybindings: settings_config.keybindings.clone(),
             },
-            config: ConfigState {
-                hosts: hosts_config,
-                snippets: snippets_config,
-                history: history_config,
-                snippet_history,
-                vault: vault_config,
-            },
+            config,
             toast_manager: ToastManager::new(),
             snippets: SnippetUiState {
                 executions: SnippetExecutionManager::new(),
@@ -707,47 +757,38 @@ impl Portal {
                 viewed_history_entry: None,
             },
             vault_ui: VaultUiState::default(),
-        };
-
-        // Initialize the global passphrase cache with the configured timeout
-        services::connection::init_passphrase_cache(settings_config.credential_timeout);
-
-        // Initialize security audit logging if enabled
-        if settings_config.security_audit_enabled {
-            let audit_dir = settings_config.security_audit_dir.clone().or_else(|| {
-                crate::config::paths::config_dir().map(|dir| dir.join("logs").join("security"))
-            });
-            match crate::security_log::init_audit_log_dir(audit_dir) {
-                Ok(Some(path)) => {
-                    tracing::info!("Security audit logging enabled at {}", path.display());
-                }
-                Ok(None) => {
-                    tracing::warn!("Security audit logging disabled: no audit directory available");
-                }
-                Err(error) => {
-                    tracing::warn!("Security audit logging disabled: {}", error);
-                }
-            }
-        } else {
-            crate::security_log::init_audit_log(None);
         }
+    }
 
-        let hub_url = app.prefs.portal_hub.effective_web_url();
-        if !hub_url.is_empty()
-            && crate::hub::auth::load_access_token(&hub_url)
-                .ok()
-                .flatten()
-                .is_some()
-        {
-            app.ui.portal_hub_auth_user = Some(format!("Authenticated @ {}", hub_url));
-        }
+    /// State-only fixture: no filesystem, keychain, or background startup work.
+    #[cfg(test)]
+    pub(crate) fn test_state() -> Self {
+        Self::from_config(ConfigState::default(), SettingsConfig::default(), 1.0)
+    }
 
-        // Focus the search input on startup and check for offline local sync changes.
-        let mut startup_tasks = vec![iced::widget::operation::focus(search_input_id())];
-        if app.ui.portal_hub_auth_user.is_some() && app.prefs.portal_hub.sync_configured() {
-            startup_tasks.push(Task::done(Message::Ui(UiMessage::PortalHubLocalSyncDue)));
+    /// Run a persistence-boundary test in a private config directory. Changing
+    /// process-global environment in a parallel test runner would be unsafe.
+    #[cfg(test)]
+    pub(crate) fn isolate_config_test() -> bool {
+        let thread = std::thread::current();
+        let name = thread.name().unwrap();
+        if std::env::var("PORTAL_ISOLATED_STATE_TEST").as_deref() == Ok(name) {
+            return false;
         }
-        (app, Task::batch(startup_tasks))
+        let directory = tempfile::tempdir().unwrap();
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", name, "--nocapture"])
+            .env("XDG_CONFIG_HOME", directory.path())
+            .env("PORTAL_ISOLATED_STATE_TEST", name)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        true
     }
 
     /// Handle messages - dispatches to specialized handlers
@@ -820,6 +861,7 @@ impl Portal {
                     portal_hub_sync_error: self.ui.portal_hub_sync_error.clone(),
                     portal_hub_sync_status: self.ui.portal_hub_sync_status.clone(),
                     portal_hub_conflict_count: self.ui.portal_hub_conflicts.len(),
+                    portal_hub_cleanup_warnings: self.ui.portal_hub_cleanup_warnings.clone(),
                     hub_eligible_hosts: self
                         .config
                         .hosts
@@ -1206,14 +1248,15 @@ impl Portal {
             }
             ActiveDialog::PortalHubOnboarding => {
                 let dialog = portal_hub_onboarding_dialog_view(
-                    &self.prefs.portal_hub,
-                    self.ui.portal_hub_status.clone(),
-                    self.ui.portal_hub_status_error.as_deref(),
-                    self.ui.portal_hub_status_loading,
-                    self.ui.portal_hub_auth_user.as_deref(),
-                    self.ui.portal_hub_auth_error.as_deref(),
-                    self.ui.portal_hub_auth_loading,
+                    &self.ui.portal_hub_wizard.draft,
+                    self.ui.portal_hub_wizard.status.clone(),
+                    self.ui.portal_hub_wizard.status_error.as_deref(),
+                    self.ui.portal_hub_wizard.status_loading,
+                    self.ui.portal_hub_wizard.auth_user.as_deref(),
+                    self.ui.portal_hub_wizard.auth_error.as_deref(),
+                    self.ui.portal_hub_wizard.auth_loading,
                     &self.ui.portal_hub_wizard,
+                    &self.ui.portal_hub_cleanup_warnings,
                     &self.config.hosts,
                     theme,
                     fonts,
@@ -1598,7 +1641,7 @@ impl Portal {
             let hub_url = Arc::<str>::from(self.prefs.portal_hub.effective_web_url());
             if !hub_url.is_empty() {
                 subscriptions.push(Subscription::run_with(
-                    hub_url,
+                    (hub_url, self.ui.portal_hub_auth_request),
                     portal_hub_sync_event_stream,
                 ));
             }
@@ -1714,9 +1757,16 @@ fn shortcut_key(key: &keyboard::Key, physical_key: keyboard::key::Physical) -> O
     }
 }
 
-fn portal_hub_sync_event_stream(hub_url: &Arc<str>) -> stream::BoxStream<'static, Message> {
+fn portal_hub_sync_event_stream(context: &(Arc<str>, Uuid)) -> stream::BoxStream<'static, Message> {
+    let (hub_url, generation) = context.clone();
     crate::hub::sync::sync_revision_event_stream(hub_url.to_string())
-        .map(|result| Message::Ui(UiMessage::PortalHubRemoteRevisions(result)))
+        .map(move |result| {
+            Message::Ui(UiMessage::PortalHubRemoteRevisions(
+                generation,
+                hub_url.to_string(),
+                result,
+            ))
+        })
         .boxed()
 }
 

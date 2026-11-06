@@ -837,17 +837,25 @@ pub enum UiMessage {
     PortalHubDisableSyncDeleteData(crate::hub::sync::PortalHubSyncService),
     /// Portal Hub stored data deletion result.
     PortalHubDisableSyncDeleteDone(
+        crate::hub::sync::SyncContext,
         crate::hub::sync::PortalHubSyncService,
         Result<String, String>,
     ),
     /// Open Portal Hub onboarding
     PortalHubOpenOnboarding,
+    PortalHubOpenManagement,
     /// Open Portal Hub project page
     PortalHubOpenGithub,
     /// Check Portal Hub version and compatibility
     PortalHubCheckStatus,
     /// Portal Hub version and compatibility check result
-    PortalHubStatusLoaded(Result<ProxyStatus, String>),
+    PortalHubStatusLoaded(Uuid, String, Result<ProxyStatus, String>),
+    PortalHubDraftStatusLoaded(Uuid, Result<ProxyStatus, String>),
+    PortalHubDraftAuthenticated(
+        Uuid,
+        Result<(crate::hub::auth::HubInfo, crate::hub::auth::PendingHubAuth), String>,
+    ),
+    PortalHubManagement(crate::hub::deployment::ManagementMessage),
     /// Run Portal Hub diagnostics.
     PortalHubRunDiagnostics,
     /// Portal Hub diagnostics result.
@@ -856,12 +864,14 @@ pub enum UiMessage {
     PortalHubAuthenticate,
     /// Portal Hub browser OAuth result.
     PortalHubAuthenticated(
-        Result<(crate::hub::auth::HubInfo, crate::hub::auth::HubAuthSummary), String>,
+        Uuid,
+        String,
+        Result<(crate::hub::auth::HubInfo, crate::hub::auth::PendingHubAuth), String>,
     ),
     /// Sign out of Portal Hub on this device.
     PortalHubLogout,
     /// Portal Hub sign out result.
-    PortalHubLoggedOut(Result<(), String>),
+    PortalHubLoggedOut(Uuid, String, Result<(), String>),
     /// Upload this device's local profile to Portal Hub.
     PortalHubUploadLocalProfile,
     /// Local profile upload result.
@@ -875,9 +885,14 @@ pub enum UiMessage {
     /// Debounced local change sync.
     PortalHubLocalSyncDue,
     /// Portal Hub pushed remote sync revisions.
-    PortalHubRemoteRevisions(Result<crate::hub::sync::HubSyncRevisionEvent, String>),
+    PortalHubRemoteRevisions(
+        Uuid,
+        String,
+        Result<crate::hub::sync::HubSyncRevisionEvent, String>,
+    ),
     /// Portal Hub sync result.
     PortalHubSyncDone(
+        crate::hub::sync::SyncContext,
         crate::hub::sync::SyncRunOrigin,
         Result<crate::hub::sync::SyncRunResult, String>,
     ),
@@ -886,7 +901,7 @@ pub enum UiMessage {
     /// Resolve pending Portal Hub conflicts.
     PortalHubResolveConflicts,
     /// Portal Hub conflict resolution result.
-    PortalHubResolveConflictsDone(Result<String, String>),
+    PortalHubResolveConflictsDone(crate::hub::sync::SyncContext, Result<String, String>),
     /// Window resized
     WindowResized(iced::Size),
     /// Window lost focus
