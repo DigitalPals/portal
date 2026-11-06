@@ -131,7 +131,8 @@ jobs:
     strategy:
       matrix:
         include:
-          - runner: ubuntu-latest
+          # Keep kernel networking tests on the same LTS for both architectures.
+          - runner: ubuntu-24.04
             arch: amd64
           - runner: ubuntu-24.04-arm
             arch: arm64

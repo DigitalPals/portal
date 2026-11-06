@@ -63,13 +63,25 @@ fn private_file(path: &Path) -> Result<File> {
         .open(path)?)
 }
 
+/// Exclusive ownership of a runtime directory by one web process.
+pub struct ServiceLock(File);
+
+impl Drop for ServiceLock {
+    fn drop(&mut self) {
+        // A flock belongs to the open file description, which a child forked by
+        // another thread shares until its exec closes the O_CLOEXEC copy.
+        // Unlock explicitly so dropping the guard releases the lock at once.
+        unsafe { libc::flock(self.0.as_raw_fd(), libc::LOCK_UN) };
+    }
+}
+
 /// Held by the web process, and automatically released on crash or termination.
-pub fn service_lock(state_dir: &Path) -> Result<File> {
+pub fn service_lock(state_dir: &Path) -> Result<ServiceLock> {
     let file = private_file(&ensure(state_dir)?.join("web.lock"))?;
     if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
         bail!("another Portal Hub web process owns this runtime directory");
     }
-    Ok(file)
+    Ok(ServiceLock(file))
 }
 
 #[derive(Serialize, Deserialize)]

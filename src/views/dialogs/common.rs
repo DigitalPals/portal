@@ -183,7 +183,7 @@ pub fn destructive_button_style(
 pub const ERROR_COLOR: iced::Color = iced::Color::from_rgb(0.86, 0.31, 0.31);
 
 /// Styled text input for dialogs - rounded with border that highlights on focus.
-/// When `has_error` is true, displays a red error border instead of the normal border.
+/// Invalid inputs keep their error border when unfocused and their focus ring when focused.
 ///
 /// Returns a closure suitable for use with `text_input.style(...)`.
 pub fn dialog_input_style_with_error(
@@ -191,16 +191,19 @@ pub fn dialog_input_style_with_error(
     has_error: bool,
 ) -> impl Fn(&iced::Theme, text_input::Status) -> text_input::Style {
     move |_iced_theme, status| {
-        let border_color = if has_error {
-            ERROR_COLOR
-        } else {
-            match status {
-                text_input::Status::Focused { .. } => theme.accent,
-                text_input::Status::Hovered => theme.text_muted,
-                _ => theme.border,
-            }
+        let border_color = match status {
+            text_input::Status::Focused { .. } => theme.focus_ring,
+            _ if has_error => ERROR_COLOR,
+            text_input::Status::Hovered => theme.text_muted,
+            _ => theme.border,
         };
-        let border_width = if has_error { 1.5 } else { 1.0 };
+        let border_width = if matches!(status, text_input::Status::Focused { .. }) {
+            2.0
+        } else if has_error {
+            1.5
+        } else {
+            1.0
+        };
         text_input::Style {
             background: theme.surface.into(),
             border: iced::Border {
@@ -268,5 +271,33 @@ pub fn dialog_pick_list_menu_style(
         selected_background: theme.selected.into(),
         selected_text_color: theme.text_primary,
         shadow: iced::Shadow::default(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::theme::{ThemeId, get_theme};
+
+    #[test]
+    fn focus_stays_visible_while_editing_valid_and_invalid_inputs() {
+        for &id in ThemeId::all() {
+            let theme = get_theme(id);
+            for has_error in [false, true] {
+                let style = dialog_input_style_with_error(theme, has_error);
+                let active = style(&iced::Theme::Dark, text_input::Status::Active);
+                let focused = style(
+                    &iced::Theme::Dark,
+                    text_input::Status::Focused { is_hovered: false },
+                );
+                assert_eq!(focused.border.color, theme.focus_ring, "{id}");
+                assert!(focused.border.width > active.border.width, "{id}");
+                assert_eq!(
+                    active.border.color,
+                    if has_error { ERROR_COLOR } else { theme.border },
+                    "{id}"
+                );
+            }
+        }
     }
 }

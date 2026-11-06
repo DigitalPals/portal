@@ -294,9 +294,9 @@ fn tab_button<'a>(
 
     // Colors based on active state
     let text_icon_color = if is_active {
-        Color::from_rgb8(0xCD, 0xD6, 0xF4) // #CDD6F4 - active
+        theme.text_primary
     } else {
-        Color::from_rgb8(0x77, 0x77, 0x90) // #777790 - inactive
+        theme.text_secondary
     };
 
     // Get icon - use distro icon if host_id is set and OS is detected
@@ -337,7 +337,7 @@ fn tab_button<'a>(
                     _ => theme.border,
                 };
                 text_input::Style {
-                    background: Color::from_rgb8(0x1e, 0x1e, 0x2e).into(),
+                    background: theme.background.into(),
                     border: iced::Border {
                         color: border_color,
                         width: 1.0,
@@ -345,7 +345,7 @@ fn tab_button<'a>(
                     },
                     icon: text_icon_color,
                     placeholder: theme.text_muted,
-                    value: Color::from_rgb8(0xCD, 0xD6, 0xF4),
+                    value: theme.text_primary,
                     selection: theme.selected,
                 }
             })
@@ -368,10 +368,10 @@ fn tab_button<'a>(
     // Close button - always uses the reserved space, avoiding app-level hover updates.
     let close_button_width = 16.0;
     let close_button: Element<'_, Message> = container(
-        button(text("×").size(fonts.section).color(text_icon_color))
+        button(text("×").size(fonts.section))
             .style(move |_theme, status| {
                 let text_color = match status {
-                    iced::widget::button::Status::Hovered => Color::from_rgb8(0xCD, 0xD6, 0xF4),
+                    iced::widget::button::Status::Hovered => theme.text_primary,
                     _ => text_icon_color,
                 };
                 iced::widget::button::Style {
@@ -387,7 +387,8 @@ fn tab_button<'a>(
     .align_x(Alignment::Center)
     .into();
 
-    let status_indicator = agent_status_indicator(tab.agent_status, tab.needs_attention, fonts);
+    let status_indicator =
+        agent_status_indicator(tab.agent_status, tab.needs_attention, theme, fonts);
 
     let content = row![
         status_indicator,
@@ -395,7 +396,7 @@ fn tab_button<'a>(
         title,
         text(session_number)
             .size(fonts.caption)
-            .color(Color::from_rgb8(0xa6, 0xad, 0xc8)),
+            .color(theme.text_secondary),
         close_button,
     ]
     .spacing(6)
@@ -403,24 +404,22 @@ fn tab_button<'a>(
 
     // Background colors
     let bg_color = if is_active {
-        Color::from_rgb8(0x41, 0x43, 0x55) // #414355 - active
+        theme.selected
     } else {
-        Color::from_rgb8(0x27, 0x27, 0x38) // #272738 - inactive
+        theme.surface
     };
 
     let tab_button = button(container(content).padding(Padding::new(6.0).left(14.0).right(8.0)))
         .style(move |_theme, status| {
             let background = match status {
-                iced::widget::button::Status::Hovered if !is_active => {
-                    Color::from_rgb8(0x35, 0x35, 0x48) // Slightly lighter on hover
-                }
+                iced::widget::button::Status::Hovered if !is_active => theme.hover,
                 _ => bg_color,
             };
             // Focus ring border
             let border_color = if is_focused {
                 theme.focus_ring
             } else {
-                Color::TRANSPARENT
+                theme.border
             };
             let border_width = if is_focused { 2.0 } else { 0.0 };
             iced::widget::button::Style {
@@ -474,13 +473,17 @@ fn truncate_title(title: &str, max_chars: usize) -> String {
 fn agent_status_indicator<'a>(
     status: Option<TabAgentStatus>,
     needs_attention: bool,
+    theme: Theme,
     fonts: ScaledFonts,
 ) -> Element<'a, Message> {
     let Some(status) = status else {
         let color = if needs_attention {
-            Color::from_rgb8(0xf9, 0xe2, 0xaf)
+            theme.terminal.ansi[3]
         } else {
-            Color::from_rgba8(0xff, 0xff, 0xff, 0.0)
+            Color {
+                a: 0.0,
+                ..theme.accent
+            }
         };
 
         return container(text("•").size(fonts.body).color(color))
@@ -504,8 +507,8 @@ fn agent_status_indicator<'a>(
     let tooltip_label = format!("{} {}", label, activity_label);
 
     let base = match status.activity {
-        TabAgentActivity::NeedsInput => Color::from_rgb8(0xf9, 0xe2, 0xaf),
-        _ => agent_accent(status.kind),
+        TabAgentActivity::NeedsInput => theme.terminal.ansi[3],
+        _ => agent_accent(status.kind, theme),
     };
     const CELL_SIZE: f32 = 1.5;
     let now_ms = SystemTime::now()
@@ -548,13 +551,13 @@ fn agent_status_indicator<'a>(
         column![
             text(tooltip_label)
                 .size(fonts.label)
-                .color(Color::from_rgb8(0xCD, 0xD6, 0xF4)),
+                .color(theme.text_primary),
             Space::new().height(Length::Fixed(1.0))
         ],
         tooltip::Position::Bottom,
     )
     .style(move |_theme| container::Style {
-        background: Some(Color::from_rgb8(0x1e, 0x1e, 0x2e).into()),
+        background: Some(theme.background.into()),
         border: iced::Border {
             color: base,
             width: 1.0,
@@ -566,11 +569,11 @@ fn agent_status_indicator<'a>(
     .into()
 }
 
-fn agent_accent(kind: TabAgentKind) -> Color {
+fn agent_accent(kind: TabAgentKind, theme: Theme) -> Color {
     match kind {
-        TabAgentKind::Codex => Color::from_rgb8(0x8a, 0xb4, 0xf0),
-        TabAgentKind::Claude => Color::from_rgb8(0xe5, 0xa9, 0x7a),
-        TabAgentKind::Kimi => Color::from_rgb8(0xb4, 0x9e, 0xfa),
+        TabAgentKind::Codex => theme.accent,
+        TabAgentKind::Claude => theme.terminal.ansi[3],
+        TabAgentKind::Kimi => theme.terminal.ansi[5],
     }
 }
 

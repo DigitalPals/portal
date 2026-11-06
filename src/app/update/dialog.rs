@@ -28,6 +28,13 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
             Task::none()
         }
         DialogMessage::Close => {
+            let reconnect_id = portal
+                .dialogs
+                .passphrase_mut()
+                .and_then(|dialog| dialog.session_id);
+            if let Some(session) = reconnect_id.and_then(|id| portal.sessions.get_mut(id)) {
+                session.reconnect_in_progress = false;
+            }
             if matches!(
                 portal.dialogs.active(),
                 crate::app::managers::ActiveDialog::PortalHubOnboarding
@@ -478,6 +485,7 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                 let host_id = dialog.host_id;
                 let connection_kind = dialog.connection_kind;
                 let sftp_context = dialog.sftp_context;
+                let reconnect_session_id = dialog.reconnect_session_id;
                 let dialog_username = dialog.username.clone();
                 let save_to_vault = dialog.save_to_vault;
                 dialog.error = None;
@@ -495,7 +503,22 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                             let Some(jump_chain) = portal.resolved_jump_chain(&host) else {
                                 return Task::none();
                             };
-                            let session_id = uuid::Uuid::new_v4();
+                            let session_id =
+                                reconnect_session_id.unwrap_or_else(uuid::Uuid::new_v4);
+                            let terminal_size = if let Some(session_id) = reconnect_session_id {
+                                let Some(session) = portal.sessions.get_mut(session_id) else {
+                                    return Task::none();
+                                };
+                                if session.disconnected_reason.is_none()
+                                    || session.reconnect_in_progress
+                                {
+                                    return Task::none();
+                                }
+                                session.reconnect_in_progress = true;
+                                session.last_terminal_size
+                            } else {
+                                portal.terminal_initial_size()
+                            };
                             let should_detect_os =
                                 connection::should_detect_os(host.detected_os.as_ref());
                             let dialog_host_name = host.name.clone();
@@ -505,12 +528,15 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                                 host.clone(),
                                 session_id,
                                 host_id,
-                                portal.terminal_initial_size(),
+                                terminal_size,
                                 should_detect_os,
                                 portal.prefs.allow_agent_forwarding,
                                 jump_chain,
                                 password,
                             );
+                            if reconnect_session_id.is_some() {
+                                return task;
+                            }
                             return portal.begin_connecting(
                                 dialog_host_name,
                                 &protocol_label,
@@ -614,12 +640,19 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                                     host.clone(),
                                     session_id,
                                     request.host_id,
-                                    portal.terminal_initial_size(),
+                                    portal
+                                        .sessions
+                                        .get(session_id)
+                                        .map(|session| session.last_terminal_size)
+                                        .unwrap_or_else(|| portal.terminal_initial_size()),
                                     request.should_detect_os,
                                     portal.prefs.allow_agent_forwarding,
                                     jump_chain,
                                     cached_passphrase,
                                 );
+                                if portal.sessions.contains(session_id) {
+                                    return task;
+                                }
                                 return portal.begin_connecting(
                                     request.host_name.clone(),
                                     &protocol_label,
@@ -707,12 +740,19 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
                                 host.clone(),
                                 session_id,
                                 host_id,
-                                portal.terminal_initial_size(),
+                                portal
+                                    .sessions
+                                    .get(session_id)
+                                    .map(|session| session.last_terminal_size)
+                                    .unwrap_or_else(|| portal.terminal_initial_size()),
                                 should_detect_os,
                                 portal.prefs.allow_agent_forwarding,
                                 jump_chain,
                                 passphrase,
                             );
+                            if portal.sessions.contains(session_id) {
+                                return task;
+                            }
                             return portal.begin_connecting(
                                 dialog_host_name,
                                 &protocol_label,
@@ -737,6 +777,13 @@ pub fn handle_dialog(portal: &mut Portal, msg: DialogMessage) -> Task<Message> {
             Task::none()
         }
         DialogMessage::PassphraseCancel => {
+            let reconnect_id = portal
+                .dialogs
+                .passphrase_mut()
+                .and_then(|dialog| dialog.session_id);
+            if let Some(session) = reconnect_id.and_then(|id| portal.sessions.get_mut(id)) {
+                session.reconnect_in_progress = false;
+            }
             if let Some(dialog) = portal.dialogs.passphrase_mut() {
                 if dialog.sftp_context.is_some() {
                     portal.sftp.clear_pending_connection();

@@ -37,7 +37,7 @@ use crate::config::settings::{
     TerminalMetricAdjustments,
 };
 use crate::fonts::{JETBRAINS_MONO_NERD, TerminalFont};
-use crate::keybindings::{AppAction, KeybindingsConfig};
+use crate::keybindings::{AppAction, KeybindingsConfig, is_command_palette_shortcut};
 use crate::theme::TerminalColors;
 
 fn is_powerline_separator(c: char) -> bool {
@@ -226,6 +226,8 @@ pub struct TerminalWidget<'a, Message> {
     /// Whether keyboard input is forwarded to the terminal. Disabled while the
     /// search bar owns the keyboard so keystrokes are not sent to the PTY.
     keyboard_input: bool,
+    /// Keep selection, copying, and scrolling available without sending remote input.
+    read_only: bool,
     /// Search matches to highlight, in grid coordinates.
     search_matches: &'a [Match],
     /// Index of the active match within `search_matches`.
@@ -260,6 +262,7 @@ impl<'a, Message> TerminalWidget<'a, Message> {
             scroll_speed: TERMINAL_SCROLL_SPEED_BASE,
             focus_token: 0,
             keyboard_input: true,
+            read_only: false,
             search_matches: &[],
             search_current: None,
             search_version: 0,
@@ -322,6 +325,12 @@ impl<'a, Message> TerminalWidget<'a, Message> {
     /// Disable while another widget (e.g. the search bar) owns the keyboard.
     pub fn keyboard_input(mut self, enabled: bool) -> Self {
         self.keyboard_input = enabled;
+        self
+    }
+
+    /// Retain local terminal interaction after the remote connection ends.
+    pub fn read_only(mut self, read_only: bool) -> Self {
+        self.read_only = read_only;
         self
     }
 
@@ -781,7 +790,7 @@ impl<'a, Message> TerminalWidget<'a, Message> {
     }
 
     fn mouse_reporting_enabled(&self) -> bool {
-        self.terminal_mode().intersects(TermMode::MOUSE_MODE)
+        !self.read_only && self.terminal_mode().intersects(TermMode::MOUSE_MODE)
     }
 
     fn mouse_button_report(
@@ -1958,7 +1967,10 @@ where
                         state.render_cache.borrow_mut().needs_refresh = true;
                         shell.request_redraw();
                     }
-                } else if alternate_scroll && let Some(bytes) = alternate_scroll_sequence(delta) {
+                } else if !self.read_only
+                    && alternate_scroll
+                    && let Some(bytes) = alternate_scroll_sequence(delta)
+                {
                     shell.publish((self.on_input)(bytes));
                 }
             }
@@ -1968,11 +1980,10 @@ where
                 text,
                 ..
             }) if state.is_focused && self.keyboard_input => {
-                // The search binding is handled at the app level; never forward
-                // it to the PTY (Ctrl+Shift+F would otherwise send ^F).
-                if self
-                    .keybindings
-                    .matches_action(AppAction::TerminalSearch, key, modifiers)
+                // Leave app shortcuts uncaptured for the global subscription,
+                // without also sending their control characters to the PTY.
+                if self.keybindings.app_action(key, modifiers).is_some()
+                    || is_command_palette_shortcut(key, modifiers)
                 {
                     return;
                 }
@@ -2026,6 +2037,10 @@ where
                     {
                         clipboard.write(iced::advanced::clipboard::Kind::Standard, text_content);
                     }
+                    return;
+                }
+
+                if self.read_only && !is_select_all {
                     return;
                 }
 
@@ -2302,7 +2317,138 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::keybindings::Keybinding;
     use crate::terminal::backend::{TerminalBackend, TerminalSize};
+
+    fn key_press(key: Key, modifiers: Modifiers) -> Event {
+        let text = match &key {
+            Key::Character(c) if !modifiers.control() => Some(c.clone()),
+            _ => None,
+        };
+        Event::Keyboard(keyboard::Event::KeyPressed {
+            modified_key: key.clone(),
+            key,
+            physical_key: keyboard::key::Physical::Unidentified(
+                keyboard::key::NativeCode::Unidentified,
+            ),
+            location: keyboard::Location::Standard,
+            modifiers,
+            text,
+            repeat: false,
+        })
+    }
+
+    fn terminal_key_messages(
+        keybindings: KeybindingsConfig,
+        events: impl IntoIterator<Item = Event>,
+    ) -> Vec<Vec<u8>> {
+        let (backend, _events) = TerminalBackend::new(TerminalSize::new(80, 24));
+        let element: Element<'_, Vec<u8>> = TerminalWidget::new(backend.term(), |bytes| bytes)
+            .keybindings(keybindings)
+            .focus_token(1)
+            .into();
+        let mut ui = iced_test::simulator(element);
+        let statuses = ui.simulate(events);
+        assert!(
+            statuses
+                .iter()
+                .all(|status| *status == iced::event::Status::Ignored)
+        );
+        ui.into_messages().collect()
+    }
+
+    #[test]
+    fn app_shortcuts_are_not_sent_to_the_terminal() {
+        let ctrl_shift = Modifiers::CTRL | Modifiers::SHIFT;
+        let events = [
+            key_press(Key::Character("n".into()), ctrl_shift),
+            key_press(Key::Character("o".into()), ctrl_shift),
+            key_press(Key::Character("w".into()), ctrl_shift),
+            key_press(Key::Character("T".into()), ctrl_shift),
+            key_press(Key::Named(keyboard::key::Named::Tab), Modifiers::CTRL),
+            key_press(Key::Named(keyboard::key::Named::Tab), ctrl_shift),
+            key_press(Key::Named(keyboard::key::Named::F11), Modifiers::empty()),
+            key_press(Key::Character("f".into()), ctrl_shift),
+            key_press(Key::Character("k".into()), Modifiers::CTRL),
+        ];
+
+        assert!(terminal_key_messages(KeybindingsConfig::default(), events).is_empty());
+    }
+
+    #[test]
+    fn shell_control_keys_and_navigation_still_reach_the_terminal() {
+        let events = [
+            key_press(Key::Character("x".into()), Modifiers::empty()),
+            key_press(Key::Character("c".into()), Modifiers::CTRL),
+            key_press(Key::Character("d".into()), Modifiers::CTRL),
+            key_press(Key::Character("z".into()), Modifiers::CTRL),
+            key_press(Key::Named(keyboard::key::Named::Tab), Modifiers::empty()),
+            key_press(
+                Key::Named(keyboard::key::Named::ArrowLeft),
+                Modifiers::empty(),
+            ),
+        ];
+
+        assert_eq!(
+            terminal_key_messages(KeybindingsConfig::default(), events),
+            vec![
+                b"x".to_vec(),
+                vec![3],
+                vec![4],
+                vec![26],
+                b"\t".to_vec(),
+                b"\x1b[D".to_vec()
+            ]
+        );
+    }
+
+    #[test]
+    fn terminal_reserves_remapped_app_shortcuts_instead_of_defaults() {
+        let keybindings = KeybindingsConfig {
+            new_tab: vec![Keybinding::parse("Alt+N").unwrap()],
+            ..Default::default()
+        };
+        let events = [
+            key_press(Key::Character("n".into()), Modifiers::ALT),
+            key_press(
+                Key::Character("t".into()),
+                Modifiers::CTRL | Modifiers::SHIFT,
+            ),
+        ];
+
+        assert_eq!(terminal_key_messages(keybindings, events), vec![vec![20]]);
+    }
+
+    #[test]
+    fn disconnected_terminal_keeps_selection_and_scrolling_without_remote_input() {
+        let (backend, _events) = TerminalBackend::new(TerminalSize::new(80, 24));
+        for _ in 0..80 {
+            backend.process_input(b"saved output\r\n");
+        }
+        // A remote program may have left mouse reporting enabled when it dropped.
+        backend.process_input(b"\x1b[?1000h");
+        let term = backend.term();
+        let widget = TerminalWidget::new(term.clone(), |bytes| bytes).read_only(true);
+        assert!(!widget.mouse_reporting_enabled());
+        let element: iced::Element<'_, Vec<u8>> = widget.into();
+        let mut ui = iced_test::simulator(element);
+        ui.point_at(iced::Point::new(80.0, 40.0));
+        ui.simulate(iced_test::simulator::click());
+        let mut select_all = iced_test::simulator::press_key(Key::Character("a".into()), None);
+        if let Event::Keyboard(keyboard::Event::KeyPressed { modifiers, .. }) = &mut select_all {
+            *modifiers = keyboard::Modifiers::CTRL | keyboard::Modifiers::SHIFT;
+        }
+        ui.simulate([select_all]);
+        assert!(term.lock().selection.is_some());
+        ui.typewrite("ignored");
+        ui.tap_key(Key::Named(keyboard::key::Named::Enter));
+        assert!(term.lock().selection.is_some());
+        ui.simulate([Event::Mouse(mouse::Event::WheelScrolled {
+            delta: mouse::ScrollDelta::Lines { x: 0.0, y: 3.0 },
+        })]);
+        assert!(term.lock().grid().display_offset() > 0);
+        assert!(ui.into_messages().next().is_none());
+    }
 
     #[test]
     fn cell_metrics_round_to_integer_pixels() {
