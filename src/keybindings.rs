@@ -287,6 +287,23 @@ impl Default for KeybindingsConfig {
 }
 
 impl KeybindingsConfig {
+    /// Shortcuts handled by the app before a terminal consumes the key.
+    /// Copy and paste stay with the focused terminal widget.
+    pub fn app_action(&self, key: &Key, modifiers: &Modifiers) -> Option<AppAction> {
+        [
+            AppAction::NewWindow,
+            AppAction::NewConnection,
+            AppAction::CloseSession,
+            AppAction::NewTab,
+            AppAction::NextSession,
+            AppAction::PreviousSession,
+            AppAction::ToggleFullscreen,
+            AppAction::TerminalSearch,
+        ]
+        .into_iter()
+        .find(|action| self.matches_action(*action, key, modifiers))
+    }
+
     pub fn matches_action(&self, action: AppAction, key: &Key, modifiers: &Modifiers) -> bool {
         let bindings = match action {
             AppAction::NewWindow => &self.new_window,
@@ -305,6 +322,12 @@ impl KeybindingsConfig {
             .iter()
             .any(|binding| binding.matches(key, modifiers))
     }
+}
+
+pub fn is_command_palette_shortcut(key: &Key, modifiers: &Modifiers) -> bool {
+    modifiers.control()
+        && !modifiers.shift()
+        && matches!(key, Key::Character(c) if c.eq_ignore_ascii_case("k"))
 }
 
 fn default_new_window() -> Vec<Keybinding> {
