@@ -277,7 +277,242 @@ async fn write_text_file(path: &Path, text: String, label: &str) -> Result<(), S
 
 #[cfg(test)]
 mod tests {
-    use super::write_text_file;
+    use super::*;
+    use crate::app::managers::ActiveDialog;
+    use crate::keybindings::AppAction;
+    use crate::message::{DialogMessage, TabMessage, UiMessage};
+    use crate::views::file_viewer::{FileType, FileViewerState, ViewerContent};
+    use crate::views::tabs::Tab;
+    use uuid::Uuid;
+
+    fn editor_app(markdown: bool, modified: bool) -> (Portal, Uuid) {
+        let mut app = Portal::test_state();
+        let id = Uuid::new_v4();
+        let file_type = if markdown {
+            FileType::Markdown
+        } else {
+            FileType::Text { language: None }
+        };
+        let mut viewer = FileViewerState::new(
+            id,
+            "notes.txt".into(),
+            FileSource::Local {
+                path: "notes.txt".into(),
+            },
+            file_type,
+        );
+        let content = text_editor::Content::with_text("Keep these edits");
+        viewer.content = if markdown {
+            ViewerContent::Markdown {
+                raw_text: content.text(),
+                content,
+                preview_mode: false,
+            }
+        } else {
+            ViewerContent::Text { content }
+        };
+        viewer.is_modified = modified;
+        app.file_viewers.insert(viewer);
+        app.tabs.push(Tab::new_file_viewer(id, "notes.txt".into()));
+        app.enter_file_viewer_view(id);
+        (app, id)
+    }
+
+    fn assert_editor_open(app: &Portal, id: Uuid, expected: &str, modified: bool) {
+        assert!(app.tabs.iter().any(|tab| tab.id == id));
+        let viewer = app.file_viewers.get(id).unwrap();
+        assert_eq!(viewer.get_text().unwrap(), expected);
+        assert_eq!(viewer.is_modified, modified);
+    }
+
+    #[test]
+    fn closing_unmodified_file_needs_no_confirmation() {
+        for markdown in [false, true] {
+            let (mut app, id) = editor_app(markdown, false);
+            let _ = app.update(Message::Tab(TabMessage::Close(id)));
+            assert!(!app.file_viewers.contains(id));
+            assert!(app.tabs.is_empty());
+            assert!(!app.dialogs.is_open());
+        }
+    }
+
+    #[test]
+    fn closing_modified_file_preserves_edits_until_discard_is_confirmed() {
+        for markdown in [false, true] {
+            let (mut app, id) = editor_app(markdown, true);
+            let original = app.file_viewers.get(id).unwrap().get_text().unwrap();
+            let _ = app.update(Message::FileViewer(FileViewerMessage::DiscardChanges(id)));
+            assert_editor_open(&app, id, &original, true);
+
+            let _ = app.update(Message::Tab(TabMessage::Close(id)));
+            assert!(
+                matches!(app.dialogs.active(), ActiveDialog::UnsavedFile(target) if *target == id)
+            );
+            assert_editor_open(&app, id, &original, true);
+            let _ = app.update(Message::Dialog(DialogMessage::Close));
+            assert!(!app.dialogs.is_open());
+            assert_editor_open(&app, id, &original, true);
+
+            // The keyboard close action uses the same protection.
+            let _ = app.handle_keybinding_action(AppAction::CloseSession);
+            let _ = app.update(Message::FileViewer(FileViewerMessage::DiscardChanges(id)));
+            assert!(!app.file_viewers.contains(id));
+            assert!(app.tabs.is_empty());
+            assert!(!app.dialogs.is_open());
+        }
+    }
+
+    #[test]
+    fn escape_cancels_close_without_losing_edits() {
+        let (mut app, id) = editor_app(false, true);
+        let original = app.file_viewers.get(id).unwrap().get_text().unwrap();
+        app.close_tab(id);
+        let _ = app.update(Message::Ui(UiMessage::KeyboardEvent(
+            iced::keyboard::Key::Named(iced::keyboard::key::Named::Escape),
+            iced::keyboard::Modifiers::default(),
+            None,
+        )));
+        assert!(!app.dialogs.is_open());
+        assert_editor_open(&app, id, &original, true);
+    }
+
+    #[test]
+    fn saving_from_toolbar_or_close_dialog_keeps_file_open() {
+        for markdown in [false, true] {
+            for from_dialog in [false, true] {
+                let (mut app, id) = editor_app(markdown, true);
+                let original = app.file_viewers.get(id).unwrap().get_text().unwrap();
+                if from_dialog {
+                    app.close_tab(id);
+                }
+                let save = app.update(Message::FileViewer(FileViewerMessage::Save(id)));
+                assert!(save.units() > 0);
+                assert!(app.file_viewers.get(id).unwrap().is_saving);
+                assert_eq!(
+                    app.update(Message::FileViewer(FileViewerMessage::Save(id)))
+                        .units(),
+                    0
+                );
+
+                let result = app.update(Message::FileViewer(FileViewerMessage::SaveResult(
+                    id,
+                    Ok(()),
+                )));
+                assert_eq!(result.units(), 0, "saving must not schedule a tab close");
+                assert_editor_open(&app, id, &original, false);
+                assert!(!app.file_viewers.get(id).unwrap().is_saving);
+                assert!(!app.dialogs.is_open());
+            }
+        }
+    }
+
+    #[test]
+    fn failed_save_keeps_edits_and_confirmation_and_allows_retry() {
+        let (mut app, id) = editor_app(false, true);
+        let original = app.file_viewers.get(id).unwrap().get_text().unwrap();
+        app.close_tab(id);
+        let _ = app.update(Message::FileViewer(FileViewerMessage::Save(id)));
+        let _ = app.update(Message::FileViewer(FileViewerMessage::SaveResult(
+            id,
+            Err("Permission denied".into()),
+        )));
+        assert_editor_open(&app, id, &original, true);
+        let viewer = app.file_viewers.get(id).unwrap();
+        assert!(!viewer.is_saving);
+        assert_eq!(viewer.save_error.as_deref(), Some("Permission denied"));
+        assert!(matches!(app.dialogs.active(), ActiveDialog::UnsavedFile(target) if *target == id));
+        assert!(
+            app.toast_manager
+                .toasts()
+                .iter()
+                .any(|toast| toast.message.contains("Permission denied"))
+        );
+
+        let _ = app.update(Message::FileViewer(FileViewerMessage::Save(id)));
+        assert!(app.file_viewers.get(id).unwrap().save_error.is_none());
+        let _ = app.update(Message::FileViewer(FileViewerMessage::SaveResult(
+            id,
+            Ok(()),
+        )));
+        assert_editor_open(&app, id, &original, false);
+        assert!(!app.dialogs.is_open());
+    }
+
+    #[test]
+    fn closing_during_save_cannot_discard_or_remove_the_file() {
+        let (mut app, id) = editor_app(false, true);
+        let original = app.file_viewers.get(id).unwrap().get_text().unwrap();
+        let _ = app.update(Message::FileViewer(FileViewerMessage::Save(id)));
+        app.close_tab(id);
+        let _ = app.update(Message::FileViewer(FileViewerMessage::DiscardChanges(id)));
+        assert_editor_open(&app, id, &original, true);
+        assert!(app.file_viewers.get(id).unwrap().is_saving);
+    }
+
+    #[test]
+    fn edits_made_during_save_remain_unsaved_and_require_confirmation() {
+        for markdown in [false, true] {
+            let (mut app, id) = editor_app(markdown, true);
+            let _ = app.update(Message::FileViewer(FileViewerMessage::Save(id)));
+            let _ = app.update(Message::FileViewer(FileViewerMessage::TextChanged(
+                id,
+                text_editor::Action::Edit(text_editor::Edit::Insert('!')),
+            )));
+            let edited = app.file_viewers.get(id).unwrap().get_text().unwrap();
+            let _ = app.update(Message::FileViewer(FileViewerMessage::SaveResult(
+                id,
+                Ok(()),
+            )));
+            assert_editor_open(&app, id, &edited, true);
+            app.close_tab(id);
+            assert!(
+                matches!(app.dialogs.active(), ActiveDialog::UnsavedFile(target) if *target == id)
+            );
+        }
+    }
+
+    #[test]
+    fn cursor_movement_does_not_mark_file_modified() {
+        for markdown in [false, true] {
+            let (mut app, id) = editor_app(markdown, false);
+            let _ = app.update(Message::FileViewer(FileViewerMessage::TextChanged(
+                id,
+                text_editor::Action::Move(text_editor::Motion::Right),
+            )));
+            assert!(!app.file_viewers.get(id).unwrap().is_modified);
+        }
+    }
+
+    #[test]
+    fn close_prompts_for_multiple_files_are_queued_without_duplicates() {
+        let (mut app, first) = editor_app(false, true);
+        let second = Uuid::new_v4();
+        let mut viewer = app.file_viewers.get(first).unwrap().clone();
+        viewer.viewer_id = second;
+        app.file_viewers.insert(viewer);
+        app.tabs
+            .push(Tab::new_file_viewer(second, "other.txt".into()));
+        app.close_tab(first);
+        app.close_tab(first);
+        app.close_tab(second);
+        assert!(matches!(app.dialogs.active(), ActiveDialog::UnsavedFile(id) if *id == first));
+        let _ = app.update(Message::FileViewer(FileViewerMessage::DiscardChanges(
+            second,
+        )));
+        assert!(
+            app.file_viewers.contains(second),
+            "only the visible dialog can discard"
+        );
+        let _ = app.update(Message::FileViewer(FileViewerMessage::DiscardChanges(
+            first,
+        )));
+        assert!(matches!(app.dialogs.active(), ActiveDialog::UnsavedFile(id) if *id == second));
+        let _ = app.update(Message::FileViewer(FileViewerMessage::DiscardChanges(
+            second,
+        )));
+        assert!(!app.dialogs.is_open());
+        assert!(app.tabs.is_empty());
+    }
 
     #[tokio::test]
     async fn write_text_file_updates_regular_file() {

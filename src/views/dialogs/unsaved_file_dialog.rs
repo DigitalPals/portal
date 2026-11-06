@@ -55,3 +55,57 @@ pub fn unsaved_file_dialog_view(
         content.push(row![Space::new().width(Length::Fill), cancel, discard, save].spacing(8));
     dialog_backdrop(content.padding(24).width(Length::Fixed(440.0)), theme)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::theme::{ThemeId, get_theme};
+    use crate::views::file_viewer::{FileSource, FileType, ViewerContent};
+    use iced::widget::text_editor;
+    use uuid::Uuid;
+
+    #[test]
+    fn dialog_choices_and_saving_state_work_in_every_theme() {
+        let id = Uuid::new_v4();
+        let mut viewer = FileViewerState::new(
+            id,
+            "notes.txt".into(),
+            FileSource::Local {
+                path: "notes.txt".into(),
+            },
+            FileType::Text { language: None },
+        );
+        viewer.content = ViewerContent::Text {
+            content: text_editor::Content::with_text("Unsaved edits"),
+        };
+        viewer.mark_modified();
+        for theme_id in ThemeId::all() {
+            for choice in ["Save", "Discard", "Cancel"] {
+                let view =
+                    unsaved_file_dialog_view(&viewer, get_theme(*theme_id), ScaledFonts::new(1.0));
+                let mut ui = iced_test::simulator(view);
+                ui.click(choice).unwrap();
+                let messages: Vec<_> = ui.into_messages().collect();
+                assert!(messages.iter().any(|message| match (choice, message) {
+                    ("Save", Message::FileViewer(FileViewerMessage::Save(target))) => *target == id,
+                    ("Discard", Message::FileViewer(FileViewerMessage::DiscardChanges(target))) =>
+                        *target == id,
+                    ("Cancel", Message::Dialog(DialogMessage::Close)) => true,
+                    _ => false,
+                }));
+            }
+        }
+        viewer.begin_save();
+        for theme_id in ThemeId::all() {
+            let view =
+                unsaved_file_dialog_view(&viewer, get_theme(*theme_id), ScaledFonts::new(1.0));
+            let mut ui = iced_test::simulator(view);
+            ui.click("Saving…").unwrap();
+            ui.click("Discard").unwrap();
+            assert!(
+                !ui.into_messages()
+                    .any(|message| matches!(message, Message::FileViewer(_)))
+            );
+        }
+    }
+}
