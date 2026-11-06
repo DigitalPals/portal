@@ -17,6 +17,7 @@ use crate::message::{Message, SessionId, SftpMessage};
 use crate::sftp::{FileEntry, FileIcon, format_size};
 use crate::theme::{ScaledFonts, Theme};
 use crate::views::components::skeleton_rows;
+use crate::views::dialogs::common::secondary_button_style;
 use crate::widgets::{column_resize_handle, mouse_area};
 
 use super::state::FilePaneState;
@@ -376,6 +377,10 @@ pub fn pane_file_list<'a>(
             column![
                 text("Error").size(fonts.section).color(theme.text_primary),
                 text(error).size(fonts.label).color(theme.text_muted),
+                button(text("Retry").size(fonts.button_small))
+                    .style(secondary_button_style(theme))
+                    .padding([8, 16])
+                    .on_press(Message::Sftp(SftpMessage::PaneRefresh(tab_id, pane_id))),
             ]
             .spacing(8)
             .align_x(Alignment::Center),
@@ -387,15 +392,18 @@ pub fn pane_file_list<'a>(
         .into();
     }
 
-    let visible_count = state.visible_entry_count();
+    let visible_count = state
+        .visible_entries_iter()
+        .filter(|(_, entry)| !entry.is_parent())
+        .count();
 
     if visible_count == 0 {
-        let message = if state.entries.is_empty() {
+        let message = if state.entries.iter().all(FileEntry::is_parent) {
             "Empty directory"
         } else {
             "No matching files"
         };
-        return container(
+        let empty_message: Element<'_, Message> = container(
             column![
                 icon_with_color(icons::files::FOLDER, 32, theme.text_muted),
                 text(message).size(fonts.body).color(theme.text_muted),
@@ -408,6 +416,26 @@ pub fn pane_file_list<'a>(
         .align_x(Alignment::Center)
         .align_y(Alignment::Center)
         .into();
+
+        // Keep the parent row usable even when there are no files to show.
+        let mut content = Column::new();
+        for (index, entry) in state
+            .visible_entries_iter()
+            .filter(|(_, entry)| entry.is_parent())
+        {
+            content = content.push(pane_file_entry_row(
+                entry,
+                index,
+                state.is_selected(index),
+                tab_id,
+                pane_id,
+                context_menu_open,
+                column_widths,
+                theme,
+                fonts,
+            ));
+        }
+        return content.push(empty_message).height(Fill).into();
     }
 
     // Column headers with resize handles at right edge
@@ -818,18 +846,37 @@ pub fn pane_footer<'a>(
     theme: Theme,
     fonts: ScaledFonts,
 ) -> Element<'a, Message> {
-    let total_count = state.entries.len();
-    let visible_count = state.visible_entry_count();
-    let selected_count = state.selected_indices.len();
+    let total_count = state
+        .entries
+        .iter()
+        .filter(|entry| !entry.is_parent())
+        .count();
+    let visible_count = state
+        .visible_entries_iter()
+        .filter(|(_, entry)| !entry.is_parent())
+        .count();
+    let selected_count = state
+        .selected_entries()
+        .iter()
+        .filter(|entry| !entry.is_parent())
+        .count();
+    let visible_items = if visible_count == 1 { "item" } else { "items" };
+    let total_items = if total_count == 1 { "item" } else { "items" };
 
     let status = if state.loading {
         "Loading...".to_string()
     } else if selected_count > 0 {
-        format!("{} of {} items selected", selected_count, visible_count)
+        format!(
+            "{} of {} {} selected",
+            selected_count, visible_count, visible_items
+        )
     } else if visible_count != total_count {
-        format!("{} of {} items (filtered)", visible_count, total_count)
+        format!(
+            "{} of {} {} (filtered)",
+            visible_count, total_count, total_items
+        )
     } else {
-        format!("{} items", total_count)
+        format!("{} {}", total_count, total_items)
     };
 
     container(
@@ -914,4 +961,104 @@ pub fn actions_menu_overlay(
         .padding(Padding::new(0.0).top(40.0).right(8.0))
         .align_x(Alignment::End)
         .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::theme::{ThemeId, get_theme};
+
+    fn entry(name: &str) -> FileEntry {
+        FileEntry {
+            name: name.into(),
+            path: PathBuf::from("/tmp").join(name),
+            is_dir: name == "..",
+            is_symlink: false,
+            size: 0,
+            modified: None,
+        }
+    }
+
+    #[test]
+    fn empty_and_filtered_panes_ignore_parent_but_keep_navigation() {
+        let tab_id = Uuid::new_v4();
+        for theme in ThemeId::all() {
+            let mut state = FilePaneState::new_local();
+            state.set_entries(vec![entry("..")]);
+            let widths = ColumnWidths::default();
+            let mut ui = iced_test::simulator(pane_file_list(
+                &state,
+                PaneId::Left,
+                tab_id,
+                false,
+                &widths,
+                get_theme(*theme),
+                ScaledFonts::new(1.0),
+            ));
+            assert!(ui.find("Empty directory").is_ok());
+            assert!(ui.find("..").is_ok());
+            drop(ui);
+
+            state.set_entries(vec![entry(".."), entry("example.txt")]);
+            state.set_filter_text("missing".into());
+            let mut ui = iced_test::simulator(pane_file_list(
+                &state,
+                PaneId::Left,
+                tab_id,
+                false,
+                &widths,
+                get_theme(*theme),
+                ScaledFonts::new(1.0),
+            ));
+            assert!(ui.find("No matching files").is_ok());
+            assert!(ui.find("..").is_ok());
+        }
+    }
+
+    #[test]
+    fn footer_counts_files_and_uses_singular_for_one_item() {
+        let mut state = FilePaneState::new_local();
+        let theme = crate::theme::Theme::portal_default();
+        let fonts = ScaledFonts::new(1.0);
+        let tab_id = Uuid::new_v4();
+        state.set_entries(vec![entry("..")]);
+        let mut ui = iced_test::simulator(pane_footer(&state, PaneId::Left, tab_id, theme, fonts));
+        assert!(ui.find("0 items").is_ok());
+        drop(ui);
+        state.set_entries(vec![entry(".."), entry("example.txt")]);
+        state.select(0); // Parent navigation is not a selected file.
+        let mut ui = iced_test::simulator(pane_footer(&state, PaneId::Left, tab_id, theme, fonts));
+        assert!(ui.find("1 item").is_ok());
+        drop(ui);
+        state.select(1);
+        let mut ui = iced_test::simulator(pane_footer(&state, PaneId::Left, tab_id, theme, fonts));
+        assert!(ui.find("1 of 1 item selected").is_ok());
+        drop(ui);
+        state.set_filter_text("missing".into());
+        let mut ui = iced_test::simulator(pane_footer(&state, PaneId::Left, tab_id, theme, fonts));
+        assert!(ui.find("0 of 1 item (filtered)").is_ok());
+    }
+
+    #[test]
+    fn retry_refreshes_the_pane_that_failed_in_every_theme() {
+        let tab_id = Uuid::new_v4();
+        let mut state = FilePaneState::new_local();
+        state.set_error("Permission denied".into());
+        for theme in ThemeId::all() {
+            let widths = ColumnWidths::default();
+            let mut ui = iced_test::simulator(pane_file_list(
+                &state,
+                PaneId::Right,
+                tab_id,
+                false,
+                &widths,
+                get_theme(*theme),
+                ScaledFonts::new(1.0),
+            ));
+            ui.click("Retry").unwrap();
+            assert!(ui.into_messages().any(|message| matches!(message,
+                Message::Sftp(SftpMessage::PaneRefresh(id, PaneId::Right)) if id == tab_id
+            )));
+        }
+    }
 }
