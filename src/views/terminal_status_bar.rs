@@ -32,6 +32,7 @@ pub fn terminal_status_bar<'a>(
     theme: Theme,
     fonts: ScaledFonts,
     host_name: &'a str,
+    can_install_key: bool,
     session_start: Instant,
     status_message: Option<String>,
 ) -> Element<'a, Message> {
@@ -57,14 +58,19 @@ pub fn terminal_status_bar<'a>(
     };
 
     // Right side: shortcut hint
-    let right = row![
-        kbd("Ctrl+Shift+K", theme, fonts),
-        text("Install SSH Key")
-            .size(fonts.small)
-            .color(theme.text_secondary),
-    ]
-    .spacing(6)
-    .align_y(Alignment::Center);
+    let right: Element<'_, Message> = if can_install_key {
+        row![
+            kbd("Ctrl+Shift+K", theme, fonts),
+            text("Install SSH Key")
+                .size(fonts.small)
+                .color(theme.text_secondary),
+        ]
+        .spacing(6)
+        .align_y(Alignment::Center)
+        .into()
+    } else {
+        Space::new().into()
+    };
 
     let content = row![
         left,
@@ -88,4 +94,30 @@ pub fn terminal_status_bar<'a>(
             ..Default::default()
         })
         .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::theme::{ThemeId, get_theme};
+
+    #[test]
+    fn key_install_hint_only_appears_when_the_session_supports_it() {
+        for theme in ThemeId::all() {
+            for can_install_key in [false, true] {
+                let mut ui = iced_test::simulator(terminal_status_bar(
+                    get_theme(*theme),
+                    ScaledFonts::new(1.0),
+                    "Terminal",
+                    can_install_key,
+                    Instant::now(),
+                    Some("Copied".into()),
+                ));
+                assert_eq!(ui.find("Ctrl+Shift+K").is_ok(), can_install_key);
+                assert_eq!(ui.find("Install SSH Key").is_ok(), can_install_key);
+                assert!(ui.find("Terminal").is_ok());
+                assert!(ui.find("Copied").is_ok());
+            }
+        }
+    }
 }

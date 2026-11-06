@@ -102,6 +102,7 @@ pub fn terminal_view_with_status<'a>(
     session: &'a TerminalSession,
     session_start: Instant,
     host_name: &'a str,
+    can_install_key: bool,
     status_message: Option<String>,
     disconnected: Option<(&'a str, bool)>,
     font_size: f32,
@@ -181,7 +182,14 @@ pub fn terminal_view_with_status<'a>(
         terminal_container.into()
     };
 
-    let status_bar = terminal_status_bar(theme, fonts, host_name, session_start, status_message);
+    let status_bar = terminal_status_bar(
+        theme,
+        fonts,
+        host_name,
+        can_install_key,
+        session_start,
+        status_message,
+    );
 
     let mut content = column![terminal_area];
     if let Some((reason, reconnecting)) = disconnected {
@@ -438,6 +446,7 @@ mod tests {
             &session,
             Instant::now(),
             "host",
+            false,
             None,
             None,
             16.0,
@@ -546,6 +555,7 @@ mod tests {
             &session,
             Instant::now(),
             "host",
+            false,
             None,
             None,
             font_size,
@@ -613,6 +623,7 @@ mod tests {
             &session,
             Instant::now(),
             "host",
+            false,
             None,
             None,
             16.0,

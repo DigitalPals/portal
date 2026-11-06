@@ -10,7 +10,8 @@ use crate::message::{DialogMessage, Message};
 use crate::theme::{BORDER_RADIUS, ScaledFonts, Theme};
 
 use super::common::{
-    dialog_backdrop, dialog_input_style, primary_button_style, secondary_button_style,
+    dialog_backdrop, dialog_checkbox_style, dialog_input_style, primary_button_style,
+    secondary_button_style,
 };
 
 /// What kind of connection this password dialog is for
@@ -253,6 +254,7 @@ pub fn password_dialog_view(
 
     if state.connection_kind == PasswordConnectionKind::Vnc {
         let save_checkbox = iced::widget::checkbox(state.save_to_vault)
+            .style(dialog_checkbox_style(theme))
             .label("Save password to vault")
             .on_toggle(|value| Message::Dialog(DialogMessage::PasswordSaveToVaultToggled(value)))
             .spacing(8);

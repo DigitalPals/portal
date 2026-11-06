@@ -236,8 +236,9 @@ pub fn host_grid_view(
     let groups_empty = groups.is_empty();
     let hosts_empty = hosts.is_empty();
 
-    if hosts_empty && groups_empty {
-        content = content.push(empty_state(theme, fonts));
+    let searching = !search_query.trim().is_empty();
+    if hosts_empty && (groups_empty || searching) {
+        content = content.push(empty_state(theme, fonts, searching));
     } else {
         let mut hosts_by_group: HashMap<Option<Uuid>, Vec<&HostCard>> = HashMap::new();
         for host in hosts {
@@ -792,21 +793,40 @@ fn hub_defaults_banner(
 }
 
 /// Empty state when no hosts are configured
-fn empty_state(theme: Theme, fonts: ScaledFonts) -> Element<'static, Message> {
+fn empty_state(theme: Theme, fonts: ScaledFonts, searching: bool) -> Element<'static, Message> {
     let accent_text = theme.text_on_accent();
+    let (title, description, button_label, action) = if searching {
+        (
+            "No matching hosts",
+            "Try a different search",
+            "Clear search",
+            Message::Ui(UiMessage::SearchChanged(String::new())),
+        )
+    } else {
+        (
+            "No hosts configured",
+            "Click New Host to add your first server",
+            "New Host",
+            Message::Host(HostMessage::Add),
+        )
+    };
     let content = column![
         icon_with_color(icons::ui::SERVER, 48, theme.text_muted),
-        text("No hosts configured")
-            .size(fonts.heading)
-            .color(theme.text_primary),
-        text("Click NEW HOST to add your first server")
-            .size(fonts.body)
-            .color(theme.text_muted),
+        text(title).size(fonts.heading).color(theme.text_primary),
+        text(description).size(fonts.body).color(theme.text_muted),
         Space::new().height(16),
         button(
             row![
-                icon_with_color(icons::ui::PLUS, 14, accent_text),
-                text("NEW HOST").size(fonts.body).color(accent_text),
+                icon_with_color(
+                    if searching {
+                        icons::ui::X
+                    } else {
+                        icons::ui::PLUS
+                    },
+                    14,
+                    accent_text
+                ),
+                text(button_label).size(fonts.body).color(accent_text),
             ]
             .spacing(6)
             .align_y(Alignment::Center),
@@ -827,7 +847,7 @@ fn empty_state(theme: Theme, fonts: ScaledFonts) -> Element<'static, Message> {
             }
         })
         .padding([10, 20])
-        .on_press(Message::Host(HostMessage::Add)),
+        .on_press(action),
     ]
     .spacing(8)
     .align_x(Alignment::Center);
@@ -844,6 +864,38 @@ fn empty_state(theme: Theme, fonts: ScaledFonts) -> Element<'static, Message> {
 mod tests {
     use super::calculate_columns;
     use crate::app::SidebarState;
+
+    #[test]
+    fn unmatched_search_can_be_cleared_even_when_a_group_matches() {
+        use super::*;
+        use crate::theme::{ThemeId, get_theme};
+        let groups = vec![GroupCard {
+            id: Uuid::new_v4(),
+            name: "Production".into(),
+            collapsed: false,
+        }];
+        for theme in ThemeId::all() {
+            let mut ui = iced_test::simulator(host_grid_view(
+                "production",
+                &groups,
+                &[],
+                3,
+                get_theme(*theme),
+                ScaledFonts::new(1.0),
+                FocusSection::Content,
+                None,
+                None,
+                &HashMap::new(),
+                None,
+            ));
+            assert!(ui.find("No matching hosts").is_ok());
+            assert!(ui.find("No hosts configured").is_err());
+            ui.click("Clear search").unwrap();
+            assert!(ui.into_messages().any(|message| matches!(message,
+                Message::Ui(UiMessage::SearchChanged(query)) if query.is_empty()
+            )));
+        }
+    }
 
     #[test]
     fn calculate_columns_handles_non_finite_width() {
