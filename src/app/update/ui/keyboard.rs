@@ -1185,6 +1185,61 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
+    fn palette_key(portal: &mut Portal, key: keyboard::key::Named) -> Task<Message> {
+        handle_keyboard_event(portal, Key::Named(key), keyboard::Modifiers::empty(), None)
+    }
+
+    fn task_messages(task: Task<Message>) -> Vec<Message> {
+        use futures::StreamExt;
+        let Some(stream) = iced_test::runtime::task::into_stream(task) else {
+            return Vec::new();
+        };
+        futures::executor::block_on(
+            stream
+                .filter_map(|action| async move {
+                    match action {
+                        iced_test::runtime::Action::Output(message) => Some(message),
+                        _ => None,
+                    }
+                })
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn command_palette_arrows_and_enter_use_the_selected_row() {
+        let mut portal = Portal::test_state();
+        portal.ui.command_palette_open = true;
+        let _ = palette_key(&mut portal, keyboard::key::Named::ArrowDown);
+        assert_eq!(portal.ui.command_palette_selected, 1);
+        let messages = task_messages(palette_key(&mut portal, keyboard::key::Named::Enter));
+        assert!(matches!(
+            messages.as_slice(),
+            [Message::Ui(UiMessage::CommandPaletteRun(
+                crate::message::CommandAction::Sftp
+            ))]
+        ));
+
+        let _ = palette_key(&mut portal, keyboard::key::Named::ArrowUp);
+        let _ = palette_key(&mut portal, keyboard::key::Named::ArrowUp);
+        assert_eq!(portal.ui.command_palette_selected, 8);
+        let _ = palette_key(&mut portal, keyboard::key::Named::ArrowDown);
+        assert_eq!(portal.ui.command_palette_selected, 0);
+    }
+
+    #[test]
+    fn command_palette_empty_results_do_not_activate_or_navigate_underneath() {
+        let mut portal = Portal::test_state();
+        portal.ui.command_palette_open = true;
+        portal.ui.command_palette_query = "unmatched".to_string();
+        let _ = palette_key(&mut portal, keyboard::key::Named::ArrowUp);
+        assert_eq!(portal.ui.command_palette_selected, 0);
+        assert!(task_messages(palette_key(&mut portal, keyboard::key::Named::Enter)).is_empty());
+        let focus = portal.ui.focus_section;
+        let _ = palette_key(&mut portal, keyboard::key::Named::F1);
+        assert_eq!(portal.ui.focus_section, focus);
+    }
+
     fn sftp_entry(name: &str, is_dir: bool, is_symlink: bool) -> FileEntry {
         FileEntry {
             name: name.to_string(),

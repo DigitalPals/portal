@@ -170,6 +170,28 @@ mod tests {
     }
 
     #[test]
+    fn command_palette_receives_captured_navigation_but_not_text_editing() {
+        assert!(
+            command_palette_subscription_message(ctrl_c_event(), event::Status::Captured).is_none()
+        );
+        for named in [
+            keyboard::key::Named::ArrowUp,
+            keyboard::key::Named::ArrowDown,
+            keyboard::key::Named::Enter,
+            keyboard::key::Named::Escape,
+        ] {
+            let mut event = ctrl_c_event();
+            if let iced::Event::Keyboard(keyboard::Event::KeyPressed { key, .. }) = &mut event {
+                *key = keyboard::Key::Named(named);
+            }
+            assert!(matches!(
+                command_palette_subscription_message(event, event::Status::Captured),
+                Some(Message::Ui(UiMessage::KeyboardEvent(keyboard::Key::Named(key), _, _))) if key == named
+            ));
+        }
+    }
+
+    #[test]
     fn ignored_keyboard_events_still_reach_global_shortcuts() {
         let Some(Message::Ui(UiMessage::KeyboardEvent(key, modifiers, shortcut_key))) =
             subscription_message(ctrl_c_event(), event::Status::Ignored)

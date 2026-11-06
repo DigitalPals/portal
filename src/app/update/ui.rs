@@ -423,6 +423,26 @@ mod tests {
     use uuid::Uuid;
 
     #[test]
+    fn command_palette_resets_selection_when_opened_and_filtered() {
+        let mut portal = Portal::test_state();
+        portal.ui.command_palette_selected = 5;
+        let _ = handle_ui(&mut portal, UiMessage::CommandPaletteToggle);
+        assert_eq!(portal.ui.command_palette_selected, 0);
+        assert!(portal.ui.command_palette_open);
+
+        let _ = handle_ui(&mut portal, UiMessage::CommandPaletteSelect(5));
+        assert_eq!(portal.ui.command_palette_selected, 5);
+        let _ = handle_ui(
+            &mut portal,
+            UiMessage::CommandPaletteChanged("settings".to_string()),
+        );
+        assert_eq!(portal.ui.command_palette_selected, 0);
+        // A hover from the previous list cannot select an invalid filtered row.
+        let _ = handle_ui(&mut portal, UiMessage::CommandPaletteSelect(5));
+        assert_eq!(portal.ui.command_palette_selected, 0);
+    }
+
+    #[test]
     fn responsive_resize_preserves_auto_hidden_terminal_sidebar() {
         assert!(!should_apply_responsive_sidebar_state(
             false,
