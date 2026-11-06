@@ -48,6 +48,7 @@ pub(super) fn handle(portal: &mut Portal, value: M) -> Task<Message> {
             portal.dialogs.finish_management(wizard.managed.operation);
             wizard.managed.cancel();
             wizard.managed.choice = choice;
+            wizard.auto_finish = None;
             wizard.edit_endpoint(if choice == SetupChoice::Server {
                 String::new()
             } else {
@@ -70,6 +71,7 @@ pub(super) fn handle(portal: &mut Portal, value: M) -> Task<Message> {
                 return Task::none();
             }
             wizard.edit_endpoint(String::new());
+            wizard.auto_finish = None;
             let state = &mut wizard.managed;
             state.host_id = Some(record.ssh_host_id);
             state.hostname = record.hostname.clone();
@@ -93,6 +95,7 @@ pub(super) fn handle(portal: &mut Portal, value: M) -> Task<Message> {
                 return Task::none();
             }
             portal.ui.portal_hub_wizard.edit_endpoint(String::new());
+            portal.ui.portal_hub_wizard.auto_finish = None;
             portal.ui.portal_hub_wizard.managed = ManagedHubState {
                 choice: SetupChoice::Server,
                 ..ManagedHubState::load()

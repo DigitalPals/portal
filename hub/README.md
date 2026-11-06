@@ -53,97 +53,28 @@ Portal Hub also keeps a revisioned sync store for Portal data:
   other Portal clients can refresh quickly after a change.
 
 The legacy OpenSSH forced-command mode is still available for manual operation
-and older clients.
-
-## Recommended Setup
-
-Portal Hub is intended to live on a private host reachable through Tailscale.
-The common setup is:
-
-```text
-Portal app  ->  Tailscale / Tailscale Serve  ->  portal-hub-web.service
-Portal app  ->  Portal Hub SSH port 2222     ->  legacy forced-command fallback
-Portal Hub  ->  target SSH hosts
-```
-
-Recommended minimum LXC size for personal use:
-
-```text
-1 vCPU
-512 MB to 1 GB RAM
-10 GB disk
-512 MB swap
-```
-
-Disk is the main resource to watch because replay logs power reconnect previews
-and thumbnails.
+and older clients; see
+[the deployment guide](docs/deployment.md#optional-legacy-ssh-forced-command).
 
 ## Install
 
-Use Portal: open Settings → Portal Hub, choose **Set up on a server**, pick an
-SSH host and select **Deploy Hub**. Portal installs Docker when needed, runs the
-Hub image of its own version with a private Tailscale sidecar, and asks you to
-sign in to Tailscale and create your owner passkey in the browser. See the
-[Portal README](../README.md#portal-hub-beta) and the
-[deployment protocol](../deploy/hub/README.md).
+Let Portal install it: in Portal, open Settings → Portal Hub, choose **Set up on
+a server**, pick an SSH host and select **Deploy Hub**. Portal installs Docker
+when needed, runs the Hub image of its own version with a private Tailscale
+sidecar, and asks you to sign in to Tailscale and create your owner passkey in
+the browser. The steps and requirements are in the
+[Portal README](../README.md#portal-hub-beta); how the managed installation
+works is in [the deployment protocol](../deploy/hub/README.md).
+
+To run the Hub yourself, follow the [manual deployment guide](docs/deployment.md)
+and connect Portal with **Connect an existing Hub**.
+
+A small server or LXC is enough for personal use: 1 vCPU, 512 MB to 1 GB RAM,
+10 GB disk. Disk is the main resource to watch because replay logs power
+reconnect previews and thumbnails.
 
 The `install-debian.sh` installer and `hub-v*` releases of the retired
 standalone repository are not part of this repository and are unsupported.
-
-For a manual installation, build the binary (`cargo build --release -p
-portal-hub`) or use the release image, publish the web service privately over
-HTTPS (for example `tailscale serve --bg http://127.0.0.1:8080`) and run it with
-that address:
-
-```sh
-portal-hub web --bind 127.0.0.1:8080 --public-url https://portal-hub.example.ts.net
-```
-
-## First Run
-
-The owner signs in with passkeys only. Create the owner with a one-time link,
-as the Hub service user on the server:
-
-```sh
-portal-hub owner-setup --username your-name
-```
-
-Open the printed `https://…/setup#token=…` link within 30 minutes and create
-the passkey. Save it in a password manager that syncs (Google Password Manager,
-iCloud Keychain, 1Password, Bitwarden) or on a security key to use one passkey
-on all your devices. Later, `portal-hub owner-setup --mode add` adds a passkey
-and `portal-hub owner-setup --mode reset` replaces all passkeys if you lose
-yours; SSH access to the server is the recovery path. Portal does this for you
-on a Hub it deployed.
-
-Hub stores passkey public keys, OAuth tokens, sync state, session metadata and
-replay logs in `/var/lib/portal-hub`. It never stores a password.
-
-Check the service:
-
-```sh
-portal-hub doctor
-```
-
-## Portal Setup
-
-In Portal, open Settings and start the Portal Hub setup flow.
-
-Use:
-
-- Host: the Tailscale name, IP, or full Tailscale Serve URL.
-- Web URL: the HTTPS URL that reaches `portal-hub-web.service`.
-- Web port: `8080`, unless you changed the web bind port. Portal does not append
-  this port when Host or Web URL already contains a full URL.
-- Sign in with your passkey in the browser.
-- Enable the services you want: hosts, settings, snippets, key vault, and
-  persistent sessions.
-- Enable Portal Hub on individual SSH hosts that should use persistent sessions.
-
-When an SSH host uses public-key auth through the web terminal transport, Portal
-sends the private key material only for the lifetime of that terminal request.
-Hub writes it to a temporary `0600` identity file and removes it when the
-terminal stream ends.
 
 ## Security Model
 
@@ -151,7 +82,8 @@ Portal Hub is designed for Tailscale-only access.
 
 - Do not expose the Hub SSH port or web service to the public internet.
 - Use Tailscale ACLs to restrict who can reach the Hub host.
-- Run Hub as the dedicated non-root `portal-hub` user.
+- Run Hub as a dedicated non-root user (the managed deployment does this for
+  you).
 - Keep `/var/lib/portal-hub` private to the Hub user.
 - Treat terminal replay logs as sensitive; they can contain command output,
   tokens, passwords, environment values, and pasted secrets.
@@ -220,46 +152,6 @@ PORTAL_HUB_ALLOWED_TARGETS=*.internal,192.0.2.0/24
 `PORTAL_HUB_ALLOWED_TARGETS` supports exact hostnames, `*` wildcard patterns,
 and IP CIDR ranges.
 
-## Legacy Forced-Command Mode
-
-The web transport is the primary Portal workflow, but the SSH forced-command
-mode remains available.
-
-Add the Portal client public key to:
-
-```text
-/home/portal-hub/.ssh/authorized_keys
-```
-
-Use this restricted prefix:
-
-```text
-restrict,pty,agent-forwarding,command="/usr/local/bin/portal-hub serve --stdio" ssh-ed25519 AAAA...
-```
-
-Smoke test from the Portal machine:
-
-```sh
-ssh -A -tt -p 2222 portal-hub@TAILSCALE_NAME -- portal-hub doctor
-```
-
-Target authentication in forced-command mode is non-interactive and depends on
-SSH agent forwarding from the Portal client.
-
-## Build From Source
-
-```sh
-cargo build --release
-sudo install -m 0755 target/release/portal-hub /usr/local/bin/portal-hub
-```
-
-Run the web service manually:
-
-```sh
-PORTAL_HUB_STATE_DIR=/var/lib/portal-hub \
-  portal-hub web --bind 127.0.0.1:8080 --public-url https://portal-hub.example.ts.net
-```
-
 ## API And Integrations
 
 Portal Hub exposes versioned CLI JSON and OAuth-authenticated web APIs:
@@ -287,7 +179,9 @@ See [docs/api.md](docs/api.md) for request and response details.
 
 ## More Docs
 
-- [Deployment guide](docs/deployment.md)
+- [Manual deployment guide](docs/deployment.md)
+- [Managed deployment protocol](../deploy/hub/README.md)
+- [Integrated runtime contract](docs/integrated-runtime.md)
 - [API contract](docs/api.md)
 - [Security policy](SECURITY.md)
 - [Changelog](CHANGELOG.md)

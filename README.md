@@ -277,10 +277,12 @@ Reopen Hub setup to resume an interrupted deployment, open Sessions to resume
 terminals, or manage updates, private backups, diagnostics and removal.
 **Advanced options** keeps the manual step-by-step controls.
 
-Choose the existing-Hub option to connect to a manually operated service. Existing
+Choose **Connect an existing Hub** for a Hub you run yourself; the
+[manual deployment guide](hub/docs/deployment.md) covers installing one. Existing
 API v2 and Android pairing remain supported.
 
 Automatic setup supports Linux amd64/arm64 servers with systemd and kernel 5.3+.
+A small server is enough for personal use (1 vCPU, 512 MB to 1 GB RAM, 10 GB disk).
 Docker is installed automatically on Debian 12–13, Ubuntu 22.04/24.04/26.04,
 Fedora 42–44 and RHEL, Rocky, AlmaLinux or CentOS Stream 9–10; elsewhere, install
 Docker Compose 2.20+ first. Servers without `/dev/net/tun` (such as unprivileged

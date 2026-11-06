@@ -284,6 +284,65 @@ pub fn portal_hub_onboarding_dialog_view(
         format!("Portal will connect to {checked_url}")
     };
 
+    // Server setup connects and signs in by itself: its steps appear only once
+    // it hands the new Hub over, to show progress and offer retries.
+    let server = wizard.managed.choice == SetupChoice::Server;
+    let connect_steps: Element<'static, Message> = if !server || wizard.auto_finish.is_some() {
+        column![
+            section_title("1. Connect", theme, fonts),
+            hub_url_input(
+                hub_url_value,
+                !status_loading && !auth_loading,
+                has_hub_url && !status_loading && !auth_loading,
+                theme,
+                fonts
+            ),
+            text("Paste a full URL or enter a host. The port is optional; add :port only when your Hub uses a custom web port.")
+                .size(fonts.small)
+                .color(theme.text_tertiary),
+            text(connection_caption)
+                .size(fonts.label)
+                .color(theme.text_muted),
+            row![
+                status_badge(setup_badge, setup_tone, theme, fonts),
+                text(setup_detail)
+                    .size(fonts.label)
+                    .color(theme.text_secondary)
+                    .width(Length::Fill),
+                check_button
+            ]
+            .spacing(10)
+            .align_y(Alignment::Center),
+            Space::new().height(6),
+            section_title("2. Sign in", theme, fonts),
+            row![
+                status_badge(auth_badge, auth_tone, theme, fonts),
+                text(auth_detail)
+                    .size(fonts.label)
+                    .color(theme.text_secondary)
+                    .width(Length::Fill),
+                auth_button
+            ]
+            .spacing(10)
+            .align_y(Alignment::Center),
+            Space::new().height(6),
+            finish_section,
+        ]
+        .spacing(10)
+        .into()
+    } else {
+        column![].into()
+    };
+    let choice_style = move |selected: bool| {
+        move |iced_theme: &iced::Theme, status| {
+            if selected {
+                primary_button_style(theme)(iced_theme, status)
+            } else {
+                secondary_button_style(theme)(iced_theme, status)
+            }
+        }
+    };
+
     let content = column![
         row![
             text("Set Up or Manage Portal Hub")
@@ -302,52 +361,15 @@ pub fn portal_hub_onboarding_dialog_view(
         Space::new().height(8),
         row![
             button(text("Connect an existing Hub").size(fonts.body)).padding([8, 12])
-                .style(secondary_button_style(theme)).on_press(management(M::Choose(SetupChoice::Existing))),
+                .style(choice_style(!server)).on_press(management(M::Choose(SetupChoice::Existing))),
             button(text("Set up on a server").size(fonts.body)).padding([8, 12])
-                .style(secondary_button_style(theme)).on_press(management(M::Choose(SetupChoice::Server))),
+                .style(choice_style(server)).on_press(management(M::Choose(SetupChoice::Server))),
         ].spacing(10),
-        if wizard.managed.choice == SetupChoice::Server {
+        if server {
             managed_hub_view(&wizard.managed, wizard.auth_loading, hosts, theme, fonts)
         } else { column![].into() },
         column(cleanup_warnings.iter().map(|warning| text(warning.clone()).size(fonts.label).color(super::common::ERROR_COLOR).into())),
-        section_title("1. Connect", theme, fonts),
-        hub_url_input(
-            hub_url_value,
-            !status_loading && !auth_loading,
-            has_hub_url && !status_loading && !auth_loading,
-            theme,
-            fonts
-        ),
-        text("Paste a full URL or enter a host. The port is optional; add :port only when your Hub uses a custom web port.")
-            .size(fonts.small)
-            .color(theme.text_tertiary),
-        text(connection_caption)
-            .size(fonts.label)
-            .color(theme.text_muted),
-        row![
-            status_badge(setup_badge, setup_tone, theme, fonts),
-            text(setup_detail)
-                .size(fonts.label)
-                .color(theme.text_secondary)
-                .width(Length::Fill),
-            check_button
-        ]
-            .spacing(10)
-            .align_y(Alignment::Center),
-        Space::new().height(6),
-        section_title("2. Sign in", theme, fonts),
-        row![
-            status_badge(auth_badge, auth_tone, theme, fonts),
-            text(auth_detail)
-                .size(fonts.label)
-                .color(theme.text_secondary)
-                .width(Length::Fill),
-            auth_button
-        ]
-            .spacing(10)
-            .align_y(Alignment::Center),
-        Space::new().height(6),
-        finish_section,
+        connect_steps,
     ]
     .spacing(10)
     .padding(24)
@@ -571,6 +593,91 @@ fn conflict_button_style(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::hub::deployment::DeploymentResponse;
+    use crate::theme::{ThemeId, get_theme};
+
+    fn onboarding(wizard: &PortalHubWizardState) -> Element<'static, Message> {
+        portal_hub_onboarding_dialog_view(
+            &wizard.draft,
+            None,
+            None,
+            false,
+            None,
+            None,
+            false,
+            wizard,
+            &[],
+            &HostsConfig::default(),
+            get_theme(ThemeId::default()),
+            ScaledFonts::new(1.0),
+        )
+    }
+
+    fn shows(view: Element<'static, Message>, label: &str) -> bool {
+        iced_test::simulator(view).find(label).is_ok()
+    }
+
+    #[test]
+    fn server_setup_hides_the_existing_hub_steps_until_it_hands_over() {
+        let mut wizard = PortalHubWizardState::begin(Default::default());
+        assert!(shows(onboarding(&wizard), "1. Connect"));
+        wizard.managed.choice = SetupChoice::Server;
+        assert!(shows(onboarding(&wizard), "Deploy Hub"));
+        assert!(!shows(onboarding(&wizard), "1. Connect"));
+        assert!(!shows(onboarding(&wizard), "2. Sign in"));
+        // The deployment connects this device: its progress and retries show.
+        wizard.auto_finish = Some(Default::default());
+        assert!(shows(onboarding(&wizard), "1. Connect"));
+        assert!(shows(onboarding(&wizard), "2. Sign in"));
+    }
+
+    fn installed(image: &str, version: &str) -> DeploymentResponse {
+        DeploymentResponse::parse(
+            &serde_json::json!({"protocol_version":1,"ok":true,"phase":"ready","message":"Hub is ready",
+                "data":{"hub_image":image,"hub_version":version,"owner_exists":true,"owner_ready":true,"active_sessions":0}})
+            .to_string(),
+        )
+        .unwrap()
+    }
+
+    fn maintenance(state: &ManagedHubState, response: &DeploymentResponse) -> Vec<String> {
+        let mut ui = iced_test::simulator(maintenance_view(
+            state,
+            response,
+            get_theme(ThemeId::default()),
+            ScaledFonts::new(1.0),
+        ));
+        let offer = format!("Update Hub to {}", env!("CARGO_PKG_VERSION"));
+        ["Update Hub", "Back up Hub", offer.as_str()]
+            .into_iter()
+            .filter(|label| ui.find(*label).is_ok())
+            .map(str::to_string)
+            .collect()
+    }
+
+    #[test]
+    fn maintenance_offers_an_update_only_when_there_is_one() {
+        let current = crate::hub::deployment::DEFAULT_IMAGE;
+        let mut state = ManagedHubState::default();
+        let up_to_date = installed(current, env!("CARGO_PKG_VERSION"));
+        assert_eq!(maintenance(&state, &up_to_date), ["Back up Hub"]);
+
+        let old = "ghcr.io/digitalpals/portal-hub:0.6.0";
+        state.image = old.into();
+        let behind = installed(old, "0.6.0");
+        let offer = format!("Update Hub to {}", env!("CARGO_PKG_VERSION"));
+        assert_eq!(maintenance(&state, &behind), ["Back up Hub", &offer]);
+
+        // An image chosen in Advanced options is the update target instead.
+        state.image = "ghcr.io/digitalpals/portal-hub:9.9.9".into();
+        assert_eq!(maintenance(&state, &behind), ["Update Hub", "Back up Hub"]);
+        state.image = current.into();
+        state.archive = Some("/tmp/portal-hub.tar".into());
+        assert_eq!(
+            maintenance(&state, &up_to_date),
+            ["Update Hub", "Back up Hub"]
+        );
+    }
 
     #[test]
     fn portal_hub_onboarding_field_ids_roundtrip() {
@@ -954,22 +1061,46 @@ fn maintenance_view(
             .style(secondary_button_style(theme))
             .on_press_maybe((enabled && !state.busy).then_some(management(M::SetUpPasskey(mode))))
     };
-    let update_offer = response
-        .string("hub_version")
-        .filter(|version| crate::hub::deployment::hub_is_older_than_portal(version))
-        .map(|version| {
+    // One update offer, shown only when there is something to update to: an
+    // image chosen in Advanced options, else the version of this Portal.
+    let installed = response.string("hub_image");
+    let update_offer =
+        if state.archive.is_some() || installed.is_some_and(|installed| installed != state.image) {
+            Some((
+                format!(
+                    "Advanced options select {}{}.",
+                    state.image,
+                    if state.archive.is_some() {
+                        " from a local image tar"
+                    } else {
+                        ""
+                    }
+                ),
+                "Update Hub".to_string(),
+                M::Run(Action::Update),
+            ))
+        } else {
+            response
+                .string("hub_version")
+                .filter(|version| crate::hub::deployment::hub_is_older_than_portal(version))
+                .map(|version| {
+                    (
+                        format!(
+                            "This Hub runs version {version}. This Portal deploys version {}.",
+                            env!("CARGO_PKG_VERSION")
+                        ),
+                        format!("Update Hub to {}", env!("CARGO_PKG_VERSION")),
+                        M::UpdateToPortalVersion,
+                    )
+                })
+        }
+        .map(|(detail, label, action)| {
             column![
-                text(format!(
-                    "This Hub runs version {version}. This Portal deploys version {}.",
-                    env!("CARGO_PKG_VERSION")
-                ))
-                .size(fonts.label),
-                button(
-                    text(format!("Update Hub to {}", env!("CARGO_PKG_VERSION"))).size(fonts.label)
-                )
-                .padding([8, 12])
-                .style(primary_button_style(theme))
-                .on_press_maybe((!state.busy).then_some(management(M::UpdateToPortalVersion))),
+                text(detail).size(fonts.label),
+                button(text(label).size(fonts.label))
+                    .padding([8, 12])
+                    .style(primary_button_style(theme))
+                    .on_press_maybe((!state.busy).then_some(management(action))),
             ]
             .spacing(8)
         });
@@ -989,13 +1120,7 @@ fn maintenance_view(
         content = content.push(offer);
     }
     content
-        .push(
-            row![
-                action_button(Action::Update, true),
-                action_button(Action::Backup, true)
-            ]
-            .spacing(8),
-        )
+        .push(action_button(Action::Backup, true))
         .push(
             checkbox(state.uninstall_confirmed)
                 .label("Uninstall this Hub's services and retain its data")
