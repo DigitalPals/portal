@@ -37,7 +37,7 @@ use crate::config::settings::{
     TerminalMetricAdjustments,
 };
 use crate::fonts::{JETBRAINS_MONO_NERD, TerminalFont};
-use crate::keybindings::{AppAction, KeybindingsConfig};
+use crate::keybindings::{AppAction, KeybindingsConfig, is_command_palette_shortcut};
 use crate::theme::TerminalColors;
 
 fn is_powerline_separator(c: char) -> bool {
@@ -1980,11 +1980,10 @@ where
                 text,
                 ..
             }) if state.is_focused && self.keyboard_input => {
-                // The search binding is handled at the app level; never forward
-                // it to the PTY (Ctrl+Shift+F would otherwise send ^F).
-                if self
-                    .keybindings
-                    .matches_action(AppAction::TerminalSearch, key, modifiers)
+                // Leave app shortcuts uncaptured for the global subscription,
+                // without also sending their control characters to the PTY.
+                if self.keybindings.app_action(key, modifiers).is_some()
+                    || is_command_palette_shortcut(key, modifiers)
                 {
                     return;
                 }
@@ -2318,7 +2317,107 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::keybindings::Keybinding;
     use crate::terminal::backend::{TerminalBackend, TerminalSize};
+
+    fn key_press(key: Key, modifiers: Modifiers) -> Event {
+        let text = match &key {
+            Key::Character(c) if !modifiers.control() => Some(c.clone()),
+            _ => None,
+        };
+        Event::Keyboard(keyboard::Event::KeyPressed {
+            modified_key: key.clone(),
+            key,
+            physical_key: keyboard::key::Physical::Unidentified(
+                keyboard::key::NativeCode::Unidentified,
+            ),
+            location: keyboard::Location::Standard,
+            modifiers,
+            text,
+            repeat: false,
+        })
+    }
+
+    fn terminal_key_messages(
+        keybindings: KeybindingsConfig,
+        events: impl IntoIterator<Item = Event>,
+    ) -> Vec<Vec<u8>> {
+        let (backend, _events) = TerminalBackend::new(TerminalSize::new(80, 24));
+        let element: Element<'_, Vec<u8>> = TerminalWidget::new(backend.term(), |bytes| bytes)
+            .keybindings(keybindings)
+            .focus_token(1)
+            .into();
+        let mut ui = iced_test::simulator(element);
+        let statuses = ui.simulate(events);
+        assert!(
+            statuses
+                .iter()
+                .all(|status| *status == iced::event::Status::Ignored)
+        );
+        ui.into_messages().collect()
+    }
+
+    #[test]
+    fn app_shortcuts_are_not_sent_to_the_terminal() {
+        let ctrl_shift = Modifiers::CTRL | Modifiers::SHIFT;
+        let events = [
+            key_press(Key::Character("n".into()), ctrl_shift),
+            key_press(Key::Character("o".into()), ctrl_shift),
+            key_press(Key::Character("w".into()), ctrl_shift),
+            key_press(Key::Character("T".into()), ctrl_shift),
+            key_press(Key::Named(keyboard::key::Named::Tab), Modifiers::CTRL),
+            key_press(Key::Named(keyboard::key::Named::Tab), ctrl_shift),
+            key_press(Key::Named(keyboard::key::Named::F11), Modifiers::empty()),
+            key_press(Key::Character("f".into()), ctrl_shift),
+            key_press(Key::Character("k".into()), Modifiers::CTRL),
+        ];
+
+        assert!(terminal_key_messages(KeybindingsConfig::default(), events).is_empty());
+    }
+
+    #[test]
+    fn shell_control_keys_and_navigation_still_reach_the_terminal() {
+        let events = [
+            key_press(Key::Character("x".into()), Modifiers::empty()),
+            key_press(Key::Character("c".into()), Modifiers::CTRL),
+            key_press(Key::Character("d".into()), Modifiers::CTRL),
+            key_press(Key::Character("z".into()), Modifiers::CTRL),
+            key_press(Key::Named(keyboard::key::Named::Tab), Modifiers::empty()),
+            key_press(
+                Key::Named(keyboard::key::Named::ArrowLeft),
+                Modifiers::empty(),
+            ),
+        ];
+
+        assert_eq!(
+            terminal_key_messages(KeybindingsConfig::default(), events),
+            vec![
+                b"x".to_vec(),
+                vec![3],
+                vec![4],
+                vec![26],
+                b"\t".to_vec(),
+                b"\x1b[D".to_vec()
+            ]
+        );
+    }
+
+    #[test]
+    fn terminal_reserves_remapped_app_shortcuts_instead_of_defaults() {
+        let keybindings = KeybindingsConfig {
+            new_tab: vec![Keybinding::parse("Alt+N").unwrap()],
+            ..Default::default()
+        };
+        let events = [
+            key_press(Key::Character("n".into()), Modifiers::ALT),
+            key_press(
+                Key::Character("t".into()),
+                Modifiers::CTRL | Modifiers::SHIFT,
+            ),
+        ];
+
+        assert_eq!(terminal_key_messages(keybindings, events), vec![vec![20]]);
+    }
 
     #[test]
     fn disconnected_terminal_keeps_selection_and_scrolling_without_remote_input() {
