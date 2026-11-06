@@ -1,6 +1,6 @@
 //! Theme system for Portal SSH client
 //!
-//! Supports 5 pre-configured themes:
+//! Supports 6 pre-configured themes:
 //! - Portal Default (dark navy blue)
 //! - Catppuccin Latte (light)
 //! - Catppuccin Frappé (dark, muted)
@@ -84,8 +84,10 @@ pub struct Theme {
     pub text_primary: Color,
     pub text_secondary: Color,
     /// Lowest-contrast text that still meets AA at small sizes (metadata,
-    /// fingerprints, timestamps). Use `text_muted` for decoration only.
+    /// fingerprints, timestamps).
     pub text_tertiary: Color,
+    /// Muted labels and placeholders, with AA contrast on UI surfaces,
+    /// including hovered and selected rows.
     pub text_muted: Color,
     pub border: Color,
     pub hover: Color,
@@ -120,14 +122,14 @@ impl Theme {
             surface: Color::from_rgb8(0x28, 0x2B, 0x3D),
             sidebar: Color::from_rgb8(0x28, 0x2B, 0x3D),
             tab_bar: Color::from_rgb8(0x14, 0x17, 0x29),
-            accent: Color::from_rgb8(0x32, 0x36, 0x4A),
+            accent: Color::from_rgb8(0x58, 0x9c, 0xff),
             text_primary: Color::from_rgb8(0xe8, 0xe8, 0xe8),
             text_secondary: Color::from_rgb8(0x9a, 0xa0, 0xb0),
-            text_tertiary: Color::from_rgb8(0x76, 0x7D, 0x93),
-            text_muted: Color::from_rgb8(0x5B, 0x5F, 0x74),
+            text_tertiary: Color::from_rgb8(0x9a, 0xa0, 0xb0),
+            text_muted: Color::from_rgb8(0x9a, 0xa0, 0xb0),
             border: Color::from_rgb8(0x3a, 0x40, 0x55),
-            hover: Color::from_rgb8(0x35, 0x3d, 0x50),
-            selected: Color::from_rgb8(0x2a, 0x4a, 0x6d),
+            hover: Color::from_rgb8(0x30, 0x35, 0x48),
+            selected: Color::from_rgb8(0x29, 0x36, 0x4f),
             focus_ring: Color::from_rgb8(0x58, 0x9c, 0xff),
             terminal: TerminalColors {
                 foreground: Color::from_rgb8(0xe6, 0xe6, 0xe6),
@@ -164,14 +166,14 @@ impl Theme {
             surface: Color::from_rgb8(0xe6, 0xe9, 0xef),    // Mantle
             sidebar: Color::from_rgb8(0xdc, 0xe0, 0xe8),    // Crust
             tab_bar: Color::from_rgb8(0xdc, 0xe0, 0xe8),    // Crust
-            accent: Color::from_rgb8(0x1e, 0x66, 0xf5),     // Blue
+            accent: Color::from_rgb8(0x18, 0x5b, 0xdc),     // Blue, darkened for small accent text
             text_primary: Color::from_rgb8(0x4c, 0x4f, 0x69), // Text
             text_secondary: Color::from_rgb8(0x5c, 0x5f, 0x77), // Subtext1
-            text_tertiary: Color::from_rgb8(0x6c, 0x6f, 0x85), // Subtext0
-            text_muted: Color::from_rgb8(0x6c, 0x6f, 0x85), // Subtext0
+            text_tertiary: Color::from_rgb8(0x5c, 0x5f, 0x77), // Subtext1
+            text_muted: Color::from_rgb8(0x5c, 0x5f, 0x77), // Subtext1
             border: Color::from_rgb8(0xcc, 0xd0, 0xda),     // Surface0
-            hover: Color::from_rgb8(0xbc, 0xc0, 0xcc),      // Surface1
-            selected: Color::from_rgb8(0xac, 0xb0, 0xbe),   // Surface2
+            hover: Color::from_rgb8(0xdc, 0xe0, 0xe8),      // Crust
+            selected: Color::from_rgb8(0xd1, 0xdd, 0xf5),   // Blue-tinted selection
             focus_ring: Color::from_rgb8(0x1e, 0x66, 0xf5), // Blue
             terminal: TerminalColors {
                 foreground: Color::from_rgb8(0x4c, 0x4f, 0x69), // Text
@@ -214,8 +216,8 @@ impl Theme {
             text_tertiary: Color::from_rgb8(0xa5, 0xad, 0xce), // Subtext0
             text_muted: Color::from_rgb8(0xa5, 0xad, 0xce), // Subtext0
             border: Color::from_rgb8(0x41, 0x45, 0x59),     // Surface0
-            hover: Color::from_rgb8(0x51, 0x57, 0x6d),      // Surface1
-            selected: Color::from_rgb8(0x62, 0x68, 0x80),   // Surface2
+            hover: Color::from_rgb8(0x3a, 0x3f, 0x52),      // Keep muted labels readable
+            selected: Color::from_rgb8(0x3a, 0x40, 0x56),   // Lavender-tinted selection
             focus_ring: Color::from_rgb8(0xba, 0xbb, 0xf1), // Lavender
             terminal: TerminalColors {
                 foreground: Color::from_rgb8(0xc6, 0xd0, 0xf5), // Text
@@ -258,8 +260,8 @@ impl Theme {
             text_tertiary: Color::from_rgb8(0xa5, 0xad, 0xcb), // Subtext0
             text_muted: Color::from_rgb8(0xa5, 0xad, 0xcb), // Subtext0
             border: Color::from_rgb8(0x36, 0x3a, 0x4f),     // Surface0
-            hover: Color::from_rgb8(0x49, 0x4d, 0x64),      // Surface1
-            selected: Color::from_rgb8(0x5b, 0x60, 0x78),   // Surface2
+            hover: Color::from_rgb8(0x36, 0x3a, 0x4f),      // Surface0
+            selected: Color::from_rgb8(0x3c, 0x41, 0x59),   // Mauve-tinted selection
             focus_ring: Color::from_rgb8(0xc6, 0xa0, 0xf6), // Mauve
             terminal: TerminalColors {
                 foreground: Color::from_rgb8(0xca, 0xd3, 0xf5), // Text
@@ -302,8 +304,8 @@ impl Theme {
             text_tertiary: Color::from_rgb8(0xa6, 0xad, 0xc8), // Subtext0
             text_muted: Color::from_rgb8(0xa6, 0xad, 0xc8), // Subtext0
             border: Color::from_rgb8(0x31, 0x32, 0x44),     // Surface0
-            hover: Color::from_rgb8(0x45, 0x47, 0x5a),      // Surface1
-            selected: Color::from_rgb8(0x58, 0x5b, 0x70),   // Surface2
+            hover: Color::from_rgb8(0x31, 0x32, 0x44),      // Surface0
+            selected: Color::from_rgb8(0x3c, 0x3e, 0x54),   // Keep muted labels readable
             focus_ring: Color::from_rgb8(0xfa, 0xb3, 0x87), // Peach
             terminal: TerminalColors {
                 foreground: Color::from_rgb8(0xcd, 0xd6, 0xf4), // Text
@@ -346,8 +348,8 @@ impl Theme {
             text_tertiary: Color::from_rgb8(0xa6, 0xad, 0xc8),
             text_muted: Color::from_rgb8(0xa6, 0xad, 0xc8),
             border: Color::from_rgb8(0x31, 0x32, 0x44),
-            hover: Color::from_rgb8(0x45, 0x47, 0x5a),
-            selected: Color::from_rgb8(0x58, 0x5b, 0x70),
+            hover: Color::from_rgb8(0x31, 0x32, 0x44),
+            selected: Color::from_rgb8(0x3c, 0x3e, 0x54),
             focus_ring: Color::from_rgb8(0x89, 0xb4, 0xfa),
             terminal: TerminalColors {
                 foreground: Color::from_rgb8(0xcd, 0xd6, 0xf4),
@@ -572,6 +574,10 @@ mod tests {
     #[test]
     fn text_on_accent_uses_dark_text_for_light_dark_theme_accents() {
         assert_eq!(
+            Theme::portal_default().text_on_accent(),
+            Color::from_rgb8(0x1e, 0x20, 0x30)
+        );
+        assert_eq!(
             Theme::catppuccin_macchiato().text_on_accent(),
             Color::from_rgb8(0x1e, 0x20, 0x30)
         );
@@ -584,6 +590,55 @@ mod tests {
     #[test]
     fn text_on_accent_uses_light_text_for_dark_accents() {
         assert_eq!(Theme::catppuccin_latte().text_on_accent(), Color::WHITE);
-        assert_eq!(Theme::portal_default().text_on_accent(), Color::WHITE);
+    }
+
+    #[test]
+    fn small_text_meets_aa_on_all_ui_surfaces() {
+        for &id in ThemeId::all() {
+            let theme = get_theme(id);
+            for (role, foreground) in [
+                ("primary", theme.text_primary),
+                ("secondary", theme.text_secondary),
+                ("tertiary", theme.text_tertiary),
+                ("muted", theme.text_muted),
+            ] {
+                for (surface, background) in [
+                    ("background", theme.background),
+                    ("surface", theme.surface),
+                    ("sidebar", theme.sidebar),
+                    ("tab bar", theme.tab_bar),
+                    ("hover", theme.hover),
+                    ("selection", theme.selected),
+                    ("terminal", theme.terminal.background),
+                ] {
+                    let ratio = contrast_ratio(background, foreground);
+                    assert!(
+                        ratio >= 4.5,
+                        "{id}: {role} text on {surface} has {ratio:.2}:1 contrast"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn accents_and_focus_rings_stand_out_on_input_and_status_surfaces() {
+        for &id in ThemeId::all() {
+            let theme = get_theme(id);
+            for background in [theme.background, theme.surface] {
+                assert!(
+                    contrast_ratio(background, theme.accent) >= 4.5,
+                    "{id}: accent text must remain readable"
+                );
+                assert!(
+                    contrast_ratio(background, theme.focus_ring) >= 3.0,
+                    "{id}: input focus must remain visible"
+                );
+            }
+            assert!(
+                contrast_ratio(theme.accent, theme.text_on_accent()) >= 4.5,
+                "{id}: primary button labels must remain readable"
+            );
+        }
     }
 }
