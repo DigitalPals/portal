@@ -420,7 +420,19 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
             if let Ok(status) = &result {
                 apply_portal_hub_discovery(&mut wizard.draft, status);
             }
+            let reachable = result.is_ok();
             wizard.receive_status(generation, result);
+            if wizard.auto_finish.is_some() && wizard.auth_user.is_none() {
+                if reachable {
+                    // One-click setup: sign in without another click.
+                    return Task::done(Message::Ui(UiMessage::PortalHubAuthenticate));
+                }
+                wizard.managed.progress.clear();
+                wizard.managed.error = Some(format!(
+                    "Your Hub is running, but this computer cannot reach {}. Connect this computer to the same Tailscale network, then select Check setup.",
+                    wizard.hub_url_input
+                ));
+            }
         }
         UiMessage::PortalHubStatusLoaded(request, endpoint, result) => {
             if portal.ui.portal_hub_status_request != request
@@ -489,12 +501,28 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
                 wizard.auth_error = None;
                 let settings = wizard.draft.clone();
                 let generation = wizard.generation;
+                // A setup link works once: later attempts use passkey sign-in.
+                let setup = wizard
+                    .auto_finish
+                    .as_mut()
+                    .and_then(|auto| auto.setup.take());
+                wizard.managed.progress = if setup.is_some() {
+                    "Create your passkey in the browser. Portal finishes setup when you are done."
+                } else {
+                    "Sign in with your passkey in the browser. Portal continues when you are done."
+                }
+                .into();
                 let (abort, registration) = futures::future::AbortHandle::new_pair();
                 wizard.auth_abort = Some(abort);
                 return Task::perform(
                     async move {
-                        futures::future::Abortable::new(authenticate_hub(settings), registration)
-                            .await
+                        let sign_in = async move {
+                            match setup {
+                                Some(link) => authenticate_hub_with_setup(settings, link).await,
+                                None => authenticate_hub(settings).await,
+                            }
+                        };
+                        futures::future::Abortable::new(sign_in, registration).await
                     },
                     move |result| match result {
                         Ok(result) => {
@@ -531,9 +559,18 @@ pub(super) fn handle_settings_message(portal: &mut Portal, msg: UiMessage) -> Ta
             match result {
                 Ok((info, auth)) => {
                     apply_portal_hub_info(&mut wizard.draft, &info);
-                    wizard.receive_auth(generation, auth);
+                    let accepted = wizard.receive_auth(generation, auth);
+                    if accepted && wizard.auto_finish.is_some() {
+                        // Defaults for a new Hub: sync everything; routing and
+                        // vault preferences keep their current settings.
+                        wizard.sync_all = true;
+                        return apply_portal_hub_wizard(portal);
+                    }
                 }
                 Err(error) => {
+                    if wizard.auto_finish.is_some() {
+                        wizard.managed.progress.clear();
+                    }
                     wizard.auth_error = Some(error);
                 }
             }
@@ -1020,6 +1057,16 @@ async fn authenticate_hub(
     let info = crate::hub::auth::fetch_hub_info(&settings).await?;
     validate_portal_hub_info(&info)?;
     let auth = crate::hub::auth::authenticate(settings).await?;
+    Ok((info, auth))
+}
+
+async fn authenticate_hub_with_setup(
+    settings: crate::config::settings::PortalHubSettings,
+    link: crate::hub::deployment::OwnerSetupLink,
+) -> Result<(crate::hub::auth::HubInfo, crate::hub::auth::PendingHubAuth), String> {
+    let info = crate::hub::auth::fetch_hub_info(&settings).await?;
+    validate_portal_hub_info(&info)?;
+    let auth = crate::hub::auth::authenticate_with_setup(settings, link.token).await?;
     Ok((info, auth))
 }
 

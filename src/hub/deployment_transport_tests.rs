@@ -92,12 +92,27 @@ async fn real_management_ssh_sftp_sudo_and_jump_chain() {
                 .await
                 .unwrap()
         } else {
-            connection
-                .execute_sudo(&helper_command(HELPER), &input, &host, &events)
+            let mut sudo = None;
+            let first = connection
+                .execute_sudo(&helper_command(HELPER), &input, &host, &events, &mut sudo)
                 .await
-                .unwrap()
+                .unwrap();
+            assert_eq!(sudo.is_some(), user == "portalpass");
+            // One management run asks for the administrator password once.
+            let again = connection
+                .execute_sudo(
+                    &bootstrap_command(HELPER),
+                    &input,
+                    &host,
+                    &events,
+                    &mut sudo,
+                )
+                .await
+                .unwrap();
+            assert!(DeploymentResponse::parse(&again.stdout).unwrap().ok);
+            first
         };
-        let response = DeploymentResponse::parse(&output.stdout, &SecretString::default()).unwrap();
+        let response = DeploymentResponse::parse(&output.stdout).unwrap();
         assert!(response.ok, "{}", response.message);
         assert!(!response.bool("installed"));
         assert_eq!(

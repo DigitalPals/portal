@@ -33,7 +33,11 @@ import uuid
 
 PROTOCOL = 1
 ROOT = Path("/opt/portal-hub")
-DEFAULT_IMAGE = "ghcr.io/digitalpals/portal-hub:0.5.0-beta.17"
+# Portal and Hub share one version; Portal deploys the Hub of its own release.
+DEFAULT_IMAGE = "ghcr.io/digitalpals/portal-hub:0.6.19"
+# First Hub with passkey-only owners and one-time owner setup links.
+MIN_HUB_VERSION = "0.6.19"
+OWNER_SETUP_MODES = {"setup", "add", "reset"}
 # Verified release AND Docker Hub multiarch manifest, 2026-11-06. See README.
 TAILSCALE_IMAGE = "tailscale/tailscale:v1.104.4@sha256:ed6480b33c6eb67c9cbd203ed42b9fb57e361986725b6856def71b7a3d9e276c"
 HUB_USER = "10001:10001"
@@ -44,11 +48,125 @@ REQUEST_LIMIT = 16384
 SAFE_ENV = {"PATH": "/usr/sbin:/usr/bin:/sbin:/bin", "HOME": "/root",
             "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8", "DEBIAN_FRONTEND": "noninteractive",
             "DOCKER_HOST": "unix:///var/run/docker.sock"}
-ACTIONS = {"inspect", "install", "status", "configure_https", "claim", "doctor",
+ACTIONS = {"inspect", "install", "status", "configure_https", "owner_setup", "doctor",
            "logs", "update", "backup", "uninstall"}
 READ_ONLY = {"inspect", "status", "doctor", "logs"}
 SEMVER = re.compile(r"v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*))?(?:\+[0-9A-Za-z.-]+)?\Z")
 DIGEST = re.compile(r"sha256:[0-9a-f]{64}\Z")
+
+# Automatic Docker installation. Distro packages are preferred; where a supported
+# release lacks Compose 2.20+, Docker's official repository is used, verified
+# by its OpenPGP key embedded below (never downloaded or trusted on first use).
+DOCKER_DISTRO_APT = {("debian", "13"): "trixie", ("ubuntu", "24.04"): "noble", ("ubuntu", "26.04"): "resolute"}
+DOCKER_REPO_APT = {("debian", "12"): "bookworm", ("ubuntu", "22.04"): "jammy"}
+DOCKER_REPO_DNF = {"fedora": ("fedora", {"42", "43", "44"}), "rhel": ("rhel", {"9", "10"}),
+                   "centos": ("centos", {"9", "10"}), "rocky": ("centos", {"9", "10"}),
+                   "almalinux": ("centos", {"9", "10"})}
+DOCKER_PACKAGES = ["docker-ce", "docker-ce-cli", "containerd.io", "docker-compose-plugin"]
+DOCKER_APT_KEYRING = Path("/etc/apt/keyrings/portal-hub-docker.asc")
+DOCKER_APT_SOURCE = Path("/etc/apt/sources.list.d/portal-hub-docker.list")
+DOCKER_RPM_KEYRING = Path("/etc/pki/rpm-gpg/portal-hub-docker.asc")
+DOCKER_DNF_REPO = Path("/etc/yum.repos.d/portal-hub-docker.repo")
+APT_SOURCE_PARTS = Path("/etc/apt/sources.list.d")
+CA_BUNDLE = Path("/etc/ssl/certs/ca-certificates.crt")
+SYSTEMD_RUNTIME = Path("/run/systemd/system")
+# Tailscale userspace networking (no /dev/net/tun) exposes SOCKS5 only inside
+# the private Hub/sidecar network namespace; it publishes no host port.
+USERSPACE_SOCKS = "127.0.0.1:1055"
+# Fingerprint 9DC858229FC7DD38854AE2D88D81803C0EBFCD88; tests recompute it from these bytes.
+DOCKER_APT_KEY = """-----BEGIN PGP PUBLIC KEY BLOCK-----
+
+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
+YT90qFF93M3v01BbxP+EIY2/9tiIPbrd
+=0YYh
+-----END PGP PUBLIC KEY BLOCK-----
+"""
+# Fingerprint 060A61C51B558A7F742B77AAC52FEB6B621E9F35; tests recompute it from these bytes.
+DOCKER_RPM_KEY = """-----BEGIN PGP PUBLIC KEY BLOCK-----
+
+mQINBFit5IEBEADDt86QpYKz5flnCsOyZ/fk3WwBKxfDjwHf/GIflo+4GWAXS7wJ
+1PSzPsvSDATV10J44i5WQzh99q+lZvFCVRFiNhRmlmcXG+rk1QmDh3fsCCj9Q/yP
+w8jn3Hx0zDtz8PIB/18ReftYJzUo34COLiHn8WiY20uGCF2pjdPgfxE+K454c4G7
+gKFqVUFYgPug2CS0quaBB5b0rpFUdzTeI5RCStd27nHCpuSDCvRYAfdv+4Y1yiVh
+KKdoe3Smj+RnXeVMgDxtH9FJibZ3DK7WnMN2yeob6VqXox+FvKYJCCLkbQgQmE50
+uVK0uN71A1mQDcTRKQ2q3fFGlMTqJbbzr3LwnCBE6hV0a36t+DABtZTmz5O69xdJ
+WGdBeePCnWVqtDb/BdEYz7hPKskcZBarygCCe2Xi7sZieoFZuq6ltPoCsdfEdfbO
++VBVKJnExqNZCcFUTEnbH4CldWROOzMS8BGUlkGpa59Sl1t0QcmWlw1EbkeMQNrN
+spdR8lobcdNS9bpAJQqSHRZh3cAM9mA3Yq/bssUS/P2quRXLjJ9mIv3dky9C3udM
++q2unvnbNpPtIUly76FJ3s8g8sHeOnmYcKqNGqHq2Q3kMdA2eIbI0MqfOIo2+Xk0
+rNt3ctq3g+cQiorcN3rdHPsTRSAcp+NCz1QF9TwXYtH1XV24A6QMO0+CZwARAQAB
+tCtEb2NrZXIgUmVsZWFzZSAoQ0UgcnBtKSA8ZG9ja2VyQGRvY2tlci5jb20+iQI3
+BBMBCgAhBQJYrep4AhsvBQsJCAcDBRUKCQgLBRYCAwEAAh4BAheAAAoJEMUv62ti
+Hp816C0P/iP+1uhSa6Qq3TIc5sIFE5JHxOO6y0R97cUdAmCbEqBiJHUPNQDQaaRG
+VYBm0K013Q1gcJeUJvS32gthmIvhkstw7KTodwOM8Kl11CCqZ07NPFef1b2SaJ7l
+TYpyUsT9+e343ph+O4C1oUQw6flaAJe+8ATCmI/4KxfhIjD2a/Q1voR5tUIxfexC
+/LZTx05gyf2mAgEWlRm/cGTStNfqDN1uoKMlV+WFuB1j2oTUuO1/dr8mL+FgZAM3
+ntWFo9gQCllNV9ahYOON2gkoZoNuPUnHsf4Bj6BQJnIXbAhMk9H2sZzwUi9bgObZ
+XO8+OrP4D4B9kCAKqqaQqA+O46LzO2vhN74lm/Fy6PumHuviqDBdN+HgtRPMUuao
+xnuVJSvBu9sPdgT/pR1N9u/KnfAnnLtR6g+fx4mWz+ts/riB/KRHzXd+44jGKZra
+IhTMfniguMJNsyEOO0AN8Tqcl0eRBxcOArcri7xu8HFvvl+e+ILymu4buusbYEVL
+GBkYP5YMmScfKn+jnDVN4mWoN1Bq2yMhMGx6PA3hOvzPNsUoYy2BwDxNZyflzuAi
+g59mgJm2NXtzNbSRJbMamKpQ69mzLWGdFNsRd4aH7PT7uPAURaf7B5BVp3UyjERW
+5alSGnBqsZmvlRnVH5BDUhYsWZMPRQS9rRr4iGW0l+TH+O2VJ8aQ
+=0Zqq
+-----END PGP PUBLIC KEY BLOCK-----
+"""
 
 
 class DeployError(Exception):
@@ -222,6 +340,99 @@ def fqdn_from_status(value):
     return None
 
 
+def tun_available():
+    with contextlib.suppress(OSError):
+        info = Path("/dev/net/tun").stat()
+        return stat.S_ISCHR(info.st_mode) and os.major(info.st_rdev) == 10 and os.minor(info.st_rdev) == 200
+    return False
+
+
+def virtualization():
+    """Container type for operator guidance (e.g. LXC nesting); never a blocker."""
+    with contextlib.suppress(OSError):
+        if Path("/run/systemd/container").is_file():
+            return Path("/run/systemd/container").read_text().strip()[:32] or None
+    with contextlib.suppress(OSError):
+        environ = Path("/proc/1/environ").read_bytes().split(b"\0")
+        for item in environ:
+            if item.startswith(b"container="):
+                return item[10:42].decode("ascii", "replace") or None
+    return None
+
+
+def docker_install_method(prerequisites):
+    """Return (kind, codename/repository) or None for an unsupported system."""
+    os_id, version = prerequisites.get("os_id"), prerequisites.get("os_version") or ""
+    if prerequisites.get("architecture") not in {"amd64", "arm64"}:
+        return None
+    if (os_id, version) in DOCKER_DISTRO_APT:
+        return ("apt_distro", DOCKER_DISTRO_APT[(os_id, version)])
+    if (os_id, version) in DOCKER_REPO_APT:
+        return ("apt_docker", DOCKER_REPO_APT[(os_id, version)])
+    if os_id in DOCKER_REPO_DNF:
+        repository, majors = DOCKER_REPO_DNF[os_id]
+        if version.split(".")[0] in majors:
+            return ("dnf", repository)
+    return None
+
+
+def archive_keyring(os_id, directory=Path("/usr/share/keyrings")):
+    """The distro archive keyring as a regular file. Debian 13 ships the real
+    keyring as .pgp with a .gpg compatibility symlink; links stay refused."""
+    for suffix in (".pgp", ".gpg"):
+        path = directory / (os_id + "-archive-keyring" + suffix)
+        if path.is_file() and not path.is_symlink():
+            return ensure_path(path, private=False)
+    fail("missing_prerequisite", "The distribution archive keyring is missing; install " + os_id + "-archive-keyring")
+
+
+def distro_sources(os_id, codename, architecture, scheme, keyring):
+    if os_id == "debian":
+        base, security = scheme + "://deb.debian.org/debian", scheme + "://security.debian.org/debian-security"
+        components = "main"
+    else:
+        base = scheme + ("://ports.ubuntu.com/ubuntu-ports" if architecture == "arm64" else "://archive.ubuntu.com/ubuntu")
+        security = base if architecture == "arm64" else scheme + "://security.ubuntu.com/ubuntu"
+        components = "main universe"
+    return "".join("deb [signed-by=" + str(keyring) + "] " + url + " " + suite + " " + components + "\n"
+                   for url, suite in ((base, codename), (base, codename + "-updates"), (security, codename + "-security")))
+
+
+def docker_apt_line(os_id, codename, architecture):
+    return ("deb [arch=" + architecture + " signed-by=" + str(DOCKER_APT_KEYRING) + "] https://download.docker.com/linux/"
+            + os_id + " " + codename + " stable\n")
+
+
+def docker_repository_configured(directory):
+    """An operator's own Docker source must not gain a conflicting Signed-By."""
+    with contextlib.suppress(OSError):
+        for path in directory.iterdir():
+            if path != DOCKER_APT_SOURCE and path.is_file() and "download.docker.com" in path.read_text(errors="replace"):
+                return True
+    return False
+
+
+def write_system_file(path, content):
+    """Root-owned, world-readable package configuration, replaced atomically."""
+    path = Path(path)
+    if not path.parent.exists():
+        path.parent.mkdir(mode=0o755, parents=True)
+    ensure_path(path.parent, directory=True, private=False)
+    if path.exists() or path.is_symlink():
+        ensure_path(path, private=False)
+    fd, temporary = tempfile.mkstemp(prefix=".portal-hub-", dir=path.parent)
+    try:
+        os.fchmod(fd, 0o644)
+        with os.fdopen(fd, "w") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
 def validate_request(request):
     if not isinstance(request, dict) or type(request.get("protocol_version")) is not int or request["protocol_version"] != PROTOCOL:
         fail("unsupported_protocol", "protocol_version must be 1")
@@ -241,7 +452,7 @@ def validate_request(request):
         "backup": {"allow_session_interruptions"},
         "uninstall": {"delete_data", "allow_session_interruptions"},
         "configure_https": {"allow_session_interruptions"},
-        "claim": {"username", "password", "allow_session_interruptions"},
+        "owner_setup": {"mode", "username", "allow_session_interruptions"},
         "logs": {"lines"},
     }.get(action, set())
     if set(request) - common - optional:
@@ -253,12 +464,11 @@ def validate_request(request):
         validate_image(request["hub_image"])
     if "hostname" in request and (not isinstance(request["hostname"], str) or not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", request["hostname"])):
         fail("invalid_hostname", "hostname must be a lowercase DNS label (1–63 characters)")
-    if action == "claim":
-        if not isinstance(request.get("username"), str) or not re.fullmatch(r"[A-Za-z0-9_.@-]{2,64}", request["username"]):
-            fail("invalid_credentials", "Invalid owner username")
-        password = request.get("password")
-        if not isinstance(password, str) or not 12 <= len(password.encode("utf-8")) <= 256 or "\x00" in password:
-            fail("invalid_credentials", "Owner password must contain 12–256 UTF-8 bytes without NUL")
+    if action == "owner_setup":
+        if request.get("mode") not in OWNER_SETUP_MODES:
+            fail("invalid_request", "mode must be setup, add or reset")
+        if "username" in request and (not isinstance(request["username"], str) or not re.fullmatch(r"[A-Za-z0-9_.@-]{2,64}", request["username"])):
+            fail("invalid_request", "Invalid owner account name")
     if "lines" in request and (type(request["lines"]) is not int or not 1 <= request["lines"] <= 500):
         fail("invalid_request", "lines must be between 1 and 500")
     if "image_archive" in request:
@@ -327,6 +537,7 @@ def compose_spec(record, directory):
     logging = {"driver": "local", "options": {"max-size": "10m", "max-file": "3"}}
     common = {"init": True, "restart": "unless-stopped", "labels": labels,
               "logging": logging, "security_opt": ["no-new-privileges:true"], "cap_drop": ["ALL"]}
+    userspace = record.get("tailscale_mode", "kernel") == "userspace"
     tail = {**copy.deepcopy(common), "image": record["tailscale_image"], "pull_policy": "never",
             "hostname": record["hostname"], "cap_add": ["NET_ADMIN", "NET_RAW"],
             "devices": ["/dev/net/tun:/dev/net/tun:rw"],
@@ -338,6 +549,13 @@ def compose_spec(record, directory):
             "tmpfs": ["/tmp:rw,nosuid,nodev,noexec,mode=1777,size=64m", "/run:rw,nosuid,nodev,noexec,mode=0755,size=16m"],
             "healthcheck": {"test": ["CMD", "tailscale", "--socket=/run/tailscale/tailscaled.sock", "status", "--json"], "interval": "30s", "timeout": "10s", "start_period": "30m", "retries": 3},
             "stop_grace_period": "30s"}
+    if userspace:
+        # No TUN (e.g. unprivileged LXC): netstack needs neither the device nor
+        # network administration capabilities. SOCKS5 stays inside the private
+        # Hub/sidecar namespace and serves only the endpoint self-check.
+        del tail["cap_add"], tail["devices"]
+        tail["environment"]["TS_USERSPACE"] = "true"
+        tail["environment"]["TS_SOCKS5_SERVER"] = USERSPACE_SOCKS
     hub = {**copy.deepcopy(common), "image": record["image_id"], "pull_policy": "never",
            "user": HUB_USER, "read_only": True, "network_mode": "service:tailscale",
            "depends_on": {"tailscale": {"condition": "service_started", "restart": True}},
@@ -363,8 +581,7 @@ class Manager:
         self.action, self.id = request["action"], request["deployment_id"]
         self.root, self.directory = Path(root), Path(root) / self.id
         self.record_path = self.directory / "deployment.json"
-        password = request.get("password", "")
-        self.runner = runner or Runner((password, json.dumps(password)[1:-1]))
+        self.runner = runner or Runner()
         self.record = None
         self.containers = {}
 
@@ -390,6 +607,8 @@ class Manager:
             fail("invalid_record", "Deployment image identity is invalid")
         if not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", record.get("hostname", "")):
             fail("invalid_record", "Invalid recorded hostname")
+        if record.get("tailscale_mode", "kernel") not in {"kernel", "userspace"}:
+            fail("invalid_record", "Invalid recorded Tailscale networking mode")
         if record.get("public_url"):
             name = record["public_url"].removeprefix("https://")
             if record["public_url"] != "https://" + (fqdn_from_status({"Self": {"DNSName": name}}) or ""):
@@ -498,20 +717,23 @@ class Manager:
                 key, _, value = line.partition("=")
                 os_info[key] = value.strip('"\'')
         docker = self.run(["docker", "info", "--format", "{{json .ServerVersion}}"], check=False, timeout=15)
+        # Some CLI versions exit 0 without a reachable daemon; require its version.
+        server = parse_json(docker, str)
+        if not server:
+            docker = Result(docker.returncode or 1, docker.stdout, docker.stderr)
         compose = self.run(["docker", "compose", "version", "--short"], check=False, timeout=15)
         compose_version = re.match(r"v?(\d+)\.(\d+)", compose.stdout.strip())
         compose_supported = bool(compose.returncode == 0 and compose_version and tuple(map(int, compose_version.groups())) >= (2, 20))
-        tun = False
-        with contextlib.suppress(OSError):
-            info = Path("/dev/net/tun").stat()
-            tun = stat.S_ISCHR(info.st_mode) and os.major(info.st_rdev) == 10 and os.minor(info.st_rdev) == 200
+        tun = tun_available()
         arch = {"x86_64": "amd64", "aarch64": "arm64"}.get(platform.machine(), platform.machine())
         blockers = []
         if docker.returncode:
             blockers.append("docker_unavailable")
         if not compose_supported:
             blockers.append("compose_unavailable")
-        if not tun:
+        # A new installation chooses its mode once; an existing one keeps it.
+        mode = self.record.get("tailscale_mode", "kernel") if self.record else ("kernel" if tun else "userspace")
+        if mode == "kernel" and not tun:
             blockers.append("tun_unavailable")
         if arch not in {"amd64", "arm64"}:
             blockers.append("unsupported_architecture")
@@ -526,7 +748,8 @@ class Manager:
         return {"docker_available": docker.returncode == 0, "compose_available": compose_supported,
                 "compose_version": compose.stdout.strip() if compose.returncode == 0 else None,
                 "pidfd_available": pidfd, "kernel": platform.release(),
-                "tun_available": tun, "architecture": arch, "os_id": os_info.get("ID", "unknown"),
+                "tun_available": tun, "tailscale_mode": mode, "virtualization": virtualization(),
+                "architecture": arch, "os_id": os_info.get("ID", "unknown"),
                 "os_version": os_info.get("VERSION_ID"), "root": os.geteuid() == 0,
                 "installed": bool(self.record and not self.record.get("uninstalled")),
                 "data_retained": bool(self.record and self.record.get("uninstalled")), "blockers": blockers}
@@ -534,26 +757,38 @@ class Manager:
     def install_docker(self, prerequisites):
         if not self.request.get("install_docker", False):
             fail("docker_consent_required", "Docker/Compose is unavailable; explicit install_docker:true is required")
-        supported = {"debian": {"13"}, "ubuntu": {"24.04"}}
-        if prerequisites["os_version"] not in supported.get(prerequisites["os_id"], set()):
-            fail("unsupported_docker_install", "Automatic installation supports Debian 13 and Ubuntu 24.04 distro packages; install Docker Compose v2 manually on other systems")
-        # Isolate sources AND metadata, so third-party repositories, trusted=yes,
-        # stale indexes, or local pinning cannot supply the privileged packages.
-        if prerequisites["os_id"] == "debian":
-            compose_package = "docker-compose"
-            keyring = "/usr/share/keyrings/debian-archive-keyring.gpg"
-            sources = "deb [signed-by=" + keyring + "] https://deb.debian.org/debian trixie main\n"
-            sources += "deb [signed-by=" + keyring + "] https://deb.debian.org/debian trixie-updates main\n"
-            sources += "deb [signed-by=" + keyring + "] https://security.debian.org/debian-security trixie-security main\n"
+        method = docker_install_method(prerequisites)
+        if not method:
+            fail("unsupported_docker_install", "Automatic Docker installation supports Debian 12–13, Ubuntu 22.04/24.04/26.04, Fedora 42–44 and RHEL, Rocky, AlmaLinux or CentOS Stream 9–10; install Docker Compose 2.20+ manually on other systems")
+        if not SYSTEMD_RUNTIME.is_dir():
+            fail("systemd_required", "Automatic Docker installation needs systemd to start the Docker service; install Docker manually on this system")
+        kind, codename = method
+        if kind == "dnf":
+            self.install_docker_dnf(codename, prerequisites)
         else:
-            compose_package = "docker-compose-v2"
-            keyring = "/usr/share/keyrings/ubuntu-archive-keyring.gpg"
-            base = "https://ports.ubuntu.com/ubuntu-ports" if prerequisites["architecture"] == "arm64" else "https://archive.ubuntu.com/ubuntu"
-            security_base = base if prerequisites["architecture"] == "arm64" else "https://security.ubuntu.com/ubuntu"
-            sources = "deb [signed-by=" + keyring + "] " + base + " noble main universe\n"
-            sources += "deb [signed-by=" + keyring + "] " + base + " noble-updates main universe\n"
-            sources += "deb [signed-by=" + keyring + "] " + security_base + " noble-security main universe\n"
-        ensure_path(Path(keyring), private=False)
+            # Isolate sources AND metadata, so third-party repositories, trusted=yes,
+            # stale indexes, or local pinning cannot supply the privileged packages.
+            os_id = prerequisites["os_id"]
+            keyring = archive_keyring(os_id)
+            if not CA_BUNDLE.is_file():
+                # Signed metadata makes plain HTTP safe for this bootstrap package.
+                self.apt_install(distro_sources(os_id, codename, prerequisites["architecture"], "http", keyring), ["ca-certificates"])
+            sources = distro_sources(os_id, codename, prerequisites["architecture"], "https", keyring)
+            if kind == "apt_distro":
+                # Debian 13 only recommends the CLI, which --no-install-recommends omits.
+                packages = ["docker.io", "docker-cli", "docker-compose"] if os_id == "debian" else ["docker.io", "docker-compose-v2"]
+            else:
+                write_system_file(DOCKER_APT_KEYRING, DOCKER_APT_KEY)
+                docker_line = docker_apt_line(os_id, codename, prerequisites["architecture"])
+                sources += docker_line
+                packages = DOCKER_PACKAGES
+            self.apt_install(sources, packages)
+            if kind == "apt_docker" and not docker_repository_configured(APT_SOURCE_PARTS):
+                # Keep receiving Docker security updates through normal apt upgrades.
+                write_system_file(DOCKER_APT_SOURCE, docker_line)
+        self.run(["systemctl", "enable", "--now", "docker"], timeout=60)
+
+    def apt_install(self, sources, packages):
         with tempfile.TemporaryDirectory(prefix=".docker-packages-", dir=self.root) as working:
             work = Path(working)
             (work / "sources.list").write_text(sources)
@@ -564,8 +799,18 @@ class Manager:
                    "-o", "Dir::Cache::pkgcache=" + str(work / "cache.bin"), "-o", "Dir::Cache::srcpkgcache=" + str(work / "src-cache.bin"),
                    "-o", "Dir::Etc::preferences=-", "-o", "Dir::Etc::preferencesparts=-"]
             self.run([*apt, "update"], timeout=600)
-            self.run([*apt, "install", "--yes", "--no-install-recommends", "docker.io", compose_package], timeout=900)
-        self.run(["systemctl", "enable", "--now", "docker"], timeout=60)
+            self.run([*apt, "install", "--yes", "--no-install-recommends", *packages], timeout=900)
+
+    def install_docker_dnf(self, repository, prerequisites):
+        major = (prerequisites.get("os_version") or "").split(".")[0]
+        arch = {"amd64": "x86_64", "arm64": "aarch64"}[prerequisites["architecture"]]
+        write_system_file(DOCKER_RPM_KEYRING, DOCKER_RPM_KEY)
+        write_system_file(DOCKER_DNF_REPO, "\n".join([
+            "[portal-hub-docker]", "name=Docker CE stable (installed by Portal Hub)",
+            "baseurl=https://download.docker.com/linux/" + repository + "/" + major + "/" + arch + "/stable",
+            "enabled=1", "gpgcheck=1", "gpgkey=file://" + str(DOCKER_RPM_KEYRING), ""]))
+        # Existing podman-docker/runc conflicts fail visibly; nothing is erased.
+        self.run(["dnf", "install", "--assumeyes", "--setopt=install_weak_deps=False", *DOCKER_PACKAGES], timeout=1200)
 
     def image_info(self, selected, archive=None, previous=None):
         validate_image(selected)
@@ -585,8 +830,8 @@ class Manager:
         if labels.get(LABEL + "deployment-protocol") != "1" or labels.get(LABEL + "api-version") != "2":
             fail("incompatible_image", "Hub image must declare deployment protocol 1 and HTTP API 2; use the integrated Hub Dockerfile")
         version_key(version)
-        if version_key(version) < version_key("0.5.0-beta.17"):
-            fail("incompatible_image", "Managed deployment requires Hub 0.5.0-beta.17 or newer")
+        if version_key(version) < version_key(MIN_HUB_VERSION):
+            fail("incompatible_image", "Managed deployment requires Hub " + MIN_HUB_VERSION + " or newer")
         if previous and version_key(version) < version_key(previous["hub_version"]):
             fail("downgrade_rejected", "Hub downgrade is blocked to protect persistent data")
         host_arch = {"x86_64": "amd64", "aarch64": "arm64"}.get(platform.machine(), platform.machine())
@@ -828,7 +1073,11 @@ class Manager:
                 continue
         if not address:
             return False
-        value = parse_json(self.exec_service("hub", "curl", "--noproxy", "*", "--fail", "--silent", "--max-time", str(min(8, timeout)),
+        # Userspace netstack has no interface address in this namespace; reach
+        # the node's own Serve listener through its private SOCKS5 server.
+        proxy = (["--proxy", "socks5://" + USERSPACE_SOCKS] if self.record.get("tailscale_mode") == "userspace"
+                 else ["--noproxy", "*"])
+        value = parse_json(self.exec_service("hub", "curl", *proxy, "--fail", "--silent", "--max-time", str(min(8, timeout)),
                                             "--resolve", name + ":443:" + address, "https://" + name + "/api/info", check=False, timeout=timeout))
         return bool(value and value.get("api_version") == 2 and value.get("public_url") == "https://" + name)
 
@@ -858,7 +1107,7 @@ class Manager:
                 time.sleep(min(1, remaining))
 
     def status(self):
-        empty = {"auth_url": None, "approval_url": None, "public_url": None, "owner_exists": None, "tailscale_state": None, "active_sessions": None}
+        empty = {"auth_url": None, "approval_url": None, "public_url": None, "owner_exists": None, "owner_ready": None, "tailscale_state": None, "active_sessions": None}
         if not self.record or self.record.get("uninstalled"):
             return self.response("not_installed", "Hub is not installed", {**empty, "data_retained": bool(self.record)})
         network = self.network_status()
@@ -866,12 +1115,14 @@ class Manager:
         native_auth = extract_auth_url(network)
         owner = parse_json(self.hub("bootstrap-status", "--json", check=False))
         owner_exists = owner.get("owner_exists") if owner and type(owner.get("owner_exists")) is bool else None
+        owner_ready = owner.get("owner_ready") if owner and type(owner.get("owner_ready")) is bool else None
         name = fqdn_from_status(network)
         url = "https://" + name if name else None
-        data = {**empty, "tailscale_state": backend, "owner_exists": owner_exists,
+        data = {**empty, "tailscale_state": backend, "owner_exists": owner_exists, "owner_ready": owner_ready,
                 "public_url": url, "active_sessions": self.active_sessions(),
                 "hub_image": self.record["hub_image"], "image_id": self.record["image_id"], "image_digest": self.record.get("image_digest"),
                 "hub_version": self.record["hub_version"], "tailscale_image": self.record["tailscale_image"],
+                "tailscale_mode": self.record.get("tailscale_mode", "kernel"),
                 "tailscale_version": network.get("Version"), "running_services": self.running_services(),
                 "recovery_required": bool(self.record.get("operation")), "last_error": self.record.get("last_error")}
         local = self.local_api()
@@ -879,7 +1130,9 @@ class Manager:
         data["network_namespace_consistent"] = self.namespace_consistent()
         data["configuration_current"] = self.configuration_current()
         serve = parse_json(self.tailscale("serve", "status", "--json", check=False))
-        data["https_ready"] = bool(owner_exists and serve and serve.get("TCP", {}).get("443", {}).get("HTTPS") and not serve.get("AllowFunnel") and self.endpoint_ready(network))
+        # Serve is safe before the owner exists: creating one needs a setup
+        # link that only the server administrator can mint.
+        data["https_ready"] = bool(serve and serve.get("TCP", {}).get("443", {}).get("HTTPS") and not serve.get("AllowFunnel") and self.endpoint_ready(network))
         if backend == "NeedsMachineAuth":
             data["approval_url"] = native_auth or "https://login.tailscale.com/admin/machines"
             phase, message = "awaiting_approval", "Approve the Tailscale machine"
@@ -889,12 +1142,13 @@ class Manager:
         elif not name or not self.record.get("https_verified"):
             data["auth_url"] = "https://login.tailscale.com/admin/dns" if name else None
             phase, message = "awaiting_https", "Enable tailnet HTTPS and configure private Serve"
-        elif owner_exists is not True:
-            phase, message = "awaiting_owner", "Create the Hub owner" if owner_exists is False else "Hub bootstrap status is unavailable; inspect doctor"
         elif not data["https_ready"] or not local or not data["network_namespace_consistent"] or not data["configuration_current"]:
             phase, message = "awaiting_https", "Private HTTPS endpoint is not ready; configure HTTPS or inspect doctor"
         elif self.record.get("operation"):
             phase, message = "awaiting_https", "An interrupted maintenance operation needs recovery; retry the operation"
+        elif owner_ready is not True:
+            # Passkeys belong to the HTTPS name, so the owner comes last.
+            phase, message = ("awaiting_owner", "Create the owner passkey") if owner is not None else ("awaiting_owner", "Hub owner status is unavailable; inspect doctor")
         else:
             phase, message = "ready", "Hub is ready"
         return self.response(phase, message, data)
@@ -985,7 +1239,8 @@ class Manager:
         self.record = {"protocol_version": PROTOCOL, "manager": MANAGER, "deployment_id": self.id,
                        "owner_token": secrets.token_hex(32), "project": "portal-hub-" + self.id,
                        "hostname": self.request.get("hostname", "portal-hub-" + self.id[:8]),
-                       "tailscale_image": TAILSCALE_IMAGE, "public_url": None, "https_verified": False,
+                       "tailscale_image": TAILSCALE_IMAGE, "tailscale_mode": pre["tailscale_mode"],
+                       "public_url": None, "https_verified": False,
                        "created_at": int(time.time()), "operation": {"kind": "install"}, **image}
         # Publish a fully-owned directory atomically. Cancellation before this
         # rename cannot leave an unmarked final directory that blocks retry.
@@ -1019,9 +1274,6 @@ class Manager:
         return name
 
     def configure(self):
-        owner = parse_json(self.hub("bootstrap-status", "--json", check=False))
-        if not owner or owner.get("owner_exists") is not True:
-            atomic_json(self.directory / "serve" / "serve.json", {})
         network = self.network_status()
         if network.get("BackendState") != "Running":
             return self.status()
@@ -1034,30 +1286,37 @@ class Manager:
             response.update(phase="awaiting_https", message="Enable HTTPS certificates in the tailnet, then retry")
             response["data"]["auth_url"] = extract_auth_url(result.stdout + "\n" + result.stderr) or "https://login.tailscale.com/admin/dns"
             return response
-        owner = parse_json(self.hub("bootstrap-status", "--json", check=False))
-        if owner and owner.get("owner_exists") is True:
-            config = private_serve_config(name)
-        else:
-            config = {}  # Explicitly revoke any stale Serve while unclaimed.
-        atomic_json(self.directory / "serve" / "serve.json", config)
+        atomic_json(self.directory / "serve" / "serve.json", private_serve_config(name))
         # Containerboot watches the DIRECTORY, so atomic replacement is observed.
         deadline = time.monotonic() + 15
-        while owner and owner.get("owner_exists") is True and time.monotonic() < deadline:
+        while time.monotonic() < deadline:
             if self.endpoint_ready(self.network_status()):
                 break
             time.sleep(1)
         return self.status()
 
-    def do_claim(self):
-        if self.network_status().get("BackendState") != "Running":
-            fail("tailscale_not_ready", "Complete Tailscale enrollment before claiming the Hub")
-        self.set_public_url(self.network_status())
-        credentials = json.dumps({"username": self.request["username"], "password": self.request["password"]}).encode()
-        result = self.hub("bootstrap-owner", "--json", stdin=credentials, check=False, timeout=60)
-        owner = parse_json(result)
-        if not owner or owner.get("owner_exists") is not True:
-            fail("owner_claim_failed", "Owner bootstrap failed; credentials were not saved by the deployment helper")
-        return self.configure()
+    def do_owner_setup(self):
+        """Mint a one-time owner passkey link. The token goes only to stdout of
+        this SSH session; the Hub stores its hash and accepts it once."""
+        network = self.network_status()
+        if network.get("BackendState") != "Running":
+            fail("tailscale_not_ready", "Complete Tailscale enrollment before creating the owner passkey")
+        self.set_public_url(network)
+        response = self.status()
+        if not response["data"].get("https_ready"):
+            fail("https_not_ready", "Finish private HTTPS before creating the owner passkey")
+        args = ["owner-setup", "--json", "--mode", self.request["mode"]]
+        if "username" in self.request:
+            args += ["--username", self.request["username"]]
+        result = self.hub(*args, check=False, timeout=60)
+        setup = parse_json(result, allow_failure=True)
+        token = setup.get("token") if setup else None
+        if result.returncode or not isinstance(token, str) or not re.fullmatch(r"[A-Za-z0-9_-]{43}", token):
+            reason = redact(result.stderr.strip().splitlines()[-1] if result.stderr.strip() else "")[:300]
+            fail("owner_setup_failed", "The Hub could not create a passkey setup link" + (": " + reason if reason else ""))
+        response["data"]["owner_setup"] = {"token": token, "mode": setup.get("mode"), "username": setup.get("username"),
+                                           "expires_at": setup.get("expires_at")}
+        return response
 
     def do_update(self):
         self.maintenance_guard()
@@ -1272,8 +1531,8 @@ class Manager:
             return self.status()
         if self.action == "configure_https":
             return self.configure()
-        if self.action == "claim":
-            return self.do_claim()
+        if self.action == "owner_setup":
+            return self.do_owner_setup()
         if self.action == "update":
             return self.do_update()
         if self.action == "backup":
@@ -1321,8 +1580,6 @@ def main():
             request = json.loads(raw)
         except (ValueError, UnicodeError):
             fail("invalid_request", "Expected one UTF-8 JSON request")
-        if isinstance(request, dict) and isinstance(request.get("password"), str):
-            secret_values = (request["password"],)
         manager = Manager(request)
         response = manager.execute()
     except DeployError as error:

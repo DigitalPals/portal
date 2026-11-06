@@ -12,7 +12,7 @@ COPY hub ./hub
 RUN cargo build --locked --release -p portal-hub
 
 FROM debian:trixie-slim
-ARG HUB_VERSION=0.5.0-beta.17
+ARG HUB_VERSION=0.6.19
 LABEL org.opencontainers.image.title="Portal Hub" \
       org.opencontainers.image.source="https://github.com/digitalpals/portal" \
       org.opencontainers.image.version="${HUB_VERSION}" \

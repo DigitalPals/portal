@@ -3,7 +3,10 @@
 This document records the integration boundaries for Portal Hub inside Portal.
 The existing Hub implementation is reused to preserve API v2, Android pairing,
 encrypted vault enrollment, sync, and SSH/session behavior. It remains a separate
-headless executable and independently versioned container image.
+headless executable and container image, versioned and released together with
+Portal: one version in `Cargo.toml` and `hub/Cargo.toml`, one `v*` release that
+publishes `ghcr.io/digitalpals/portal-hub:<version>`. The former standalone
+repository is retired.
 
 ## Repository layout
 
@@ -19,13 +22,26 @@ headless executable and independently versioned container image.
 - Canonical existing API schemas live in `hub/contracts/portal-hub/v2`.
 - Durable Hub state: `/var/lib/portal-hub`.
 - Transient Hub state: `/run/portal-hub`, selected by `PORTAL_HUB_RUN_DIR`.
-- Managed containers set `PORTAL_HUB_REQUIRE_BOOTSTRAP=true` to prohibit public
-  first-owner registration, and `PORTAL_HUB_NETWORK_MODE=sidecar` for diagnostics.
-- `portal-hub bootstrap-owner --json` reads one JSON object from stdin:
-  `{"username":"...","password":"..."}`. It atomically establishes an owner,
-  never overwrites an existing owner, and emits JSON with `owner_exists` and
-  `created`. Repeating with the existing correct credentials is idempotent.
-- `portal-hub bootstrap-status --json` emits `{"owner_exists":true|false}`.
+- The owner authenticates with passkeys only (WebAuthn, relying party = the
+  Hub's public HTTPS host). There is no password sign-up or sign-in.
+- Owner creation, extra passkeys and recovery need a one-time setup link minted
+  by the local service administrator: `portal-hub owner-setup --json --mode
+  setup|add|reset [--username NAME]` emits `token`, `mode`, `username`,
+  `expires_at` and, when `PORTAL_HUB_PUBLIC_URL` is usable for passkeys,
+  `setup_url` (`<public URL>/setup#token=<token>`). Tokens are 256-bit, valid 30
+  minutes, single use, stored only as SHA-256 hashes, and a new link replaces the
+  previous one. `setup` creates the owner (or enrolls the first passkey of an
+  owner from a password-based Hub, erasing its password hash); `add` keeps
+  existing passkeys; `reset` replaces all passkeys and revokes every access
+  token, refresh token and authorization code. Forced-command SSH cannot run it.
+- `/setup` reads the token from the URL fragment and may carry an OAuth PKCE
+  request; on success it returns an authorization code to that client, so one
+  browser visit both creates the passkey and signs the client in.
+- `portal-hub bootstrap-status --json` emits
+  `{"owner_exists":true|false,"owner_ready":true|false}`; ready means the owner
+  has at least one passkey. `doctor` reports both.
+- Managed containers set `PORTAL_HUB_REQUIRE_BOOTSTRAP=true` (doctor then fails
+  until the owner passkey exists) and `PORTAL_HUB_NETWORK_MODE=sidecar`.
 - Normal OAuth/PKCE and existing API v2 remain the application authorization path.
 - Container replacement terminates current sessions. Detect/reconcile stale
   runtime metadata, and require explicit maintenance consent for live sessions.
@@ -39,7 +55,9 @@ those same in-memory bytes. Root never executes an SSH-user-writable script or
 imports modules from its directory. The helper then reads one JSON request from
 the remaining stdin with `--request-stdin`.
 No passwords, enrollment keys, or tokens may be embedded in shell command text,
-Compose environment, saved deployment records, diagnostic logs, or errors.
+Compose environment, saved deployment records, diagnostic logs, or errors. The
+only secret a response carries is the owner setup token in `data.owner_setup`,
+which Portal moves out of the response data immediately.
 
 Request fields: `protocol_version:1`, `action`, `deployment_id` (UUID), plus
 action-specific fields. Default installation root is `/opt/portal-hub/<UUID>`.
@@ -55,22 +73,29 @@ Errors use `ok:false`, `phase:"error"`, `message`, and a stable `error_code`.
 Actions:
 
 - `inspect`: read-only prerequisite and existing-deployment report. Data includes
-  `docker_available`, `compose_available`, `tun_available`, `architecture`,
-  `os_id`, `installed`, and blockers. Root/sudo is needed for mutations.
+  `docker_available`, `compose_available`, `tun_available`, `tailscale_mode`
+  (`kernel` or `userspace`), `virtualization`, `architecture`, `os_id`,
+  `installed`, and blockers. Missing TUN blocks only an existing kernel-mode
+  installation. Root/sudo is needed for mutations.
 - `install`: idempotently prepare/start stack. Fields: `hostname`, `hub_image`,
   optional `image_archive` (uploaded tar) with `image_archive_sha256` (the hash of
   bytes uploaded by Portal), `install_docker` explicit boolean. The helper checks
   that checksum against its private frozen copy before Docker loads the image.
   The Hub image must use a pinned version or digest, never `latest`.
 - `status`: report phase plus `auth_url`, `approval_url`, `public_url`,
-  `owner_exists`, `tailscale_state`, `active_sessions`, and installed versions
-  when available. Missing fields may be null. Phases include `not_installed`,
-  `awaiting_login`, `awaiting_approval`, `awaiting_https`, `awaiting_owner`, `ready`.
+  `owner_exists`, `owner_ready`, `tailscale_state`, `active_sessions`, and
+  installed versions when available. Missing fields may be null. Phases, in
+  order: `not_installed`, `awaiting_login`, `awaiting_approval`,
+  `awaiting_https`, `awaiting_owner`, `ready`. The owner comes after HTTPS
+  because passkeys need the HTTPS name.
 - `configure_https`: configure private Serve only; return any required consent
-  URL as `auth_url` and discovered `public_url`. Never enable Funnel. Do not
-  expose Hub until owner bootstrap has completed.
-- `claim`: fields `username`, `password`; execute the stdin bootstrap command as
-  the Hub user and enable the private Serve endpoint only after success.
+  URL as `auth_url` and discovered `public_url`. Never enable Funnel. Serve may
+  expose an unclaimed Hub: owner creation needs a setup link.
+- `owner_setup`: field `mode` (`setup`, `add`, `reset`) and, for a new owner,
+  `username`. Requires Tailscale running and private HTTPS ready
+  (`tailscale_not_ready`, `https_not_ready`); returns status plus
+  `owner_setup: {token, mode, username, expires_at}` or `owner_setup_failed`
+  with the Hub's reason.
 - `doctor`: structured actual application/network readiness, not just IP presence.
 - `logs`: bounded redacted diagnostic text.
 - `update`: new `hub_image` or optional `image_archive`; reject active sessions
@@ -88,8 +113,11 @@ with executable behavior and update both producer and consumer when fields chang
 
 Use official version-pinned Tailscale plus a separate nonroot Hub container,
 `network_mode: service:tailscale`, kernel networking, TUN, and NET_ADMIN/NET_RAW
-on the sidecar for the pinned image's legacy firewall backend. The Hub drops all
-capabilities. Persist identity and application data separately. Enable tailnet DNS,
+on the sidecar for the pinned image's legacy firewall backend. New installations
+without TUN record `tailscale_mode: "userspace"` and run the sidecar in netstack
+mode with no device or added capabilities and a namespace-private SOCKS5 listener
+for the endpoint self-check; the recorded mode never changes afterwards. The Hub
+drops all capabilities. Persist identity and application data separately. Enable tailnet DNS,
 persist authentication with `TS_AUTH_ONCE=true`, provide enough boot time for
 human login, and configure Serve declaratively. Publish no Hub ports and mount
 neither the Docker socket nor Tailscale credentials into Hub. Use runtime tmpfs,
@@ -100,7 +128,9 @@ an init/reaper, supported amd64/arm64 images, and scheduled bounded log pruning.
 New setup and existing-Hub connection are separate choices. Reuse direct SSH
 host definitions, verification, auth and jump hosts; never depend on the Hub
 being installed to manage that Hub. Support root, passwordless sudo and prompted
-sudo without saving/logging the sudo password. Maintain a local deployment UUID
+sudo without saving/logging the sudo password. Never create or store an owner
+credential: the owner passkey is created in the browser from the setup link, and
+recovery uses `owner_setup` with `reset` over SSH. Maintain a local deployment UUID
 and management-host reference for resumable setup and maintenance. Allow a local
 image archive for testing/offline or unpublished builds.
 

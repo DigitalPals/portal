@@ -11,21 +11,27 @@ and the shared protocol is [hub-implementation-contract.md](../../docs/hub-imple
 
 ## Images and building
 
-The default is `ghcr.io/digitalpals/portal-hub:0.5.0-beta.17`. This is **unpublished**
-until the coordinated release. For testing now, build and upload a local archive;
-installation does not require a registry when the selected image is uploaded or
-already exists in the remote Docker daemon.
+Portal and Hub share one version. Each Portal release (`v*` tag) publishes
+`ghcr.io/digitalpals/portal-hub:<version>` for amd64/arm64 from the same commit,
+and that Portal deploys exactly that image by default. A development build of
+Portal points at an image that is published only by its release, so build and
+upload a local archive to test unreleased changes; installation does not need a
+registry when the selected image is uploaded or already exists in the remote
+Docker daemon.
 
 From the repository root, in the existing CI environment or an `agent-resource`
-lease when running temporary host workloads:
+lease when running temporary host workloads (`VERSION` is the version in
+`Cargo.toml`):
 
 ```sh
+VERSION=$(cargo pkgid -p portal-hub | cut -d@ -f2)
 docker build -f deploy/hub/Dockerfile \
-  --build-arg HUB_VERSION=0.5.0-beta.17 \
-  -t ghcr.io/digitalpals/portal-hub:0.5.0-beta.17 .
-docker save -o portal-hub-0.5.0-beta.17.tar \
-  ghcr.io/digitalpals/portal-hub:0.5.0-beta.17
+  --build-arg HUB_VERSION=$VERSION \
+  -t ghcr.io/digitalpals/portal-hub:$VERSION .
+docker save -o portal-hub-$VERSION.tar ghcr.io/digitalpals/portal-hub:$VERSION
 ```
+
+Then select the tar under **Advanced options** in Portal's Hub setup.
 
 The Dockerfile supports native Linux amd64/arm64 builds. It builds the root
 workspace lockfile with `cargo build --locked --release -p portal-hub`; it does
@@ -39,7 +45,7 @@ Images must use an exact semantic-version tag or sha256 digest. `latest`,
 syntax are rejected. The image must declare these OCI/custom labels:
 
 ```text
-org.opencontainers.image.version=0.5.0-beta.17
+org.opencontainers.image.version=<version>
 io.portal.hub.api-version=2
 io.portal.hub.deployment-protocol=1
 ```
@@ -47,7 +53,7 @@ io.portal.hub.deployment-protocol=1
 The actual runtime version must match the image version label and report
 `metadata_schema_version:2`. CLI `api_version:1` is intentionally retained;
 the HTTP `/api/info` contract is version 2. Downgrades and versions older than
-beta.17 are blocked. After resolution the selected reference, local content ID,
+`MIN_HUB_VERSION` (0.6.19, the first passkey-only Hub) are blocked. After resolution the selected reference, local content ID,
 available repository digest, version and source are saved. Compose runs the
 immutable content ID, so a retagged image cannot silently change an installation.
 The helper never prunes images, preserving rollback IDs.
@@ -121,11 +127,24 @@ Each deployment has separate private **bind volumes**:
 Hub shares only the sidecar network namespace (`network_mode: service:tailscale`),
 listens on `127.0.0.1:8080`, and receives neither Tailscale storage nor its
 control socket. No host ports are published. No Docker socket is mounted in
-either container. No Funnel is enabled. The sidecar uses kernel networking,
-`/dev/net/tun`, `cap_drop:ALL` and only `NET_ADMIN` plus `NET_RAW`. The pinned
-image uses iptables-legacy, whose raw socket operations require `NET_RAW` as
-well as the network administration capability. These capabilities are granted
-only to the sidecar; Hub still receives none. DNS acceptance and persistent
+either container. No Funnel is enabled. By default the sidecar uses kernel
+networking, `/dev/net/tun`, `cap_drop:ALL` and only `NET_ADMIN` plus `NET_RAW`.
+The pinned image uses iptables-legacy, whose raw socket operations require
+`NET_RAW` as well as the network administration capability. These capabilities
+are granted only to the sidecar; Hub still receives none.
+
+A **new** installation on a host without a usable TUN device (typically an
+unprivileged LXC container) records `tailscale_mode: "userspace"` instead. The
+sidecar then runs Tailscale's netstack (`TS_USERSPACE=true`) with no device and
+no added capabilities at all, plus a SOCKS5 listener on `127.0.0.1:1055` inside
+the private Hub/sidecar namespace (no host port). Serve works unchanged; the
+endpoint self-check reaches the node's own Serve listener through that SOCKS5
+server, because netstack assigns no interface address in the namespace. The mode
+is chosen once and kept by every later action: an existing kernel-mode
+installation whose TUN device disappears reports `tun_unavailable` rather than
+silently changing networking. In userspace mode Hub reaches SSH targets through
+the host's normal network; targets reachable only over the tailnet are not yet
+supported in this mode. DNS acceptance and persistent
 `TS_AUTH_ONCE=true` are explicit. It owns native login through containerboot,
 with a 30-minute human-login boot timeout. Hub starts without depending on a
 healthy/enrolled tailnet, so local bootstrap remains available.
@@ -134,8 +153,9 @@ Hub is nonroot, drops all capabilities, has a read-only root filesystem, and
 uses private UID-10001 mode-0700 `/run/portal-hub` tmpfs plus writable `/tmp`
 tmpfs. Both containers use init/reaping, restart policies, healthchecks, log
 rotation and 30-second stop grace. Linux `/proc`, working pidfd support (kernel
-5.3+) and a real TUN device are required. Compose 2.20+ is required. Inspection
-checks the Docker daemon, Compose version, TUN, architecture and host pidfd.
+5.3+) are required; TUN selects kernel networking when present. Compose 2.20+ is
+required. Inspection checks the Docker daemon, Compose version, TUN (reported as
+`tailscale_mode`), container virtualization, architecture and host pidfd.
 Runtime doctor checks the actual container/service-user environment.
 
 `compose.template.yaml` is JSON (valid YAML), a concrete security-review fixture
@@ -146,14 +166,17 @@ The tests enforce that this fixture stays identical to the embedded renderer.
 ## JSON protocol
 
 Portal uses `/usr/bin/python3 -I` under root or sudo with a fixed in-memory loader
-that verifies the streamed source length and SHA-256 before executing it. The
+that verifies the streamed source length and SHA-256 before executing it. For
+`install` and the desktop's one-click setup, a fixed shell prologue first installs
+`python3` from the server's own apt or dnf sources when no Python 3.9+ exists,
+with package-manager stdin closed so only the loader reads the streamed source;
+it exits 86 when that is impossible. Read-only actions never install anything. The
 source is followed by one bounded UTF-8 JSON object and **stdin is closed**.
 For manual use, place the helper in root-controlled storage and run
 `python3 -I /root/portal_hub_deploy.py --request-stdin`. Never have sudo reopen a
-helper stored in an SSH-user-writable directory. The
-bootstrap CLI also needs EOF; the helper passes credentials through `docker
-exec -i --user 10001:10001 ... portal-hub bootstrap-owner --json` and closes the
-pipe. Do not put passwords, auth keys or tokens in shell command strings.
+helper stored in an SSH-user-writable directory. Requests contain no
+credentials: the owner signs in with passkeys created in the browser. Do not put
+auth keys or tokens in shell command strings.
 
 Every request starts with:
 
@@ -177,10 +200,10 @@ must be actual `*.ts.net` FQDNs, rather than a guessed requested hostname.
 | Action | Additional request fields | Behavior |
 | --- | --- | --- |
 | `inspect` | none | Read-only prerequisite/existing-record report, including blockers |
-| `install` | `hostname`, `hub_image`, optional `image_archive`, `install_docker` | Prepare/start or resume the owned installation; default hostname `portal-hub-<UUID prefix>` and default beta.17 image |
+| `install` | `hostname`, `hub_image`, optional `image_archive`, `install_docker` | Prepare/start or resume the owned installation; default hostname `portal-hub-<UUID prefix>` and the image of this Portal version |
 | `status` | none | Native login/approval, owner, actual application/TLS readiness, versions, sessions and recovery state |
-| `configure_https` | optional `allow_session_interruptions` | Discover actual origin, guard/recreate for environment changes, request HTTPS certificate, return consent URL, write Serve only for an owner |
-| `claim` | `username`, `password`; optional `allow_session_interruptions` | Verify/bootstrap owner over stdin, then configure private HTTPS |
+| `configure_https` | optional `allow_session_interruptions` | Discover actual origin, guard/recreate for environment changes, request HTTPS certificate, return consent URL, write private Serve (never Funnel) |
+| `owner_setup` | `mode` (`setup`, `add` or `reset`); `username` for a new owner; optional `allow_session_interruptions` | Once private HTTPS is ready, mint a one-time owner passkey link with `portal-hub owner-setup` and return it in `data.owner_setup` |
 | `doctor` | none | Prerequisites, runtime doctor, local API, TLS API, ownership, namespace and operation-journal checks |
 | `logs` | optional `lines` (1–500, default 200) | Bounded redacted service logs |
 | `update` | `hub_image` and/or `image_archive`; optional `allow_session_interruptions` | Pinned image change, consistent pre-update snapshot, readiness verification and automatic rollback |
@@ -190,29 +213,52 @@ must be actual `*.ts.net` FQDNs, rather than a guessed requested hostname.
 Every `image_archive` requires a lowercase 64-character `image_archive_sha256`.
 Portal calculates it while uploading, so a server-side replacement fails before
 Docker can load the archive. Booleans must be JSON booleans, and unknown request fields are rejected. Owner
-names follow runtime rules (2–64 ASCII letters/digits/dot/underscore/dash/@),
-and passwords must contain 12–256 UTF-8 bytes. Passwords are never persisted,
-put in Compose/environment/argv, or returned in error strings. On install retry,
+names follow runtime rules (2–64 ASCII letters/digits/dot/underscore/dash/@).
+The setup token in an `owner_setup` response is a 256-bit, single-use secret that
+expires after 30 minutes; the Hub stores only its SHA-256 hash, a new link
+replaces any earlier one, and the helper never writes it to the record, logs or
+diagnostics (generic redaction also removes `token=` values). On install retry,
 an archive for the unchanged image selection is ignored after the content ID
 has been recorded and is still available; a missing image can be restored from
 that archive or its recorded digest. Use `update` for any deliberate image change. Install also
 accepts `allow_session_interruptions` when repairing an existing live stack.
 
-Typical setup is `inspect`, `install`, then repeated `status` until native
+The desktop's **Deploy Hub** button drives this sequence automatically on one
+SSH connection (one sudo prompt at most, held in memory for that run): `inspect`,
+`install` with `install_docker:true`, `status` every 3 seconds while it opens the
+validated Tailscale login/approval page in the browser, `configure_https`
+(reopening the tailnet HTTPS consent page if certificate issuance needs it) and
+finally `owner_setup` with mode `setup`. The desktop then verifies the HTTPS
+endpoint itself and opens `https://<hub>/setup?<OAuth PKCE request>#token=<token>`
+in the browser. The token stays in the URL fragment, which browsers never send to
+the server; the page removes it from the address bar. The person creates the
+passkey, the Hub creates the owner and redirects to Portal's loopback callback
+with an authorization code, and Portal saves the sync defaults. If the owner
+already has a passkey, Portal opens the normal passkey sign-in page instead.
+
+Passkeys belong to the Hub's MagicDNS HTTPS name. **Add a passkey** (`add`) and
+**Reset owner passkey** (`reset`, which removes every passkey and revokes every
+token, so all devices sign in again) use the same link flow; SSH access to this
+server is the recovery path. An owner from an older password-based Hub enrolls a
+passkey through `setup` and its password hash is erased.
+
+Typical manual setup is `inspect`, `install`, then repeated `status` until native
 Tailscale login/approval completes. `AuthURL` is read directly from `tailscale
 status --json` even when the CLI exits nonzero during login. `NeedsMachineAuth`
 produces `awaiting_approval` and the native URL or the Tailscale machines page.
 For HTTPS, `configure_https` may return the Tailscale DNS admin consent URL; it
-requests a certificate into sidecar tmpfs without publishing the application.
-Return after consent, then `claim`. Claim may also precede HTTPS consent; the
-owner remains durable and the endpoint stays closed until HTTPS configuration
-succeeds. No Tailscale account password, API token or auth key is requested.
+requests a certificate into sidecar tmpfs. Return after consent and repeat it;
+it then publishes the Hub privately with Serve. An unclaimed Hub is safe to
+expose on the tailnet because owner creation needs a setup link that only the
+server administrator can mint. Then run `owner_setup`. No Tailscale account
+password, API token or auth key is requested.
 
 Phases are `not_installed`, `awaiting_login`, `awaiting_approval`,
 `awaiting_https`, `awaiting_owner`, and `ready`; inspect/logs/backup use
 `inspected`, `logs`, and `backed_up`. A stopped/starting/broken stack stays in
 the applicable waiting phase with detailed readiness fields; it never becomes
-`ready` solely because it has a tailnet IP. Ready requires owner existence,
+`ready` solely because it has a tailnet IP. `awaiting_owner` comes after HTTPS
+because passkeys need the HTTPS name. Ready requires an owner with a passkey,
 local API v2, a Serve HTTPS configuration without Funnel, matching container
 network namespaces, and a real certificate-validated request to the actual
 Tailscale address returning API v2 and the correct advertised HTTPS origin.
@@ -223,15 +269,31 @@ does not call Compose up during an idempotent install retry.
 This verifies the node endpoint from its namespace; client tailnet ACL/access
 and human login are additional integration checks performed by the root agent.
 
-Automatic Docker installation needs explicit `install_docker:true`. It supports
-Debian 13 (`docker.io`, `docker-compose` v2) and Ubuntu 24.04 (`docker.io`,
-`docker-compose-v2`) distro packages. It
-uses isolated apt metadata and fixed official HTTPS archive sources with the
-installed distro archive keyring (`signed-by`); unsigned metadata, untrusted
-packages, third-party sources and local repository pinning are excluded. It
-then enables Docker through systemd. Other distros, Debian 12, missing archive
-keyrings and hosts without systemd require operator-provided Docker/Compose.
-No curl-to-shell installer or external repository key is trusted implicitly.
+Automatic Docker installation needs explicit `install_docker:true` and systemd.
+
+| System | Source | Packages |
+| --- | --- | --- |
+| Debian 13, Ubuntu 24.04 and 26.04 | Distro archive | `docker.io`, `docker-cli`, `docker-compose` (Debian) / `docker.io`, `docker-compose-v2` (Ubuntu) |
+| Debian 12, Ubuntu 22.04 | Docker's apt repository | `docker-ce`, `docker-ce-cli`, `containerd.io`, `docker-compose-plugin` |
+| Fedora 42–44, RHEL 9–10, Rocky/AlmaLinux 9–10, CentOS Stream 9–10 | Docker's dnf repository | same as above |
+
+apt installs use isolated metadata: fixed official HTTPS archive sources with the
+installed distro archive keyring (`signed-by`), no `sources.list.d`, no local
+pinning, and unsigned metadata or untrusted packages refused. When the CA bundle
+is missing, `ca-certificates` is first installed from the same signed archive
+over HTTP. Docker's repositories are authenticated by Docker's OpenPGP keys
+**embedded in the helper** (deb key `9DC8 5822 9FC7 DD38 854A  E2D8 8D81 803C
+0EBF CD88`, rpm key `060A 61C5 1B55 8A7F 742B  77AA C52F EB6B 621E 9F35`); they
+are never downloaded or trusted on first use, and the tests recompute both
+fingerprints from the embedded bytes. The key is written to
+`/etc/apt/keyrings/portal-hub-docker.asc` or `/etc/pki/rpm-gpg/portal-hub-docker.asc`.
+So that Docker keeps receiving security updates, the helper also persists
+`/etc/apt/sources.list.d/portal-hub-docker.list` (skipped when an operator already
+configured a `download.docker.com` source) or `/etc/yum.repos.d/portal-hub-docker.repo`
+(`gpgcheck=1`). dnf never uses `--allowerasing`: conflicting packages such as
+`podman-docker` fail the install visibly instead of being removed. Docker is then
+enabled through systemd. Other systems require operator-provided Docker/Compose.
+No curl-to-shell installer is used.
 
 ## Maintenance, cancellation and recovery
 

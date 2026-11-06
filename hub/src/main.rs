@@ -89,10 +89,17 @@ enum CommandKind {
         #[arg(long)]
         json: bool,
     },
-    /// Locally establish the first owner using a JSON object on stdin.
-    BootstrapOwner {
+    /// Create a one-time link that registers an owner passkey: the first
+    /// passkey (creating the owner), another passkey, or a replacement for all
+    /// of them. Only the local service administrator can run it.
+    OwnerSetup {
         #[arg(long)]
         json: bool,
+        #[arg(long, value_enum, default_value_t = web::SetupMode::Setup)]
+        mode: web::SetupMode,
+        /// Account name for a new owner; an existing owner keeps its name.
+        #[arg(long)]
+        username: Option<String>,
     },
     /// Read owner existence without exposing account details.
     BootstrapStatus {
@@ -298,6 +305,7 @@ struct DoctorReport {
     run_dir: PathBuf,
     network_mode: String,
     owner_exists: Option<bool>,
+    owner_ready: Option<bool>,
     active_sessions: usize,
     ok: bool,
     checks: Vec<DoctorCheck>,
@@ -349,7 +357,11 @@ fn main() -> Result<()> {
             format,
         } => list_sessions(&state, active, include_preview, preview_bytes, format),
         CommandKind::Doctor { json } => doctor(&state, json),
-        CommandKind::BootstrapOwner { json } => web::bootstrap_owner_cli(&state.root, json),
+        CommandKind::OwnerSetup {
+            json,
+            mode,
+            username,
+        } => web::owner_setup_cli(&state.root, json, mode, username),
         CommandKind::BootstrapStatus { json } => web::bootstrap_status_cli(&state.root, json),
         CommandKind::Prune {
             ended_older_than_days,
@@ -432,8 +444,8 @@ fn run_forced_command(state: &State) -> Result<()> {
             format,
         }) => list_sessions(state, active, include_preview, preview_bytes, format),
         Some(CommandKind::Doctor { json }) => doctor(state, json),
-        Some(CommandKind::BootstrapOwner { .. } | CommandKind::BootstrapStatus { .. }) => {
-            bail!("bootstrap is only available to the local service administrator")
+        Some(CommandKind::OwnerSetup { .. } | CommandKind::BootstrapStatus { .. }) => {
+            bail!("owner setup is only available to the local service administrator")
         }
         Some(CommandKind::Prune { .. }) => {
             bail!("prune is not available through forced-command mode")
@@ -1161,25 +1173,27 @@ fn doctor(state: &State, json: bool) -> Result<()> {
         "host" => checks.push(binary_check("tailscale", "required for host-mode Tailscale networking")),
         _ => checks.push(DoctorCheck { name: "network_mode".into(), ok: false, message: "unsupported network mode".into() }),
     }
-    let owner_exists = match web::owner_exists(&state.root) {
-        Ok(exists) => Some(exists),
+    let owner = web::owner_exists(&state.root)
+        .and_then(|exists| Ok((exists, web::owner_ready(&state.root)?)));
+    let (owner_exists, owner_ready) = match owner {
+        Ok((exists, ready)) => (Some(exists), Some(ready)),
         Err(_) => {
             checks.push(DoctorCheck {
                 name: "database".into(),
                 ok: false,
                 message: "Hub owner database could not be read".into(),
             });
-            None
+            (None, None)
         }
     };
     if runtime::require_bootstrap() {
         checks.push(DoctorCheck {
             name: "owner_bootstrap".into(),
-            ok: owner_exists == Some(true),
-            message: if owner_exists == Some(true) {
-                "owner is established"
+            ok: owner_ready == Some(true),
+            message: if owner_ready == Some(true) {
+                "the owner has a passkey"
             } else {
-                "local owner bootstrap is required"
+                "the owner passkey is not set up yet; finish setup in Portal or run portal-hub owner-setup"
             }
             .into(),
         });
@@ -1204,6 +1218,7 @@ fn doctor(state: &State, json: bool) -> Result<()> {
         run_dir: runtime::run_dir(&state.root),
         network_mode,
         owner_exists,
+        owner_ready,
         active_sessions,
         ok,
         checks,

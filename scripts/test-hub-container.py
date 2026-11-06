@@ -2,15 +2,14 @@
 """Exercise the actual Hub image, using a disposable lease on managed hosts.
 
 The test requires no Tailscale account. It covers the application boundary:
-unclaimed HTTP lockout, local bootstrap, nonroot diagnostics, runtime storage,
-and durable ownership across container restart. Networking/enrollment is covered
+no password sign-up, local-only owner passkey setup links, nonroot diagnostics,
+runtime storage and durable owner setup state across container restart. Networking/enrollment is covered
 by the deployment tests and separately needs a real tailnet acceptance test.
 """
 
 import json
 import os
 from pathlib import Path
-import secrets
 import shutil
 import subprocess
 import sys
@@ -101,27 +100,36 @@ def main():
 
             ready()
             assert execute("id", "-u").stdout.strip() == "10001"
-            body = json.dumps({"username": "smoke-owner", "password": secrets.token_urlsafe(24)})
-            registration = execute(
-                "curl", "-sS", "-o", "/dev/null", "-w", "%{http_code}",
-                "-H", "Content-Type: application/json", "--data-binary", "@-",
-                "http://127.0.0.1:8080/auth/register", data=body,
-            )
-            assert registration.stdout == "403", "Unclaimed managed Hub must reject public registration"
-            first = json.loads(execute("portal-hub", "bootstrap-owner", "--json", data=body).stdout)
-            assert first == {"owner_exists": True, "created": True}
-            repeated = json.loads(execute("portal-hub", "bootstrap-owner", "--json", data=body).stdout)
-            assert repeated == {"owner_exists": True, "created": False}
-            doctor = json.loads(execute("portal-hub", "doctor", "--json").stdout)
-            assert doctor["owner_exists"] is True
+            def post(path, body):
+                return execute(
+                    "curl", "-sS", "-o", "/dev/null", "-w", "%{http_code}",
+                    "-H", "Content-Type: application/json", "--data-binary", "@-",
+                    "http://127.0.0.1:8080" + path, data=json.dumps(body),
+                ).stdout
+
+            password = {"username": "smoke-owner", "password": "unique-smoke-password"}
+            for path in ("/auth/register", "/auth/login"):
+                assert post(path, password) in {"404", "405"}, "Hub must not offer password sign-up or sign-in"
+            assert post("/webauthn/setup/info", {"token": "guessed-token"}) == "400"
+            first = json.loads(execute("portal-hub", "owner-setup", "--json", "--username", "smoke-owner").stdout)
+            assert first["mode"] == "setup" and first["username"] == "smoke-owner" and len(first["token"]) == 43
+            latest = json.loads(execute("portal-hub", "owner-setup", "--json", "--username", "smoke-owner").stdout)
+            assert post("/webauthn/setup/info", {"token": first["token"]}) == "400", "A new link replaces the old one"
+            assert post("/webauthn/setup/info", {"token": latest["token"]}) == "200"
+            # Until the passkey exists, doctor reports exactly that and nothing else.
+            doctor = json.loads(execute("portal-hub", "doctor", "--json", check=False).stdout)
+            assert doctor["owner_exists"] is False and doctor["owner_ready"] is False
+            failing = [check["name"] for check in doctor["checks"] if not check["ok"]]
+            assert failing == ["owner_bootstrap"], failing
             assert doctor["network_mode"] == "sidecar"
             execute("sh", "-c", "umask 077; printf transient > /run/portal-hub/smoke-marker")
             run(["docker", "restart", "--time", "20", container])
             ready()
             assert execute("test", "-e", "/run/portal-hub/smoke-marker", check=False).returncode != 0
             state = json.loads(execute("portal-hub", "bootstrap-status", "--json").stdout)
-            assert state["owner_exists"] is True, "Restart must preserve the durable owner"
-            print("Hub image passed: nonroot, managed bootstrap, diagnostics, runtime tmpfs, durable restart")
+            assert state == {"owner_exists": False, "owner_ready": False}
+            assert post("/webauthn/setup/info", {"token": latest["token"]}) == "200", "Restart must preserve the setup link"
+            print("Hub image passed: nonroot, passkey-only owner setup, diagnostics, runtime tmpfs, durable restart")
         except BaseException:
             if container:
                 # Logs can contain terminal output; this fixture has no real users/sessions.

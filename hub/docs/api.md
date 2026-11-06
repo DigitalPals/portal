@@ -121,8 +121,12 @@ Run the web server:
 portal-hub web --bind 0.0.0.0:8080 --public-url https://hub.example.test
 ```
 
-When no user exists, `GET /admin` presents the one-time owner setup wizard. The
-wizard asks for an account name and password.
+The owner signs in with passkeys only; passkeys need an HTTPS public URL (or a
+`*.localhost` development name). The owner is created from a one-time setup link
+that only the local administrator can mint with `portal-hub owner-setup`; see
+[integrated-runtime.md](integrated-runtime.md#owner-setup-and-sign-in). Until
+then `GET /admin` and `GET /oauth/authorize` ask the user to finish setup in
+Portal.
 
 Portal desktop authenticates with OAuth authorization code + PKCE:
 
@@ -131,8 +135,21 @@ GET /oauth/authorize?response_type=code&client_id=portal-desktop&redirect_uri=ht
 POST /oauth/token
 ```
 
-The browser page served by `GET /oauth/authorize` signs the user in with the
-owner password before issuing the OAuth authorization code.
+The browser page served by `GET /oauth/authorize` confirms the owner's passkey
+before issuing the OAuth authorization code. The page uses these JSON endpoints:
+
+```text
+POST /webauthn/login/start      {"oauth": {...authorize query...}}
+POST /webauthn/login/finish     {"flow_id": "...", "credential": {...}}  -> {"redirect_uri": "..."}
+GET  /setup?<optional authorize query>#token=<setup token>
+POST /webauthn/setup/info       {"token": "..."}  -> {"username": "...", "mode": "setup|add|reset"}
+POST /webauthn/setup/start      {"token": "..."}
+POST /webauthn/setup/finish     {"flow_id": "...", "credential": {...}, "oauth": {...}|null}
+                                -> {"ok": true, "redirect_uri": "..."|null}
+```
+
+`/setup` with an authorize query returns an authorization code for that client
+after the passkey is registered, so the first visit also signs the client in.
 
 The token response contains a bearer `access_token` and `refresh_token`.
 Authenticated clients can call:

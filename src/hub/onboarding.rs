@@ -3,7 +3,7 @@ use std::collections::HashSet;
 use uuid::Uuid;
 
 use super::auth::PendingHubAuth;
-use super::deployment::ManagedHubState;
+use super::deployment::{ManagedHubState, OwnerSetupLink};
 use crate::config::settings::PortalHubSettings;
 use crate::proxy::ProxyStatus;
 
@@ -29,6 +29,16 @@ pub struct PortalHubWizardState {
     pub prefer_vault: bool,
     pub sync_all: bool,
     pub managed: ManagedHubState,
+    /// Set when a one-click deployment reached ready: verify the endpoint,
+    /// sign in and save the defaults without further clicks.
+    pub auto_finish: Option<AutoFinish>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct AutoFinish {
+    /// One-time link for creating the owner passkey; taken by the first
+    /// sign-in attempt. None when the owner already has a passkey.
+    pub setup: Option<OwnerSetupLink>,
 }
 
 impl PortalHubWizardState {

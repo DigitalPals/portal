@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Portal is a Linux-first SSH and VNC client with GUI built in Rust using the Iced framework. It features terminal emulation (via alacritty_terminal) for remote and local shells, SFTP file browsing with dual-pane interface, VNC remote desktop with GPU-accelerated rendering, a built-in file viewer (code/images/PDF/markdown), host management with groups, an encrypted key vault, and optional Portal Hub integration (persistent proxied sessions + profile sync).
 
-The Portal ecosystem spans three repos: this desktop client, Portal Hub (`~/Code/portal-hub`, the sync/proxy service), and Portal Android (`~/Code/portal-android`). See `AGENTS.md` for the cross-repo workflow, local builds, and the release preflight checklist.
+The Portal ecosystem spans two repos: this one, which holds the desktop client and Portal Hub (`hub/`, the sync/proxy service, plus its deployment in `deploy/hub/`), and Portal Android (`~/Code/portal-android`). The former standalone Portal Hub repo is retired. Portal and Hub share one version and one release. See `AGENTS.md` for the cross-repo workflow, local builds, and the release preflight checklist.
 
 ## Build Commands
 
@@ -200,14 +200,16 @@ The VNC widget uses a custom wgpu shader (`src/vnc/widget.rs`) with a `FrameBuff
 
 Releases are triggered by pushing a `v*` tag whose version matches `Cargo.toml` (there is no separate release branch). Follow the preflight checklist in `AGENTS.md` before tagging (fmt, audit, `./run.sh build` when deps changed, green CI on main). The Nix flake provides development tools only; NixOS distribution will use Flatpak in the future.
 
-1. **Update version** in `Cargo.toml`:
+1. **Update version** in `Cargo.toml` and `hub/Cargo.toml` (Portal and Hub share
+   one version), `ARG HUB_VERSION` in `deploy/hub/Dockerfile` and `DEFAULT_IMAGE` in
+   `deploy/hub/portal_hub_deploy.py`. `cargo test --lib` fails if any of them differ:
    ```toml
    version = "X.Y.Z"
    ```
 
 2. **Commit and push to main**:
    ```bash
-   git add Cargo.toml
+   git add Cargo.toml hub/Cargo.toml Cargo.lock deploy/hub
    git commit -m "chore: bump version to X.Y.Z"
    git push origin main
    ```
@@ -221,6 +223,7 @@ Releases are triggered by pushing a `v*` tag whose version matches `Cargo.toml` 
 4. **Automated CI/CD** (`.github/workflows/release.yml`) will:
    - Build for Linux (x86_64, arm64)
    - Create DEB, RPM, tarball, and x86_64 AppImage packages
+   - Publish the Portal Hub image `ghcr.io/digitalpals/portal-hub:X.Y.Z` (amd64/arm64, provenance) and `hub-release.json`
    - Add `SHA256SUMS` for release asset verification
    - Create GitHub release with tag `vX.Y.Z`
 

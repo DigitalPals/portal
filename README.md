@@ -236,9 +236,10 @@ That's it. You're in.
 
 ## Portal Hub Beta
 
-Portal Hub now lives in this repository under [`hub/`](hub/), alongside the
-desktop client. It remains a separate headless service for persistent SSH
-sessions, synced hosts/settings/snippets, and encrypted vault storage.
+Portal Hub lives in this repository under [`hub/`](hub/), alongside the
+desktop client, and shares its version and releases. It remains a separate
+headless service for persistent SSH sessions, synced hosts/settings/snippets,
+and encrypted vault storage.
 
 Portal can install and manage Hub on an SSH server using Docker Compose and a
 dedicated Tailscale container. The Hub receives its own persistent tailnet
@@ -249,30 +250,52 @@ To use it:
 
 1. Add the server as an SSH host with an independent local key, SSH agent, or
    password. Administrative access through root or sudo is needed for deployment.
-2. In Settings → Portal Hub, start setup and choose to install on a server.
-   Check the server, review the changes, and approve Docker installation if needed.
-3. Install Hub, open the Tailscale sign-in page, and refresh status after login
-   or device approval. No Tailscale API key is needed.
-4. Create the Hub owner and enable private HTTPS, completing any Tailscale HTTPS
-   consent in the browser. Unclaimed managed Hubs cannot be registered remotely.
-5. Verify the connection and sign in, then choose profile sync, Vault and routing.
-   Settings and tokens stay in a draft until you finish; cancellation preserves
-   the current working Hub configuration.
-6. Open Sessions to resume terminals. Reopen Hub setup to resume a saved
-   deployment or manage updates, private backups, diagnostics and removal.
+2. In Settings → Portal Hub, start setup, choose **Set up on a server**, pick the
+   server and select **Deploy Hub**.
+3. Sign in to Tailscale in the browser page that opens (and approve the device or
+   enable tailnet HTTPS certificates if Tailscale asks). No Tailscale API key is
+   needed.
+4. Create your passkey when the Hub opens in the browser.
+
+Everything else is automatic: Portal installs Python 3 and Docker when missing,
+starts the Hub of its own version, waits for Tailscale, enables private HTTPS and
+opens a one-time setup link for your owner passkey. Creating the passkey signs
+this device in, and Portal turns on sync. It asks for the sudo password at most
+once. Your existing host routing and Vault preferences are kept; change them
+later in Settings.
+
+The Hub has no password. Sign in on other devices, including Portal Android,
+with the same passkey: save it in a password manager that syncs (Google Password
+Manager, iCloud Keychain, 1Password, Bitwarden) or on a security key, or use your
+phone's passkey through the browser's QR code prompt. Passkeys belong to the
+Hub's Tailscale HTTPS name. To add another passkey, or to recover after losing
+yours, reopen Hub setup, select the server and use **Add a passkey** or **Reset
+owner passkey**: Portal creates a new setup link over SSH, so SSH access to the
+server is the recovery path. A reset signs out every device.
+
+Reopen Hub setup to resume an interrupted deployment, open Sessions to resume
+terminals, or manage updates, private backups, diagnostics and removal.
+**Advanced options** keeps the manual step-by-step controls.
 
 Choose the existing-Hub option to connect to a manually operated service. Existing
 API v2 and Android pairing remain supported.
 
-Managed deployments require a Linux amd64/arm64 host with TUN access, Python 3.9+
-and Docker Compose 2.20+. Docker inside an LXC also requires suitable nesting/TUN
-permissions from its host. Networking policy must allow clients to reach Hub and
+Automatic setup supports Linux amd64/arm64 servers with systemd and kernel 5.3+.
+Docker is installed automatically on Debian 12–13, Ubuntu 22.04/24.04/26.04,
+Fedora 42–44 and RHEL, Rocky, AlmaLinux or CentOS Stream 9–10; elsewhere, install
+Docker Compose 2.20+ first. Servers without `/dev/net/tun` (such as unprivileged
+LXC containers) use Tailscale userspace networking automatically; Docker inside an
+LXC still needs nesting enabled on its host, and in userspace mode Hub reaches SSH
+targets over the server's normal network only. This computer must be on the same
+tailnet to reach the Hub. Networking policy must allow clients to reach Hub and
 Hub to reach the selected SSH targets. This deployment does not publish public
 Hub ports or enable Tailscale Funnel.
 
-The integrated `0.5.0-beta.17` image must be published before the default registry
-install is available. For a local or unpublished build, select a Docker image tar
-in setup. See [building and exporting an image](deploy/hub/README.md#images-and-building).
+Each Portal release publishes the Hub image of the same version
+(`ghcr.io/digitalpals/portal-hub:<version>`), and that Portal deploys it. A
+development build points at an image that is published only by its release; to
+test unreleased changes, select a locally built Docker image tar in setup. See
+[building and exporting an image](deploy/hub/README.md#images-and-building).
 
 Typing `exit` in the remote shell closes the real session. Closing the Portal tab or losing connectivity only detaches Portal from the proxy session.
 
@@ -293,9 +316,9 @@ python3 scripts/test-hub-container.py portal-hub:dev --build
 The container test uses a disposable resource lease on managed development hosts.
 It validates real image bootstrap and restart without joining a tailnet. Hub
 source provenance is recorded in [hub/PROVENANCE.md](hub/PROVENANCE.md).
-Desktop `v*` releases and Hub `hub-v*` image releases are independent; both build
-from the same workspace and lockfile. Details: [deployment protocol](deploy/hub/README.md)
-and [runtime state and bootstrap](hub/docs/integrated-runtime.md).
+Portal and Portal Hub share one version: a `v*` release builds the desktop packages
+and publishes the Hub image from the same commit. Details: [deployment protocol](deploy/hub/README.md)
+and [runtime state and owner setup](hub/docs/integrated-runtime.md).
 
 For SSH hosts that authenticate with a private key (key file or vault key),
 Portal sends the decrypted key to Portal Hub over TLS when the proxied session
