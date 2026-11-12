@@ -8,6 +8,21 @@ Portal is a Linux-first SSH and VNC client with GUI built in Rust using the Iced
 
 The Portal ecosystem spans two repos: this one, which holds the desktop client and Portal Hub (`hub/`, the sync/proxy service, plus its deployment in `deploy/hub/`), and Portal Android (`~/Code/portal-android`). The former standalone Portal Hub repo is retired. Portal and Hub share one version and one release. See `AGENTS.md` for the cross-repo workflow, local builds, and the release preflight checklist.
 
+## Testing (fast testing)
+- After a change, run `fast-test` in the repository folder. It tests only what changed since `main` (commits,
+  staged and unstaged edits, new files): quick tests here on The Dragon, heavy ones (VMs, Nix, databases, wide
+  changes) on The Beast by itself. `fast-test --dry-run` shows what it would run and why.
+- Exit 0 passed, 1 failed, 2 couldn't run (say so; don't run the full suite here instead). When it fails, its output
+  ends with the failing step's last lines; the whole log is in `.git/fast-test/`.
+- Don't run the full test suite and don't wait for GitHub CI. `fast-test --full` runs everything on The Beast, only
+  when someone asks for it.
+- A failing test runs once more before it counts as failing (fast-test does this itself). Never skip or weaken a test
+  to make it pass.
+- Every night The Beast runs the full suite of `main`; failures are reported in the morning.
+- Here every step runs on this computer (Portal builds and tests locally, no remote builder) and there is no
+  `--full` or nightly run. The real-boundary and container scripts lease their own fixtures; `fast-test` runs one
+  only when that script or the Hub image changed, otherwise run them by hand.
+
 ## Build Commands
 
 ```bash

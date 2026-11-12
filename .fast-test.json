@@ -1,0 +1,52 @@
+{
+  "about": "What `fast-test` runs for a change (see ~/Code/fast-test). Portal builds and tests on this computer only (AGENTS.md): every step runs here, there is no Beast part. The real-boundary scripts lease their own fixtures through agent-resource.",
+  "steps": [
+    {
+      "name": "rust-fmt",
+      "when": ["*.rs"],
+      "run": "cargo fmt --all -- --check"
+    },
+    {
+      "name": "portal",
+      "about": "Clippy and the unit tests of the desktop app (the contract-backed tests read hub/contracts).",
+      "when": ["src/**", "tests/validation_tests.rs", "build.rs", "hub/contracts/**", "Cargo.toml", "Cargo.lock"],
+      "run": "cargo clippy --locked --all-targets -- -D warnings && cargo test --locked --lib --test validation_tests",
+      "timeout": 40
+    },
+    {
+      "name": "hub",
+      "about": "Clippy and tests of Portal Hub, in the dev shell (its runtime tests need dtach and sshd).",
+      "when": ["hub/**", "Cargo.lock", "flake.nix", "flake.lock"],
+      "unless": ["hub/**/*.md"],
+      "run": "nix --extra-experimental-features 'nix-command flakes' develop --command sh -c 'cargo clippy --locked -p portal-hub --all-targets -- -D warnings && cargo test --locked -p portal-hub'",
+      "timeout": 40
+    },
+    {
+      "name": "hub-deploy",
+      "about": "The deployment helper's tests.",
+      "when": ["deploy/hub/**"],
+      "run": "python3 -m unittest discover -s deploy/hub/tests"
+    },
+    {
+      "name": "hub-container",
+      "about": "The container smoke test, through its own leased route, when the image or that test changed.",
+      "when": ["deploy/hub/Dockerfile", "scripts/test-hub-container.py"],
+      "run": "python3 scripts/test-hub-container.py portal-hub:dev --build",
+      "alone": true,
+      "timeout": 40
+    },
+    {
+      "name": "hub-real",
+      "about": "A real-boundary script (leased fixtures) when that script itself changed; otherwise run them by hand.",
+      "when": ["scripts/test-hub-ssh.py", "scripts/test-hub-mounts.py"],
+      "run": "for f in {files}; do python3 \"$f\" || exit 1; done",
+      "alone": true,
+      "timeout": 40
+    },
+    {
+      "name": "shellcheck",
+      "when": ["*.sh"],
+      "run": "shellcheck {files}"
+    }
+  ]
+}
