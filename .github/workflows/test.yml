@@ -1,10 +1,10 @@
 name: Tests
 
+# Not on every push: `fast-test` checks each change (AGENTS.md). The release workflow runs these tests on the
+# tagged commit before it builds anything; run them by hand from the Actions tab when someone asks.
 on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+  workflow_dispatch:
+  workflow_call:
 
 env:
   CARGO_TERM_COLOR: always
