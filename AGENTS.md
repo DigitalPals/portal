@@ -98,12 +98,11 @@ ecosystem, use this order to avoid long feedback loops:
     follow the same version and are checked by the same test).
   - Pushing a `v*` tag matching that version builds the desktop packages and
     publishes the amd64/arm64 Hub image `ghcr.io/digitalpals/portal-hub:<version>`
-    with provenance in the same release. The workflow requires green main-branch
-    Tests on that exact commit. There are no separate `hub-v*` releases.
+    with provenance in the same release. The workflow first runs the full Tests
+    workflow on that commit and stops if it fails. There are no separate `hub-v*` releases.
   - Portal Android currently has CI but no GitHub release workflow in this repo.
-- Decide whether a new release is needed before waiting on CI. If a release is
-  needed, bump versions first, then run local focused checks, then push once so
-  CI validates the final release candidate commit.
+- Tests no longer run on every push. If a release is needed, bump versions
+  first, run `fast-test`, push once, then tag: the release runs the full Tests.
 - For Portal release candidates, validate the release-only paths before pushing
   the release tag:
   - Run `cargo fmt -- --check` and the same security audit command used by CI
@@ -115,12 +114,10 @@ ecosystem, use this order to avoid long feedback loops:
   - Treat GitHub Actions deprecation warnings in release workflows as blockers
     while preparing a release. Update actions before tagging so failures do not
     appear after the expensive binary builds have already run.
-- Before triggering release workflows, wait for CI on the final pushed head to
-  pass, including desktop, Hub runtime/container and Android contract jobs.
-- For Portal, create and push the `v*` tag only after the final `main` CI run is
-  green. If a tag workflow fails before a GitHub release is created, fix `main`,
-  verify CI again, delete and recreate the tag on the corrected commit, then
-  re-run the release.
+- For Portal, the `v*` tag's release runs the Tests first (desktop, Hub
+  runtime/container and Android contract jobs). If it fails before a GitHub
+  release is created, fix `main`, delete and recreate the tag on the corrected
+  commit, then re-run the release.
 - For Portal Hub LXC validation on `root@10.10.0.13`:
   - Run remote shell snippets with `bash -lc`; the default shell may be `fish`.
   - Do not assume `rsync` exists on the LXC. To sync the committed Hub source
@@ -143,5 +140,5 @@ ecosystem, use this order to avoid long feedback loops:
 - Portal release jobs can legitimately take 30 minutes or more on a cold cache.
   Poll job-level status and name the slow job explicitly; do not assume the run
   is stuck until the job stops advancing or hits its workflow timeout.
-- Do not trigger GitHub releases until release-candidate CI is green and human
+- Do not trigger GitHub releases until `fast-test` passes and human
   testing on the Portal Hub LXC has been completed when applicable.

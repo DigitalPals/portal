@@ -27,7 +27,7 @@ jobs:
 
       # Portal and Portal Hub share one version and one release: each Portal
       # release deploys the Hub image built from the same commit.
-      - name: Validate release tag, shared version and green CI
+      - name: Validate release tag and shared version
         id: version
         env:
           GH_TOKEN: ${{ github.token }}
@@ -45,20 +45,21 @@ jobs:
             exit 1
           fi
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main
-          conclusion=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/test.yml/runs?head_sha=$GITHUB_SHA&branch=main&event=push&per_page=1" --jq '.workflow_runs[0].conclusion')
-          if [ "$conclusion" != success ]; then
-            echo '::error::The release commit must first pass the main Tests workflow.'
-            exit 1
-          fi
 
           echo "version=$TAG" >> "$GITHUB_OUTPUT"
           echo "number=$VERSION" >> "$GITHUB_OUTPUT"
           echo "hub_image=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/portal-hub" >> "$GITHUB_OUTPUT"
           echo "::notice::Will create release $TAG with Portal Hub image $VERSION"
 
+  # The full test suite on the tagged commit; nothing is built or published unless it passes.
+  tests:
+    name: Tests
+    needs: prepare
+    uses: ./.github/workflows/test.yml
+
   build:
     name: Build ${{ matrix.name }}
-    needs: prepare
+    needs: [prepare, tests]
     strategy:
       matrix:
         include:
@@ -143,7 +144,7 @@ jobs:
 
   hub-image:
     name: Publish Portal Hub image
-    needs: prepare
+    needs: [prepare, tests]
     runs-on: ubuntu-latest
     permissions:
       contents: read
