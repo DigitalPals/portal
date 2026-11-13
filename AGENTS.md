@@ -1,5 +1,10 @@
 # Agent Notes
 
+## How to answer
+
+- Always answer concisely and in plain English: short sentences, everyday words, the answer first. Leave out filler,
+  jargon and long lists unless someone asks for more detail.
+
 ## Portal Ecosystem Context
 
 Keep the whole Portal ecosystem in mind when making product, architecture, protocol,

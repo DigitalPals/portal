@@ -2,6 +2,11 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## How to answer
+
+- Always answer concisely and in plain English: short sentences, everyday words, the answer first. Leave out filler,
+  jargon and long lists unless someone asks for more detail.
+
 ## Project Overview
 
 Portal is a Linux-first SSH and VNC client with GUI built in Rust using the Iced framework. It features terminal emulation (via alacritty_terminal) for remote and local shells, SFTP file browsing with dual-pane interface, VNC remote desktop with GPU-accelerated rendering, a built-in file viewer (code/images/PDF/markdown), host management with groups, an encrypted key vault, and optional Portal Hub integration (persistent proxied sessions + profile sync).
